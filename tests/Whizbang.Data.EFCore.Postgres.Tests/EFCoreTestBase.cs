@@ -2,6 +2,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Pgvector;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -75,6 +76,10 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
       dataSourceBuilder.EnableDynamicJson();
 
+      // Enable pgvector type mapping for vector search operations
+      // This allows Pgvector.Vector type to work with EF Core
+      dataSourceBuilder.UseVector();
+
       _dataSource = dataSourceBuilder.Build();
 
       // Configure DbContext options to use the data source
@@ -83,7 +88,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
         // Register Whizbang's custom PostgreSQL function translators
         // This enables optimized ?| array overlap for large principal sets
         npgsqlOptions.UseWhizbangFunctions();
-      });
+      })
+      .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
       DbContextOptions = optionsBuilder.Options;
 
       // Initialize database schema

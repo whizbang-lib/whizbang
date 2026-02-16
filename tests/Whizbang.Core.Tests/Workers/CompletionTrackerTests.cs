@@ -224,6 +224,66 @@ public class CompletionTrackerTests {
   }
 
   [Test]
+  public async Task CalculateTimeout_ExtremeRetryCount_DoesNotOverflow_Async() {
+    // Arrange - Use defaults: 5 min base, 2.0 multiplier, 60 min max
+    // At retryCount=100, Math.Pow(2.0, 100) = 1.27e30
+    // 300 seconds * 1.27e30 would overflow TimeSpan.MaxValue (~9.2e18 ticks)
+    var tracker = new CompletionTracker<TestCompletion>();
+
+    // Act - This would throw OverflowException before the fix
+    var timeout = tracker.CalculateTimeout(100);
+
+    // Assert - Should be capped at maxTimeout (60 minutes), not throw
+    await Assert.That(timeout).IsEqualTo(TimeSpan.FromMinutes(60));
+  }
+
+  [Test]
+  public async Task CalculateTimeout_ModerateRetryCount_ReturnsExpectedBackoff_Async() {
+    // Arrange - 10 second base, 2x multiplier, 5 minute max
+    var tracker = new CompletionTracker<TestCompletion>(
+      baseTimeout: TimeSpan.FromSeconds(10),
+      backoffMultiplier: 2.0,
+      maxTimeout: TimeSpan.FromMinutes(5)
+    );
+
+    // Act & Assert
+    // retryCount=0: 10 * 2^0 = 10s
+    await Assert.That(tracker.CalculateTimeout(0)).IsEqualTo(TimeSpan.FromSeconds(10));
+    // retryCount=1: 10 * 2^1 = 20s
+    await Assert.That(tracker.CalculateTimeout(1)).IsEqualTo(TimeSpan.FromSeconds(20));
+    // retryCount=2: 10 * 2^2 = 40s
+    await Assert.That(tracker.CalculateTimeout(2)).IsEqualTo(TimeSpan.FromSeconds(40));
+    // retryCount=5: 10 * 2^5 = 320s > 300s max, capped at 5 min
+    await Assert.That(tracker.CalculateTimeout(5)).IsEqualTo(TimeSpan.FromMinutes(5));
+  }
+
+  [Test]
+  public async Task ResetStale_ExtremeRetryCount_DoesNotThrow_Async() {
+    // Arrange - Simulate a message stuck in retry loop for a very long time
+    var tracker = new CompletionTracker<TestCompletion>(
+      baseTimeout: TimeSpan.FromSeconds(1),
+      backoffMultiplier: 2.0,
+      maxTimeout: TimeSpan.FromSeconds(30)
+    );
+
+    tracker.Add(new TestCompletion { Id = Guid.NewGuid(), Data = "StuckMessage" });
+    var pending = tracker.GetPending();
+
+    // Manually set a very high retry count (simulating many failed retries)
+    pending[0].RetryCount = 200;
+
+    var sentAt = DateTimeOffset.UtcNow.AddMinutes(-1); // Sent 1 minute ago
+    tracker.MarkAsSent(pending, sentAt);
+
+    // Act - Should not throw OverflowException
+    tracker.ResetStale(DateTimeOffset.UtcNow);
+
+    // Assert - Should reset to Pending since it's past maxTimeout
+    await Assert.That(tracker.PendingCount).IsEqualTo(1);
+    await Assert.That(tracker.GetPending()[0].RetryCount).IsEqualTo(201);
+  }
+
+  [Test]
   public async Task CountProperties_ReflectCurrentState_Async() {
     // Arrange
     var tracker = new CompletionTracker<TestCompletion>();

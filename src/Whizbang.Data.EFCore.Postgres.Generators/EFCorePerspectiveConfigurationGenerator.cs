@@ -201,7 +201,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(modelType.Name);
+    // Use GetTableBaseName to handle nested types correctly (e.g., ActiveJobTemplate.Model -> ActiveJobTemplateModel)
+    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
+    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(tableBaseName);
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);

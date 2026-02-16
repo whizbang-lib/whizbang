@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.RabbitMQ;
 
@@ -42,10 +43,22 @@ public static class ServiceCollectionExtensions {
     var existingConn = services.Any(sd => sd.ServiceType == typeof(IConnection));
     if (!existingConn) {
       services.AddSingleton<IConnection>(sp => {
-        var logger = sp.GetService<ILogger<RabbitMQTransport>>();
-        logger?.LogInformation("Creating RabbitMQ connection");
-        var factory = new ConnectionFactory { Uri = new Uri(connectionString) };
-        return factory.CreateConnectionAsync().GetAwaiter().GetResult();
+        var logger = sp.GetService<ILogger<RabbitMQConnectionRetry>>();
+        logger?.LogInformation("Creating RabbitMQ connection with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", options.InitialRetryAttempts, options.RetryIndefinitely);
+
+        var connectionRetry = new RabbitMQConnectionRetry(options, logger);
+        var factory = new ConnectionFactory {
+          Uri = new Uri(connectionString),
+          AutomaticRecoveryEnabled = true,
+          NetworkRecoveryInterval = options.InitialRetryDelay
+        };
+
+        var connection = connectionRetry.CreateConnectionWithRetryAsync(factory).GetAwaiter().GetResult();
+
+        // Wire up connection state monitoring for runtime reconnection visibility
+        _wireUpConnectionStateMonitoring(connection, logger);
+
+        return connection;
       });
     }
 
@@ -70,7 +83,69 @@ public static class ServiceCollectionExtensions {
       return transport;
     });
 
+    // Register transport readiness check
+    services.AddSingleton<ITransportReadinessCheck>(sp => {
+      var connection = sp.GetRequiredService<IConnection>();
+      return new RabbitMQReadinessCheck(connection);
+    });
+
+    // Register message publish strategy
+    services.AddSingleton<IMessagePublishStrategy>(sp =>
+      new TransportPublishStrategy(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetRequiredService<ITransportReadinessCheck>()
+      )
+    );
+
     return services;
+  }
+
+  /// <summary>
+  /// Wires up connection state monitoring for runtime reconnection visibility.
+  /// RabbitMQ's automatic recovery handles reconnection; this provides logging for observability.
+  /// </summary>
+  [SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Connection events are infrequent - high-performance logging not justified")]
+  private static void _wireUpConnectionStateMonitoring(IConnection connection, ILogger? logger) {
+    if (logger == null) {
+      return;
+    }
+
+    // Log when connection is lost
+    connection.ConnectionShutdownAsync += (_, args) => {
+      logger.LogWarning(
+        "RabbitMQ connection shutdown. Reason: {ReplyCode} - {ReplyText}. Automatic recovery will attempt to reconnect.",
+        args.ReplyCode,
+        args.ReplyText);
+      return Task.CompletedTask;
+    };
+
+    // Log when automatic recovery succeeds
+    connection.RecoverySucceededAsync += (_, _) => {
+      logger.LogInformation("RabbitMQ connection recovered successfully after temporary disconnection");
+      return Task.CompletedTask;
+    };
+
+    // Log when automatic recovery fails (will continue retrying)
+    connection.ConnectionRecoveryErrorAsync += (_, args) => {
+      logger.LogError(
+        args.Exception,
+        "RabbitMQ connection recovery attempt failed. Automatic recovery will continue retrying.");
+      return Task.CompletedTask;
+    };
+
+    // Log when connection is blocked by broker (resource alarm)
+    connection.ConnectionBlockedAsync += (_, args) => {
+      logger.LogWarning(
+        "RabbitMQ connection blocked by broker. Reason: {Reason}. Publishing may be delayed.",
+        args.Reason);
+      return Task.CompletedTask;
+    };
+
+    // Log when connection is unblocked
+    connection.ConnectionUnblockedAsync += (_, _) => {
+      logger.LogInformation("RabbitMQ connection unblocked. Normal operation resumed.");
+      return Task.CompletedTask;
+    };
   }
 
   /// <summary>

@@ -84,9 +84,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       logger?.LogInformation("DIAGNOSTIC: wh_message_associations table SQL is present in schema");
 
       // CRITICAL: Check if it's schema-qualified correctly
+      // Note: PostgresSchemaBuilder quotes schema names to handle reserved keywords (e.g., "user")
+      // So we check for the quoted format: "schema".wh_table
       var expectedTable = string.IsNullOrEmpty("__SCHEMA__") || "__SCHEMA__" == "public"
         ? "wh_message_associations"
-        : "__SCHEMA__.wh_message_associations";
+        : "\"__SCHEMA__\".wh_message_associations";
       if (coreInfrastructureSchema.Contains(expectedTable)) {
         logger?.LogInformation("DIAGNOSTIC: Table is correctly schema-qualified as '{Table}'", expectedTable);
       } else {
@@ -151,6 +153,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     ILogger? logger,
     CancellationToken cancellationToken) {
 
+    // Note: __QUOTED_SCHEMA__ includes double quotes for PostgreSQL reserved keyword safety (e.g., "user")
     const string Constraints = @"
 -- Foreign keys (note: PostgreSQL doesn't support IF NOT EXISTS for FK constraints)
 DO $$
@@ -159,34 +162,34 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_receptor_processing_event'
   ) THEN
-    ALTER TABLE __SCHEMA__.wh_receptor_processing
+    ALTER TABLE __QUOTED_SCHEMA__.wh_receptor_processing
       ADD CONSTRAINT fk_receptor_processing_event
-      FOREIGN KEY (event_id) REFERENCES __SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
+      FOREIGN KEY (event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
   END IF;
 
   -- FK: perspective_checkpoints.last_event_id -> event_store.event_id
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_checkpoints_event'
   ) THEN
-    ALTER TABLE __SCHEMA__.wh_perspective_checkpoints
+    ALTER TABLE __QUOTED_SCHEMA__.wh_perspective_checkpoints
       ADD CONSTRAINT fk_perspective_checkpoints_event
-      FOREIGN KEY (last_event_id) REFERENCES __SCHEMA__.wh_event_store(event_id) ON DELETE RESTRICT;
+      FOREIGN KEY (last_event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE RESTRICT;
   END IF;
 END $$;
 
 -- Unique constraint for receptor_processing (event_id, receptor_name)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
-  ON __SCHEMA__.wh_receptor_processing(event_id, receptor_name);
+  ON __QUOTED_SCHEMA__.wh_receptor_processing(event_id, receptor_name);
 
 -- Partial indexes for status-based queries
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
-  ON __SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
+  ON __QUOTED_SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_catching_up
-  ON __SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
+  ON __QUOTED_SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
-  ON __SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
+  ON __QUOTED_SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
 ";
 
     try {
@@ -226,9 +229,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
           var sampleLines = string.Join("\n", transformedSql.Split('\n').Take(50));
           logger?.LogInformation("DIAGNOSTIC: Sample of transformed SQL for {Migration}:\n{Sample}", name, sampleLines);
 
-          // Check if transformation worked
+          // Check if transformation worked (schema is quoted in generated SQL)
           if (!string.IsNullOrEmpty("__SCHEMA__") && "__SCHEMA__" != "public") {
-            var hasQualified = transformedSql.Contains("__SCHEMA__.wh_outbox") || transformedSql.Contains("__SCHEMA__.wh_inbox");
+            // After transformation, tables will be qualified with quoted schema: "schema".wh_outbox
+            var hasQualified = transformedSql.Contains("\"__SCHEMA__\".wh_outbox") || transformedSql.Contains("\"__SCHEMA__\".wh_inbox");
             var hasUnqualified = System.Text.RegularExpressions.Regex.IsMatch(transformedSql, @"(?<!\.)(\bwh_outbox\b|\bwh_inbox\b)");
             logger?.LogInformation("DIAGNOSTIC: Transformation check - HasQualified={HasQualified}, HasUnqualified={HasUnqualified}",
               hasQualified, hasUnqualified);
@@ -261,16 +265,26 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
 
   /// <summary>
   /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
-  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "schema.wh_inbox", "schema.wh_outbox".
+  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "\"schema\".wh_inbox", "\"schema\".wh_outbox".
   /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
+  /// Schema names are quoted to handle PostgreSQL reserved keywords (e.g., "user").
   /// </summary>
   /// <param name="sql">Original migration SQL</param>
   /// <param name="schema">Schema name to prepend (e.g., "inventory", "bff")</param>
   /// <returns>Transformed SQL with schema-qualified table names</returns>
   private static string _transformMigrationSql(string sql, string schema) {
-    // If schema is empty or "public", return SQL unchanged
-    if (string.IsNullOrEmpty(schema) || schema == "public") {
-      return sql;
+    // Quote the schema name to handle PostgreSQL reserved keywords (e.g., "user")
+    // Default to "public" if schema is empty
+    var effectiveSchema = string.IsNullOrEmpty(schema) ? "public" : schema;
+    var quotedSchema = $"\"{effectiveSchema}\"";
+
+    // First, ALWAYS replace __MIGRATION_SCHEMA__ placeholder (even for "public" schema)
+    // This ensures the placeholder is substituted before any early returns
+    var transformedSql = sql.Replace("__MIGRATION_SCHEMA__", quotedSchema);
+
+    // If schema is "public", no further qualification needed - table names are already valid
+    if (effectiveSchema == "public") {
+      return transformedSql;
     }
 
     // List of Whizbang infrastructure table names to qualify
@@ -292,18 +306,17 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       "wh_event_sequence" // Sequence name
     };
 
-    var transformedSql = sql;
-
     // Replace each table name with schema-qualified version
     // Use word boundaries (\b) to avoid replacing column names or partial matches
     foreach (var tableName in tableNames) {
       // Pattern: tableName NOT preceded by period (to avoid replacing already-qualified names)
       // Matches: "FROM wh_inbox", "ALTER TABLE wh_inbox", etc.
       // Does NOT match: "inventory.wh_inbox", "wh_inbox_id" (column name)
+      // Uses quoted schema to handle PostgreSQL reserved keywords (e.g., "user")
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
         $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
-        $"{schema}.$1",
+        $"{quotedSchema}.$1",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
     }
@@ -321,38 +334,39 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
 
     // Replace function names in CREATE/DROP/CALL statements
     // This ensures each schema has its own function instance (e.g., inventory.register_message_associations)
+    // Use quotedSchema to handle PostgreSQL reserved keywords (e.g., "user")
     foreach (var functionName in functionNames) {
-      // Pattern 1: "CREATE [OR REPLACE] FUNCTION functionName(" → "CREATE [OR REPLACE] FUNCTION schema.functionName("
+      // Pattern 1: "CREATE [OR REPLACE] FUNCTION functionName(" → "CREATE [OR REPLACE] FUNCTION "schema".functionName("
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
         $@"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b(\s*\()",
-        $"$1{schema}.{functionName}$2",
+        $"$1{quotedSchema}.{functionName}$2",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
 
-      // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] schema.functionName"
+      // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] "schema".functionName"
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
         $@"(DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{schema}.{functionName}",
+        $"$1{quotedSchema}.{functionName}",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
 
-      // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION schema.functionName"
+      // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION "schema".functionName"
       // This handles GRANT/REVOKE statements for function permissions
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
         $@"((?:GRANT|REVOKE)\s+.*\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{schema}.{functionName}",
+        $"$1{quotedSchema}.{functionName}",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
 
-      // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION schema.functionName"
+      // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION "schema".functionName"
       // This handles COMMENT statements for function documentation
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
         $@"(COMMENT\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
-        $"$1{schema}.{functionName}",
+        $"$1{quotedSchema}.{functionName}",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
     }

@@ -129,7 +129,8 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
 
     // Configure DbContext
     var optionsBuilder = new DbContextOptionsBuilder<PhysicalFieldIntegrationDbContext>();
-    optionsBuilder.UseNpgsql(_dataSource);
+    optionsBuilder.UseNpgsql(_dataSource)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     _context = new PhysicalFieldIntegrationDbContext(optionsBuilder.Options);
 
     // Initialize database schema

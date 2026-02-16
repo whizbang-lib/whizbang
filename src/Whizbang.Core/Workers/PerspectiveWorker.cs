@@ -419,15 +419,15 @@ public partial class PerspectiveWorker(
         } else {
           if (processedEvents.Count == 0) {
             LogSkippingPostPerspectiveInlineNoEvents(_logger);
-#pragma warning disable CA1848 // Temporary diagnostic logging
-            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO EVENTS (lastProcessed={LastProcessed}, current={Current})",
+#pragma warning disable CA1848 // Diagnostic logging for troubleshooting
+            _logger.LogDebug("Skipping PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO EVENTS (lastProcessed={LastProcessed}, current={Current})",
               perspectiveName, streamId, lastProcessedEventId, result.LastEventId);
 #pragma warning restore CA1848
           }
           if (_lifecycleInvoker is null) {
             LogSkippingPostPerspectiveInlineNoInvoker(_logger);
-#pragma warning disable CA1848 // Temporary diagnostic logging
-            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO INVOKER",
+#pragma warning disable CA1848 // Diagnostic logging for troubleshooting
+            _logger.LogDebug("Skipping PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO INVOKER",
               perspectiveName, streamId);
 #pragma warning restore CA1848
           }

@@ -286,6 +286,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Quotes a PostgreSQL identifier to handle reserved keywords (e.g., "user", "table", "select").
+  /// Always quotes to ensure safety regardless of the identifier value.
+  /// Example: "user" → "\"user\"", "bff" → "\"bff\""
+  /// </summary>
+  private static string _quotePostgresIdentifier(string identifier) {
+    // Double quotes are the PostgreSQL standard for quoting identifiers
+    // This handles reserved keywords like "user", "table", "select", etc.
+    return $"\"{identifier}\"";
+  }
+
+  /// <summary>
   /// Extracts perspective information from a class implementing IPerspectiveFor.
   /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
   /// Returns null if the class doesn't implement the interface.
@@ -751,6 +762,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
+      // __QUOTED_SCHEMA__ is used in SQL contexts where reserved keywords like "user" need quoting
+      // Double quotes are escaped ("") for use inside C# verbatim string literals (@"...")
+      template = template.Replace("__QUOTED_SCHEMA__", $"\"\"{dbContext.Schema}\"\"");
+      // __SCHEMA__ is used in C# contexts (like HasDefaultSchema) where EF Core handles quoting
       template = template.Replace("__SCHEMA__", dbContext.Schema);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
@@ -827,7 +842,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Escape the SQL content for C# verbatim string literal (@"...")
       // In verbatim strings, only quotes need escaping (by doubling them)
       // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
       var escapedContent = content
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
           .Replace("\"", "\"\"")  // Escape quotes for verbatim string
           .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
           .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
@@ -858,14 +876,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return "\"\""; // Empty string - no perspective tables
     }
 
+    // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user", "table")
+    var quotedSchema = _quotePostgresIdentifier(schema);
+
     var sb = new StringBuilder();
     sb.AppendLine("-- Perspective Tables (auto-generated from PerspectiveRow<TModel> types)");
     sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine($"-- Schema: {schema}");
     sb.AppendLine();
 
-    // Create schema if it doesn't exist
-    sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {schema};");
+    // Create schema if it doesn't exist (quoted to handle reserved keywords like "user")
+    sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {quotedSchema};");
     sb.AppendLine();
 
     // Get unique tables (same table might be referenced by multiple perspectives)
@@ -878,7 +899,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var perspective in uniqueTables) {
       // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
       sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
-      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {schema}.{perspective.TableName} (");
+      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
       sb.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
       sb.AppendLine($"  data JSONB NOT NULL,");
       sb.AppendLine($"  metadata JSONB NOT NULL,");
@@ -891,20 +912,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{perspective.TableName.Replace("wh_per_", "")}_created_at");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} (created_at);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
       sb.AppendLine();
 
       // Add GIN indexes on JSONB columns for full LINQ query support
       // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
       var shortName = perspective.TableName.Replace("wh_per_", "");
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (data);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (data);");
       sb.AppendLine();
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (metadata);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
       sb.AppendLine();
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (scope);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
       sb.AppendLine();
     }
 

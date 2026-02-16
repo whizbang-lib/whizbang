@@ -15,5 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\Whizbang.Transports.AzureServiceBus\Whizbang.Transports.AzureServiceBus.csproj" />
   </ItemGroup>
 </Project>

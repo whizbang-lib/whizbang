@@ -616,22 +616,22 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 10,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: PublisherLoop started, waiting for work from channel..."
+    Level = LogLevel.Debug,
+    Message = "PublisherLoop started, waiting for work from channel..."
   )]
   static partial void LogPublisherLoopStarted(ILogger logger);
 
   [LoggerMessage(
     EventId = 11,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
+    Level = LogLevel.Debug,
+    Message = "PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
   )]
   static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string destination);
 
   [LoggerMessage(
     EventId = 12,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Transport readiness check: IsReady={IsReady}"
+    Level = LogLevel.Debug,
+    Message = "Transport readiness check: IsReady={IsReady}"
   )]
   static partial void LogTransportReadinessCheck(ILogger logger, bool isReady);
 
@@ -651,15 +651,15 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 15,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: About to publish message {MessageId} to {Destination}"
+    Level = LogLevel.Debug,
+    Message = "About to publish message {MessageId} to {Destination}"
   )]
   static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string destination);
 
   [LoggerMessage(
     EventId = 16,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Publish result for {MessageId}: Success={Success}, Status={Status}"
+    Level = LogLevel.Debug,
+    Message = "Publish result for {MessageId}: Success={Success}, Status={Status}"
   )]
   static partial void LogPublishResult(ILogger logger, Guid messageId, bool success, MessageProcessingStatus status);
 

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -1274,6 +1275,15 @@ public abstract class Dispatcher(
 
       // If no strategy is registered, skip outbox routing (local-only event)
       if (strategy == null) {
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        logger?.LogWarning(
+          "IWorkCoordinatorStrategy not registered - event will not be published to outbox for cross-service delivery. " +
+          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. EventType: {EventType}",
+          eventType.Name);
+#pragma warning restore CA1848
         return;
       }
 
@@ -1412,6 +1422,15 @@ public abstract class Dispatcher(
 
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        logger?.LogWarning(
+          "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
+          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
+          messageType.Name);
+#pragma warning restore CA1848
         throw new HandlerNotFoundException(messageType);
       }
 
@@ -1472,6 +1491,15 @@ public abstract class Dispatcher(
 
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        logger?.LogWarning(
+          "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
+          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
+          messageType.Name);
+#pragma warning restore CA1848
         throw new HandlerNotFoundException(messageType);
       }
 

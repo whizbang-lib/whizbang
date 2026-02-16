@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus;
 
@@ -46,14 +47,13 @@ public static class ServiceCollectionExtensions {
     // ONLY if not already registered (allows tests to provide shared client)
     var existingRegistration = services.Any(sd => sd.ServiceType == typeof(Azure.Messaging.ServiceBus.ServiceBusClient));
     if (!existingRegistration) {
-      Console.WriteLine("[AddAzureServiceBusTransport] No existing ServiceBusClient found, creating new one");
       services.AddSingleton(sp => {
-        var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
-        logger?.LogInformation("Creating new ServiceBusClient from connection string");
-        return new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
+        var logger = sp.GetService<ILogger<AzureServiceBusConnectionRetry>>();
+        logger?.LogInformation("Creating Azure Service Bus client with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", options.InitialRetryAttempts, options.RetryIndefinitely);
+
+        var connectionRetry = new AzureServiceBusConnectionRetry(options, logger);
+        return connectionRetry.CreateClientWithRetryAsync(connectionString).GetAwaiter().GetResult();
       });
-    } else {
-      Console.WriteLine("[AddAzureServiceBusTransport] Found existing ServiceBusClient registration, reusing it");
     }
 
     // Register transport as singleton, injecting shared client
@@ -75,6 +75,22 @@ public static class ServiceCollectionExtensions {
 
       return transport;
     });
+
+    // Register transport readiness check
+    services.AddSingleton<ITransportReadinessCheck>(sp => {
+      var transport = sp.GetRequiredService<ITransport>();
+      var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
+      var logger = sp.GetRequiredService<ILogger<ServiceBusReadinessCheck>>();
+      return new ServiceBusReadinessCheck(transport, client, logger);
+    });
+
+    // Register message publish strategy
+    services.AddSingleton<IMessagePublishStrategy>(sp =>
+      new TransportPublishStrategy(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetRequiredService<ITransportReadinessCheck>()
+      )
+    );
 
     return services;
   }

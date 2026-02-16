@@ -480,8 +480,8 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 19,
-    Level = LogLevel.Warning,
-    Message = "[ServiceBusConsumer DIAGNOSTIC] _serializeToNewInboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
+    Level = LogLevel.Debug,
+    Message = "Serializing to InboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
   )]
   static partial void LogSerializeInboxMessage(ILogger logger, Guid messageId, string payloadType, bool isEvent, Guid streamId);
 
