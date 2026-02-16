@@ -20,6 +20,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// This approach avoids the previous issue where each test created its own container,
 /// causing 60+ simultaneous container startups and Docker resource exhaustion.
 /// </summary>
+/// <remarks>
+/// Uses NotInParallel to prevent database contention when multiple tests
+/// compete for the shared PostgreSQL container connections.
+/// </remarks>
+[NotInParallel("EFCorePostgresTests")]
 public abstract class EFCoreTestBase : IAsyncDisposable {
   static EFCoreTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally

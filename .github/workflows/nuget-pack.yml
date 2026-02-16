@@ -31,10 +31,12 @@ jobs:
     - name: Verify packages created
       run: |
         # List of all expected packages (with SoftwareExtravaganza prefix)
+        # NOTE: Internal packages excluded (IsPackable=false):
+        #   - Whizbang.Generators.Shared (ILMerged into generator packages)
+        #   - Whizbang.Testing (empty placeholder)
         EXPECTED_PACKAGES=(
           "SoftwareExtravaganza.Whizbang.Core"
           "SoftwareExtravaganza.Whizbang.Generators"
-          "SoftwareExtravaganza.Whizbang.Generators.Shared"
           "SoftwareExtravaganza.Whizbang.Data.Postgres"
           "SoftwareExtravaganza.Whizbang.Data.Schema"
           "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
@@ -54,7 +56,6 @@ jobs:
           "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
           "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
           "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
-          "SoftwareExtravaganza.Whizbang.Testing"
           "SoftwareExtravaganza.Whizbang.Migrate"
           "SoftwareExtravaganza.Whizbang.CLI"
         )

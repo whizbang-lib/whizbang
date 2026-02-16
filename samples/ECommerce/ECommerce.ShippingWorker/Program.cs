@@ -6,7 +6,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 #if AZURESERVICEBUS
@@ -50,11 +50,18 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 builder.Services.AddDbContext<ShippingDbContext>(options =>
   options.UseNpgsql(postgresConnection));
 
-// Register unified Whizbang API with EF Core Postgres driver
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
 _ = builder.Services
   .AddWhizbang()
+  .WithRouting(routing => {
+    routing
+      .OwnDomains("ecommerce.shipping.commands")
+      .SubscribeTo("ecommerce.orders.events")
+      .Inbox.UseSharedTopic("inbox");
+  })
   .WithEFCore<ShippingDbContext>()
-  .WithDriver.Postgres;
+  .WithDriver.Postgres
+  .AddTransportConsumer();
 
 // Register Whizbang generated services
 builder.Services.AddReceptors();
@@ -63,26 +70,6 @@ builder.Services.AddWhizbangAggregateIdExtractor();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-
-// Transport consumer
-var consumerOptions = new TransportConsumerOptions();
-
-#if AZURESERVICEBUS
-consumerOptions.Destinations.Add(new TransportDestination(
-  Address: "orders",
-  RoutingKey: "sub-shipping-orders"  // Azure Service Bus subscription name
-));
-
-#elif RABBITMQ
-consumerOptions.Destinations.Add(new TransportDestination(
-  Address: "orders",                   // RabbitMQ exchange name
-  RoutingKey: "shipping-worker-queue"  // RabbitMQ queue name
-));
-
-#endif
-
-builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<TransportConsumerWorker>();
 
 var host = builder.Build();
 

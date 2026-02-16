@@ -243,6 +243,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(inventoryDataSource);
     });
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
@@ -386,6 +391,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
+
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
 
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
@@ -541,12 +551,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
 
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         dbContext,
-        schema: "inventory",
-        serviceName: "ECommerce.InventoryWorker",
-        logger: logger,
-        cancellationToken: ct
+        "inventory",
+        "ECommerce.InventoryWorker",
+        logger,
+        ct
       );
 
       Console.WriteLine("[RabbitMqFixture] InventoryWorker message associations registered (inventory schema)");
@@ -557,12 +567,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
 
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         dbContext,
-        schema: "bff",
-        serviceName: "ECommerce.BFF.API",
-        logger: logger,
-        cancellationToken: ct
+        "bff",
+        "ECommerce.BFF.API",
+        logger,
+        ct
       );
 
       Console.WriteLine("[RabbitMqFixture] BFF message associations registered (bff schema)");

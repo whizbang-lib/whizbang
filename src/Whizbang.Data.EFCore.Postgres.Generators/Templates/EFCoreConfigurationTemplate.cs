@@ -29,7 +29,9 @@ public static class WhizbangModelBuilderExtensions {
     // CRITICAL: Set default schema to instruct EF Core to generate schema-qualified SQL queries
     // Without this, EF Core generates unqualified queries like "SELECT * FROM wh_outbox" which fail
     // With this, EF Core generates "SELECT * FROM __SCHEMA__.wh_outbox" which works correctly
-    if (!string.IsNullOrEmpty("__SCHEMA__") && "__SCHEMA__" != "public") {
+    // NOTE: HasDefaultSchema() must be called even for "public" schema so that
+    // FindEntityType(typeof(OutboxRecord))?.GetSchema() returns the correct schema value
+    if (!string.IsNullOrEmpty("__SCHEMA__")) {
       modelBuilder.HasDefaultSchema("__SCHEMA__");
     }
 

@@ -108,12 +108,28 @@ if (-not (Test-Path $localPackagesDir)) {
     New-Item -ItemType Directory -Path $localPackagesDir | Out-Null
 }
 
+# Internal packages to skip (IsPackable=false - not published to NuGet)
+$internalPackages = @(
+    'Whizbang.Generators.Shared',    # ILMerged into generator packages
+    'Whizbang.Testing'               # Empty placeholder
+)
+
 # Find all Whizbang projects
-$projects = Get-ChildItem -Path $srcDir -Filter "Whizbang.*.csproj" -Recurse |
+$allProjects = Get-ChildItem -Path $srcDir -Filter "Whizbang.*.csproj" -Recurse |
     Where-Object { $_.FullName -notmatch "\\obj\\" -and $_.FullName -notmatch "\\bin\\" }
+
+# Filter out internal packages
+$projects = $allProjects | Where-Object { $_.BaseName -notin $internalPackages }
+$skippedProjects = $allProjects | Where-Object { $_.BaseName -in $internalPackages }
 
 Write-Host "Found $($projects.Count) projects to pack:" -ForegroundColor Green
 $projects | ForEach-Object { Write-Host "  - $($_.BaseName)" -ForegroundColor Gray }
+
+if ($skippedProjects.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Skipping $($skippedProjects.Count) internal packages (IsPackable=false):" -ForegroundColor DarkGray
+    $skippedProjects | ForEach-Object { Write-Host "  - $($_.BaseName)" -ForegroundColor DarkGray }
+}
 Write-Host ""
 
 $successCount = 0

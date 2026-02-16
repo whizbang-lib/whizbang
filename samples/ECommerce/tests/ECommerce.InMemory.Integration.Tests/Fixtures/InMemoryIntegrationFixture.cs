@@ -261,6 +261,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
       options.UseNpgsql(inventoryDataSource));
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture already ensures the database schema is created before starting hosts,
+    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
+    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -397,6 +403,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
+
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture already ensures the database schema is created before starting hosts,
+    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
+    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
 
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
@@ -557,8 +569,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      // Use generated RegisterPerspectiveAssociationsAsync from EFCorePerspectiveAssociationGenerator
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         inventoryDbContext,
         schema: "inventory",
         serviceName: "ECommerce.InventoryWorker",
@@ -574,8 +586,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      // Use generated RegisterPerspectiveAssociationsAsync from EFCorePerspectiveAssociationGenerator
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         bffDbContext,
         schema: "bff",
         serviceName: "ECommerce.BFF.API",
