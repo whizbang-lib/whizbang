@@ -163,39 +163,39 @@ public class TopicRoutingStrategyTests {
   // ===============================================================================
 
   [Test]
-  public async Task NamespaceRoutingStrategy_HierarchicalNamespace_ExtractsSecondToLastSegmentAsync() {
-    // Arrange - MyApp.Orders.Events.OrderCreated → "orders"
+  public async Task NamespaceRoutingStrategy_ReturnsFullNamespaceAsync() {
+    // Arrange - MyApp.Orders.Events.OrderCreated → "testnamespaces.myapp.orders.events"
     var strategy = new NamespaceRoutingStrategy();
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("orders");
+    // Assert - Returns full namespace in lowercase
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_FlatNamespace_ExtractsFromTypeNameAsync() {
-    // Arrange - MyApp.Contracts.Commands.CreateOrder → "order"
+  public async Task NamespaceRoutingStrategy_CommandNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - MyApp.Contracts.Commands.CreateOrder → "testnamespaces.myapp.contracts.commands"
     var strategy = new NamespaceRoutingStrategy();
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("order");
+    // Assert - Returns full namespace in lowercase
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.contracts.commands");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_FlatNamespaceWithEvents_ExtractsFromTypeNameAsync() {
-    // Arrange - MyApp.Contracts.Events.OrderCreated → "order"
+  public async Task NamespaceRoutingStrategy_EventNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - MyApp.Contracts.Events.OrderCreated → "testnamespaces.myapp.contracts.events"
     var strategy = new NamespaceRoutingStrategy();
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("order");
+    // Assert - Returns full namespace in lowercase
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.contracts.events");
   }
 
   [Test]
@@ -211,27 +211,29 @@ public class TopicRoutingStrategyTests {
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_TypeNameExtraction_RemovesCommandSuffixAsync() {
-    // Arrange
+  public async Task NamespaceRoutingStrategy_MessageNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - Messages namespace
     var strategy = new NamespaceRoutingStrategy();
 
-    // Act - CreateOrderCommand → "order"
+    // Act
     var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Messages.CreateOrderCommand), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("order");
+    // Assert - Returns full namespace in lowercase
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.contracts.messages");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_TypeNameExtraction_RemovesEventSuffixAsync() {
+  public async Task NamespaceRoutingStrategy_SameNamespaceForDifferentTypes_ReturnsSameNamespaceAsync() {
     // Arrange
     var strategy = new NamespaceRoutingStrategy();
 
-    // Act - OrderCreatedEvent → "order"
-    var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Messages.OrderCreatedEvent), "ignored");
+    // Act - Both types are in the same namespace
+    var result1 = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Messages.CreateOrderCommand), "ignored");
+    var result2 = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Messages.OrderCreatedEvent), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("order");
+    // Assert - Both should return the same namespace
+    await Assert.That(result1).IsEqualTo(result2);
+    await Assert.That(result1).IsEqualTo("testnamespaces.myapp.contracts.messages");
   }
 
   [Test]
@@ -241,39 +243,39 @@ public class TopicRoutingStrategyTests {
     var poolStrategy = new PoolSuffixRoutingStrategy("01");
     var composite = new CompositeTopicRoutingStrategy(namespaceStrategy, poolStrategy);
 
-    // Act - orders → orders-01
+    // Act - Full namespace with pool suffix
     var result = composite.ResolveTopic(typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "base");
 
     // Assert
-    await Assert.That(result).IsEqualTo("orders-01");
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.orders.events-01");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_NullNamespace_ExtractsFromTypeNameAsync() {
-    // The type has a namespace, so we'll test with a custom function that returns the type name processing
+  public async Task NamespaceRoutingStrategy_WithValidNamespace_ReturnsNamespaceAsync() {
+    // Arrange
     var strategy = new NamespaceRoutingStrategy();
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestEvent), "fallback");
 
-    // Assert - TestEvent with namespace "Whizbang.Core.Tests.Routing" should work
-    await Assert.That(result).IsNotNull();
+    // Assert - TestEvent with namespace "Whizbang.Core.Tests.Routing" should return it
+    await Assert.That(result).IsEqualTo("whizbang.core.tests.routing");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_SkipsQueriesNamespace_UsesTypeNameAsync() {
-    // Arrange - MyApp.Contracts.Queries.GetOrderById → "order"
+  public async Task NamespaceRoutingStrategy_QueriesNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - MyApp.Contracts.Queries.GetOrderById → full namespace
     var strategy = new NamespaceRoutingStrategy();
 
     // Act
     var result = strategy.ResolveTopic(typeof(TestNamespaces.MyApp.Contracts.Queries.GetOrderById), "ignored");
 
-    // Assert
-    await Assert.That(result).IsEqualTo("order");
+    // Assert - Returns full namespace in lowercase
+    await Assert.That(result).IsEqualTo("testnamespaces.myapp.contracts.queries");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_ReturnsLowercaseTopicAsync() {
+  public async Task NamespaceRoutingStrategy_ReturnsLowercaseNamespaceAsync() {
     // Arrange
     var strategy = new NamespaceRoutingStrategy();
 
@@ -281,6 +283,7 @@ public class TopicRoutingStrategyTests {
     var result = strategy.ResolveTopic(typeof(NamespaceRoutingTestTypes.OrderCreated), "ignored");
 
     // Assert - Should be lowercase
+    await Assert.That(result).IsEqualTo("namespaceroutingtesttypes");
     await Assert.That(result).IsEqualTo(result.ToLowerInvariant());
   }
 }

@@ -3,9 +3,20 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Core.Routing;
 
 /// <summary>
-/// Each domain publishes to its own topic.
-/// Default strategy - clear domain separation.
+/// Publishes messages to namespace-specific topics.
+/// Topic is the full namespace, routing key is the type name.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Example for MyApp.Users.Events.TenantCreatedEvent:
+/// - Topic: "myapp.users.events"
+/// - Routing Key: "tenantcreatedevent"
+/// </para>
+/// <para>
+/// This enables direct subscription to event namespaces:
+/// services subscribe to namespaces they care about.
+/// </para>
+/// </remarks>
 /// <docs>core-concepts/routing#domain-topic-outbox</docs>
 public sealed class DomainTopicOutboxStrategy : IOutboxRoutingStrategy {
   private readonly ITopicRoutingStrategy _topicResolver;
@@ -33,14 +44,14 @@ public sealed class DomainTopicOutboxStrategy : IOutboxRoutingStrategy {
     ArgumentNullException.ThrowIfNull(messageType);
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
-    // Extract domain from message type namespace
-    var domain = _topicResolver.ResolveTopic(messageType, "", null);
+    // Topic = full namespace (e.g., "myapp.users.events")
+    var ns = _topicResolver.ResolveTopic(messageType, "", null);
 
-    // Routing key is lowercase type name
+    // Routing key = type name (e.g., "tenantcreatedevent")
     var routingKey = messageType.Name.ToLowerInvariant();
 
     return new TransportDestination(
-      Address: domain,
+      Address: ns,
       RoutingKey: routingKey,
       Metadata: null
     );

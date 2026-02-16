@@ -65,8 +65,8 @@ public class NamespaceRoutingIntegrationTests {
   // ========================================
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_HierarchicalNamespace_RoutesToCorrectTopicAsync() {
-    // Arrange - Event from MyApp.Orders.Events namespace
+  public async Task PublishAsync_WithNamespaceRouting_ReturnsFullNamespaceAsTopicAsync() {
+    // Arrange - Event from TestNamespaces.MyApp.Orders.Events namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy);
@@ -75,14 +75,14 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.PublishAsync(@event);
 
-    // Assert - Should route to "orders" based on namespace segment
+    // Assert - Should route to full namespace in lowercase
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("orders");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_FlatNamespace_ExtractsFromTypeNameAsync() {
-    // Arrange - Command from MyApp.Contracts.Commands namespace (flat structure)
+  public async Task PublishAsync_WithNamespaceRouting_CommandNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - Command from TestNamespaces.MyApp.Contracts.Commands namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy);
@@ -91,14 +91,14 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.SendAsync(command);
 
-    // Assert - Should extract "order" from type name since namespace has generic segment
+    // Assert - Should return full namespace
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("order");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.contracts.commands");
   }
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_EventSuffix_StrippedFromTopicAsync() {
-    // Arrange - Event with "Event" suffix from flat namespace
+  public async Task PublishAsync_WithNamespaceRouting_EventNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - Event from TestNamespaces.MyApp.Contracts.Events namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy);
@@ -107,14 +107,14 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.PublishAsync(@event);
 
-    // Assert - Should strip "Created" suffix and get "order"
+    // Assert - Should return full namespace
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("order");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.contracts.events");
   }
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_CommandSuffix_StrippedFromTopicAsync() {
-    // Arrange - Command with "Command" suffix
+  public async Task PublishAsync_WithNamespaceRouting_MessageNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - Command from TestNamespaces.MyApp.Contracts.Messages namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy);
@@ -123,14 +123,14 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.SendAsync(command);
 
-    // Assert - Should strip "Command" and "Create" to get "order"
+    // Assert - Should return full namespace
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("order");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.contracts.messages");
   }
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_QueriesNamespace_ExtractsFromTypeNameAsync() {
-    // Arrange - Query from Queries namespace
+  public async Task PublishAsync_WithNamespaceRouting_QueriesNamespace_ReturnsFullNamespaceAsync() {
+    // Arrange - Query from TestNamespaces.MyApp.Contracts.Queries namespace
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy);
@@ -139,9 +139,9 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.SendAsync(query);
 
-    // Assert - Should extract "order" from type name
+    // Assert - Should return full namespace
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("order");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.contracts.queries");
   }
 
   [Test]
@@ -158,9 +158,9 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.PublishAsync(@event);
 
-    // Assert - Should be "orders" from namespace + "-01" from pool suffix
+    // Assert - Should be full namespace + "-01" from pool suffix
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("orders-01");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.orders.events-01");
   }
 
   [Test]
@@ -180,7 +180,7 @@ public class NamespaceRoutingIntegrationTests {
   }
 
   [Test]
-  public async Task SendManyAsync_WithNamespaceRouting_RoutesAllMessagesCorrectlyAsync() {
+  public async Task SendManyAsync_WithNamespaceRouting_RoutesAllMessagesToTheirNamespacesAsync() {
     // Arrange - Multiple messages from different namespaces
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
@@ -194,15 +194,15 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.SendManyAsync(messages);
 
-    // Assert - Each routed to correct topic
+    // Assert - Each routed to its full namespace
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
-    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("orders");
-    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("order");
-    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("order");
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("testnamespaces.myapp.orders.events");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("testnamespaces.myapp.contracts.commands");
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("testnamespaces.myapp.contracts.messages");
   }
 
   [Test]
-  public async Task PublishAsync_WithNamespaceRouting_ReturnsLowercaseTopicAsync() {
+  public async Task PublishAsync_WithNamespaceRouting_ReturnsLowercaseNamespaceAsync() {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
     var routingStrategy = new NamespaceRoutingStrategy();
@@ -212,10 +212,11 @@ public class NamespaceRoutingIntegrationTests {
     // Act
     await dispatcher.PublishAsync(@event);
 
-    // Assert - Topic should be lowercase
+    // Assert - Namespace should be lowercase
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
     var destination = strategy.QueuedOutboxMessages[0].Destination;
     await Assert.That(destination).IsEqualTo(destination.ToLowerInvariant());
+    await Assert.That(destination).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   // ========================================
