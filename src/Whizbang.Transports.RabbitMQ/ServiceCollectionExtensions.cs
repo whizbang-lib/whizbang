@@ -3,7 +3,9 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
@@ -89,11 +91,14 @@ public static class ServiceCollectionExtensions {
       return new RabbitMQReadinessCheck(connection);
     });
 
-    // Register message publish strategy
+    // Register message publish strategy with routing support
+    // Commands are routed to shared inbox topic, events to namespace topics
     services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<ITransportReadinessCheck>()
+        sp.GetRequiredService<ITransportReadinessCheck>(),
+        sp.GetService<IOutboxRoutingStrategy>(),
+        sp.GetService<IOptions<RoutingOptions>>()
       )
     );
 

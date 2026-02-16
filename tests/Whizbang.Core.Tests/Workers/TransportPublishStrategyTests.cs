@@ -4,11 +4,13 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -235,5 +237,127 @@ public class TransportPublishStrategyTests {
     await Assert.That(result.Success).IsTrue();
     await Assert.That(transport.LastPublishedEnvelope).IsNotNull();
     // StreamId should be used for message ordering/routing in envelope
+  }
+
+  [Test]
+  public async Task PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync() {
+    // Arrange - This test verifies the CRITICAL routing behavior:
+    // Commands (like CreateTenantCommand) must be routed to the shared inbox topic,
+    // NOT to a topic named after the command type
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var routingStrategy = new SharedTopicOutboxStrategy("inbox");
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("myapp.commands");
+
+    var strategy = new TransportPublishStrategy(
+      transport,
+      readinessCheck,
+      routingStrategy,
+      Options.Create(routingOptions)
+    );
+
+    var messageId = Guid.CreateVersion7();
+    // Simulate a command being published - destination is the command type name,
+    // but it should be routed to "inbox" instead
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createtenantcommand", // This is WRONG - will be transformed
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.CreateTenantCommand, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Commands.CreateTenantCommand, MyApp", // Namespace contains "Commands"
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // CRITICAL: Commands MUST be routed to "inbox", NOT "createtenantcommand"
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox")
+      .Because("Commands must be routed to the shared inbox topic, not individual command topics");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithRoutingStrategy_EventUsesDestinationDirectlyAsync() {
+    // Arrange - Events should use the destination directly (already namespace topic)
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var routingStrategy = new SharedTopicOutboxStrategy("inbox");
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("myapp.commands");
+
+    var strategy = new TransportPublishStrategy(
+      transport,
+      readinessCheck,
+      routingStrategy,
+      Options.Create(routingOptions)
+    );
+
+    var messageId = Guid.CreateVersion7();
+    // Events have namespace ending in "Events"
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events", // Event namespace topic
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp", // Namespace contains "Events"
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Events use destination directly (already the namespace topic)
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("myapp.orders.events")
+      .Because("Events should be published to their namespace topic");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithoutRoutingStrategy_UsesDestinationDirectlyAsync() {
+    // Arrange - Without routing, destination is used directly (legacy behavior)
+    // NOTE: This is potentially dangerous if the destination isn't a real topic!
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+
+    // No routing strategy - using simple constructor
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createtenantcommand", // Will be used directly - may not exist!
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.CreateTenantCommand, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Commands.CreateTenantCommand, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Without routing, destination is used directly (legacy behavior)
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("createtenantcommand")
+      .Because("Without routing strategy, destination is used directly");
   }
 }
