@@ -35,20 +35,21 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   // ========================================
 
   [Test]
-  public async Task SharedTopicOutboxStrategy_PublishesToSharedTopicAsync() {
+  public async Task SharedTopicOutboxStrategy_PublishesCommandsToSharedTopicAsync() {
     // Arrange - Use topic-00 as shared topic (pre-provisioned in emulator)
+    // Commands go to shared topic; Events go to namespace topics (which aren't pre-provisioned)
     var outboxStrategy = new SharedTopicOutboxStrategy("topic-00");
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };
 
     var destination = outboxStrategy.GetDestination(
-      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder),
       ownedDomains,
-      MessageKind.Event
+      MessageKind.Command
     );
 
-    // Verify destination uses shared topic
+    // Verify destination uses shared topic with namespace-based routing key
     await Assert.That(destination.Address).IsEqualTo("topic-00");
-    await Assert.That(destination.RoutingKey).IsEqualTo("orders.ordercreated");
+    await Assert.That(destination.RoutingKey).IsEqualTo("testnamespaces.myapp.contracts.commands.createorder");
 
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
@@ -96,7 +97,7 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   public async Task SharedTopicInboxStrategy_SubscribesToSharedTopicAsync() {
     // Arrange - Use topic-01 as shared inbox topic
     var inboxStrategy = new SharedTopicInboxStrategy("topic-01");
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands", "myapp.inventory.commands" };
 
     var subscriptionInfo = inboxStrategy.GetSubscription(
       ownedDomains,
@@ -104,9 +105,12 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       MessageKind.Command
     );
 
-    // Verify subscription is correct
+    // Verify subscription is correct - now includes system commands and # wildcards
     await Assert.That(subscriptionInfo.Topic).IsEqualTo("topic-01");
-    await Assert.That(subscriptionInfo.FilterExpression).IsEqualTo("orders,inventory");
+    // Filter expression format: "whizbang.core.commands.system.#,myapp.inventory.commands.#,myapp.orders.commands.#"
+    await Assert.That(subscriptionInfo.FilterExpression).Contains("whizbang.core.commands.system.#");
+    await Assert.That(subscriptionInfo.FilterExpression).Contains("myapp.orders.commands.#");
+    await Assert.That(subscriptionInfo.FilterExpression).Contains("myapp.inventory.commands.#");
 
     // Drain any existing messages
     await _drainMessagesAsync("topic-01", "sub-01-a");
@@ -154,15 +158,16 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   [Test]
   public async Task SharedOutbox_ToSharedInbox_EndToEndAsync() {
     // Arrange - Both use shared topic strategy with topic-00
+    // Commands go to shared topic; Events go to namespace topics
     var sharedTopic = "topic-00";
     var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
     var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };
 
     var destination = outboxStrategy.GetDestination(
-      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder),
       ownedDomains,
-      MessageKind.Event
+      MessageKind.Command
     );
 
     var subscriptionInfo = inboxStrategy.GetSubscription(
@@ -223,10 +228,10 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   // ========================================
 
   [Test]
-  public async Task DomainTopicOutboxStrategy_GetDestination_ReturnsDomainTopicAsync() {
+  public async Task DomainTopicOutboxStrategy_GetDestination_ReturnsNamespaceTopicAsync() {
     // Arrange
     var outboxStrategy = new DomainTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.orders.events" };
 
     // Act
     var destination = outboxStrategy.GetDestination(
@@ -235,8 +240,8 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
       MessageKind.Event
     );
 
-    // Assert - Verify routing logic (not transport delivery)
-    await Assert.That(destination.Address).IsEqualTo("orders");
+    // Assert - Verify routing logic (now returns full namespace)
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
     await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
   }
 

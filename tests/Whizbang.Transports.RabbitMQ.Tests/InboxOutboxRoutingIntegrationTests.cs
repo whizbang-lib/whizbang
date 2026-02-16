@@ -108,8 +108,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Event
     );
 
-    // Verify destination is correct
-    await Assert.That(destination.Address).IsEqualTo("orders");
+    // Verify destination is correct - now uses full namespace
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
     await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
 
     // Set up consumer to verify message arrival at domain exchange
@@ -202,9 +202,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Event
     );
 
-    // Verify destination uses shared topic
-    await Assert.That(destination.Address).IsEqualTo("shared.events");
-    await Assert.That(destination.RoutingKey).IsEqualTo("orders.ordercreated");
+    // Verify destination uses shared topic with namespace routing
+    // For events: topic = namespace, routing key = type name
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
+    await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
     await Assert.That(destination.Metadata is not null).IsTrue();
 
     // Set up consumer on shared exchange with routing key
@@ -247,8 +248,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Event
     );
 
-    // Default topic is "whizbang.events"
-    await Assert.That(destination.Address).IsEqualTo("whizbang.events");
+    // For events, address is the full namespace (not the shared topic)
+    await Assert.That(destination.Address).IsEqualTo("testnamespaces.myapp.orders.events");
 
     // Set up consumer
     var awaiter = new MessageIdAwaiter();
@@ -385,7 +386,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   ) {
     // Arrange
     var inboxStrategy = new SharedTopicInboxStrategy("shared.inbox");
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands", "myapp.inventory.commands" };
 
     var subscription = inboxStrategy.GetSubscription(
       ownedDomains,
@@ -393,9 +394,11 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Command
     );
 
-    // Verify subscription is correct
+    // Verify subscription is correct - now includes system commands and # wildcards
     await Assert.That(subscription.Topic).IsEqualTo("shared.inbox");
-    await Assert.That(subscription.FilterExpression).IsEqualTo("orders,inventory");
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.commands.system.#");
+    await Assert.That(subscription.FilterExpression).Contains("myapp.orders.commands.#");
+    await Assert.That(subscription.FilterExpression).Contains("myapp.inventory.commands.#");
     await Assert.That(subscription.Metadata is not null).IsTrue();
 
     // Set up consumer on shared inbox
@@ -434,7 +437,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   ) {
     // Arrange - Use default topic
     var inboxStrategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
 
     var subscription = inboxStrategy.GetSubscription(
       ownedDomains,
@@ -442,8 +445,8 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Command
     );
 
-    // Default topic is "whizbang.inbox"
-    await Assert.That(subscription.Topic).IsEqualTo("whizbang.inbox");
+    // Default topic is "inbox"
+    await Assert.That(subscription.Topic).IsEqualTo("inbox");
 
     // Set up consumer
     var awaiter = new MessageIdAwaiter();
@@ -527,15 +530,16 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     CancellationToken cancellationToken
   ) {
     // Arrange - Both use shared topic strategy
+    // Commands go to shared topic; Events go to namespace topics
     var sharedTopic = "test.shared";
     var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
     var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };
 
     var destination = outboxStrategy.GetDestination(
-      typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated),
+      typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder),
       ownedDomains,
-      MessageKind.Event
+      MessageKind.Command
     );
 
     var subscription = inboxStrategy.GetSubscription(
@@ -544,7 +548,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       MessageKind.Command
     );
 
-    // Verify both strategies use the same shared topic
+    // Verify both strategies use the same shared topic for commands
     await Assert.That(destination.Address).IsEqualTo(subscription.Topic);
 
     // Set up consumer
