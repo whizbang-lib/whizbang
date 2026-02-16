@@ -67,9 +67,11 @@ public static class PostgresDriverExtensions {
             // Fallback: return default check that always returns true
             // User should register NpgsqlDataSource for proper readiness checking
             var fallbackLogger = sp.GetService<ILogger<DefaultDatabaseReadinessCheck>>();
+#pragma warning disable CA1848 // Use the LoggerMessage delegates - startup logging doesn't need high performance
             fallbackLogger?.LogWarning(
               "NpgsqlDataSource not registered. Database readiness check will always return true. " +
               "For proper startup resilience, register NpgsqlDataSource before AddDbContext.");
+#pragma warning restore CA1848
             return new DefaultDatabaseReadinessCheck();
           }
 
