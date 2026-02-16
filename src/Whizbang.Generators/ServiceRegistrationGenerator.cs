@@ -75,6 +75,12 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     // But we still want to analyze them to report WHIZ041 diagnostic later
     var isAbstract = classSymbol.IsAbstract;
 
+    // Skip types that are not accessible from outside their declaring type
+    // This handles private nested classes inside test fixtures
+    if (!_isTypeAccessible(classSymbol)) {
+      return null;
+    }
+
     // Find user interfaces that extend Whizbang interfaces
     // A "user interface" is one that:
     // 1. Is NOT a Whizbang interface itself (doesn't start with Whizbang.Core)
@@ -135,6 +141,32 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Default to Lens (shouldn't happen if _isUserInterfaceExtendingWhizbang returned true)
     return ServiceCategory.Lens;
+  }
+
+  /// <summary>
+  /// Checks if a type is accessible from outside its declaring type.
+  /// Returns false for private/protected nested types.
+  /// </summary>
+  private static bool _isTypeAccessible(INamedTypeSymbol typeSymbol) {
+    // Check the type itself
+    if (typeSymbol.DeclaredAccessibility == Accessibility.Private ||
+        typeSymbol.DeclaredAccessibility == Accessibility.Protected ||
+        typeSymbol.DeclaredAccessibility == Accessibility.ProtectedAndInternal) {
+      return false;
+    }
+
+    // Check all containing types (for nested types)
+    var containingType = typeSymbol.ContainingType;
+    while (containingType is not null) {
+      if (containingType.DeclaredAccessibility == Accessibility.Private ||
+          containingType.DeclaredAccessibility == Accessibility.Protected ||
+          containingType.DeclaredAccessibility == Accessibility.ProtectedAndInternal) {
+        return false;
+      }
+      containingType = containingType.ContainingType;
+    }
+
+    return true;
   }
 
   /// <summary>

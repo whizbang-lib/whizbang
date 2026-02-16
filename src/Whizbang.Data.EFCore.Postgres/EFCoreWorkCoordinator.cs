@@ -48,6 +48,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
 
+  /// <summary>
+  /// Gets the schema from the provided value, falling back to the default if empty/null.
+  /// Logs a warning when falling back to the default schema.
+  /// </summary>
+  /// <param name="schema">The schema value to check.</param>
+  /// <param name="defaultSchema">The default schema to use as fallback.</param>
+  /// <param name="logger">Optional logger for warning messages.</param>
+  /// <returns>The schema if valid, or the default schema.</returns>
+  internal static string GetSchemaWithFallback(
+    string? schema,
+    string defaultSchema,
+    ILogger<EFCoreWorkCoordinator<TDbContext>>? logger) {
+    if (string.IsNullOrWhiteSpace(schema)) {
+      logger?.LogWarning(
+        "Schema not found or empty for OutboxRecord entity type, falling back to default schema '{DefaultSchema}'",
+        defaultSchema);
+      return defaultSchema;
+    }
+
+    return schema;
+  }
+
+  /// <summary>
+  /// Builds a schema-qualified identifier for SQL. Handles empty/public schema correctly.
+  /// NEVER produces a leading dot - uses unqualified name for public schema.
+  /// </summary>
+  /// <param name="schema">The schema name (should come from GetSchemaWithFallback).</param>
+  /// <param name="identifier">The function or table name.</param>
+  /// <returns>Schema-qualified identifier like "\"myschema\".function_name" or just "function_name" for public.</returns>
+  internal static string BuildSchemaQualifiedName(string schema, string identifier) {
+    // CRITICAL: Never produce a leading dot
+    if (string.IsNullOrWhiteSpace(schema) || schema == DEFAULT_SCHEMA) {
+      return identifier;
+    }
+    // Quote schema name to handle PostgreSQL reserved words
+    return $"\"{schema}\".{identifier}";
+  }
+
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method orchestrates complex work batch processing with multiple parameter preparations and SQL execution. Splitting would reduce clarity of the atomic database operation flow.")]
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
@@ -132,10 +170,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // CRITICAL: Get schema from DbContext model to schema-qualify the function call
     // Functions are database-wide in PostgreSQL - multiple schemas sharing a database
     // must use schema-qualified function names to avoid calling the wrong function
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
-    var functionName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA
-      ? "process_work_batch"
-      : $"{schema}.process_work_batch";
+    var rawSchema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
+    var schema = GetSchemaWithFallback(rawSchema, DEFAULT_SCHEMA, _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "process_work_batch");
+
+    // DIAGNOSTIC: Log schema resolution for troubleshooting multi-schema deployments
+    _logger?.LogDebug(
+      "Schema resolution: rawSchema='{RawSchema}', schema='{Schema}', functionName='{FunctionName}'",
+      rawSchema ?? "(null)", schema, functionName);
 
     // Execute the process_work_batch function (new signature after decomposition)
     var sql = $@"
@@ -588,8 +630,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     try {
       // Get schema from DbContext configuration for schema-qualified function call
-      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
-      var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+        DEFAULT_SCHEMA,
+        _logger);
+      var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_checkpoint_work");
+      var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
@@ -620,10 +666,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // DIAGNOSTIC: Verify the checkpoint was actually updated
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
-    var diagnosticSchema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
-    var diagnosticSql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-      "SELECT stream_id, perspective_name, status, last_event_id, error FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
-      diagnosticSchema);
+    var diagnosticSchema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_checkpoints");
+    var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 
     var checkpointState = await _dbContext.Database
       .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, completion.StreamId, completion.PerspectiveName)
@@ -661,8 +709,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Get schema from DbContext configuration for schema-qualified function call
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
-    var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_checkpoint_work");
+    var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
 
     await _dbContext.Database.ExecuteSqlRawAsync(
       sql,
@@ -680,10 +732,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
-    var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-      "SELECT stream_id, perspective_name, last_event_id, status FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
-      schema);
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_checkpoints");
+    var sql = $"SELECT stream_id, perspective_name, last_event_id, status FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 
     var result = await _dbContext.Database
       .SqlQueryRaw<CheckpointQueryResult>(sql, streamId, perspectiveName)

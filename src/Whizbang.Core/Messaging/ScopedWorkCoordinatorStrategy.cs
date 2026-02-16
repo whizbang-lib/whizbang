@@ -336,8 +336,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
   [LoggerMessage(
     EventId = 8,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: WorkChannelWriter is {Status}, returned work count: {Count}"
+    Level = LogLevel.Debug,
+    Message = "WorkChannelWriter is {Status}, returned work count: {Count}"
   )]
   static partial void LogWorkChannelWriterStatus(ILogger logger, string status, int count);
 
@@ -364,22 +364,22 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
   [LoggerMessage(
     EventId = 12,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Flushing {Count} outbox messages with InstanceId={InstanceId}, Service={ServiceName}"
+    Level = LogLevel.Debug,
+    Message = "Flushing {Count} outbox messages with InstanceId={InstanceId}, Service={ServiceName}"
   )]
   static partial void LogFlushingWithInstanceId(ILogger logger, Guid instanceId, string serviceName, int count);
 
   [LoggerMessage(
     EventId = 13,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: ProcessWorkBatchAsync returned: Outbox={OutboxCount}, Inbox={InboxCount}, Perspective={PerspectiveCount}"
+    Level = LogLevel.Debug,
+    Message = "ProcessWorkBatchAsync returned: Outbox={OutboxCount}, Inbox={InboxCount}, Perspective={PerspectiveCount}"
   )]
   static partial void LogProcessWorkBatchResult(ILogger logger, int outboxCount, int inboxCount, int perspectiveCount);
 
   [LoggerMessage(
     EventId = 14,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Returned outbox work: MessageId={MessageId}, Destination={Destination}, IsNewlyStored={IsNewlyStored}"
+    Level = LogLevel.Debug,
+    Message = "Returned outbox work: MessageId={MessageId}, Destination={Destination}, IsNewlyStored={IsNewlyStored}"
   )]
   static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string destination, bool isNewlyStored);
 

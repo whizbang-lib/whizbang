@@ -74,6 +74,25 @@ private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> 
 }
 #endregion
 
+#region LAZY_FIELD_ENUM
+private JsonTypeInfo<__FULLY_QUALIFIED_NAME__>? _Enum___UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_ENUM
+if (type == typeof(__FULLY_QUALIFIED_NAME__)) {
+  return CreateEnum___UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region ENUM_TYPE_FACTORY
+private JsonTypeInfo<__FULLY_QUALIFIED_NAME__> CreateEnum___UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  var converter = JsonMetadataServices.GetEnumConverter<__FULLY_QUALIFIED_NAME__>(options);
+  var jsonTypeInfo = JsonMetadataServices.CreateValueInfo<__FULLY_QUALIFIED_NAME__>(options, converter);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
 #region HELPER_CREATE_PROPERTY
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,

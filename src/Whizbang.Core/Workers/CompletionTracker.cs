@@ -115,13 +115,20 @@ public sealed class CompletionTracker<T> where T : notnull {
   /// Calculate retry timeout using exponential backoff.
   /// Formula: baseTimeout * (backoffMultiplier ^ retryCount), capped at maxTimeout.
   /// Example with defaults (1s base, 2.0 multiplier, 60s max): 1s → 2s → 4s → 8s → 16s → 32s → 60s (max)
+  /// Guards against TimeSpan overflow by checking result before creating TimeSpan.
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Local variable in private method - standard naming acceptable")]
-  private TimeSpan CalculateTimeout(int retryCount) {
-    var timeout = TimeSpan.FromSeconds(
-      _baseTimeout.TotalSeconds * Math.Pow(_backoffMultiplier, retryCount)
-    );
-    return timeout > _maxTimeout ? _maxTimeout : timeout;
+  internal TimeSpan CalculateTimeout(int retryCount) {
+    var multiplier = Math.Pow(_backoffMultiplier, retryCount);
+    var totalSeconds = _baseTimeout.TotalSeconds * multiplier;
+
+    // Guard against overflow - cap at maxTimeout before creating TimeSpan
+    // This prevents TimeSpan.FromSeconds from throwing OverflowException
+    // when exponential backoff produces extremely large values
+    if (double.IsInfinity(totalSeconds) || double.IsNaN(totalSeconds) || totalSeconds > _maxTimeout.TotalSeconds) {
+      return _maxTimeout;
+    }
+
+    return TimeSpan.FromSeconds(totalSeconds);
   }
 
   /// <summary>

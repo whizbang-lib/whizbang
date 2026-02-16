@@ -84,23 +84,6 @@ _ = builder.Services
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
-// Register transport readiness check
-#if AZURESERVICEBUS
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var transport = sp.GetRequiredService<ITransport>();
-  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
-  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
-});
-
-#elif RABBITMQ
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
-  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
-});
-
-#endif
-
 // Register generated perspective runners (ProductCatalogPerspective, InventoryLevelsPerspective)
 // This registers IPerspectiveRunnerRegistry + all discovered IPerspectiveRunner implementations
 builder.Services.AddPerspectiveRunners();
@@ -122,14 +105,6 @@ builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleRecept
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();
 builder.Services.AddScoped<IInventoryLens, InventoryLens>();
-
-// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-  new TransportPublishStrategy(
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<ITransportReadinessCheck>()
-  )
-);
 
 // Transport consumer - receives events and commands
 var consumerOptions = new TransportConsumerOptions();

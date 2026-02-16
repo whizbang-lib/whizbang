@@ -5,6 +5,7 @@ namespace Whizbang.Generators;
 /// This record uses value equality which is critical for incremental generator performance.
 /// </summary>
 /// <param name="FullyQualifiedName">Fully qualified type name with global:: prefix (e.g., "global::MyApp.Commands.CreateOrder")</param>
+/// <param name="ClrTypeName">Type name in CLR format for runtime type resolution. Uses "+" for nested types (e.g., "MyApp.AuthContracts+LoginCommand")</param>
 /// <param name="SimpleName">Simple type name without namespace (e.g., "CreateOrder")</param>
 /// <param name="IsCommand">True if type implements ICommand</param>
 /// <param name="IsEvent">True if type implements IEvent</param>
@@ -14,6 +15,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record JsonMessageTypeInfo(
     string FullyQualifiedName,
+    string ClrTypeName,
     string SimpleName,
     bool IsCommand,
     bool IsEvent,
@@ -60,3 +62,23 @@ internal sealed record JsonWhizbangIdInfo(
     string SimpleName,
     string ConverterName
 );
+
+/// <summary>
+/// Value type containing information about a discovered enum type for JSON serialization.
+/// Enums are discovered from message properties and nested type properties.
+/// This record uses value equality which is critical for incremental generator performance.
+/// </summary>
+/// <param name="FullyQualifiedName">Fully qualified type name with global:: prefix (e.g., "global::MyApp.OrderStatus")</param>
+/// <param name="SimpleName">Simple type name without namespace (e.g., "OrderStatus")</param>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithEnumProperty_DiscoversEnumAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync</tests>
+internal sealed record JsonEnumInfo(
+    string FullyQualifiedName,
+    string SimpleName
+) {
+  /// <summary>
+  /// Unique identifier derived from fully qualified name, suitable for C# identifiers.
+  /// Strips "global::" prefix and replaces "." with "_".
+  /// </summary>
+  public string UniqueIdentifier => FullyQualifiedName.Replace("global::", "").Replace(".", "_");
+}

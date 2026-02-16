@@ -61,32 +61,6 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
-// Register transport readiness check
-#if AZURESERVICEBUS
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var transport = sp.GetRequiredService<ITransport>();
-  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
-  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
-});
-
-#elif RABBITMQ
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
-  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
-});
-
-#endif
-
-// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-  new TransportPublishStrategy(
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<ITransportReadinessCheck>()
-  )
-);
-
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 

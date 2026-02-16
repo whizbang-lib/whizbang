@@ -141,4 +141,74 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
     await Assert.That(tableCount).IsEqualTo(3)
       .Because("wh_inbox, wh_outbox, and wh_event_store tables should all exist");
   }
+
+  [Test]
+  public async Task IsReadyAsync_WithMissingFunctions_ReturnsFalseAsync() {
+    // Arrange - Create a fresh database with tables but WITHOUT the process_work_batch function
+    await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
+      .WithDatabase("tables_only_test")
+      .WithUsername("postgres")
+      .WithPassword("postgres")
+      .Build();
+
+    await testContainer.StartAsync();
+
+    try {
+      var connectionString = testContainer.GetConnectionString();
+
+      // Create only the required tables (without the task schema and functions)
+      await using var setupConnection = new Npgsql.NpgsqlConnection(connectionString);
+      await setupConnection.OpenAsync();
+
+      const string createTablesSql = @"
+        CREATE TABLE wh_inbox (id SERIAL PRIMARY KEY);
+        CREATE TABLE wh_outbox (id SERIAL PRIMARY KEY);
+        CREATE TABLE wh_event_store (id SERIAL PRIMARY KEY);";
+
+      await setupConnection.ExecuteAsync(createTablesSql);
+
+      var readinessCheck = new PostgresDatabaseReadinessCheck(
+        connectionString,
+        NullLogger<PostgresDatabaseReadinessCheck>.Instance
+      );
+
+      // Act
+      var isReady = await readinessCheck.IsReadyAsync();
+
+      // Assert
+      await Assert.That(isReady).IsFalse()
+        .Because("Required function 'task.process_work_batch' does not exist - workers would fail");
+    } finally {
+      await testContainer.StopAsync();
+    }
+  }
+
+  [Test]
+  public async Task IsReadyAsync_WithAllRequiredFunctions_ReturnsTrueAsync() {
+    // Arrange - Use the test database which has all functions
+    var readinessCheck = new PostgresDatabaseReadinessCheck(
+      ConnectionString,
+      NullLogger<PostgresDatabaseReadinessCheck>.Instance
+    );
+
+    // Verify the process_work_batch function exists in test database (in public schema)
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var functionCountSql = @"
+      SELECT COUNT(*)
+      FROM information_schema.routines
+      WHERE routine_schema = 'public'
+        AND routine_name = 'process_work_batch'
+        AND routine_type = 'FUNCTION'";
+
+    var functionCount = await connection.QuerySingleAsync<int>(functionCountSql);
+    await Assert.That(functionCount).IsEqualTo(1)
+      .Because("Test database should have public.process_work_batch function");
+
+    // Act
+    var isReady = await readinessCheck.IsReadyAsync();
+
+    // Assert
+    await Assert.That(isReady).IsTrue()
+      .Because("All required tables AND functions exist");
+  }
 }

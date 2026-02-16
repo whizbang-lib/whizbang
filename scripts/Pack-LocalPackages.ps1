@@ -34,9 +34,9 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",
 
-    [switch]$Clean,
+    [switch]$Clean = $true,
 
-    [switch]$IncrementVersion
+    [switch]$IncrementVersion = $true
 )
 
 $ErrorActionPreference = "Stop"

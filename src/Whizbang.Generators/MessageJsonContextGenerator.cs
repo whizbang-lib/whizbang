@@ -154,6 +154,26 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Gets the CLR-format type name for runtime type resolution.
+  /// CLR uses "+" for nested types instead of "." (which is C# syntax).
+  /// E.g., "MyApp.AuthContracts+LoginCommand" instead of "MyApp.AuthContracts.LoginCommand"
+  /// </summary>
+  /// <param name="symbol">The type symbol</param>
+  /// <returns>CLR-format type name without global:: prefix</returns>
+  private static string _getClrTypeName(INamedTypeSymbol symbol) {
+    if (symbol.ContainingType != null) {
+      // Nested type - use + separator (CLR format)
+      return _getClrTypeName(symbol.ContainingType) + "+" + symbol.Name;
+    }
+
+    if (!symbol.ContainingNamespace.IsGlobalNamespace) {
+      return symbol.ContainingNamespace.ToDisplayString() + "." + symbol.Name;
+    }
+
+    return symbol.Name;
+  }
+
+  /// <summary>
   /// Determines the message kind for diagnostic reporting.
   /// </summary>
   private static string _getMessageKind(JsonMessageTypeInfo message) {
@@ -201,6 +221,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var fullyQualifiedName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var clrTypeName = _getClrTypeName(typeSymbol);
     var simpleName = typeSymbol.Name;
 
     // Extract property information for JSON serialization
@@ -227,6 +248,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     return new JsonMessageTypeInfo(
         FullyQualifiedName: fullyQualifiedName,
+        ClrTypeName: clrTypeName,
         SimpleName: simpleName,
         IsCommand: isCommand,
         IsEvent: isEvent,
@@ -299,6 +321,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
+    // Discover enum types used in message and nested type properties
+    var enumTypes = _discoverEnumTypes(allTypes, compilation);
+
+    // Report diagnostics for discovered enum types
+    foreach (var enumType in enumTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          enumType.SimpleName,
+          "enum type"
+      ));
+    }
+
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -313,15 +348,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Replace HEADER region with timestamp
     template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
 
-    // Generate lazy fields (messages + nested types + lists)
+    // Generate lazy fields (messages + nested types + lists + enums)
     var lazyFields = new System.Text.StringBuilder();
     lazyFields.Append(_generateLazyFields(assembly, allTypes));
     lazyFields.Append(_generateListLazyFields(assembly, listTypes));
+    lazyFields.Append(_generateEnumLazyFields(assembly, enumTypes));
 
-    // Generate factory methods (messages + lists)
+    // Generate factory methods (messages + lists + enums)
     var factories = new System.Text.StringBuilder();
     factories.Append(_generateMessageTypeFactories(assembly, allTypes));
     factories.Append(_generateListFactories(assembly, listTypes));
+    factories.Append(_generateEnumFactories(assembly, enumTypes));
 
     // Discover WhizbangId converters by examining message property types
     var converters = _discoverWhizbangIdConverters(allTypes);
@@ -330,7 +367,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, enumTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
@@ -339,9 +376,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     context.AddSource("MessageJsonContext.g.cs", template);
 
-    // Only generate WhizbangJsonContext facade if there are messages
-    // (Whizbang.Core has a hand-written version since it has no messages)
-    if (messages.Length > 0) {
+    // Always generate WhizbangJsonContext facade
+    {
       var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
       facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
       facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
@@ -416,7 +452,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
 
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<JsonEnumInfo> enumTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -439,6 +475,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         assembly,
         TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_LIST");
+
+    var enumCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_ENUM");
 
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
     sb.AppendLine("JsonTypeInfo? IJsonTypeInfoResolver.GetTypeInfo(Type type, JsonSerializerOptions options) {");
@@ -488,6 +529,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var check = listCheckSnippet
             .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+        sb.AppendLine(check);
+        sb.AppendLine();
+      }
+    }
+
+    // Enum types discovered in message and nested type properties
+    if (!enumTypes.IsEmpty) {
+      sb.AppendLine("  // Enum types discovered in messages and nested types");
+      foreach (var enumType in enumTypes) {
+        var check = enumCheckSnippet
+            .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -557,12 +610,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Only generate mappings for actual message types (commands/events), not nested types
     var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent);
     var typeMappings = messageTypes.Select(type => {
-      // Get assembly-qualified name using the ACTUAL compilation assembly name
-      // FullyQualifiedName is like "global::MyApp.Commands.CreateOrder"
-      // We need "MyApp.Commands.CreateOrder, MyApp.Contracts" (actual assembly name)
-      var typeNameWithoutGlobal = type.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-
-      return $"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),";
+      // Use CLR type name format (uses + for nested types) for runtime type resolution
+      // ClrTypeName is like "MyApp.Commands.CreateOrder" or "MyApp.AuthContracts+LoginCommand"
+      return $"    \"{type.ClrTypeName}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),";
     });
     sb.AppendLine(string.Join("\n", typeMappings));
 
@@ -880,9 +930,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var nestedProperties = _extractPropertiesFromType(typeSymbol);
         bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
 
+        // Build CLR type name for nested types (uses + separator for nested types)
+        var clrTypeName = _getClrTypeName(typeSymbol);
+
         // Build nested type info
         var nestedTypeInfo = new JsonMessageTypeInfo(
             FullyQualifiedName: elementTypeName,
+            ClrTypeName: clrTypeName,
             SimpleName: typeSymbol.Name,
             IsCommand: false,  // Nested types are not commands/events
             IsEvent: false,
@@ -900,6 +954,89 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return nestedTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Discovers enum types used in message properties and nested type properties.
+  /// Enums need JsonTypeInfo generated for AOT serialization to work properly.
+  /// Recursively discovers enums in all types (messages + nested types).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithEnumProperty_DiscoversEnumAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DeeplyNestedEnumProperty_DiscoversEnumAsync</tests>
+  private static ImmutableArray<JsonEnumInfo> _discoverEnumTypes(
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      Compilation compilation) {
+
+    var discoveredEnums = new Dictionary<string, JsonEnumInfo>();
+
+    foreach (var type in allTypes) {
+      foreach (var property in type.Properties) {
+        // Get the property type (handle nullable and collection wrappers)
+        var propertyTypeName = property.Type;
+
+        // Strip nullable suffix if present
+        if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
+          propertyTypeName = propertyTypeName[..^1];
+        }
+
+        // Check if it's already discovered
+        if (discoveredEnums.ContainsKey(propertyTypeName)) {
+          continue;
+        }
+
+        // Skip collection types (their element types are handled separately)
+        if (_extractElementType(property.Type) != null) {
+          continue;
+        }
+
+        // Skip primitive and framework types
+        if (_isPrimitiveOrFrameworkType(propertyTypeName)) {
+          continue;
+        }
+
+        // Skip framework enums (DayOfWeek, etc.) - they're handled by STJ
+        if (_isFrameworkEnum(propertyTypeName)) {
+          continue;
+        }
+
+        // Try to get the type symbol
+        var typeSymbol = _tryGetPublicTypeSymbol(propertyTypeName, compilation);
+        if (typeSymbol == null) {
+          continue;
+        }
+
+        // Check if it's an enum
+        if (typeSymbol.TypeKind != TypeKind.Enum) {
+          continue;
+        }
+
+        // Add to discovered enums
+        discoveredEnums[propertyTypeName] = new JsonEnumInfo(
+            FullyQualifiedName: propertyTypeName,
+            SimpleName: typeSymbol.Name
+        );
+      }
+    }
+
+    return discoveredEnums.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Checks if a type is a framework enum that System.Text.Json handles natively.
+  /// </summary>
+  private static bool _isFrameworkEnum(string fullyQualifiedTypeName) {
+    var frameworkEnums = new[] {
+      "global::System.DayOfWeek",
+      "global::System.DateTimeKind",
+      "global::System.StringComparison",
+      "global::System.EnvironmentVariableTarget",
+      "global::System.IO.FileMode",
+      "global::System.IO.FileAccess",
+      "global::System.IO.FileShare"
+    };
+
+    return frameworkEnums.Contains(fullyQualifiedTypeName);
   }
 
   /// <summary>
@@ -1090,6 +1227,61 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Generates lazy fields for enum types.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithEnumProperty_DiscoversEnumAsync</tests>
+  private static string _generateEnumLazyFields(Assembly assembly, ImmutableArray<JsonEnumInfo> enumTypes) {
+    if (enumTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+
+    // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
+    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine();
+
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_ENUM");
+
+    foreach (var enumType in enumTypes) {
+      var field = snippet
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(field);
+    }
+
+    // Restore CS0169 warning
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore CS0169");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates factory methods for enum types using JsonMetadataServices.GetEnumInfo.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithEnumProperty_DiscoversEnumAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync</tests>
+  private static string _generateEnumFactories(Assembly assembly, ImmutableArray<JsonEnumInfo> enumTypes) {
+    if (enumTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "ENUM_TYPE_FACTORY");
+
+    foreach (var enumType in enumTypes) {
+      var factory = snippet
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(factory);
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
+  }
+
   // ========================================
   // Helper Methods for _discoverNestedTypes Complexity Reduction
   // ========================================
@@ -1175,8 +1367,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  // Register type name mappings for cross-assembly resolution");
 
     var typeRegistrations = messageTypes.Select(message => {
-      var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-      var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
+      // Use CLR type name format (uses + for nested types) for runtime type resolution
+      var assemblyQualifiedName = $"{message.ClrTypeName}, {actualAssemblyName}";
 
       return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{assemblyQualifiedName}\",\n" +
@@ -1202,8 +1394,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
 
     var envelopeRegistrations = messageTypes.Select(message => {
-      var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-      var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
+      // Use CLR type name format (uses + for nested types) for runtime type resolution
+      var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{message.ClrTypeName}, {actualAssemblyName}]], Whizbang.Core";
 
       return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{envelopeTypeName}\",\n" +

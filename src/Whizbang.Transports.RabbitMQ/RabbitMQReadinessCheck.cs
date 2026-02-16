@@ -1,13 +1,13 @@
 using RabbitMQ.Client;
 using Whizbang.Core.Transports;
 
-namespace Whizbang.Hosting.RabbitMQ;
+namespace Whizbang.Transports.RabbitMQ;
 
 /// <summary>
 /// Readiness check for RabbitMQ transport.
 /// Verifies that the RabbitMQ connection is established and ready to accept messages.
 /// </summary>
-/// <docs>components/hosting/rabbitmq</docs>
+/// <docs>components/transports/rabbitmq</docs>
 public class RabbitMQReadinessCheck : ITransportReadinessCheck {
   private readonly IConnection _connection;
 

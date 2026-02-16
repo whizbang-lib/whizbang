@@ -1,12 +1,14 @@
+#pragma warning disable CA1707 // Test method names can contain underscores
+
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
-using Whizbang.Hosting.Azure.ServiceBus;
+using Whizbang.Transports.AzureServiceBus;
 
-namespace Whizbang.Hosting.Azure.ServiceBus.Tests;
+namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
 /// Tests for ServiceBusReadinessCheck implementation.

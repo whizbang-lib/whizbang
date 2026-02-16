@@ -40,7 +40,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     await Assert.That(messageCode!).Contains("namespace TestAssembly.Generated");
     await Assert.That(messageCode).Contains("public partial class MessageJsonContext : JsonSerializerContext");
 
-    // Should also generate WhizbangJsonContext facade since there are messages
+    // Should always generate WhizbangJsonContext facade
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(facadeCode).IsNotNull();
     await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
@@ -313,9 +313,10 @@ public class SomeClass { }
     // Should NOT contain any user message types
     await Assert.That(code).DoesNotContain("MyApp");
 
-    // Should NOT generate WhizbangJsonContext facade since there are no messages
+    // Should ALWAYS generate WhizbangJsonContext facade (even with no messages)
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
-    await Assert.That(facadeCode).IsNull();
+    await Assert.That(facadeCode).IsNotNull();
+    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]
@@ -387,9 +388,10 @@ public class SomeClass {
     await Assert.That(code!).Contains("public partial class MessageJsonContext");
     await Assert.That(code).Contains("MessageId"); // Core type should be present
 
-    // Should NOT generate WhizbangJsonContext facade since there are no messages
+    // Should ALWAYS generate WhizbangJsonContext facade (even with no messages)
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
-    await Assert.That(facadeCode).IsNull();
+    await Assert.That(facadeCode).IsNotNull();
+    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]
@@ -949,5 +951,432 @@ public record SharedItem {
     // Count factory method DEFINITIONS (not calls) - signature pattern is unique
     var factorySignatureCount = code.Split("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem").Length - 1;
     await Assert.That(factorySignatureCount).IsEqualTo(1);
+  }
+
+  // ==================== Enum Discovery Tests (100% branch coverage) ====================
+
+  /// <summary>
+  /// Tests enum discovery in direct message properties.
+  /// Enums used directly in events should be discovered and have JsonTypeInfo generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithEnumProperty_DiscoversEnumAsync() {
+    // Arrange - Event with direct enum property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public enum OrderStatus { Pending, Confirmed, Shipped, Delivered }
+
+public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+    public OrderStatus Status { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Enum should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Enum should have GetEnumConverter factory method
+    await Assert.That(code!).Contains("OrderStatus");
+    await Assert.That(code).Contains("GetEnumConverter");
+  }
+
+  /// <summary>
+  /// Tests enum discovery in nested type properties (the bug scenario).
+  /// StepBlueprint.StepType should be discovered when StepBlueprint is discovered.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedTypeWithEnumProperty_DiscoversEnumAsync() {
+    // Arrange - Event → List<Stage> → Stage.StepType enum (the JDNext bug scenario)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public enum StepType { Manual, Automated, Hybrid }
+
+public record BlueprintCreatedEvent : IEvent {
+    public List<StageBlueprint> Stages { get; init; } = new();
+}
+
+public record StageBlueprint {
+    public string Name { get; init; } = "";
+    public StepType Type { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both StageBlueprint AND StepType enum should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Nested class discovered
+    await Assert.That(code!).Contains("StageBlueprint");
+
+    // Enum used by nested class ALSO discovered
+    await Assert.That(code).Contains("StepType");
+    await Assert.That(code).Contains("GetEnumConverter");
+  }
+
+  /// <summary>
+  /// Tests that deeply nested enums are discovered.
+  /// Event → List<Stage> → List<Step> → Step.ActionType enum
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeeplyNestedEnumProperty_DiscoversEnumAsync() {
+    // Arrange - Three levels: Event → Stage → Step → ActionType enum
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public enum ActionType { Create, Update, Delete, Archive }
+
+public record WorkflowEvent : IEvent {
+    public List<Stage> Stages { get; init; } = new();
+}
+
+public record Stage {
+    public string Name { get; init; } = "";
+    public List<Step> Steps { get; init; } = new();
+}
+
+public record Step {
+    public string Name { get; init; } = "";
+    public ActionType Action { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - All nested types AND deeply nested enum discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All nested classes discovered
+    await Assert.That(code!).Contains("Stage");
+    await Assert.That(code).Contains("Step");
+
+    // Deeply nested enum discovered
+    await Assert.That(code).Contains("ActionType");
+  }
+
+  /// <summary>
+  /// Tests that internal enums are skipped during discovery.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_InternalEnum_SkipsEnumAsync() {
+    // Arrange - Public event with internal enum property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+internal enum InternalStatus { Draft, Active }
+
+public record EventWithInternalEnum : IEvent {
+    public string Name { get; init; } = "";
+    public InternalStatus Status { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Internal enum should NOT have factory generated
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Internal enum should not have factory method
+    await Assert.That(code!).DoesNotContain("Create_TestApp_InternalStatus");
+  }
+
+  /// <summary>
+  /// Tests that framework enums (like DayOfWeek) are not discovered.
+  /// STJ handles these natively.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_FrameworkEnum_SkipsEnumAsync() {
+    // Arrange - Event with System.DayOfWeek property
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+public record ScheduleEvent : IEvent {
+    public string Name { get; init; } = "";
+    public DayOfWeek Day { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - DayOfWeek should NOT be discovered (framework enum)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should not have factory for DayOfWeek
+    await Assert.That(code!).DoesNotContain("Create_System_DayOfWeek");
+  }
+
+  /// <summary>
+  /// Tests multiple enums in the same nested type.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleEnumsInNestedType_DiscoversAllEnumsAsync() {
+    // Arrange - Nested type with multiple enum properties
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public enum Priority { Low, Medium, High, Critical }
+public enum Category { Bug, Feature, Enhancement }
+
+public record TaskEvent : IEvent {
+    public List<TaskItem> Tasks { get; init; } = new();
+}
+
+public record TaskItem {
+    public string Title { get; init; } = "";
+    public Priority Priority { get; init; }
+    public Category Category { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both enums should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both enums discovered
+    await Assert.That(code!).Contains("Priority");
+    await Assert.That(code).Contains("Category");
+  }
+
+  // ==================== CLR Type Name Format Tests (Nested Type + Separator) ====================
+
+  /// <summary>
+  /// Primary bug fix test: Verifies that nested types use CLR format with + separator
+  /// in type registrations instead of C# format with dots.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedMessageType_UsesClrFormatWithPlusSignAsync() {
+    // Arrange - nested message type in static class
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public static class AuthContracts {
+  public record LoginCommand(string Username) : ICommand;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use + for nested type in registration (CLR format)
+    await Assert.That(code!).Contains("MyApp.AuthContracts+LoginCommand, TestAssembly");
+
+    // Should NOT use dots for nested type (C# format) in the assembly-qualified name
+    await Assert.That(code).DoesNotContain("MyApp.AuthContracts.LoginCommand, TestAssembly");
+  }
+
+  /// <summary>
+  /// Regression test: Verifies that non-nested types still use dot separator correctly.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNonNestedMessageType_UsesDotSeparatorAsync() {
+    // Arrange - non-nested message type
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string OrderId) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use dots for namespace-qualified name (not nested)
+    await Assert.That(code!).Contains("MyApp.Commands.CreateOrder, TestAssembly");
+
+    // Should NOT have any + in the type name (not nested)
+    await Assert.That(code).DoesNotContain("MyApp.Commands+CreateOrder");
+  }
+
+  /// <summary>
+  /// Tests deeply nested types (2+ levels) use multiple plus separators.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDeeplyNestedType_UsesMultiplePlusSeparatorsAsync() {
+    // Arrange - deeply nested message type
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public static class Outer {
+  public static class Inner {
+    public record DeepCommand(string Data) : ICommand;
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use + for both nesting levels
+    await Assert.That(code!).Contains("MyApp.Outer+Inner+DeepCommand, TestAssembly");
+
+    // Should NOT use dots for nested types
+    await Assert.That(code).DoesNotContain("MyApp.Outer.Inner.DeepCommand, TestAssembly");
+  }
+
+  /// <summary>
+  /// Tests that nested type uses CLR format in GetTypeInfoByName switch case.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedType_GeneratesCorrectSwitchCaseAsync() {
+    // Arrange - nested message type
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public static class Contracts {
+  public record TestCommand(string Id) : ICommand;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use + in switch case for type lookup
+    await Assert.That(code!).Contains("\"MyApp.Contracts+TestCommand, TestAssembly\"");
+  }
+
+  /// <summary>
+  /// Tests that nested type uses CLR format in MessageEnvelope registration.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedType_GeneratesCorrectEnvelopeRegistrationAsync() {
+    // Arrange - nested message type
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public static class Events {
+  public record OrderCreated(string OrderId) : IEvent;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use + for nested type in MessageEnvelope registration
+    await Assert.That(code!).Contains("MessageEnvelope`1[[MyApp.Events+OrderCreated, TestAssembly]]");
+
+    // Should NOT use dots for nested type in envelope
+    await Assert.That(code).DoesNotContain("MessageEnvelope`1[[MyApp.Events.OrderCreated, TestAssembly]]");
+  }
+
+  /// <summary>
+  /// Tests global namespace type handling (edge case).
+  /// Types in global namespace should just have their simple name.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithGlobalNamespaceType_HandlesCorrectlyAsync() {
+    // Arrange - type in global namespace
+    var source = """
+using Whizbang.Core;
+
+public record GlobalCommand(string Data) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should use simple name for global namespace type
+    await Assert.That(code!).Contains("GlobalCommand, TestAssembly");
   }
 }
