@@ -1205,15 +1205,15 @@ public abstract class Dispatcher(
       return;
     }
 
-    // Use EventExtractor to find all IEvent instances in the result
+    // Use MessageExtractor to find all IMessage instances (events and commands) in the result
     // This handles tuples, arrays, nested structures, etc. using ITuple interface (AOT-safe)
-    foreach (var evt in Internal.EventExtractor.ExtractEvents(result)) {
-      // Get an untyped publisher for the concrete event type (AOT-compatible)
+    foreach (var msg in Internal.MessageExtractor.ExtractMessages(result)) {
+      // Get an untyped publisher for the concrete message type (AOT-compatible)
       // The generated code returns a delegate that casts the object to the correct type internally
-      var eventType = evt.GetType();
-      var publisher = GetUntypedReceptorPublisher(eventType);
+      var messageType = msg.GetType();
+      var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        await publisher(evt);
+        await publisher(msg);
       }
     }
   }
