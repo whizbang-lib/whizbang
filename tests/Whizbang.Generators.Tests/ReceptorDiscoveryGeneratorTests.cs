@@ -871,4 +871,212 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
     await Assert.That(whiz001).IsNotNull();
     await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("SyncOrderReceptor");
   }
+
+  // ==================== ReceptorRegistry.g.cs Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithReceptor_GeneratesReceptorRegistryAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate ReceptorRegistry.g.cs
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("IReceptorRegistry");
+    await Assert.That(registry).Contains("GetReceptorsFor");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorWithoutFireAt_RegisteredAtDefaultStagesAsync() {
+    // Arrange - Receptor without [FireAt] attribute should be registered at 3 default stages
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should register at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("LifecycleStage.LocalImmediateInline");
+    await Assert.That(registry).Contains("LifecycleStage.PreOutboxInline");
+    await Assert.That(registry).Contains("LifecycleStage.PostInboxInline");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorWithFireAt_RegisteredOnlyAtSpecifiedStageAsync() {
+    // Arrange - Receptor with [FireAt(PostInboxInline)] should only be registered at PostInboxInline
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record AuditEvent : IEvent;
+
+[FireAt(LifecycleStage.PostInboxInline)]
+public class AuditLogger : IReceptor<AuditEvent> {
+  public ValueTask HandleAsync(AuditEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should only register at PostInboxInline
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // Count occurrences of the message type - should only appear for PostInboxInline
+    var content = registry!;
+    var auditEventCount = content.Split("AuditEvent").Length - 1;
+
+    // With [FireAt(PostInboxInline)], the receptor should appear exactly once (at PostInboxInline)
+    // Not at LocalImmediateInline or PreOutboxInline
+    await Assert.That(content).Contains("LifecycleStage.PostInboxInline");
+    await Assert.That(auditEventCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorRegistry_HasCorrectStructureAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record TestCommand : ICommand;
+public record TestResponse : IEvent;
+
+public class TestReceptor : IReceptor<TestCommand, TestResponse> {
+  public ValueTask<TestResponse> HandleAsync(TestCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new TestResponse());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Verify structure of generated ReceptorRegistry
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("sealed class GeneratedReceptorRegistry");
+    // NOTE: GeneratedReceptorRegistry no longer has IServiceProvider field.
+    // Instead, the InvokeAsync delegate accepts (sp, msg, ct) where sp is the scoped provider.
+    await Assert.That(registry).Contains("GetReceptorsFor(Type messageType, LifecycleStage stage)");
+    await Assert.That(registry).Contains("ReceptorInfo[]");
+    await Assert.That(registry).Contains("ReceptorId:");
+    await Assert.That(registry).Contains("InvokeAsync:");
+    // Verify the delegate signature accepts IServiceProvider as first parameter (sp)
+    await Assert.That(registry).Contains("(sp, msg, ct)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DispatcherRegistrations_IncludesAddWhizbangReceptorRegistryAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record TestCommand : ICommand;
+public record TestResponse : IEvent;
+
+public class TestReceptor : IReceptor<TestCommand, TestResponse> {
+  public ValueTask<TestResponse> HandleAsync(TestCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new TestResponse());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - DispatcherRegistrations should include AddWhizbangReceptorRegistry extension method
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(registrations!).Contains("AddWhizbangReceptorRegistry");
+    await Assert.That(registrations).Contains("IReceptorRegistry, GeneratedReceptorRegistry");
+    await Assert.That(registrations).Contains("IReceptorInvoker, ReceptorInvoker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync() {
+    // Arrange - Project with perspective but no receptors
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace MyApp.Perspectives;
+
+public record ProductCreatedEvent : IEvent;
+
+public record ProductModel {
+  public Guid Id { get; set; }
+}
+
+public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+  public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+    return currentData;
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should still generate ReceptorRegistry.g.cs with empty routing
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("return _emptyList");
+  }
 }

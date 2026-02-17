@@ -90,10 +90,18 @@ __PHYSICAL_FIELD_CONFIGS__
     });
     services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
 
-    // Register WorkCoordinatorOptions (if not already registered)
-    // This is defensive - users can override by registering their own options before calling .WithDriver.Postgres
+    // Register WorkCoordinatorOptions singleton
+    // Supports both direct registration AND IOptions<T> pattern (Configure<WorkCoordinatorOptions>())
     if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.WorkCoordinatorOptions))) {
-      services.AddSingleton(new Whizbang.Core.Messaging.WorkCoordinatorOptions());
+      services.AddSingleton<Whizbang.Core.Messaging.WorkCoordinatorOptions>(sp => {
+        // Check if user configured via IOptions<T> pattern
+        var optionsAccessor = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>();
+        if (optionsAccessor is not null) {
+          return optionsAccessor.Value;
+        }
+        // Fallback to default
+        return new Whizbang.Core.Messaging.WorkCoordinatorOptions();
+      });
     }
 
     // Register shared work channel writer as singleton

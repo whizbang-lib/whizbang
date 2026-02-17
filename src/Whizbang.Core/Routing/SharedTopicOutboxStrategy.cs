@@ -31,6 +31,11 @@ public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
   public static string DefaultInboxTopic => DEFAULT_INBOX_TOPIC;
 
   private readonly string _inboxTopic;
+
+  /// <summary>
+  /// Gets the configured inbox topic name for this strategy instance.
+  /// </summary>
+  public string InboxTopic => _inboxTopic;
   private readonly ITopicRoutingStrategy _topicResolver;
 
   /// <summary>

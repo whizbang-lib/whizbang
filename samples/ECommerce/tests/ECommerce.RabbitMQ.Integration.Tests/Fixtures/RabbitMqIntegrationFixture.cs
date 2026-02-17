@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
@@ -328,7 +329,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"products-{_testId}",
-      RoutingKey: $"inventory-products-queue-{_testId}"
+      RoutingKey: $"inventory-products-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+      }
     ));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
@@ -338,8 +342,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetService<ILifecycleInvoker>(),
-        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<IReceptorInvoker>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -477,11 +482,17 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"products-{_testId}",
-      RoutingKey: $"bff-products-queue-{_testId}"
+      RoutingKey: $"bff-products-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
     ));
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"inventory-{_testId}",
-      RoutingKey: $"bff-inventory-queue-{_testId}"
+      RoutingKey: $"bff-inventory-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
     ));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
@@ -491,8 +502,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetService<ILifecycleInvoker>(),
-        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<IReceptorInvoker>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );

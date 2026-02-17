@@ -12,6 +12,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -65,28 +66,44 @@ public abstract class Dispatcher(
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
   JsonSerializerOptions? jsonOptions = null,
-  Routing.ITopicRegistry? topicRegistry = null,
-  Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
+  ITopicRegistry? topicRegistry = null,
+  ITopicRoutingStrategy? topicRoutingStrategy = null,
   IAggregateIdExtractor? aggregateIdExtractor = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
+  IReceptorInvoker? receptorInvoker = null,
   IEnvelopeSerializer? envelopeSerializer = null,
-  IEnvelopeRegistry? envelopeRegistry = null
+  IEnvelopeRegistry? envelopeRegistry = null,
+  IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+  ILifecycleInvoker? lifecycleInvoker = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITraceStore? _traceStore = traceStore;
-  private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
-  private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
+  private readonly ITopicRegistry? _topicRegistry = topicRegistry;
+  private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;
   private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly IReceptorInvoker? _receptorInvoker = receptorInvoker;
+  // Lifecycle invoker for runtime-registered receptors (test infrastructure, observers)
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker ?? serviceProvider.GetService<ILifecycleInvoker>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry ?? serviceProvider.GetService<IEnvelopeRegistry>();
+  // Outbox routing strategy for determining actual transport destinations (inbox for commands, namespace for events)
+  private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
+  // Owned domains for routing decisions - resolved from RoutingOptions if available
+  private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
 
   // Unused parameter retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
+
+  /// <summary>
+  /// Resolves owned domains from RoutingOptions in DI container.
+  /// </summary>
+  private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
+    var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
+    return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+  }
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -180,7 +197,14 @@ public abstract class Dispatcher(
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
       await _cascadeEventsFromResultAsync(result);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
+      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
       if (_lifecycleInvoker is not null) {
         var lifecycleContext = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.ImmediateAsync,
@@ -188,9 +212,19 @@ public abstract class Dispatcher(
           StreamId = null,
           LastProcessedEventId = null,
           MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
+          AttemptNumber = null
         };
+
+        // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
         await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+
+        // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+
+        // Fire LocalImmediateInline stage (blocking, local-only)
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -270,17 +304,7 @@ public abstract class Dispatcher(
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result);
 
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
-      }
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -342,7 +366,10 @@ public abstract class Dispatcher(
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
       await _cascadeEventsFromResultAsync(result);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
+      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
       if (_lifecycleInvoker is not null) {
         var lifecycleContext = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.ImmediateAsync,
@@ -350,9 +377,19 @@ public abstract class Dispatcher(
           StreamId = null,
           LastProcessedEventId = null,
           MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
+          AttemptNumber = null
         };
+
+        // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
         await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+
+        // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+
+        // Fire LocalImmediateInline stage (blocking, local-only)
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -407,6 +444,9 @@ public abstract class Dispatcher(
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result);
 
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
       if (_lifecycleInvoker is not null) {
         var lifecycleContext = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.ImmediateAsync,
@@ -414,9 +454,14 @@ public abstract class Dispatcher(
           StreamId = null,
           LastProcessedEventId = null,
           MessageSource = MessageSource.Local,
-          AttemptNumber = 1
+          AttemptNumber = null
         };
+
         await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
       }
     } finally {
       _envelopeRegistry?.Unregister(envelope);
@@ -515,7 +560,7 @@ public abstract class Dispatcher(
     if (asyncInvoker != null) {
       // OPTIMIZATION: Skip envelope creation when trace store is null
       // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _lifecycleInvoker != null) {
+      if (_traceStore != null || _receptorInvoker != null) {
         return _localInvokeWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -596,7 +641,9 @@ public abstract class Dispatcher(
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
@@ -605,18 +652,11 @@ public abstract class Dispatcher(
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
       await _cascadeEventsFromResultAsync(result);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-      }
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
 
       return result;
     } finally {
@@ -650,7 +690,7 @@ public abstract class Dispatcher(
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
+    if (_traceStore != null || _receptorInvoker != null) {
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
@@ -677,7 +717,9 @@ public abstract class Dispatcher(
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message!);
@@ -686,16 +728,11 @@ public abstract class Dispatcher(
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
       await _cascadeEventsFromResultAsync(result);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null
-        };
-        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-      }
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
 
       return result;
     } finally {
@@ -823,7 +860,9 @@ public abstract class Dispatcher(
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
       // Invoke using delegate - zero reflection, strongly typed
       await invoker(message);
@@ -858,7 +897,7 @@ public abstract class Dispatcher(
     if (asyncInvoker != null) {
       // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
       // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _lifecycleInvoker != null) {
+      if (_traceStore != null || _receptorInvoker != null) {
         return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -904,16 +943,7 @@ public abstract class Dispatcher(
       // Invoke using delegate - zero reflection, strongly typed
       await invoker(message!);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null
-        };
-        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-      }
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -968,7 +998,7 @@ public abstract class Dispatcher(
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
-      if (_traceStore != null || _lifecycleInvoker != null) {
+      if (_traceStore != null || _receptorInvoker != null) {
         return await _localInvokeWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
       }
       options.CancellationToken.ThrowIfCancellationRequested();
@@ -1044,17 +1074,7 @@ public abstract class Dispatcher(
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result);
 
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
-      }
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
       return result;
     } finally {
@@ -1341,6 +1361,15 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
   private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+    // PRIORITY: Use outbox routing strategy if configured (routes events to namespace topics)
+    // This ensures events are stored with their ACTUAL destination in the outbox,
+    // providing proper durability guarantees
+    if (_outboxRoutingStrategy != null) {
+      var destination = _outboxRoutingStrategy.GetDestination(eventType, _ownedDomains, MessageKind.Event);
+      return destination.Address;
+    }
+
+    // FALLBACK: Convention-based routing (for backwards compatibility)
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(eventType);
 
@@ -1377,6 +1406,15 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved destination name</returns>
   private string _resolveCommandDestination(Type commandType, IReadOnlyDictionary<string, object>? context = null) {
+    // PRIORITY: Use outbox routing strategy if configured (routes commands to inbox)
+    // This ensures commands are stored with their ACTUAL destination in the outbox,
+    // providing proper durability guarantees
+    if (_outboxRoutingStrategy != null) {
+      var destination = _outboxRoutingStrategy.GetDestination(commandType, _ownedDomains, MessageKind.Command);
+      return destination.Address;
+    }
+
+    // FALLBACK: Convention-based routing (for backwards compatibility)
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(commandType);
 

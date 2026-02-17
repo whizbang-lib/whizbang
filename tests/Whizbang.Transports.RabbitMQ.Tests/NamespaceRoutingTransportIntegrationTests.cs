@@ -111,7 +111,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -154,7 +154,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -200,7 +200,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -245,7 +245,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -299,7 +299,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
               receivedMessages[topicForClosure].TrySetResult(true);
               await Task.CompletedTask;
             },
-            new TransportDestination(expectedTopic, $"test-queue-{expectedTopic}-{Guid.NewGuid():N}"),
+            _createTestDestination(expectedTopic),
             cancellationToken
           );
           subscriptions.Add(subscription);
@@ -353,7 +353,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -394,6 +394,17 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
   // ========================================
   // HELPER METHODS
   // ========================================
+
+  /// <summary>
+  /// Creates a TransportDestination with deterministic SubscriberName metadata for testing.
+  /// Each call generates a unique subscriber name to ensure test isolation.
+  /// </summary>
+  private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+    };
+    return new TransportDestination(address, routingKey, metadata);
+  }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {

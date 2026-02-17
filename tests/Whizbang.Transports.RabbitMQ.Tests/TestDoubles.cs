@@ -71,6 +71,7 @@ internal class FakeChannel : IChannel {
   public bool BasicConsumeAsyncCalled { get; private set; }
   public bool BasicCancelAsyncCalled { get; private set; }
   public string? LastConsumerTag { get; private set; }
+  public string? LastDeclaredQueueName { get; private set; }
 
   // Members actually used by RabbitMQChannelPool
   public bool IsOpen => !IsDisposed;
@@ -116,6 +117,7 @@ internal class FakeChannel : IChannel {
   // Implement subscription methods for SubscribeAsync tests
   public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
     QueueDeclareAsyncCalled = true;
+    LastDeclaredQueueName = queue;
     // Return a fake QueueDeclareOk
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }

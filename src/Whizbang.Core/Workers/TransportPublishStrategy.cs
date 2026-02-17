@@ -2,7 +2,6 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -19,43 +18,38 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_TransportFailure_ShouldReturnFailureResultAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_TransformsDestinationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithRoutingStrategy_CommandRoutedToInboxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync</tests>
 /// Default implementation of IMessagePublishStrategy that publishes messages via ITransport.
-/// Publishes envelope objects directly to the configured transport.
-/// When IOutboxRoutingStrategy is provided, transforms the destination using the routing strategy.
+/// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
+/// Events use their destination directly (already namespace topics).
 /// </summary>
 public class TransportPublishStrategy : IMessagePublishStrategy {
   private readonly ITransport _transport;
   private readonly ITransportReadinessCheck _readinessCheck;
-  private readonly IOutboxRoutingStrategy? _routingStrategy;
-  private readonly IReadOnlySet<string>? _ownedDomains;
+  private readonly string _inboxTopic;
 
   /// <summary>
-  /// Creates a new TransportPublishStrategy.
+  /// Creates a new TransportPublishStrategy with default inbox topic.
+  /// Commands are automatically routed to shared inbox topic.
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck)
+    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic) {
   }
 
   /// <summary>
-  /// Creates a new TransportPublishStrategy with routing support.
+  /// Creates a new TransportPublishStrategy with a custom inbox topic.
+  /// Commands are automatically routed to the specified inbox topic.
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  /// <param name="routingStrategy">Routing strategy to transform destinations</param>
-  /// <param name="routingOptions">Routing options containing owned domains</param>
-  public TransportPublishStrategy(
-    ITransport transport,
-    ITransportReadinessCheck readinessCheck,
-    IOutboxRoutingStrategy? routingStrategy,
-    IOptions<RoutingOptions>? routingOptions) {
+  /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
-    _routingStrategy = routingStrategy;
-    _ownedDomains = routingOptions?.Value.OwnedDomains;
+    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
   }
 
   /// <summary>
@@ -77,8 +71,16 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// <returns>Result indicating success/failure and any error details</returns>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     try {
-      // Resolve transport destination - use routing strategy if available
+      // Resolve transport destination
+      // PRIMARY: Uses destination from outbox (set correctly by Dispatcher when IOutboxRoutingStrategy is configured)
+      // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
       var destination = _resolveDestination(work);
+
+      // DEBUG: Log routing decision for troubleshooting
+      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] MessageType={work.MessageType}");
+      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] OutboxDestination={work.Destination}");
+      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedAddress={destination.Address}");
+      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedRoutingKey={destination.RoutingKey}");
 
       // Publish to transport - envelope is already deserialized
       // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
@@ -105,31 +107,28 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
 
   /// <summary>
   /// Resolves the actual transport destination for a message.
-  /// If routing strategy is configured, transforms command destinations to shared inbox.
-  /// Otherwise, uses the destination directly from the outbox.
+  /// ALWAYS routes commands to shared inbox topic - this is critical for message delivery.
+  /// Events use their destination directly (already namespace topics).
   /// </summary>
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination</returns>
   private TransportDestination _resolveDestination(OutboxWork work) {
-    // If no routing strategy is configured, use destination directly
-    if (_routingStrategy is null || _ownedDomains is null) {
-      return new TransportDestination(work.Destination);
-    }
-
-    // Detect message kind from type name (AOT-safe, no Type.GetType)
+    // ALWAYS detect message kind - commands MUST go to inbox, not individual command topics
+    // This is critical: without this, commands would be published to non-existent topics
+    // and silently dropped by the message broker
     var messageKind = _detectMessageKindFromTypeName(work.MessageType);
 
-    // For commands, route to shared inbox
-    // For events, use the destination directly (already the namespace topic)
+    // For commands, ALWAYS route to shared inbox topic
+    // This applies whether or not WithRouting() was explicitly called
     if (messageKind == MessageKind.Command) {
-      // Commands go to shared inbox topic
+      // Commands go to shared inbox topic (configured via constructor)
       // Parse the type name to get the routing key for filtering
       var typeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? work.Destination;
       var ns = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
       var routingKey = string.IsNullOrEmpty(ns) ? typeName : $"{ns}.{typeName}";
 
       return new TransportDestination(
-        Address: SharedTopicOutboxStrategy.DefaultInboxTopic,
+        Address: _inboxTopic,
         RoutingKey: routingKey
       );
     }

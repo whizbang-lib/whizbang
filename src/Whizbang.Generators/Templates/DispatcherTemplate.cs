@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 
 #region NAMESPACE
@@ -35,12 +36,15 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     IServiceInstanceProvider instanceProvider,
     ITraceStore? traceStore = null,
     JsonSerializerOptions? jsonOptions = null,
-    global::Whizbang.Core.Routing.ITopicRegistry? topicRegistry = null,
-    global::Whizbang.Core.Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
+    ITopicRegistry? topicRegistry = null,
+    ITopicRoutingStrategy? topicRoutingStrategy = null,
     IAggregateIdExtractor? aggregateIdExtractor = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
-    IEnvelopeSerializer? envelopeSerializer = null
-  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer) {
+    IReceptorInvoker? receptorInvoker = null,
+    IEnvelopeSerializer? envelopeSerializer = null,
+    IEnvelopeRegistry? envelopeRegistry = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+    ILifecycleInvoker? lifecycleInvoker = null
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker) {
     _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 

@@ -116,7 +116,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(destination.Address),
       cancellationToken
     );
 
@@ -162,7 +162,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(destination.Address),
       cancellationToken
     );
 
@@ -212,7 +212,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(destination.Address),
       cancellationToken
     );
 
@@ -255,7 +255,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(destination.Address),
       cancellationToken
     );
 
@@ -303,7 +303,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(subscription.Topic),
       cancellationToken
     );
 
@@ -350,7 +350,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(subscription.Topic),
       cancellationToken
     );
 
@@ -405,7 +405,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(subscription.Topic),
       cancellationToken
     );
 
@@ -452,7 +452,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(subscription.Topic),
       cancellationToken
     );
 
@@ -502,7 +502,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(destination.Address),
       cancellationToken
     );
 
@@ -555,7 +555,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
-      new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
+      _createTestDestination(subscription.Topic),
       cancellationToken
     );
 
@@ -579,6 +579,17 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
   // HELPER METHODS
   // ========================================
+
+  /// <summary>
+  /// Creates a TransportDestination with deterministic SubscriberName metadata for testing.
+  /// Each call generates a unique subscriber name to ensure test isolation.
+  /// </summary>
+  private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+    };
+    return new TransportDestination(address, routingKey, metadata);
+  }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
