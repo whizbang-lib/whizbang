@@ -8,15 +8,15 @@ using Whizbang.Core.Internal;
 namespace Whizbang.Core.Tests.Internal;
 
 /// <summary>
-/// Tests for EventExtractor which extracts IEvent instances from complex return types.
+/// Tests for MessageExtractor which extracts IMessage instances (events and commands) from complex return types.
 /// </summary>
-public class EventExtractorTests {
+public class MessageExtractorTests {
   #region Null Handling
 
   [Test]
   public async Task ExtractEvents_WithNull_ReturnsEmptyAsync() {
     // Act
-    var events = EventExtractor.ExtractEvents(null).ToList();
+    var events = MessageExtractor.ExtractMessages(null).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -32,7 +32,7 @@ public class EventExtractorTests {
     var singleEvent = new TestEvent("Test");
 
     // Act
-    var events = EventExtractor.ExtractEvents(singleEvent).ToList();
+    var events = MessageExtractor.ExtractMessages(singleEvent).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(1);
@@ -45,7 +45,7 @@ public class EventExtractorTests {
     const string nonEvent = "not an event";
 
     // Act
-    var events = EventExtractor.ExtractEvents(nonEvent).ToList();
+    var events = MessageExtractor.ExtractMessages(nonEvent).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -54,7 +54,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithPrimitiveValue_ReturnsEmptyAsync() {
     // Act
-    var events = EventExtractor.ExtractEvents(42).ToList();
+    var events = MessageExtractor.ExtractMessages(42).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -74,7 +74,7 @@ public class EventExtractorTests {
     };
 
     // Act
-    var events = EventExtractor.ExtractEvents(eventsArray).ToList();
+    var events = MessageExtractor.ExtractMessages(eventsArray).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(3);
@@ -86,7 +86,7 @@ public class EventExtractorTests {
     var emptyArray = Array.Empty<IEvent>();
 
     // Act
-    var events = EventExtractor.ExtractEvents(emptyArray).ToList();
+    var events = MessageExtractor.ExtractMessages(emptyArray).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -105,7 +105,7 @@ public class EventExtractorTests {
     ];
 
     // Act
-    var events = EventExtractor.ExtractEvents(eventEnumerable).ToList();
+    var events = MessageExtractor.ExtractMessages(eventEnumerable).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(2);
@@ -117,7 +117,7 @@ public class EventExtractorTests {
     IEvent[] emptyEnumerable = [];
 
     // Act
-    var events = EventExtractor.ExtractEvents(emptyEnumerable).ToList();
+    var events = MessageExtractor.ExtractMessages(emptyEnumerable).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -132,7 +132,7 @@ public class EventExtractorTests {
     };
 
     // Act
-    var events = EventExtractor.ExtractEvents(nestedStructure).ToList();
+    var events = MessageExtractor.ExtractMessages(nestedStructure).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(3);
@@ -152,7 +152,7 @@ public class EventExtractorTests {
     );
 
     // Act
-    var events = EventExtractor.ExtractEvents(tuple).ToList();
+    var events = MessageExtractor.ExtractMessages(tuple).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(2);
@@ -168,7 +168,7 @@ public class EventExtractorTests {
     );
 
     // Act
-    var events = EventExtractor.ExtractEvents(valueTuple).ToList();
+    var events = MessageExtractor.ExtractMessages(valueTuple).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(2);
@@ -180,7 +180,7 @@ public class EventExtractorTests {
     var tuple = Tuple.Create("string", 42, 3.14);
 
     // Act
-    var events = EventExtractor.ExtractEvents(tuple).ToList();
+    var events = MessageExtractor.ExtractMessages(tuple).ToList();
 
     // Assert
     await Assert.That(events).IsEmpty();
@@ -195,7 +195,7 @@ public class EventExtractorTests {
     );
 
     // Act
-    var events = EventExtractor.ExtractEvents(tupleWithArray).ToList();
+    var events = MessageExtractor.ExtractMessages(tupleWithArray).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(3);
@@ -211,7 +211,7 @@ public class EventExtractorTests {
     );
 
     // Act
-    var events = EventExtractor.ExtractEvents(tupleWithNull).ToList();
+    var events = MessageExtractor.ExtractMessages(tupleWithNull).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(1);
@@ -231,7 +231,7 @@ public class EventExtractorTests {
     );
 
     // Act
-    var events = EventExtractor.ExtractEvents(complexStructure).ToList();
+    var events = MessageExtractor.ExtractMessages(complexStructure).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(4);
@@ -248,7 +248,7 @@ public class EventExtractorTests {
     };
 
     // Act
-    var events = EventExtractor.ExtractEvents(listWithNulls).ToList();
+    var events = MessageExtractor.ExtractMessages(listWithNulls).ToList();
 
     // Assert - Only the events are extracted, nulls are skipped in the recursive call
     await Assert.That(events).Count().IsEqualTo(2);
@@ -256,9 +256,72 @@ public class EventExtractorTests {
 
   #endregion
 
+  #region Command Extraction
+
+  [Test]
+  public async Task ExtractEvents_WithSingleCommand_ReturnsCommandAsync() {
+    // Arrange
+    var command = new TestCommand("CreateOrder");
+
+    // Act
+    var messages = MessageExtractor.ExtractMessages(command).ToList();
+
+    // Assert - Commands should also be extracted since they are IMessage
+    await Assert.That(messages).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithCommandArray_ReturnsAllCommandsAsync() {
+    // Arrange
+    ICommand[] commands = [
+      new TestCommand("First"),
+      new TestCommand("Second")
+    ];
+
+    // Act
+    var messages = MessageExtractor.ExtractMessages(commands).ToList();
+
+    // Assert
+    await Assert.That(messages).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithMixedEventsAndCommands_ReturnsAllAsync() {
+    // Arrange - Tuple with both events and commands
+    var mixed = (
+      Event: new TestEvent("OrderCreated"),
+      Command: new TestCommand("SendNotification"),
+      AnotherEvent: new TestEvent("NotificationSent")
+    );
+
+    // Act
+    var messages = MessageExtractor.ExtractMessages(mixed).ToList();
+
+    // Assert - Should extract both events AND commands
+    await Assert.That(messages).Count().IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithTupleContainingCommandArray_FlattensProperlyAsync() {
+    // Arrange
+    var tupleWithCommands = (
+      Event: new TestEvent("Single"),
+      Commands: new ICommand[] { new TestCommand("Cmd1"), new TestCommand("Cmd2") }
+    );
+
+    // Act
+    var messages = MessageExtractor.ExtractMessages(tupleWithCommands).ToList();
+
+    // Assert - Should extract the event plus both commands
+    await Assert.That(messages).Count().IsEqualTo(3);
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestEvent(string Name) : IEvent;
+  private sealed record TestCommand(string Name) : ICommand;
 
   #endregion
 }

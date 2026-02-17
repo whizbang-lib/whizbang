@@ -28,23 +28,39 @@ namespace Whizbang.Core.Messaging;
 /// receptors with scoped dependencies (like IEventStore) can be resolved correctly, even when
 /// called from singleton services like TransportConsumerWorker.
 /// </para>
+/// <para>
+/// <strong>Event Cascading:</strong> When receptors return IEvent instances (directly, in tuples, or arrays),
+/// these events are cascaded (published) via the optional <see cref="IEventCascader"/>.
+/// </para>
 /// </remarks>
 /// <docs>core-concepts/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceScopeFactory _scopeFactory;
+  private readonly IEventCascader? _eventCascader;
 
   /// <summary>
   /// Creates a new ReceptorInvoker.
   /// </summary>
   /// <param name="registry">The receptor registry to query for discovered receptors.</param>
   /// <param name="scopeFactory">Factory to create service scopes for resolving scoped dependencies.</param>
-  public ReceptorInvoker(IReceptorRegistry registry, IServiceScopeFactory scopeFactory) {
+  public ReceptorInvoker(IReceptorRegistry registry, IServiceScopeFactory scopeFactory)
+    : this(registry, scopeFactory, eventCascader: null) {
+  }
+
+  /// <summary>
+  /// Creates a new ReceptorInvoker with event cascading support.
+  /// </summary>
+  /// <param name="registry">The receptor registry to query for discovered receptors.</param>
+  /// <param name="scopeFactory">Factory to create service scopes for resolving scoped dependencies.</param>
+  /// <param name="eventCascader">Optional cascader for publishing events returned by receptors.</param>
+  public ReceptorInvoker(IReceptorRegistry registry, IServiceScopeFactory scopeFactory, IEventCascader? eventCascader) {
     ArgumentNullException.ThrowIfNull(registry);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     _registry = registry;
     _scopeFactory = scopeFactory;
+    _eventCascader = eventCascader;
   }
 
   /// <inheritdoc/>
@@ -80,7 +96,26 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     foreach (var receptor in receptors) {
       // InvokeAsync is a pre-compiled delegate (no reflection)
       // Pass the scoped provider so receptor can be resolved with its dependencies
-      await receptor.InvokeAsync(scopedProvider, message, cancellationToken).ConfigureAwait(false);
+      var result = await receptor.InvokeAsync(scopedProvider, message, cancellationToken).ConfigureAwait(false);
+
+      // Cascade any IMessage instances (events and commands) from the receptor's return value
+      // Uses AOT-safe EventExtractor (ITuple interface, not reflection)
+      if (result is not null && _eventCascader is not null) {
+        await _cascadeMessagesFromResultAsync(result, cancellationToken).ConfigureAwait(false);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Extracts IMessage instances (events and commands) from receptor return values and cascades them.
+  /// Supports single messages, tuples, arrays, and nested structures via EventExtractor.
+  /// AOT-compatible: Uses ITuple interface, not reflection.
+  /// </summary>
+  private async Task _cascadeMessagesFromResultAsync(object result, CancellationToken cancellationToken) {
+    // Use MessageExtractor to find all IMessage instances in the result
+    // This handles tuples, arrays, nested structures using ITuple interface (AOT-safe)
+    foreach (var msg in Internal.MessageExtractor.ExtractMessages(result)) {
+      await _eventCascader!.CascadeAsync(msg, cancellationToken).ConfigureAwait(false);
     }
   }
 }

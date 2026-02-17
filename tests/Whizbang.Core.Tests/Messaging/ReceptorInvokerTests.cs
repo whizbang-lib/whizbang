@@ -24,6 +24,11 @@ public class ReceptorInvokerTests {
   private sealed record TestMessage(string Value) : IMessage;
 
   /// <summary>
+  /// Test event type for cascade tests.
+  /// </summary>
+  private sealed record TestEvent(Guid Id, string Data) : IEvent;
+
+  /// <summary>
   /// Creates a service scope factory that returns a fresh ServiceProvider each time.
   /// </summary>
   private static IServiceScopeFactory _createScopeFactory() {
@@ -231,6 +236,170 @@ public class ReceptorInvokerTests {
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
+  // ========================================
+  // RETURN VALUE CASCADING TESTS
+  // ========================================
+
+  /// <summary>
+  /// Verifies that when a receptor returns an IEvent, that event is cascaded (dispatched).
+  /// This is critical for inbox processing where receptors produce events that need publishing.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorReturnsEvent_ShouldCascadeEventAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var cascadeTracker = new CascadeTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register a receptor that returns an event
+    var returnedEvent = new TestEvent(Guid.CreateVersion7(), "cascaded");
+    registry.RegisterReceptorWithReturn<TestMessage, TestEvent>(
+      "EventProducingReceptor",
+      LifecycleStage.PostInboxInline,
+      returnedEvent
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+
+    // Assert - The returned event should have been cascaded
+    await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(1);
+    await Assert.That(cascadeTracker.CascadedMessages[0]).IsEqualTo(returnedEvent);
+  }
+
+  /// <summary>
+  /// Verifies that when a receptor returns a tuple containing events, all events are cascaded.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorReturnsTupleWithEvents_ShouldCascadeAllEventsAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var cascadeTracker = new CascadeTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register a receptor that returns a tuple with multiple events
+    var event1 = new TestEvent(Guid.CreateVersion7(), "event1");
+    var event2 = new TestEvent(Guid.CreateVersion7(), "event2");
+    registry.RegisterReceptorWithReturn<TestMessage, (TestEvent, TestEvent)>(
+      "TupleReceptor",
+      LifecycleStage.PostInboxInline,
+      (event1, event2)
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+
+    // Assert - Both events should have been cascaded
+    await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(2);
+    await Assert.That(cascadeTracker.CascadedMessages).Contains(event1);
+    await Assert.That(cascadeTracker.CascadedMessages).Contains(event2);
+  }
+
+  /// <summary>
+  /// Verifies that when a receptor returns an array of events, all events are cascaded.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorReturnsEventArray_ShouldCascadeAllEventsAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var cascadeTracker = new CascadeTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register a receptor that returns an array of events
+    var events = new[] {
+      new TestEvent(Guid.CreateVersion7(), "event1"),
+      new TestEvent(Guid.CreateVersion7(), "event2"),
+      new TestEvent(Guid.CreateVersion7(), "event3")
+    };
+    registry.RegisterReceptorWithReturn<TestMessage, TestEvent[]>(
+      "ArrayReceptor",
+      LifecycleStage.PostInboxInline,
+      events
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+
+    // Assert - All events should have been cascaded
+    await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// Verifies that when a receptor returns null, no cascade happens.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorReturnsNull_ShouldNotCascadeAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var cascadeTracker = new CascadeTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register a receptor that returns null
+    registry.RegisterReceptorWithReturn<TestMessage, TestEvent?>(
+      "NullReceptor",
+      LifecycleStage.PostInboxInline,
+      null
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+
+    // Assert - No events should have been cascaded
+    await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Verifies that when a receptor returns a non-event result, no cascade happens.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorReturnsNonEvent_ShouldNotCascadeAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var cascadeTracker = new CascadeTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register a receptor that returns a plain string (not an IEvent)
+    registry.RegisterReceptorWithReturn<TestMessage, string>(
+      "StringReceptor",
+      LifecycleStage.PostInboxInline,
+      "just a string result"
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+
+    // Assert - No events should have been cascaded
+    await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Tracks which messages were cascaded (for testing purposes).
+  /// </summary>
+  private sealed class CascadeTracker : IEventCascader {
+    private readonly List<IMessage> _cascadedMessages = [];
+    public List<IMessage> CascadedMessages => _cascadedMessages;
+
+    public Task CascadeAsync(IMessage message, CancellationToken cancellationToken = default) {
+      _cascadedMessages.Add(message);
+      return Task.CompletedTask;
+    }
+  }
+
   /// <summary>
   /// Test registry implementation that mimics source-generated behavior.
   /// Receptors are registered at specific stages - the compile-time categorization is simulated.
@@ -256,7 +425,32 @@ public class ReceptorInvokerTests {
         InvokeAsync: (sp, msg, ct) => {
           // sp is the scoped service provider (not used in tests)
           _tracker.RecordInvocation(receptorId, stage);
-          return ValueTask.CompletedTask;
+          return ValueTask.FromResult<object?>(null);
+        }
+      ));
+    }
+
+    /// <summary>
+    /// Registers a receptor that returns a specific value.
+    /// Used to test return value cascading.
+    /// </summary>
+    public void RegisterReceptorWithReturn<TMessage, TReturn>(
+      string receptorId,
+      LifecycleStage stage,
+      TReturn? returnValue
+    ) {
+      var key = (typeof(TMessage), stage);
+      if (!_receptors.TryGetValue(key, out var list)) {
+        list = [];
+        _receptors[key] = list;
+      }
+
+      list.Add(new ReceptorInfo(
+        MessageType: typeof(TMessage),
+        ReceptorId: receptorId,
+        InvokeAsync: (sp, msg, ct) => {
+          _tracker.RecordInvocation(receptorId, stage);
+          return ValueTask.FromResult<object?>(returnValue);
         }
       ));
     }
