@@ -4,13 +4,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -246,16 +244,9 @@ public class TransportPublishStrategyTests {
     // NOT to a topic named after the command type
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var routingStrategy = new SharedTopicOutboxStrategy("inbox");
-    var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("myapp.commands");
 
-    var strategy = new TransportPublishStrategy(
-      transport,
-      readinessCheck,
-      routingStrategy,
-      Options.Create(routingOptions)
-    );
+    // Routing is now AUTOMATIC - no explicit routing strategy needed
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.CreateVersion7();
     // Simulate a command being published - destination is the command type name,
@@ -279,7 +270,7 @@ public class TransportPublishStrategyTests {
     // Assert
     await Assert.That(result.Success).IsTrue();
     await Assert.That(transport.LastPublishedDestination).IsNotNull();
-    // CRITICAL: Commands MUST be routed to "inbox", NOT "createtenantcommand"
+    // CRITICAL: Commands MUST be routed to "inbox" (shared inbox), NOT "createtenantcommand"
     await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox")
       .Because("Commands must be routed to the shared inbox topic, not individual command topics");
   }
@@ -289,16 +280,9 @@ public class TransportPublishStrategyTests {
     // Arrange - Events should use the destination directly (already namespace topic)
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var routingStrategy = new SharedTopicOutboxStrategy("inbox");
-    var routingOptions = new RoutingOptions();
-    routingOptions.OwnDomains("myapp.commands");
 
-    var strategy = new TransportPublishStrategy(
-      transport,
-      readinessCheck,
-      routingStrategy,
-      Options.Create(routingOptions)
-    );
+    // Routing is now AUTOMATIC - events detected and use destination directly
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.CreateVersion7();
     // Events have namespace ending in "Events"
@@ -327,9 +311,9 @@ public class TransportPublishStrategyTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithoutRoutingStrategy_UsesDestinationDirectlyAsync() {
-    // Arrange - Without routing, destination is used directly (legacy behavior)
-    // NOTE: This is potentially dangerous if the destination isn't a real topic!
+  public async Task PublishAsync_WithoutRoutingStrategy_CommandStillRoutedToInboxAsync() {
+    // Arrange - Even without explicit routing, commands MUST go to inbox
+    // This is critical for message delivery - commands to non-existent topics are lost!
     var transport = new TestTransport();
     var readinessCheck = new DefaultTransportReadinessCheck();
 
@@ -339,7 +323,7 @@ public class TransportPublishStrategyTests {
     var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
-      Destination = "createtenantcommand", // Will be used directly - may not exist!
+      Destination = "createtenantcommand", // This is WRONG - will be transformed to inbox
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.CreateTenantCommand, MyApp]], Whizbang.Core",
       MessageType = "MyApp.Commands.CreateTenantCommand, MyApp",
@@ -356,8 +340,77 @@ public class TransportPublishStrategyTests {
     // Assert
     await Assert.That(result.Success).IsTrue();
     await Assert.That(transport.LastPublishedDestination).IsNotNull();
-    // Without routing, destination is used directly (legacy behavior)
-    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("createtenantcommand")
-      .Because("Without routing strategy, destination is used directly");
+    // CRITICAL: Commands MUST be routed to inbox even without explicit routing config
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox")
+      .Because("Commands must ALWAYS be routed to shared inbox to ensure delivery");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithCustomInboxTopic_CommandRoutedToCustomTopicAsync() {
+    // Arrange - This test verifies that a custom inbox topic can be configured
+    // For example, JDX uses "whizbang" as their inbox exchange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+
+    // Use custom inbox topic "whizbang" instead of default "inbox"
+    var strategy = new TransportPublishStrategy(transport, readinessCheck, "whizbang");
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createtenantcommand",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.CreateTenantCommand, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Commands.CreateTenantCommand, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Commands should be routed to the custom "whizbang" topic
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("whizbang")
+      .Because("Commands should be routed to the configured custom inbox topic");
+  }
+
+  [Test]
+  public async Task PublishAsync_NestedClassCommand_RoutedToInboxAsync() {
+    // Arrange - This test verifies nested class types work correctly
+    // JDX uses nested types like AuthContracts+CreateTenantCommand
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createtenant",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.Auth.AuthContracts+CreateTenantCommand, JDX.Contracts]], Whizbang.Core",
+      // Nested class uses '+' notation: Namespace.OuterClass+NestedClass
+      MessageType = "JDX.Contracts.Auth.AuthContracts+CreateTenantCommand, JDX.Contracts",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    // Even though namespace doesn't contain "Commands", the type name ends with "Command"
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox")
+      .Because("Nested class commands ending with 'Command' must be routed to inbox");
   }
 }

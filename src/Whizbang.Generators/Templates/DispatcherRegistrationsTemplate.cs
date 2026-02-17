@@ -14,6 +14,7 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 
 #region NAMESPACE
@@ -49,27 +50,37 @@ namespace Whizbang.Core.Generated {
     }
 
     /// <summary>
-    /// Registers the generated zero-reflection dispatcher.
-    /// Automatically resolves optional Singleton dependencies: ITraceStore, ITransport, JsonSerializerOptions, ITopicRegistry, ITopicRoutingStrategy, IAggregateIdExtractor, IEnvelopeSerializer.
+    /// Registers the generated zero-reflection dispatcher and receptor registry.
+    /// Automatically resolves optional Singleton dependencies: ITraceStore, ITransport, JsonSerializerOptions, ITopicRegistry, ITopicRoutingStrategy, IAggregateIdExtractor, IEnvelopeSerializer, IOutboxRoutingStrategy.
     /// NOTE: IEventStore and IWorkCoordinatorStrategy are resolved per-call from the active scope, not captured in constructor.
     /// This is required because they may be registered as Scoped (e.g., EF Core implementations).
     /// </summary>
+    /// <remarks>
+    /// This method also registers IReceptorRegistry and IReceptorInvoker for lifecycle stage invocation.
+    /// You don't need to call AddWhizbangReceptorRegistry() separately.
+    /// </remarks>
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
+      // Register receptor registry first (dispatcher depends on IReceptorInvoker)
+      services.AddWhizbangReceptorRegistry();
+
       services.AddSingleton<IDispatcher>(sp => {
         var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
         var traceStore = sp.GetService<ITraceStore>();
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
-        var topicRegistry = sp.GetService<Whizbang.Core.Routing.ITopicRegistry>();
-        var topicRoutingStrategy = sp.GetService<Whizbang.Core.Routing.ITopicRoutingStrategy>();
+        var topicRegistry = sp.GetService<ITopicRegistry>();
+        var topicRoutingStrategy = sp.GetService<ITopicRoutingStrategy>();
         var aggregateIdExtractor = sp.GetService<IAggregateIdExtractor>();
-        var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
+        var receptorInvoker = sp.GetService<IReceptorInvoker>();
         var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
+        var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
+        var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
+        var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
@@ -99,6 +110,21 @@ namespace Whizbang.Core.Generated {
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
         return new JsonLifecycleMessageDeserializer(jsonOptions);
       });
+      return services;
+    }
+
+    /// <summary>
+    /// Registers the generated zero-reflection receptor registry.
+    /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
+    /// - Receptors WITH [FireAt(X)] are registered at stage X only
+    /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    /// Registered as Singleton since it's stateless (delegates are pre-compiled).
+    /// </summary>
+    [ExcludeFromCodeCoverage]
+    [DebuggerNonUserCode]
+    public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
+      services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
+      services.AddSingleton<IReceptorInvoker, ReceptorInvoker>();
       return services;
     }
   }

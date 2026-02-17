@@ -308,6 +308,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var lifecycleInvokerSource = _generateLifecycleInvokerSource(compilation, receptors);
     context.AddSource("LifecycleInvoker.g.cs", lifecycleInvokerSource);
 
+    var receptorRegistrySource = _generateReceptorRegistrySource(compilation, receptors);
+    context.AddSource("ReceptorRegistry.g.cs", receptorRegistrySource);
+
     var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
     context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
@@ -675,6 +678,95 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
     result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "LIFECYCLE_ROUTING", routingCode.ToString());
+
+    return result;
+  }
+
+  /// <summary>
+  /// Generates IReceptorRegistry implementation that pre-categorizes ALL receptors by stage.
+  /// - Receptors WITH [FireAt(X)] are registered at stage X only
+  /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
+  /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
+  /// </summary>
+  private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
+    var namespaceName = $"{assemblyName}.Generated";
+
+    // Read template from embedded resource
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "ReceptorRegistryTemplate.cs"
+    );
+
+    // Load snippets for receptor registry routing
+    var responseSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "RECEPTOR_REGISTRY_ROUTING_SNIPPET"
+    );
+
+    var voidSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"
+    );
+
+    // Default stages for receptors WITHOUT [FireAt] attribute
+    var defaultStages = new[] {
+      "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PreOutboxInline",
+      "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline"
+    };
+
+    // Build list of (receptor, stage) pairs from ALL receptors
+    var routingPairs = new System.Collections.Generic.List<(ReceptorInfo Receptor, string Stage)>();
+    foreach (var receptor in receptors) {
+      if (receptor.HasDefaultStage) {
+        // No [FireAt] attributes - register at default stages
+        foreach (var stage in defaultStages) {
+          routingPairs.Add((receptor, stage));
+        }
+      } else {
+        // Has [FireAt] attributes - register at specified stages only
+        // Note: LifecycleStages already contains fully qualified names from _extractLifecycleStages()
+        foreach (var stage in receptor.LifecycleStages) {
+          routingPairs.Add((receptor, stage));
+        }
+      }
+    }
+
+    // Generate routing code for each (receptor, stage) pair
+    var routingCode = new StringBuilder();
+    foreach (var (receptor, stage) in routingPairs) {
+      string generatedCode;
+
+      if (receptor.IsVoid) {
+        // Void receptor: IReceptor<TMessage>
+        generatedCode = voidSnippet
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
+      } else {
+        // Regular receptor: IReceptor<TMessage, TResponse>
+        generatedCode = responseSnippet
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
+      }
+
+      routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
+    }
+
+    // Replace template markers
+    var result = template;
+    result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode.ToString());
 
     return result;
   }

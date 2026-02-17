@@ -3,7 +3,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
@@ -91,16 +90,24 @@ public static class ServiceCollectionExtensions {
       return new RabbitMQReadinessCheck(connection);
     });
 
-    // Register message publish strategy with routing support
-    // Commands are routed to shared inbox topic, events to namespace topics
-    services.AddSingleton<IMessagePublishStrategy>(sp =>
-      new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<ITransportReadinessCheck>(),
-        sp.GetService<IOutboxRoutingStrategy>(),
-        sp.GetService<IOptions<RoutingOptions>>()
-      )
-    );
+    // Register message publish strategy
+    // Commands are AUTOMATICALLY routed to shared inbox topic
+    // If IOutboxRoutingStrategy is configured (via WithRouting), use its inbox topic
+    services.AddSingleton<IMessagePublishStrategy>(sp => {
+      var transport = sp.GetRequiredService<ITransport>();
+      var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+
+      // Try to get inbox topic from registered outbox routing strategy
+      // WithRouting() registers IOutboxRoutingStrategy directly
+      var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
+        // Use the configured inbox topic from outbox strategy
+        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+      }
+
+      // Fall back to default inbox topic
+      return new TransportPublishStrategy(transport, readinessCheck);
+    });
 
     return services;
   }

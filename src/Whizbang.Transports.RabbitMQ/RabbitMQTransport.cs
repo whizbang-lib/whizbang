@@ -212,16 +212,29 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     }
 
     var exchangeName = destination.Address;
-    var queueName = destination.RoutingKey ?? _options.DefaultQueueName
-      ?? throw new InvalidOperationException("Queue name must be specified in TransportDestination.RoutingKey or RabbitMQOptions.DefaultQueueName");
 
-    var routingPattern = _getRoutingPattern(destination);
+    // Queue name priority:
+    // 1. Explicit DefaultQueueName from options (for specific use cases)
+    // 2. SubscriberName from metadata (REQUIRED for competing consumers)
+    // SubscriberName ensures deterministic queue naming across service instances
+    var subscriberName = _getSubscriberName(destination);
+    if (_options.DefaultQueueName is null && subscriberName is null) {
+      throw new InvalidOperationException(
+        $"SubscriberName is required in destination metadata for deterministic queue naming. " +
+        $"Configure SubscriberName when building TransportDestination, or set RabbitMQOptions.DefaultQueueName. " +
+        $"Exchange: '{exchangeName}'");
+    }
+
+    var queueName = _options.DefaultQueueName ?? $"{subscriberName}-{exchangeName}";
+
+    // Get routing patterns - may be multiple for topic exchange filtering
+    var routingPatterns = _getRoutingPatterns(destination);
 
     _logger?.LogDebug(
-      "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing pattern {RoutingPattern}",
+      "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing patterns [{RoutingPatterns}]",
       exchangeName,
       queueName,
-      routingPattern
+      string.Join(", ", routingPatterns)
     );
 
     try {
@@ -270,15 +283,25 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      // Bind queue to exchange with routing pattern
-      await channel.QueueBindAsync(
-        queue: queueName,
-        exchange: exchangeName,
-        routingKey: routingPattern,
-        arguments: null,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
+      // Bind queue to exchange with routing patterns
+      // Create one binding per pattern for proper topic exchange filtering
+      foreach (var pattern in routingPatterns) {
+        _logger?.LogDebug(
+          "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
+          queueName,
+          exchangeName,
+          pattern
+        );
+
+        await channel.QueueBindAsync(
+          queue: queueName,
+          exchange: exchangeName,
+          routingKey: pattern,
+          arguments: null,
+          noWait: false,
+          cancellationToken: cancellationToken
+        );
+      }
 
       // Create async consumer
       var consumer = new AsyncEventingBasicConsumer(channel);
@@ -410,15 +433,60 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
   }
 
   /// <summary>
-  /// Extracts the routing pattern from destination metadata.
+  /// Extracts the routing patterns from destination metadata.
+  /// Returns multiple patterns for creating multiple bindings.
   /// </summary>
-  private static string _getRoutingPattern(TransportDestination destination) {
-    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) != true) {
-      return "#";
+  private static List<string> _getRoutingPatterns(TransportDestination destination) {
+    // Try "RoutingPatterns" (plural) first - set by SharedTopicInboxStrategy
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsValue) == true) {
+      // RoutingPatterns is a JsonElement containing an array of strings
+      if (patternsValue.ValueKind == System.Text.Json.JsonValueKind.Array) {
+        var patterns = new List<string>();
+        foreach (var item in patternsValue.EnumerateArray()) {
+          var pattern = item.GetString();
+          if (!string.IsNullOrEmpty(pattern)) {
+            patterns.Add(pattern);
+          }
+        }
+        if (patterns.Count > 0) {
+          return patterns;
+        }
+      }
     }
 
-    var patternStr = patternValue.ToString();
-    return string.IsNullOrEmpty(patternStr) ? "#" : patternStr;
+    // Fallback: Try "RoutingPattern" (singular)
+    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) == true) {
+      var patternStr = patternValue.ToString();
+      if (!string.IsNullOrEmpty(patternStr)) {
+        return [patternStr];
+      }
+    }
+
+    // Fallback: Check if RoutingKey contains comma-separated patterns
+    if (!string.IsNullOrEmpty(destination.RoutingKey) && destination.RoutingKey.Contains(',')) {
+      return destination.RoutingKey.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    // Default: match all
+    return ["#"];
+  }
+
+  /// <summary>
+  /// Extracts the SubscriberName from destination metadata for deterministic queue naming.
+  /// Returns null if not found or empty/whitespace.
+  /// </summary>
+  /// <param name="destination">The transport destination containing metadata</param>
+  /// <returns>The subscriber name, or null if not found</returns>
+  private static string? _getSubscriberName(TransportDestination destination) {
+    if (destination.Metadata?.TryGetValue("SubscriberName", out var subscriberNameValue) == true) {
+      if (subscriberNameValue.ValueKind == System.Text.Json.JsonValueKind.String) {
+        var name = subscriberNameValue.GetString();
+        if (!string.IsNullOrWhiteSpace(name)) {
+          return name;
+        }
+      }
+    }
+    return null;
   }
 
   /// <summary>

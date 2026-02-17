@@ -59,8 +59,9 @@ public partial class WorkCoordinatorPublisherWorker(
   IWorkChannelWriter workChannelWriter,
   IOptions<WorkCoordinatorPublisherOptions> options,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+  IReceptorInvoker? receptorInvoker = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -68,8 +69,9 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IReceptorInvoker? _receptorInvoker = receptorInvoker;
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -269,7 +271,10 @@ public partial class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // PreOutbox lifecycle stages (before publishing to transport)
-        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        // ALL receptors registered at PreOutbox stages fire here, including:
+        // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
+        // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
+        if (_lifecycleMessageDeserializer is not null && (_receptorInvoker is not null || _lifecycleInvoker is not null)) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
@@ -281,10 +286,22 @@ public partial class WorkCoordinatorPublisherWorker(
             AttemptNumber = work.Attempts
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+          // Invoke compile-time business receptors
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+          }
+          // Invoke runtime test/lifecycle receptors
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+          }
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreOutboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+          }
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+          }
         }
 
         // Publish via strategy
@@ -293,7 +310,9 @@ public partial class WorkCoordinatorPublisherWorker(
         LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
         // PostOutbox lifecycle stages (after publishing to transport)
-        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        // ALL receptors registered at PostOutbox stages fire here
+        // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
+        if (_lifecycleMessageDeserializer is not null && (_receptorInvoker is not null || _lifecycleInvoker is not null)) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
@@ -305,10 +324,22 @@ public partial class WorkCoordinatorPublisherWorker(
             AttemptNumber = work.Attempts
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+          // Invoke compile-time business receptors
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+          }
+          // Invoke runtime test/lifecycle receptors
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+          }
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostOutboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+          }
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+          }
         }
 
         // Collect results

@@ -85,6 +85,10 @@ public sealed class TransportSubscriptionBuilder {
     // Build metadata dictionary from InboxSubscription metadata
     var metadata = _buildMetadata(subscription);
 
+    // Add SubscriberName for deterministic queue naming (critical for competing consumers)
+    metadata ??= new Dictionary<string, System.Text.Json.JsonElement>();
+    metadata["SubscriberName"] = JsonElementHelper.FromString(_serviceName);
+
     return new TransportDestination(
         Address: subscription.Topic,
         RoutingKey: subscription.FilterExpression,
@@ -101,9 +105,15 @@ public sealed class TransportSubscriptionBuilder {
     var destinations = new List<TransportDestination>();
 
     foreach (var ns in eventNamespaces) {
+      // Add SubscriberName for deterministic queue naming (critical for competing consumers)
+      var metadata = new Dictionary<string, System.Text.Json.JsonElement> {
+        ["SubscriberName"] = JsonElementHelper.FromString(_serviceName)
+      };
+
       destinations.Add(new TransportDestination(
           Address: ns,
-          RoutingKey: "#")); // Subscribe to all messages in namespace
+          RoutingKey: "#", // Subscribe to all messages in namespace
+          Metadata: metadata));
     }
 
     return destinations;

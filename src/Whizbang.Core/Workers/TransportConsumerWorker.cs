@@ -13,6 +13,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Generic background service that consumes messages from any ITransport implementation.
 /// Subscribes to configured destinations and dispatches received messages to IDispatcher.
+/// Uses both IReceptorInvoker (compile-time business receptors) and ILifecycleInvoker (runtime test receptors).
 /// </summary>
 /// <docs>components/workers/transport-consumer</docs>
 public class TransportConsumerWorker : BackgroundService {
@@ -21,8 +22,9 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly OrderedStreamProcessor _orderedProcessor;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IReceptorInvoker? _receptorInvoker;
+  private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILogger<TransportConsumerWorker> _logger;
   private readonly List<ISubscription> _subscriptions = [];
 
@@ -34,8 +36,9 @@ public class TransportConsumerWorker : BackgroundService {
   /// <param name="scopeFactory">Service scope factory for creating scoped services</param>
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
-  /// <param name="lifecycleInvoker">Optional lifecycle invoker for PreInbox and PostInbox stages</param>
-  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer</param>
+  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
+  /// <param name="receptorInvoker">Optional unified receptor invoker for compile-time business receptors</param>
+  /// <param name="lifecycleInvoker">Optional lifecycle invoker for runtime test/lifecycle receptors</param>
   /// <param name="logger">Logger instance</param>
   public TransportConsumerWorker(
     ITransport transport,
@@ -43,8 +46,9 @@ public class TransportConsumerWorker : BackgroundService {
     IServiceScopeFactory scopeFactory,
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
-    ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
+    IReceptorInvoker? receptorInvoker,
+    ILifecycleInvoker? lifecycleInvoker,
     ILogger<TransportConsumerWorker> logger
   ) {
     ArgumentNullException.ThrowIfNull(transport);
@@ -59,8 +63,9 @@ public class TransportConsumerWorker : BackgroundService {
     _scopeFactory = scopeFactory;
     _jsonOptions = jsonOptions;
     _orderedProcessor = orderedProcessor;
-    _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _receptorInvoker = receptorInvoker;
+    _lifecycleInvoker = lifecycleInvoker;
     _logger = logger;
   }
 
@@ -161,11 +166,16 @@ public class TransportConsumerWorker : BackgroundService {
         myWork.Count
       );
 
-      // 5. Invoke PreInbox lifecycle stages (before local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      // 5. Invoke PreInbox lifecycle stages (ALL receptors registered at PreInbox stages)
+      foreach (var work in myWork) {
+        object? message = null;
 
+        // Deserialize message if we have any invoker
+        if (_lifecycleMessageDeserializer is not null && (_receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+        }
+
+        if (message is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreInboxAsync,
             EventId = null,
@@ -175,10 +185,26 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          }
 
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          }
+
+          // PreInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          }
+
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          }
         }
       }
 
@@ -209,11 +235,17 @@ public class TransportConsumerWorker : BackgroundService {
         cancellationToken
       );
 
-      // 7. Invoke PostInbox lifecycle stages (after local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      // 7. Invoke PostInbox lifecycle stages (ALL receptors registered at PostInbox stages)
+      // This is where DEFAULT receptors (without [FireAt]) fire for the distributed receive path
+      foreach (var work in myWork) {
+        object? message = null;
 
+        // Deserialize message if we have any invoker
+        if (_lifecycleMessageDeserializer is not null && (_receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+        }
+
+        if (message is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostInboxAsync,
             EventId = null,
@@ -223,10 +255,26 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          }
 
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          }
+
+          // PostInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+
+          if (_receptorInvoker is not null) {
+            await _receptorInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          }
+
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          }
         }
       }
 

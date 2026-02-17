@@ -322,4 +322,58 @@ public class DispatcherSnippets {
 
   // Placeholder field to allow snippets to compile (used by lifecycle routing)
   protected IServiceProvider _serviceProvider => null!;
+
+  /// <summary>
+  /// Example method showing snippet structure for receptor registry routing.
+  /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
+  /// Used for async receptors with response.
+  /// The delegate accepts a scoped IServiceProvider to resolve receptors with scoped dependencies.
+  /// </summary>
+  protected IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> ReceptorRegistryRoutingExample(
+      Type messageType,
+      LifecycleStage stage) {
+    #region RECEPTOR_REGISTRY_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
+      return new global::Whizbang.Core.Messaging.ReceptorInfo[] {
+        new global::Whizbang.Core.Messaging.ReceptorInfo(
+          MessageType: typeof(__MESSAGE_TYPE__),
+          ReceptorId: "__RECEPTOR_CLASS__",
+          InvokeAsync: async (sp, msg, ct) => {
+            var receptor = sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+            await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
+          }
+        )
+      };
+    }
+    #endregion
+
+    return Array.Empty<global::Whizbang.Core.Messaging.ReceptorInfo>();
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for receptor registry routing.
+  /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
+  /// Used for void async receptors.
+  /// The delegate accepts a scoped IServiceProvider to resolve receptors with scoped dependencies.
+  /// </summary>
+  protected IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> ReceptorRegistryVoidRoutingExample(
+      Type messageType,
+      LifecycleStage stage) {
+    #region RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
+      return new global::Whizbang.Core.Messaging.ReceptorInfo[] {
+        new global::Whizbang.Core.Messaging.ReceptorInfo(
+          MessageType: typeof(__MESSAGE_TYPE__),
+          ReceptorId: "__RECEPTOR_CLASS__",
+          InvokeAsync: async (sp, msg, ct) => {
+            var receptor = sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+            await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
+          }
+        )
+      };
+    }
+    #endregion
+
+    return Array.Empty<global::Whizbang.Core.Messaging.ReceptorInfo>();
+  }
 }

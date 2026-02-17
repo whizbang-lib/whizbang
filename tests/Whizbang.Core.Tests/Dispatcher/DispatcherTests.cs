@@ -771,14 +771,18 @@ public class DispatcherTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+  public async Task LocalInvokeAsync_WithReceptorInvoker_DoesNotDoubleInvokeReceptorAsync() {
     // Arrange
+    // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
+    // because the dispatcher already invokes receptors directly via generated delegates.
+    // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
+    // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
-    var lifecycleInvoker = new MockLifecycleInvoker();
-    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var receptorInvoker = new MockReceptorInvoker();
+    services.AddSingleton<IReceptorInvoker>(receptorInvoker);
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
     services.AddWhizbangDispatcher();
@@ -790,22 +794,23 @@ public class DispatcherTests {
     // Act
     var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command);
 
-    // Assert - Lifecycle was invoked
+    // Assert - Dispatcher does NOT call IReceptorInvoker (to avoid double invocation)
     await Assert.That(result).IsNotNull();
-    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
-    await Assert.That(lifecycleInvoker.LastStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(receptorInvoker.InvokeCount).IsEqualTo(0);
   }
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+  public async Task SendAsync_WithReceptorInvoker_DoesNotDoubleInvokeReceptorAsync() {
     // Arrange
+    // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
+    // because the dispatcher already invokes receptors directly via generated delegates.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
-    var lifecycleInvoker = new MockLifecycleInvoker();
-    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var receptorInvoker = new MockReceptorInvoker();
+    services.AddSingleton<IReceptorInvoker>(receptorInvoker);
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
     services.AddWhizbangDispatcher();
@@ -817,9 +822,9 @@ public class DispatcherTests {
     // Act
     var receipt = await dispatcher.SendAsync(command);
 
-    // Assert - Lifecycle was invoked
+    // Assert - Dispatcher does NOT call IReceptorInvoker (to avoid double invocation)
     await Assert.That(receipt).IsNotNull();
-    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(receptorInvoker.InvokeCount).IsEqualTo(0);
   }
 
   // ========================================
@@ -1010,8 +1015,8 @@ public class DispatcherTests {
       .Throws<OperationCanceledException>();
   }
 
-  // Mock lifecycle invoker for testing
-  private sealed class MockLifecycleInvoker : ILifecycleInvoker {
+  // Mock receptor invoker for testing
+  private sealed class MockReceptorInvoker : IReceptorInvoker {
     public int InvokeCount { get; private set; }
     public LifecycleStage? LastStage { get; private set; }
 

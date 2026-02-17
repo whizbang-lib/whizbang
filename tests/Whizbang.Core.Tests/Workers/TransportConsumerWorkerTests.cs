@@ -42,8 +42,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -81,8 +82,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -128,8 +130,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -173,8 +176,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -219,8 +223,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -266,8 +271,9 @@ public class TransportConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      receptorInvoker: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 

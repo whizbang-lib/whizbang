@@ -158,6 +158,20 @@ public static class TransportConsumerBuilderExtensions {
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
 
+    // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
+    // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
+    builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
+      // Try to get the generated registry (if AddWhizbangReceptorRegistry was called)
+      var registry = sp.GetService<IReceptorRegistry>();
+      if (registry is not null) {
+        var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+        return new ReceptorInvoker(registry, scopeFactory);
+      }
+
+      // Fallback: return a no-op invoker if no registry is available
+      return new NullReceptorInvoker();
+    });
+
     // Register TransportConsumerWorker as hosted service
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
@@ -238,6 +252,20 @@ public static class TransportConsumerBuilderExtensions {
 
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
+
+    // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
+    // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
+    builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
+      // Try to get the generated registry (if AddWhizbangReceptorRegistry was called)
+      var registry = sp.GetService<IReceptorRegistry>();
+      if (registry is not null) {
+        var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+        return new ReceptorInvoker(registry, scopeFactory);
+      }
+
+      // Fallback: return a no-op invoker if no registry is available
+      return new NullReceptorInvoker();
+    });
 
     // Register TransportConsumerWorker as hosted service
     builder.Services.AddHostedService<TransportConsumerWorker>();
