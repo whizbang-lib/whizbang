@@ -67,8 +67,10 @@ public static class SubscriptionRetryHelper {
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
-        if (attempt > 1) {
-          _logSubscriptionEstablished(logger, destination.Address, attempt);
+        if (attempt == 1) {
+          _logSubscriptionSuccess(logger, destination.Address, destination.RoutingKey);
+        } else {
+          _logSubscriptionEstablished(logger, destination.Address, destination.RoutingKey, attempt);
         }
 
         return; // Success!
@@ -97,10 +99,19 @@ public static class SubscriptionRetryHelper {
 
   #region Logging
 
-  private static void _logSubscriptionEstablished(ILogger logger, string destination, int attempt) {
+  private static void _logSubscriptionSuccess(ILogger logger, string destination, string? routingKey) {
     logger.LogInformation(
-      "Subscription to {Destination} established after {Attempt} attempts",
+      "✓ Subscribed to {Destination} (routing key: {RoutingKey})",
       destination,
+      routingKey ?? "#"
+    );
+  }
+
+  private static void _logSubscriptionEstablished(ILogger logger, string destination, string? routingKey, int attempt) {
+    logger.LogInformation(
+      "✓ Subscribed to {Destination} (routing key: {RoutingKey}) after {Attempt} attempts",
+      destination,
+      routingKey ?? "#",
       attempt
     );
   }

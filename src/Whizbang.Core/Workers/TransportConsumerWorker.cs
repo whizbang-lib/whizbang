@@ -111,7 +111,16 @@ public class TransportConsumerWorker : BackgroundService {
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation("TransportConsumerWorker starting");
+    _logger.LogInformation("TransportConsumerWorker starting with {DestinationCount} destinations", _options.Destinations.Count);
+
+    // Log all destinations we're going to subscribe to
+    foreach (var destination in _options.Destinations) {
+      _logger.LogInformation(
+        "  → Destination: {Address} (routing key: {RoutingKey})",
+        destination.Address,
+        destination.RoutingKey ?? "#"
+      );
+    }
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
