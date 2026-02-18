@@ -30,6 +30,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
   /// 3. Adds composite PK and FK constraints
   /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch)
+  /// 5. Registers perspective associations (populates wh_message_associations for event routing)
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
@@ -54,6 +55,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
     logger?.LogInformation("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
     await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+
+    // Step 5: Register perspective associations (populates wh_message_associations for event routing)
+    logger?.LogInformation("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
+    #region REGISTER_ASSOCIATIONS
+    #endregion
 
     logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
   }

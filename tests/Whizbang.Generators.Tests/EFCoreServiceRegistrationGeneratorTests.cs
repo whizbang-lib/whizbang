@@ -1215,4 +1215,167 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   #endregion
+
+  #region Step 5 - Register Perspective Associations Tests
+
+  /// <summary>
+  /// Test that schema extensions include Step 5 comment indicating perspective association registration.
+  /// Step 5 registers perspective→event type mappings in wh_message_associations table.
+  /// This enables process_work_batch Phase 4.6 to create perspective events.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {
+    // Arrange - source with DbContext and a perspective
+    var source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+        public TestModel Apply(TestModel current, TestEvent e) => current;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources
+      .FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+
+    // Assert - Step 5 should be present and call RegisterPerspectiveAssociationsAsync
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should have Step 5 comment
+    await Assert.That(sourceText).Contains("Step 5");
+
+    // Should call RegisterPerspectiveAssociationsAsync
+    await Assert.That(sourceText).Contains("RegisterPerspectiveAssociationsAsync");
+  }
+
+  /// <summary>
+  /// Test that schema extensions contain all 5 initialization steps in order.
+  /// Steps: 1) Core infrastructure, 2) Perspective tables, 3) Constraints, 4) Migrations, 5) Perspective associations.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_ContainsAllFiveStepsAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources
+      .FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+
+    // Assert - All 5 steps should be present
+    await Assert.That(schemaExtensions).IsNotNull();
+    var code = schemaExtensions!.SourceText.ToString();
+
+    // Verify all steps exist
+    await Assert.That(code).Contains("Step 1"); // Core infrastructure
+    await Assert.That(code).Contains("Step 2"); // Perspective tables
+    await Assert.That(code).Contains("Step 3"); // Constraints
+    await Assert.That(code).Contains("Step 4"); // Migrations
+    await Assert.That(code).Contains("Step 5"); // Perspective associations
+  }
+
+  /// <summary>
+  /// Test that Step 5 calls RegisterPerspectiveAssociationsAsync with correct parameters.
+  /// The generated code uses extension method pattern with schema and assembly name parameters.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_Step5UsesExtensionMethodPatternAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources
+      .FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+
+    // Assert - Should use extension method pattern
+    await Assert.That(schemaExtensions).IsNotNull();
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // The generated code should call dbContext.RegisterPerspectiveAssociationsAsync(...)
+    await Assert.That(sourceText).Contains("await dbContext.RegisterPerspectiveAssociationsAsync(");
+  }
+
+  /// <summary>
+  /// Test that Step 5 is called AFTER Step 4 (migrations).
+  /// The order matters because associations should only be registered after the
+  /// wh_message_associations table and register_message_associations function are created.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_Step5ComesAfterStep4Async() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+    var schemaExtensions = result.GeneratedSources
+      .FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+
+    // Assert - Step 5 must come after Step 4
+    await Assert.That(schemaExtensions).IsNotNull();
+    var code = schemaExtensions!.SourceText.ToString();
+
+    // Find positions
+    var step4Index = code.IndexOf("Step 4", StringComparison.Ordinal);
+    var step5Index = code.IndexOf("Step 5", StringComparison.Ordinal);
+
+    await Assert.That(step4Index).IsGreaterThan(-1);
+    await Assert.That(step5Index).IsGreaterThan(-1);
+    await Assert.That(step5Index).IsGreaterThan(step4Index);
+  }
+
+  #endregion
 }
