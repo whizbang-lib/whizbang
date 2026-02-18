@@ -2,8 +2,11 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
@@ -12,13 +15,26 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Generic background service that consumes messages from any ITransport implementation.
-/// Subscribes to configured destinations and dispatches received messages to IDispatcher.
+/// Subscribes to configured destinations with built-in resilience (retry with exponential backoff).
 /// Uses both IReceptorInvoker (compile-time business receptors) and ILifecycleInvoker (runtime test receptors).
 /// </summary>
+/// <remarks>
+/// <para>
+/// Resilience features:
+/// <list type="bullet">
+/// <item>Exponential backoff retry for failed subscriptions</item>
+/// <item>Per-destination state tracking</item>
+/// <item>Connection recovery handling via <see cref="ITransportWithRecovery"/></item>
+/// <item>Health monitoring for failed subscriptions</item>
+/// </list>
+/// </para>
+/// </remarks>
 /// <docs>components/workers/transport-consumer</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 public class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
+  private readonly SubscriptionResilienceOptions _resilienceOptions;
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly OrderedStreamProcessor _orderedProcessor;
@@ -26,13 +42,16 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly IReceptorInvoker? _receptorInvoker;
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILogger<TransportConsumerWorker> _logger;
-  private readonly List<ISubscription> _subscriptions = [];
+
+  private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
+  private CancellationTokenSource? _linkedCts;
 
   /// <summary>
   /// Initializes a new instance of TransportConsumerWorker.
   /// </summary>
   /// <param name="transport">The transport to consume messages from</param>
   /// <param name="options">Configuration options specifying destinations</param>
+  /// <param name="resilienceOptions">Resilience options for subscription retry behavior</param>
   /// <param name="scopeFactory">Service scope factory for creating scoped services</param>
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
@@ -43,6 +62,7 @@ public class TransportConsumerWorker : BackgroundService {
   public TransportConsumerWorker(
     ITransport transport,
     TransportConsumerOptions options,
+    SubscriptionResilienceOptions resilienceOptions,
     IServiceScopeFactory scopeFactory,
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
@@ -53,6 +73,7 @@ public class TransportConsumerWorker : BackgroundService {
   ) {
     ArgumentNullException.ThrowIfNull(transport);
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(resilienceOptions);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(jsonOptions);
     ArgumentNullException.ThrowIfNull(orderedProcessor);
@@ -60,6 +81,7 @@ public class TransportConsumerWorker : BackgroundService {
 
     _transport = transport;
     _options = options;
+    _resilienceOptions = resilienceOptions;
     _scopeFactory = scopeFactory;
     _jsonOptions = jsonOptions;
     _orderedProcessor = orderedProcessor;
@@ -67,7 +89,22 @@ public class TransportConsumerWorker : BackgroundService {
     _receptorInvoker = receptorInvoker;
     _lifecycleInvoker = lifecycleInvoker;
     _logger = logger;
+
+    // Initialize state for each destination
+    foreach (var destination in _options.Destinations) {
+      _states[destination] = new SubscriptionState(destination);
+    }
+
+    // Register recovery handler if transport supports it
+    if (_transport is ITransportWithRecovery recoveryTransport) {
+      recoveryTransport.SetRecoveryHandler(_onConnectionRecoveredAsync);
+    }
   }
+
+  /// <summary>
+  /// Gets the current subscription states for health monitoring.
+  /// </summary>
+  public IReadOnlyDictionary<TransportDestination, SubscriptionState> SubscriptionStates => _states;
 
   /// <summary>
   /// Executes the worker, creating subscriptions for all configured destinations.
@@ -75,6 +112,8 @@ public class TransportConsumerWorker : BackgroundService {
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation("TransportConsumerWorker starting");
+
+    _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
     // Wait for transport readiness if readiness check is configured
     using (var scope = _scopeFactory.CreateScope()) {
@@ -88,35 +127,140 @@ public class TransportConsumerWorker : BackgroundService {
         }
         _logger.LogInformation("Transport is ready");
       }
+
+      // Provision infrastructure for owned domains before creating subscriptions
+      var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
+      var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
+      if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
+        _logger.LogInformation(
+          "Provisioning infrastructure for {Count} owned domains",
+          routingOptions.OwnedDomains.Count);
+
+        await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
+
+        _logger.LogInformation("Infrastructure provisioning completed");
+      }
     }
 
-    // Subscribe to each destination
-    foreach (var destination in _options.Destinations) {
-      _logger.LogInformation(
-        "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
-        destination.Address,
-        destination.RoutingKey
-      );
+    // Subscribe to all destinations with retry
+    await _subscribeToAllDestinationsAsync(stoppingToken);
 
-      var subscription = await _transport.SubscribeAsync(
-        async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
-        destination,
-        stoppingToken
-      );
-
-      _subscriptions.Add(subscription);
-    }
+    var healthyCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Healthy);
+    var failedCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Failed);
 
     _logger.LogInformation(
-      "TransportConsumerWorker started with {Count} subscriptions",
-      _subscriptions.Count
+      "TransportConsumerWorker started with {HealthyCount} healthy, {FailedCount} failed subscriptions",
+      healthyCount,
+      failedCount
     );
+
+    // Start health monitor in background
+    _ = _monitorSubscriptionHealthAsync(_linkedCts.Token);
 
     // Keep running until cancellation is requested
     try {
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
       _logger.LogInformation("TransportConsumerWorker cancellation requested");
+    }
+  }
+
+  /// <summary>
+  /// Subscribes to all destinations with retry logic.
+  /// </summary>
+  private async Task _subscribeToAllDestinationsAsync(CancellationToken cancellationToken) {
+    var tasks = _states.Values.Select(state =>
+      _subscribeWithRetryAsync(state, cancellationToken)
+    );
+
+    if (_resilienceOptions.AllowPartialSubscriptions) {
+      // Allow partial failures - wait for all tasks
+      await Task.WhenAll(tasks);
+    } else {
+      // All must succeed - throw on first failure
+      foreach (var task in tasks) {
+        await task;
+        var completedState = _states.Values.FirstOrDefault(s => s.Status == SubscriptionStatus.Failed);
+        if (completedState != null) {
+          throw new InvalidOperationException(
+            $"Subscription to {completedState.Destination.Address} failed and AllowPartialSubscriptions=false"
+          );
+        }
+      }
+    }
+  }
+
+  /// <summary>
+  /// Subscribes to a single destination with retry logic.
+  /// </summary>
+  private async Task _subscribeWithRetryAsync(SubscriptionState state, CancellationToken cancellationToken) {
+    _logger.LogInformation(
+      "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
+      state.Destination.Address,
+      state.Destination.RoutingKey
+    );
+
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      _transport,
+      state.Destination,
+      async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
+      state,
+      _resilienceOptions,
+      _logger,
+      cancellationToken
+    );
+  }
+
+  /// <summary>
+  /// Handles connection recovery by re-establishing all subscriptions.
+  /// </summary>
+  private async Task _onConnectionRecoveredAsync(CancellationToken cancellationToken) {
+    _logger.LogInformation("Connection recovered, re-establishing subscriptions...");
+
+    // Reset all states to Pending
+    foreach (var state in _states.Values) {
+      state.Subscription?.Dispose();
+      state.Subscription = null;
+      state.Status = SubscriptionStatus.Pending;
+      state.ResetAttempts();
+    }
+
+    // Re-subscribe to all destinations
+    await _subscribeToAllDestinationsAsync(cancellationToken);
+
+    _logger.LogInformation("Subscription re-establishment completed");
+  }
+
+  /// <summary>
+  /// Background task that monitors subscription health and attempts recovery.
+  /// </summary>
+  private async Task _monitorSubscriptionHealthAsync(CancellationToken cancellationToken) {
+    while (!cancellationToken.IsCancellationRequested) {
+      try {
+        await Task.Delay(_resilienceOptions.HealthCheckInterval, cancellationToken);
+
+        var failedStates = _states.Values
+          .Where(s => s.Status == SubscriptionStatus.Failed)
+          .ToList();
+
+        if (failedStates.Count > 0) {
+          _logger.LogInformation(
+            "Health monitor: attempting to recover {Count} failed subscriptions",
+            failedStates.Count
+          );
+
+          foreach (var state in failedStates) {
+            // Reset and retry in background
+            state.Status = SubscriptionStatus.Pending;
+            state.ResetAttempts();
+            _ = _subscribeWithRetryAsync(state, cancellationToken);
+          }
+        }
+      } catch (OperationCanceledException) {
+        break;
+      } catch (Exception ex) {
+        _logger.LogError(ex, "Error in subscription health monitor");
+      }
     }
   }
 
@@ -425,8 +569,10 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
-    foreach (var subscription in _subscriptions) {
-      await subscription.PauseAsync();
+    foreach (var state in _states.Values) {
+      if (state.Subscription != null) {
+        await state.Subscription.PauseAsync();
+      }
     }
 
     _logger.LogInformation("All subscriptions paused");
@@ -439,8 +585,10 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
-    foreach (var subscription in _subscriptions) {
-      await subscription.ResumeAsync();
+    foreach (var state in _states.Values) {
+      if (state.Subscription != null) {
+        await state.Subscription.ResumeAsync();
+      }
     }
 
     _logger.LogInformation("All subscriptions resumed");
@@ -453,12 +601,14 @@ public class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
+    _linkedCts?.Cancel();
+
     // Dispose all subscriptions
-    foreach (var subscription in _subscriptions) {
-      subscription.Dispose();
+    foreach (var state in _states.Values) {
+      state.Subscription?.Dispose();
     }
 
-    _subscriptions.Clear();
+    _states.Clear();
 
     _logger.LogInformation("TransportConsumerWorker stopped");
 

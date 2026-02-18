@@ -16,6 +16,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -339,6 +340,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
         consumerOptions,
+        new SubscriptionResilienceOptions(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
@@ -499,6 +501,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
         consumerOptions,
+        new SubscriptionResilienceOptions(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),

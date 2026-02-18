@@ -177,10 +177,10 @@ public class TransportConsumerBuilderExtensionsTests {
       routing.OwnDomains("myapp.orders.commands");
     });
 
-    // Act
+    // Act - TransportConsumerWorker always has resilience built-in
     builder.AddTransportConsumer();
 
-    // Assert
+    // Assert - TransportConsumerWorker is always registered (with built-in resilience)
     var hostedServiceDescriptor = services.FirstOrDefault(
         d => d.ServiceType == typeof(IHostedService) &&
              d.ImplementationType == typeof(TransportConsumerWorker));
@@ -345,7 +345,7 @@ public class TransportConsumerBuilderExtensionsTests {
     builder.AddTransportConsumer();
     builder.AddTransportConsumer();
 
-    // Assert - Should only have one IHostedService registration for TransportConsumerWorker
+    // Assert - Should have hosted service registrations
     var hostedServiceCount = services.Count(
         d => d.ServiceType == typeof(IHostedService) &&
              d.ImplementationType == typeof(TransportConsumerWorker));
@@ -458,10 +458,10 @@ public class TransportConsumerBuilderExtensionsTests {
 
     var perspectiveBuilder = new WhizbangPerspectiveBuilder(services);
 
-    // Act
+    // Act - TransportConsumerWorker always has resilience built-in
     perspectiveBuilder.AddTransportConsumer();
 
-    // Assert
+    // Assert - Should register TransportConsumerWorker (with built-in resilience)
     var hostedServiceDescriptor = services.FirstOrDefault(
         d => d.ServiceType == typeof(IHostedService) &&
              d.ImplementationType == typeof(TransportConsumerWorker));

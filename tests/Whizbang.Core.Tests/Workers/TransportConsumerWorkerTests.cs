@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -39,6 +40,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -79,6 +81,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -127,6 +130,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -173,6 +177,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -220,6 +225,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -268,6 +274,7 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
@@ -480,6 +487,9 @@ internal class FakeDispatcher : IDispatcher {
 
   public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
     throw new NotImplementedException();
+
+  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 }
 
 internal class FakeDeliveryReceipt : IDeliveryReceipt {

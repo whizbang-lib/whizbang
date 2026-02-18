@@ -2,9 +2,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.HealthChecks;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 
@@ -31,6 +33,13 @@ public sealed class TransportConsumerConfiguration {
   /// </list>
   /// </remarks>
   public List<TransportDestination> AdditionalDestinations { get; } = [];
+
+  /// <summary>
+  /// Gets the resilience options for subscription retry behavior.
+  /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
+  /// </summary>
+  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
 /// <summary>
@@ -114,8 +123,12 @@ public static class TransportConsumerBuilderExtensions {
     var config = new TransportConsumerConfiguration();
     configure?.Invoke(config);
 
-    // Capture additional destinations in closure for the factory
+    // Capture configuration in closures for factory patterns
     var additionalDestinations = config.AdditionalDestinations.ToList();
+    var resilienceOptions = config.ResilienceOptions;
+
+    // Register SubscriptionResilienceOptions as singleton
+    builder.Services.AddSingleton(resilienceOptions);
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
     // The factory resolves dependencies at runtime and populates destinations
@@ -158,6 +171,11 @@ public static class TransportConsumerBuilderExtensions {
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
 
+    // Register IEventCascader for cascading messages returned from receptors
+    // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
+    // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
+    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
+
     // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
     builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
@@ -165,15 +183,29 @@ public static class TransportConsumerBuilderExtensions {
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
         var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-        return new ReceptorInvoker(registry, scopeFactory);
+        var eventCascader = sp.GetService<IEventCascader>();
+        return new ReceptorInvoker(registry, scopeFactory, eventCascader);
       }
 
       // Fallback: return a no-op invoker if no registry is available
       return new NullReceptorInvoker();
     });
 
-    // Register TransportConsumerWorker as hosted service
+    // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
+
+    // Register health check for subscription monitoring
+    builder.Services.AddHealthChecks()
+      .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
+        "subscriptions",
+        sp => {
+          var worker = sp.GetService<TransportConsumerWorker>();
+          var states = worker?.SubscriptionStates
+            ?? new Dictionary<TransportDestination, SubscriptionState>();
+          return new SubscriptionHealthCheck(states);
+        },
+        failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
+        tags: ["transport", "subscriptions"]));
 
     return builder;
   }
@@ -210,8 +242,12 @@ public static class TransportConsumerBuilderExtensions {
     var config = new TransportConsumerConfiguration();
     configure?.Invoke(config);
 
-    // Capture additional destinations in closure for the factory
+    // Capture configuration in closures for factory patterns
     var additionalDestinations = config.AdditionalDestinations.ToList();
+    var resilienceOptions = config.ResilienceOptions;
+
+    // Register SubscriptionResilienceOptions as singleton
+    builder.Services.AddSingleton(resilienceOptions);
 
     // Register TransportConsumerOptions as singleton using factory pattern (AOT-safe)
     builder.Services.AddSingleton<TransportConsumerOptions>(sp => {
@@ -253,6 +289,11 @@ public static class TransportConsumerBuilderExtensions {
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
 
+    // Register IEventCascader for cascading messages returned from receptors
+    // Uses IServiceProvider to lazily resolve IDispatcher (avoids circular dependency:
+    // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
+    builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
+
     // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
     builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
@@ -260,15 +301,29 @@ public static class TransportConsumerBuilderExtensions {
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
         var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-        return new ReceptorInvoker(registry, scopeFactory);
+        var eventCascader = sp.GetService<IEventCascader>();
+        return new ReceptorInvoker(registry, scopeFactory, eventCascader);
       }
 
       // Fallback: return a no-op invoker if no registry is available
       return new NullReceptorInvoker();
     });
 
-    // Register TransportConsumerWorker as hosted service
+    // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
+
+    // Register health check for subscription monitoring
+    builder.Services.AddHealthChecks()
+      .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
+        "subscriptions",
+        sp => {
+          var worker = sp.GetService<TransportConsumerWorker>();
+          var states = worker?.SubscriptionStates
+            ?? new Dictionary<TransportDestination, SubscriptionState>();
+          return new SubscriptionHealthCheck(states);
+        },
+        failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
+        tags: ["transport", "subscriptions"]));
 
     return builder;
   }
