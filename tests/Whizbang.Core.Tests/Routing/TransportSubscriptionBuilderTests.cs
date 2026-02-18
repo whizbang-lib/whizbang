@@ -40,11 +40,11 @@ public class TransportSubscriptionBuilderTests {
 
   [Test]
   public async Task BuildDestinations_WithNoEvents_ReturnsOnlyInboxAsync() {
-    // Arrange
+    // Arrange - use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("myapp.orders.commands");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
         Options.Create(routingOptions),
         discovery,
@@ -152,11 +152,11 @@ public class TransportSubscriptionBuilderTests {
 
   [Test]
   public async Task BuildEventDestinations_WithManualSubscriptions_IncludesThemAsync() {
-    // Arrange
+    // Arrange - use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.SubscribeTo("myapp.payments.events");
 
-    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
+    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
         Options.Create(routingOptions),
         discovery,
@@ -309,6 +309,9 @@ public class TransportSubscriptionBuilderTests {
     public TestEventNamespaceRegistry(IEnumerable<string> namespaces) {
       _namespaces = new HashSet<string>(namespaces, StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>Creates an empty registry (no auto-discovered namespaces).</summary>
+    public static TestEventNamespaceRegistry Empty => new([]);
 
     public IReadOnlySet<string> GetPerspectiveEventNamespaces() => _namespaces;
     public IReadOnlySet<string> GetReceptorEventNamespaces() => new HashSet<string>();
