@@ -16,12 +16,13 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </summary>
 /// <docs>components/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
-public class RabbitMQTransport : ITransport, IAsyncDisposable {
+public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
+  private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
 
@@ -50,6 +51,29 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     _channelPool = channelPool;
     _options = options;
     _logger = logger;
+
+    // Hook into connection recovery event to notify subscribers
+    _connection.RecoverySucceededAsync += _onConnectionRecoverySucceededAsync;
+  }
+
+  /// <inheritdoc />
+  public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
+    _recoveryHandler = onRecovered;
+  }
+
+  /// <summary>
+  /// Handles RabbitMQ connection recovery event by invoking the recovery handler.
+  /// </summary>
+  private async Task _onConnectionRecoverySucceededAsync(object sender, AsyncEventArgs args) {
+    _logger?.LogInformation("RabbitMQ connection recovered, invoking recovery handler");
+
+    if (_recoveryHandler != null) {
+      try {
+        await _recoveryHandler(CancellationToken.None);
+      } catch (Exception ex) {
+        _logger?.LogError(ex, "Error in recovery handler after connection recovery");
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -596,6 +620,10 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     }
 
     _disposed = true;
+
+    // Unhook recovery event to prevent memory leak
+    _connection.RecoverySucceededAsync -= _onConnectionRecoverySucceededAsync;
+    _recoveryHandler = null;
 
     // Dispose channel pool
     _channelPool.Dispose();

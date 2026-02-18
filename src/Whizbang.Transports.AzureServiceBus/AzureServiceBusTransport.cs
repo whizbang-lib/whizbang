@@ -14,7 +14,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <tests>No tests found</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
-public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
+public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly ServiceBusAdministrationClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
@@ -23,6 +23,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly bool _isEmulator;
+  private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
 
@@ -66,6 +67,39 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     activity?.SetTag("transport.emulator", _isEmulator);
     activity?.SetTag("transport.admin_client_available", false);
     activity?.SetTag("transport.shared_client", true);
+  }
+
+  /// <inheritdoc />
+  public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
+    _recoveryHandler = onRecovered;
+  }
+
+  /// <summary>
+  /// Determines if a Service Bus exception indicates a connection-level error
+  /// that warrants triggering subscription recovery.
+  /// </summary>
+  private static bool _isConnectionError(Exception ex) {
+    if (ex is ServiceBusException sbEx) {
+      return sbEx.Reason is
+        ServiceBusFailureReason.ServiceCommunicationProblem or
+        ServiceBusFailureReason.ServiceBusy or
+        ServiceBusFailureReason.ServiceTimeout;
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Invokes the recovery handler if set and appropriate.
+  /// </summary>
+  private async Task _invokeRecoveryHandlerAsync() {
+    if (_recoveryHandler != null) {
+      try {
+        _logger.LogInformation("Azure Service Bus connection recovered, invoking recovery handler");
+        await _recoveryHandler(CancellationToken.None);
+      } catch (Exception ex) {
+        _logger.LogError(ex, "Error in recovery handler after Service Bus connection recovery");
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -418,7 +452,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       };
 
       // Configure error handler
-      processor.ProcessErrorAsync += args => {
+      processor.ProcessErrorAsync += async args => {
         Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessErrorAsync invoked! ErrorSource={args.ErrorSource}, Exception={args.Exception.Message}");
         _logger.LogError(
           args.Exception,
@@ -427,7 +461,15 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
           destination.RoutingKey ?? _options.DefaultSubscriptionName,
           args.ErrorSource
         );
-        return Task.CompletedTask;
+
+        // If this is a connection-level error, trigger recovery handler
+        if (_isConnectionError(args.Exception)) {
+          _logger.LogWarning(
+            "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
+            (args.Exception as ServiceBusException)?.Reason
+          );
+          await _invokeRecoveryHandlerAsync();
+        }
       };
 
       // Start processing
@@ -608,6 +650,9 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     }
 
     _disposed = true;
+
+    // Clear recovery handler to prevent memory leak
+    _recoveryHandler = null;
 
     // Dispose all senders
     foreach (var sender in _senders.Values) {
