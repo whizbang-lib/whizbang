@@ -146,6 +146,107 @@ public class EventSubscriptionDiscoveryTests {
     await Assert.That(namespaces.Count).IsEqualTo(0);
   }
 
+  [Test]
+  public async Task DiscoverEventNamespaces_ExcludesOwnedDomainsExactMatchAsync() {
+    // Arrange - BFF service owns "jdx.contracts.bff", shouldn't subscribe to its own events
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("jdx.contracts.bff");
+    routingOptions.SubscribeTo("jdx.contracts.bff", "jdx.contracts.auth");
+    var options = Options.Create(routingOptions);
+    var discovery = new EventSubscriptionDiscovery(options);
+
+    // Act
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    // Assert - should only contain auth, not bff (owned)
+    await Assert.That(namespaces.Count).IsEqualTo(1);
+    await Assert.That(namespaces.Contains("jdx.contracts.auth")).IsTrue();
+    await Assert.That(namespaces.Contains("jdx.contracts.bff")).IsFalse();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync() {
+    // Arrange - BFF owns "jdx.contracts.bff", shouldn't subscribe to child namespaces
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("jdx.contracts.bff");
+    var options = Options.Create(routingOptions);
+
+    var registry = TestEventNamespaceRegistry.Create(
+        perspectiveNamespaces: "jdx.contracts.bff.events",  // Child of owned domain
+        receptorNamespaces: "jdx.contracts.auth.events"     // Not owned
+    );
+
+    var discovery = new EventSubscriptionDiscovery(options, registry);
+
+    // Act
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    // Assert - should only contain auth events, not bff.events (child of owned)
+    await Assert.That(namespaces.Count).IsEqualTo(1);
+    await Assert.That(namespaces.Contains("jdx.contracts.auth.events")).IsTrue();
+    await Assert.That(namespaces.Contains("jdx.contracts.bff.events")).IsFalse();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_OwnedDomainWithTrailingDotAsync() {
+    // Arrange - owned domain already has trailing dot
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("jdx.contracts.bff.");
+    routingOptions.SubscribeTo("jdx.contracts.bff.events", "jdx.contracts.user.events");
+    var options = Options.Create(routingOptions);
+    var discovery = new EventSubscriptionDiscovery(options);
+
+    // Act
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    // Assert - should exclude bff.events even with trailing dot
+    await Assert.That(namespaces.Count).IsEqualTo(1);
+    await Assert.That(namespaces.Contains("jdx.contracts.user.events")).IsTrue();
+    await Assert.That(namespaces.Contains("jdx.contracts.bff.events")).IsFalse();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_MultipleOwnedDomainsAsync() {
+    // Arrange - service owns multiple domains
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("jdx.contracts.bff", "jdx.contracts.admin");
+    var options = Options.Create(routingOptions);
+
+    var registry = TestEventNamespaceRegistry.Create(
+        perspectiveNamespaces: "jdx.contracts.bff.events",
+        receptorNamespaces: "jdx.contracts.admin.events"
+    );
+    routingOptions.SubscribeTo("jdx.contracts.user.events");
+
+    var discovery = new EventSubscriptionDiscovery(options, registry);
+
+    // Act
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    // Assert - both owned domain children should be excluded
+    await Assert.That(namespaces.Count).IsEqualTo(1);
+    await Assert.That(namespaces.Contains("jdx.contracts.user.events")).IsTrue();
+    await Assert.That(namespaces.Contains("jdx.contracts.bff.events")).IsFalse();
+    await Assert.That(namespaces.Contains("jdx.contracts.admin.events")).IsFalse();
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_OwnedDomainCaseInsensitiveAsync() {
+    // Arrange - owned domain matching should be case-insensitive
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("JDX.Contracts.BFF");
+    routingOptions.SubscribeTo("jdx.contracts.bff.events", "jdx.contracts.auth.events");
+    var options = Options.Create(routingOptions);
+    var discovery = new EventSubscriptionDiscovery(options);
+
+    // Act
+    var namespaces = discovery.DiscoverEventNamespaces();
+
+    // Assert - should exclude bff.events despite case difference
+    await Assert.That(namespaces.Count).IsEqualTo(1);
+    await Assert.That(namespaces.Contains("jdx.contracts.auth.events")).IsTrue();
+  }
+
   #endregion
 
   #region GetAutoDiscoveredNamespaces Tests

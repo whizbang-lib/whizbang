@@ -37,8 +37,9 @@ public sealed class EventSubscriptionDiscovery {
 
   /// <summary>
   /// Discovers all event namespaces that this service should subscribe to.
+  /// Excludes namespaces that overlap with owned domains (this service publishes those, not subscribes).
   /// </summary>
-  /// <returns>Combined set of event namespaces from auto-discovery and manual configuration.</returns>
+  /// <returns>Combined set of event namespaces from auto-discovery and manual configuration, excluding owned namespaces.</returns>
   public IReadOnlySet<string> DiscoverEventNamespaces() {
     var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -52,6 +53,22 @@ public sealed class EventSubscriptionDiscovery {
     // Add manual subscriptions from RoutingOptions
     foreach (var ns in _routingOptions.SubscribedNamespaces) {
       namespaces.Add(ns);
+    }
+
+    // Remove namespaces that overlap with owned domains
+    // (this service publishes to those, it shouldn't subscribe to them)
+    foreach (var ownedDomain in _routingOptions.OwnedDomains) {
+      // Remove exact matches
+      namespaces.Remove(ownedDomain);
+
+      // Remove namespaces that are children of owned domains
+      // e.g., if owned is "jdx.contracts.bff", remove "jdx.contracts.bff.events"
+      var ownedPrefix = ownedDomain.EndsWith('.')
+        ? ownedDomain
+        : ownedDomain + ".";
+
+      namespaces.RemoveWhere(ns =>
+        ns.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase));
     }
 
     return namespaces;
