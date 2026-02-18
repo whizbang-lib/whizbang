@@ -51,12 +51,13 @@ public class EventSubscriptionDiscoveryTests {
   #region DiscoverEventNamespaces Tests
 
   [Test]
-  public async Task DiscoverEventNamespaces_WithNoRegistry_ReturnsManualSubscriptionsOnlyAsync() {
-    // Arrange
+  public async Task DiscoverEventNamespaces_WithEmptyRegistry_ReturnsManualSubscriptionsOnlyAsync() {
+    // Arrange - use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.SubscribeTo("myapp.orders.events", "myapp.payments.events");
     var options = Options.Create(routingOptions);
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -134,10 +135,11 @@ public class EventSubscriptionDiscoveryTests {
   }
 
   [Test]
-  public async Task DiscoverEventNamespaces_WithEmptyOptions_ReturnsEmptySetAsync() {
-    // Arrange
+  public async Task DiscoverEventNamespaces_WithEmptyOptionsAndRegistry_ReturnsEmptySetAsync() {
+    // Arrange - use empty registry to isolate from static EventNamespaceRegistry
     var options = Options.Create(new RoutingOptions());
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -149,11 +151,13 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task DiscoverEventNamespaces_ExcludesOwnedDomainsExactMatchAsync() {
     // Arrange - BFF service owns "jdx.contracts.bff", shouldn't subscribe to its own events
+    // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("jdx.contracts.bff");
     routingOptions.SubscribeTo("jdx.contracts.bff", "jdx.contracts.auth");
     var options = Options.Create(routingOptions);
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -190,11 +194,13 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task DiscoverEventNamespaces_OwnedDomainWithTrailingDotAsync() {
     // Arrange - owned domain already has trailing dot
+    // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("jdx.contracts.bff.");
     routingOptions.SubscribeTo("jdx.contracts.bff.events", "jdx.contracts.user.events");
     var options = Options.Create(routingOptions);
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -233,11 +239,13 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task DiscoverEventNamespaces_OwnedDomainCaseInsensitiveAsync() {
     // Arrange - owned domain matching should be case-insensitive
+    // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("JDX.Contracts.BFF");
     routingOptions.SubscribeTo("jdx.contracts.bff.events", "jdx.contracts.auth.events");
     var options = Options.Create(routingOptions);
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -252,10 +260,11 @@ public class EventSubscriptionDiscoveryTests {
   #region GetAutoDiscoveredNamespaces Tests
 
   [Test]
-  public async Task GetAutoDiscoveredNamespaces_WithNoRegistry_ReturnsEmptySetAsync() {
-    // Arrange
+  public async Task GetAutoDiscoveredNamespaces_WithEmptyRegistry_ReturnsEmptySetAsync() {
+    // Arrange - use empty registry to isolate from static EventNamespaceRegistry
     var options = Options.Create(new RoutingOptions());
-    var discovery = new EventSubscriptionDiscovery(options);
+    var emptyRegistry = TestEventNamespaceRegistry.Create();
+    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
 
     // Act
     var namespaces = discovery.GetAutoDiscoveredNamespaces();

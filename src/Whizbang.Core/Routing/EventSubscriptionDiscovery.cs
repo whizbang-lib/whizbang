@@ -10,7 +10,7 @@ namespace Whizbang.Core.Routing;
 /// <remarks>
 /// <para>
 /// Event subscriptions are determined by:
-/// 1. Auto-discovery: Namespaces from registered perspectives and receptors (via IEventNamespaceRegistry)
+/// 1. Auto-discovery: Namespaces from <see cref="EventNamespaceRegistry"/> (populated by module initializers)
 /// 2. Manual subscriptions: Namespaces configured via RoutingOptions.SubscribeTo()
 /// </para>
 /// <para>
@@ -26,7 +26,7 @@ public sealed class EventSubscriptionDiscovery {
   /// Creates a new event subscription discovery service.
   /// </summary>
   /// <param name="routingOptions">Routing options containing manual subscriptions.</param>
-  /// <param name="registry">Source-generated event namespace registry (optional).</param>
+  /// <param name="registry">Event namespace registry for testing (optional). When null, uses static <see cref="EventNamespaceRegistry"/>.</param>
   public EventSubscriptionDiscovery(
       IOptions<RoutingOptions> routingOptions,
       IEventNamespaceRegistry? registry = null) {
@@ -44,10 +44,12 @@ public sealed class EventSubscriptionDiscovery {
     var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Add auto-discovered namespaces from perspectives and receptors
-    if (_registry is not null) {
-      foreach (var ns in _registry.GetAllEventNamespaces()) {
-        namespaces.Add(ns);
-      }
+    // Use injected registry (for testing) or static registry (production)
+    var autoNamespaces = _registry?.GetAllEventNamespaces()
+        ?? EventNamespaceRegistry.GetAllNamespaces();
+
+    foreach (var ns in autoNamespaces) {
+      namespaces.Add(ns);
     }
 
     // Add manual subscriptions from RoutingOptions
@@ -79,10 +81,9 @@ public sealed class EventSubscriptionDiscovery {
   /// </summary>
   /// <returns>Set of auto-discovered event namespaces.</returns>
   public IReadOnlySet<string> GetAutoDiscoveredNamespaces() {
-    if (_registry is null) {
-      return new HashSet<string>();
-    }
-    return _registry.GetAllEventNamespaces();
+    // Use injected registry (for testing) or static registry (production)
+    return _registry?.GetAllEventNamespaces()
+        ?? EventNamespaceRegistry.GetAllNamespaces();
   }
 
   /// <summary>

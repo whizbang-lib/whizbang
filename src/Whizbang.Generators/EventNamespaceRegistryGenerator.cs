@@ -161,7 +161,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the EventNamespaceRegistry class implementing IEventNamespaceRegistry.
+  /// Generates the EventNamespaceSource class implementing IEventNamespaceSource
+  /// and a ModuleInitializer that registers it with EventNamespaceRegistry.
   /// </summary>
   private static void _generateEventNamespaceRegistry(
       SourceProductionContext context,
@@ -202,20 +203,49 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     // Usings
     source.AppendLine("using System;");
     source.AppendLine("using System.Collections.Generic;");
-    source.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    source.AppendLine("using System.Runtime.CompilerServices;");
     source.AppendLine("using Whizbang.Core.Routing;");
     source.AppendLine();
 
     source.AppendLine($"namespace {namespaceName};");
     source.AppendLine();
 
-    // Registry implementation class
+    // Module Initializer class
     source.AppendLine("/// <summary>");
-    source.AppendLine("/// Auto-generated registry for event namespace discovery (AOT-compatible).");
-    source.AppendLine($"/// Discovered {uniquePerspectiveNs.Count} perspective namespace(s) and {uniqueReceptorNs.Count} receptor namespace(s).");
-    source.AppendLine("/// Implements IEventNamespaceRegistry for dependency injection.");
+    source.AppendLine("/// Auto-registration coordinator for event namespace discovery.");
+    source.AppendLine("/// Uses [ModuleInitializer] to register EventNamespaceSource with the global EventNamespaceRegistry.");
+    source.AppendLine("/// Runs before Main() - no explicit registration needed.");
     source.AppendLine("/// </summary>");
-    source.AppendLine("public sealed class EventNamespaceRegistry : IEventNamespaceRegistry {");
+    source.AppendLine("internal static class EventNamespaceSourceInitializer {");
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Registers this assembly's EventNamespaceSource with the global registry.");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  // CA2255: Intentional use of ModuleInitializer for AOT-compatible event namespace registration");
+    source.AppendLine("#pragma warning disable CA2255");
+    source.AppendLine("  [ModuleInitializer]");
+    source.AppendLine("#pragma warning restore CA2255");
+    source.AppendLine("  public static void Initialize() {");
+    source.AppendLine("    EventNamespaceRegistry.Register(EventNamespaceSource.Instance);");
+    source.AppendLine("  }");
+    source.AppendLine("}");
+    source.AppendLine();
+
+    // Source implementation class
+    source.AppendLine("/// <summary>");
+    source.AppendLine("/// Auto-generated source for event namespace discovery (AOT-compatible).");
+    source.AppendLine($"/// Discovered {uniquePerspectiveNs.Count} perspective namespace(s) and {uniqueReceptorNs.Count} receptor namespace(s).");
+    source.AppendLine("/// Implements IEventNamespaceSource for static EventNamespaceRegistry.");
+    source.AppendLine("/// </summary>");
+    source.AppendLine("internal sealed class EventNamespaceSource : IEventNamespaceSource {");
+    source.AppendLine();
+
+    // Singleton instance
+    source.AppendLine("  /// <summary>Singleton instance for registration.</summary>");
+    source.AppendLine("  public static readonly EventNamespaceSource Instance = new();");
+    source.AppendLine();
+
+    // Private constructor
+    source.AppendLine("  private EventNamespaceSource() { }");
     source.AppendLine();
 
     // Static fields for the namespace sets
@@ -254,31 +284,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// <inheritdoc />");
     source.AppendLine("  public IReadOnlySet<string> GetAllEventNamespaces() => _allNamespaces;");
     source.AppendLine("}");
-    source.AppendLine();
 
-    // Extension class
-    source.AppendLine("/// <summary>");
-    source.AppendLine("/// Extension methods for registering event namespace registry.");
-    source.AppendLine("/// </summary>");
-    source.AppendLine("public static class EventNamespaceRegistryExtensions {");
-    source.AppendLine("  /// <summary>");
-    source.AppendLine($"  /// Registers EventNamespaceRegistry with {allNamespaces.Count} discovered namespace(s) as a singleton.");
-    source.AppendLine("  /// Also registers EventSubscriptionDiscovery service for combining auto-discovered and manual subscriptions.");
-    source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
-    source.AppendLine("  /// </summary>");
-    source.AppendLine("  public static IServiceCollection AddEventNamespaceRegistry(");
-    source.AppendLine("      this IServiceCollection services) {");
-    source.AppendLine();
-    source.AppendLine("    // Register the registry as singleton");
-    source.AppendLine("    services.AddSingleton<IEventNamespaceRegistry, EventNamespaceRegistry>();");
-    source.AppendLine();
-    source.AppendLine("    // Register EventSubscriptionDiscovery service");
-    source.AppendLine("    services.AddEventSubscriptionDiscovery();");
-    source.AppendLine();
-    source.AppendLine("    return services;");
-    source.AppendLine("  }");
-    source.AppendLine("}");
-
-    context.AddSource("EventNamespaceRegistry.g.cs", source.ToString());
+    context.AddSource("EventNamespaceSource.g.cs", source.ToString());
   }
 }
