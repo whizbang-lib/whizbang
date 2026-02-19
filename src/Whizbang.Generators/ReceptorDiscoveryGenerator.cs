@@ -115,6 +115,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Extract lifecycle stages from [FireAt] attributes
     var lifecycleStages = _extractLifecycleStages(classSymbol);
 
+    // Extract default routing from [DefaultRouting] attribute
+    var defaultRouting = _extractDefaultRouting(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
@@ -126,7 +129,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           LifecycleStages: lifecycleStages,
-          IsSync: false
+          IsSync: false,
+          DefaultRouting: defaultRouting
       );
     }
 
@@ -141,7 +145,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           MessageType: voidReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
-          IsSync: false
+          IsSync: false,
+          DefaultRouting: defaultRouting
       );
     }
 
@@ -156,7 +161,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           MessageType: syncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           LifecycleStages: lifecycleStages,
-          IsSync: true
+          IsSync: true,
+          DefaultRouting: defaultRouting
       );
     }
 
@@ -171,7 +177,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           MessageType: voidSyncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
-          IsSync: true
+          IsSync: true,
+          DefaultRouting: defaultRouting
       );
     }
 
@@ -221,6 +228,149 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return stages.ToArray();
+  }
+
+  /// <summary>
+  /// Extracts the [DefaultRouting] attribute value from a receptor class.
+  /// Returns the fully qualified DispatchMode enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchMode.Local")
+  /// or null if no [DefaultRouting] attribute is found.
+  /// </summary>
+  private static string? _extractDefaultRouting(INamedTypeSymbol classSymbol) {
+    const string DEFAULT_ROUTING_ATTRIBUTE = "Whizbang.Core.Dispatch.DefaultRoutingAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() != DEFAULT_ROUTING_ATTRIBUTE) {
+        continue;
+      }
+
+      // [DefaultRouting(DispatchMode.Local)]
+      // Constructor argument is DispatchMode enum value
+      if (attribute.ConstructorArguments.Length > 0) {
+        var modeArg = attribute.ConstructorArguments[0];
+        if (modeArg.Value is int modeValue) {
+          // Get the enum type to convert int to enum name
+          var modeType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
+              .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
+              ?.Parameters.FirstOrDefault()?.Type;
+
+          if (modeType is INamedTypeSymbol enumType) {
+            // Find the enum member with this value
+            var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
+                .FirstOrDefault(f => f.ConstantValue is int val && val == modeValue);
+
+            if (enumMember is not null) {
+              // Return fully qualified enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchMode.Local")
+              return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Extracts unique event types from receptor response types for outbox cascade generation.
+  /// Handles simple event types, tuples (extracts all event elements), and arrays (extracts element type).
+  /// Returns fully qualified type names for AOT-compatible type-switch generation.
+  /// </summary>
+  /// <param name="receptors">The collection of discovered receptors.</param>
+  /// <returns>Unique set of fully qualified event type names.</returns>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
+  private static HashSet<string> _extractUniqueEventTypes(ImmutableArray<ReceptorInfo> receptors) {
+    var eventTypes = new HashSet<string>(StringComparer.Ordinal);
+
+    foreach (var receptor in receptors) {
+      // Skip void receptors (no response type to cascade)
+      if (receptor.IsVoid || string.IsNullOrEmpty(receptor.ResponseType)) {
+        continue;
+      }
+
+      var responseType = receptor.ResponseType!;
+
+      // Handle tuple types: (Type1, Type2, ...) - extract all elements
+      if (responseType.StartsWith("(", StringComparison.Ordinal) && responseType.EndsWith(")", StringComparison.Ordinal)) {
+        var tupleElements = _extractTupleElements(responseType);
+        foreach (var element in tupleElements) {
+          // Elements from tuples may also be arrays - extract element type
+          if (element.EndsWith("[]", StringComparison.Ordinal)) {
+            var elementType = element.Substring(0, element.Length - 2);
+            eventTypes.Add(elementType);
+          } else {
+            eventTypes.Add(element);
+          }
+        }
+      }
+      // Handle array types: Type[] - extract element type
+      else if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
+        var elementType = responseType.Substring(0, responseType.Length - 2);
+        eventTypes.Add(elementType);
+      }
+      // Simple event type
+      else {
+        eventTypes.Add(responseType);
+      }
+    }
+
+    return eventTypes;
+  }
+
+  /// <summary>
+  /// Extracts individual type names from a tuple type string.
+  /// Handles nested tuples by tracking parenthesis depth.
+  /// </summary>
+  /// <param name="tupleType">Tuple type string like "(Type1, Type2)" or "(Type1, (Type2, Type3))"</param>
+  /// <returns>List of extracted type names.</returns>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleResponse_ExtractsEventsForCascadeAsync</tests>
+  private static List<string> _extractTupleElements(string tupleType) {
+    var elements = new List<string>();
+
+    // Remove outer parentheses
+    var inner = tupleType.Substring(1, tupleType.Length - 2);
+
+    var current = new StringBuilder();
+    var depth = 0;
+
+    for (var i = 0; i < inner.Length; i++) {
+      var c = inner[i];
+
+      if (c == '(') {
+        depth++;
+        current.Append(c);
+      } else if (c == ')') {
+        depth--;
+        current.Append(c);
+      } else if (c == ',' && depth == 0) {
+        // Found a comma at top level - this separates elements
+        var element = current.ToString().Trim();
+        if (!string.IsNullOrEmpty(element)) {
+          // If element is a nested tuple, recursively extract
+          if (element.StartsWith("(", StringComparison.Ordinal)) {
+            elements.AddRange(_extractTupleElements(element));
+          } else {
+            elements.Add(element);
+          }
+        }
+        current.Clear();
+      } else {
+        current.Append(c);
+      }
+    }
+
+    // Don't forget the last element
+    var lastElement = current.ToString().Trim();
+    if (!string.IsNullOrEmpty(lastElement)) {
+      if (lastElement.StartsWith("(", StringComparison.Ordinal)) {
+        elements.AddRange(_extractTupleElements(lastElement));
+      } else {
+        elements.Add(lastElement);
+      }
+    }
+
+    return elements;
   }
 
   /// <summary>
@@ -582,6 +732,60 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
 
+    // Load Any Send routing snippets for cascade support
+    var anySendNonVoidSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "ANY_SEND_ROUTING_NONVOID_SNIPPET"
+    );
+
+    // Generate Any Send routing code - prioritizes non-void async receptors (for cascading)
+    // This enables void LocalInvokeAsync paths to find non-void receptors and cascade their results
+    var anySendRouting = new StringBuilder();
+    foreach (var messageType in regularReceptorsByMessage.Keys) {
+      var receptorList = regularReceptorsByMessage[messageType];
+      var firstReceptor = receptorList[0];
+
+      // Replace placeholders with actual types
+      var generatedCode = anySendNonVoidSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+
+      anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
+    // Generate receptor default routing lookup (for [DefaultRouting] attribute support)
+    // Group all receptors by message type and find ones with DefaultRouting
+    var receptorDefaultRouting = new StringBuilder();
+    var allReceptorsByMessage = receptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
+    foreach (var messageType in allReceptorsByMessage.Keys) {
+      var receptorList = allReceptorsByMessage[messageType];
+      // Find first receptor with DefaultRouting attribute (if multiple, first wins)
+      var receptorWithRouting = receptorList.FirstOrDefault(r => r.HasDefaultRouting);
+      if (receptorWithRouting is not null) {
+        receptorDefaultRouting.AppendLine($"      if (messageType == typeof({messageType})) {{");
+        receptorDefaultRouting.AppendLine($"        return {receptorWithRouting.DefaultRouting};");
+        receptorDefaultRouting.AppendLine($"      }}");
+        receptorDefaultRouting.AppendLine();
+      }
+    }
+
+    // Generate outbox cascade type-switch (for auto-cascading events to outbox)
+    // Collect unique event types from receptor response types
+    var outboxCascade = new StringBuilder();
+    var eventTypes = _extractUniqueEventTypes(receptors);
+
+    foreach (var eventType in eventTypes) {
+      outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
+      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New());");
+      outboxCascade.AppendLine($"      }}");
+      outboxCascade.AppendLine();
+    }
+
     // Replace template markers using regex for robustness
     // This handles variations in whitespace and formatting
     var result = template;
@@ -602,6 +806,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "UNTYPED_PUBLISH_ROUTING", untypedPublishRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "SYNC_SEND_ROUTING", syncSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SYNC_SEND_ROUTING", voidSyncSendRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "ANY_SEND_ROUTING", anySendRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_DEFAULT_ROUTING", receptorDefaultRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "OUTBOX_CASCADE", outboxCascade.ToString());
 
     return result;
   }

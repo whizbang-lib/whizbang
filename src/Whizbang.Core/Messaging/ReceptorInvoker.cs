@@ -99,23 +99,12 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       var result = await receptor.InvokeAsync(scopedProvider, message, cancellationToken).ConfigureAwait(false);
 
       // Cascade any IMessage instances (events and commands) from the receptor's return value
-      // Uses AOT-safe EventExtractor (ITuple interface, not reflection)
+      // Handles tuples, arrays, Route wrappers via IEventCascader
+      // Note: Receptor default routing not passed through - routing is determined by
+      // message attributes, Route wrappers, or system default (Outbox)
       if (result is not null && _eventCascader is not null) {
-        await _cascadeMessagesFromResultAsync(result, cancellationToken).ConfigureAwait(false);
+        await _eventCascader.CascadeFromResultAsync(result, receptorDefault: null, cancellationToken).ConfigureAwait(false);
       }
-    }
-  }
-
-  /// <summary>
-  /// Extracts IMessage instances (events and commands) from receptor return values and cascades them.
-  /// Supports single messages, tuples, arrays, and nested structures via EventExtractor.
-  /// AOT-compatible: Uses ITuple interface, not reflection.
-  /// </summary>
-  private async Task _cascadeMessagesFromResultAsync(object result, CancellationToken cancellationToken) {
-    // Use MessageExtractor to find all IMessage instances in the result
-    // This handles tuples, arrays, nested structures using ITuple interface (AOT-safe)
-    foreach (var msg in Internal.MessageExtractor.ExtractMessages(result)) {
-      await _eventCascader!.CascadeAsync(msg, cancellationToken).ConfigureAwait(false);
     }
   }
 }

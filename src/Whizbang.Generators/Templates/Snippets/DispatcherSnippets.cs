@@ -377,4 +377,88 @@ public class DispatcherSnippets {
 
     return Array.Empty<global::Whizbang.Core.Messaging.ReceptorInfo>();
   }
+
+  /// <summary>
+  /// Example method showing snippet structure for "any receptor" routing (non-void).
+  /// Used by void LocalInvokeAsync paths to find non-void receptors for cascading.
+  /// Returns a type-erased delegate that invokes the receptor and returns the result as object.
+  /// </summary>
+  protected Func<object, ValueTask<object?>>? AnyRoutingNonVoidExample(object message, Type messageType) {
+    #region ANY_SEND_ROUTING_NONVOID_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
+      }
+
+      [System.Diagnostics.DebuggerStepThrough]
+      async ValueTask<object?> InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+          var typedMsg = (__MESSAGE_TYPE__)msg;
+          var result = await receptor.HandleAsync(typedMsg);
+          return result;
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
+        }
+      }
+
+      return InvokeReceptor;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for "any receptor" routing (void).
+  /// Used by void LocalInvokeAsync paths to find void receptors (fallback when non-void not found).
+  /// Returns a type-erased delegate that invokes the receptor and returns null.
+  /// </summary>
+  protected Func<object, ValueTask<object?>>? AnyRoutingVoidExample(object message, Type messageType) {
+    #region ANY_SEND_ROUTING_VOID_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
+      }
+
+      [System.Diagnostics.DebuggerStepThrough]
+      async ValueTask<object?> InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+          var typedMsg = (__MESSAGE_TYPE__)msg;
+          await receptor.HandleAsync(typedMsg);
+          return null;  // Void receptor - no result to cascade
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
+        }
+      }
+
+      return InvokeReceptor;
+    }
+    #endregion
+
+    return null;
+  }
 }

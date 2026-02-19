@@ -22,9 +22,10 @@ public static class TestConstants {
   ///     EventTrackingReceptor, ShippedEventTrackingReceptor, NotificationEventTrackingReceptor)
   /// - 4 receptors from DispatcherSyncTests.cs (AsyncOrderReceptor, SyncOrderReceptor, SyncTupleReceptor, VoidSyncLogReceptor)
   /// - 3 receptors from SyncReceptorTests.cs (SyncOrderReceptor, SyncTupleReceptor, VoidSyncReceptor)
+  /// - 2 receptors from DispatcherVoidCascadeTests.cs (ProcessOrderReceptor, OrderProcessedEventTracker)
   /// - 5 additional receptors from other test files
   ///
-  /// Total: 44 receptors
+  /// Total: 46 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 44;
+  public const int EXPECTED_RECEPTOR_COUNT = 46;
 }

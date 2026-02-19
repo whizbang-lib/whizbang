@@ -335,6 +335,8 @@ internal class TestDispatcher : IDispatcher {
     throw new NotImplementedException();
   public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
+  public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 }
 
 /// <summary>

@@ -97,6 +97,12 @@ public abstract class Dispatcher(
   // Unused parameter retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
 
+  // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
+  private ILogger? _cascadeLogger;
+#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
+  private ILogger CascadeLogger => _cascadeLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+#pragma warning restore IDE1006
+
   /// <summary>
   /// Resolves owned domains from RoutingOptions in DI container.
   /// </summary>
@@ -195,7 +201,8 @@ public abstract class Dispatcher(
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-      await _cascadeEventsFromResultAsync(result);
+      // Pass messageType so we can look up receptor's [DefaultRouting] attribute
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
@@ -302,7 +309,7 @@ public abstract class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
@@ -364,7 +371,7 @@ public abstract class Dispatcher(
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
@@ -442,7 +449,7 @@ public abstract class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
@@ -561,18 +568,18 @@ public abstract class Dispatcher(
       // OPTIMIZATION: Skip envelope creation when trace store is null
       // This achieves zero allocation for high-throughput scenarios
       if (_traceStore != null || _receptorInvoker != null) {
-        return _localInvokeWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+        return _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
       // Fast path with cascade support for receptor tuple/array returns
       // Invoke using delegate, then extract and publish any IEvent instances
-      return _localInvokeWithCascadeAsync(asyncInvoker, message);
+      return _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
     }
 
     // Fallback to sync receptor
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
-      return _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+      return _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
     }
 
     throw new HandlerNotFoundException(messageType);
@@ -586,13 +593,14 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
   private ValueTask<TResult> _localInvokeSyncWithCascadeAsync<TResult>(
     SyncReceptorInvoker<TResult> syncInvoker,
-    object message
+    object message,
+    Type messageType
   ) {
     // Invoke synchronously
     var result = syncInvoker(message);
 
     // Auto-cascade any events (still async for publishing)
-    var cascadeTask = _cascadeEventsFromResultAsync(result);
+    var cascadeTask = _cascadeEventsFromResultAsync(result, messageType);
     if (!cascadeTask.IsCompletedSuccessfully) {
       return _awaitCascadeAndReturnResultAsync(cascadeTask, result);
     }
@@ -617,11 +625,34 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithCascadeAsync<TResult>(
     ReceptorInvoker<TResult> invoker,
-    object message
+    object message,
+    Type messageType
   ) {
     var result = await invoker(message);
-    await _cascadeEventsFromResultAsync(result);
+    await _cascadeEventsFromResultAsync(result, messageType);
     return result;
+  }
+
+  /// <summary>
+  /// Void path cascade support for non-void receptors.
+  /// When void LocalInvokeAsync is called but a non-void receptor is found,
+  /// invoke it and cascade any events from the result.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithAnyInvokerAndCascadeAsync(
+    Func<object, ValueTask<object?>> invoker,
+    object message,
+    Type messageType
+  ) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Invoking receptor for {MessageType}", messageType.Name);
+    var result = await invoker(message);
+    CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Receptor returned {ResultType}, IsNull={IsNull}", result?.GetType().Name ?? "null", result == null);
+    if (result != null) {
+      await _cascadeEventsFromResultAsync(result, messageType);
+    } else {
+      CascadeLogger.LogWarning("[CASCADE] VoidWithAnyInvoker: Receptor returned null, no cascade will occur");
+    }
+#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -630,6 +661,7 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithTracingAsync<TResult>(
     object message,
+    Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     string callerMemberName,
@@ -650,7 +682,7 @@ public abstract class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
@@ -696,7 +728,7 @@ public abstract class Dispatcher(
 
     // Fast path with cascade support for receptor tuple/array returns
     // Invoke using delegate, then extract and publish any IEvent instances
-    return _localInvokeWithCascadeAsync(invoker, message);
+    return _localInvokeWithCascadeAsync(invoker, message, messageType);
   }
 
   /// <summary>
@@ -726,7 +758,7 @@ public abstract class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, typeof(TMessage));
 
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
@@ -840,6 +872,13 @@ public abstract class Dispatcher(
       return ValueTask.CompletedTask;
     }
 
+    // Fallback to any receptor (void or non-void) for cascade support
+    // This enables void LocalInvokeAsync to cascade events from non-void receptors
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+    }
+
     throw new HandlerNotFoundException(messageType);
   }
 
@@ -913,6 +952,13 @@ public abstract class Dispatcher(
       // Invoke synchronously - returns pre-completed ValueTask
       syncInvoker(message);
       return ValueTask.CompletedTask;
+    }
+
+    // Fallback to any receptor (void or non-void) for cascade support
+    // This enables void LocalInvokeAsync to cascade events from non-void receptors
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
     }
 
     throw new HandlerNotFoundException(messageType);
@@ -999,16 +1045,16 @@ public abstract class Dispatcher(
 
     if (asyncInvoker != null) {
       if (_traceStore != null || _receptorInvoker != null) {
-        return await _localInvokeWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+        return await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
       }
       options.CancellationToken.ThrowIfCancellationRequested();
-      return await _localInvokeWithCascadeAsync(asyncInvoker, message);
+      return await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
     }
 
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
       options.CancellationToken.ThrowIfCancellationRequested();
-      return await _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+      return await _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
     }
 
     throw new HandlerNotFoundException(messageType);
@@ -1056,6 +1102,7 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithTracingAndOptionsAsync<TResult>(
     object message,
+    Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     DispatchOptions options,
@@ -1072,7 +1119,7 @@ public abstract class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
@@ -1188,34 +1235,107 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
-  /// Extracts IEvent instances from receptor return values and publishes them.
-  /// Supports tuples, arrays, and nested structures via EventExtractor.
-  /// This enables the clean pattern: return (result, @event) - where @event is auto-published.
+  /// Extracts IMessage instances from receptor return values and dispatches them based on routing.
+  /// Supports tuples, arrays, nested structures, and Routed&lt;T&gt; wrappers via MessageExtractor.
+  /// This enables the clean pattern: return (result, Route.Local(@event)) - where @event is dispatched locally.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Uses the AOT-compatible GetUntypedReceptorPublisher method which is implemented by
   /// source-generated code. The generated code knows all event types at compile time and
   /// returns type-erased delegates that cast internally.
+  /// </para>
+  /// <para>
+  /// Routing behavior based on DispatchMode:
+  /// <list type="bullet">
+  ///   <item>Local: Invoke in-process receptors only via GetUntypedReceptorPublisher</item>
+  ///   <item>Outbox: Write to outbox for cross-service delivery via _cascadeToOutboxAsync</item>
+  ///   <item>Both: Both local dispatch AND outbox write</item>
+  ///   <item>Default (unwrapped): Outbox only (system default)</item>
+  /// </list>
+  /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
+  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result) {
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
+      result?.GetType().Name ?? "null", originalMessageType?.Name ?? "null");
+
     // Fast path: Skip if result is null
     if (result == null) {
+      CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: Result is null, skipping cascade");
       return;
     }
 
-    // Use MessageExtractor to find all IMessage instances (events and commands) in the result
-    // This handles tuples, arrays, nested structures, etc. using ITuple interface (AOT-safe)
-    foreach (var msg in Internal.MessageExtractor.ExtractMessages(result)) {
-      // Get an untyped publisher for the concrete message type (AOT-compatible)
-      // The generated code returns a delegate that casts the object to the correct type internally
+    // Look up receptor default routing from [DefaultRouting] attribute on the receptor
+    // This is done via the generated GetReceptorDefaultRouting method
+    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+        ? GetReceptorDefaultRouting(originalMessageType)
+        : null;
+    CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
+
+    // Use MessageExtractor to find all IMessage instances with routing info
+    // This handles tuples, arrays, nested structures, Routed<T> wrappers, etc. using ITuple interface (AOT-safe)
+    var extractedCount = 0;
+    foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+      extractedCount++;
       var messageType = msg.GetType();
-      var publisher = GetUntypedReceptorPublisher(messageType);
-      if (publisher != null) {
-        await publisher(msg);
+      CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted message {Count}: Type={MessageType}, Mode={Mode}",
+        extractedCount, messageType.Name, mode);
+
+      // Local dispatch: Invoke in-process receptors
+      if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", messageType.Name);
+        var publisher = GetUntypedReceptorPublisher(messageType);
+        if (publisher != null) {
+          await publisher(msg);
+        }
+      }
+
+      // Outbox dispatch: Write to outbox for cross-service delivery
+      if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
+        await CascadeToOutboxAsync(msg, messageType);
       }
     }
+
+    if (extractedCount == 0) {
+      CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: No messages extracted from result type {ResultType}. " +
+        "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
+        result.GetType().Name);
+    } else {
+      CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted {Count} messages total", extractedCount);
+    }
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Publishes a cascaded message to the outbox for cross-service delivery.
+  /// Uses source-generated type-switch dispatch for AOT compatibility.
+  /// </summary>
+  /// <param name="message">The message to cascade to outbox.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// This base implementation is a no-op. The source generator creates an override
+  /// with a type-switched dispatch table that calls PublishToOutboxAsync for each
+  /// known event type. This avoids reflection and maintains AOT compatibility.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
+  protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType) {
+    // Base implementation is a no-op.
+    // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync.
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogWarning("[CASCADE] CascadeToOutboxAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
+      "This means the generated dispatcher does NOT have an override for this message type. " +
+      "The message will NOT be written to the outbox!", messageType.Name);
+#pragma warning restore CA1848
+    return Task.CompletedTask;
   }
 
   /// <summary>
@@ -1250,7 +1370,7 @@ public abstract class Dispatcher(
 
     // Publish event for cross-service delivery if work coordinator strategy is available
     // process_work_batch will store events to wh_event_store and create perspective events atomically
-    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
+    await PublishToOutboxAsync(eventData, eventType, messageId);
   }
 
   /// <summary>
@@ -1278,7 +1398,42 @@ public abstract class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
     await publisher(eventData);
 
-    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
+    await PublishToOutboxAsync(eventData, eventType, messageId);
+  }
+
+  /// <summary>
+  /// Cascades a message with explicit routing mode.
+  /// Called by IEventCascader after resolving routing from wrappers and attributes.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  public async Task CascadeMessageAsync(IMessage message, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    var messageType = message.GetType();
+
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Message={MessageType}, Mode={Mode}", messageType.Name, mode);
+#pragma warning restore CA1848
+
+    // Local dispatch: Invoke in-process receptors
+    if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+#pragma warning disable CA1848
+      CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Dispatching locally for {MessageType}", messageType.Name);
+#pragma warning restore CA1848
+      var publisher = GetUntypedReceptorPublisher(messageType);
+      if (publisher != null) {
+        await publisher(message);
+      }
+    }
+
+    // Outbox dispatch: Write to outbox for cross-service delivery
+    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+#pragma warning disable CA1848
+      CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
+#pragma warning restore CA1848
+      await CascadeToOutboxAsync(message, messageType);
+    }
   }
 
   /// <summary>
@@ -1287,11 +1442,27 @@ public abstract class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task _publishToOutboxViaScopeAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId) {
+  /// <typeparam name="TEvent">The type of event to publish.</typeparam>
+  /// <param name="eventData">The event data to publish.</param>
+  /// <param name="eventType">The runtime type of the event.</param>
+  /// <param name="messageId">The unique message ID for this event.</param>
+  /// <remarks>
+  /// Protected to allow generated dispatcher to call this method from CascadeToOutboxAsync override.
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventType.Name, messageId);
+#pragma warning restore CA1848
+
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Strategy resolved: {StrategyType}", strategy?.GetType().Name ?? "null");
+#pragma warning restore CA1848
 
       // If no strategy is registered, skip outbox routing (local-only event)
       if (strategy == null) {
@@ -1331,15 +1502,29 @@ public abstract class Dispatcher(
       envelope.AddHop(hop);
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+#pragma warning restore CA1848
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Created NewOutboxMessage, MessageId={MessageId}, Type={Type}",
+        newOutboxMessage.MessageId, newOutboxMessage.MessageType);
+#pragma warning restore CA1848
 
       // Queue event for batched processing
       strategy.QueueOutboxMessage(newOutboxMessage);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called QueueOutboxMessage");
+#pragma warning restore CA1848
 
       // Flush strategy to execute the batch
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: FlushAsync returned OutboxWork={OutboxCount}, InboxWork={InboxCount}",
+        workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
+#pragma warning restore CA1848
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
     } finally {
@@ -1925,4 +2110,33 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
   protected abstract VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a type-erased delegate for invoking ANY receptor.
+  /// This enables void LocalInvokeAsync paths to cascade events from non-void receptors.
+  /// Returns a delegate that invokes the receptor and returns the result as object? (null for void).
+  /// Returns null if no receptor (void or non-void) is registered for the message type.
+  /// </summary>
+  /// <remarks>
+  /// Priority order:
+  /// 1. Non-void async receptor (IReceptor&lt;TMessage, TResponse&gt;)
+  /// 2. Non-void sync receptor (ISyncReceptor&lt;TMessage, TResponse&gt;)
+  /// 3. Void async receptor (IReceptor&lt;TMessage&gt;)
+  /// 4. Void sync receptor (ISyncReceptor&lt;TMessage&gt;)
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#void-cascade</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherVoidCascadeTests.cs</tests>
+  protected abstract Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns the default dispatch routing for a message type
+  /// based on the [DefaultRouting] attribute on the receptor class that handles the message.
+  /// Used by cascade to apply receptor-level routing policy to all returned messages.
+  /// Returns null if no receptor with [DefaultRouting] is registered for the message type.
+  /// </summary>
+  /// <param name="messageType">The runtime type of the message</param>
+  /// <returns>The default dispatch mode from the receptor's [DefaultRouting] attribute, or null</returns>
+  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
+  protected abstract Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType);
 }

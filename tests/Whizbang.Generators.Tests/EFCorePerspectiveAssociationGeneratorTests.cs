@@ -199,4 +199,71 @@ namespace TestNamespace {
     await Assert.That(generatedSource!).Contains("ConcretePerspective");
     await Assert.That(generatedSource!).DoesNotContain("BasePerspective");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DuplicatePerspectiveEventPairs_DeduplicatesAsync() {
+    // Arrange - A perspective implementing multiple interfaces that share the same event type
+    // This can cause duplicate (PerspectiveClassName, MessageTypeName) pairs which would cause
+    // "ON CONFLICT DO UPDATE command cannot affect row a second time" PostgreSQL errors
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderUpdatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  // A perspective implementing two IPerspectiveFor interfaces
+  public class OrderPerspective :
+    IPerspectiveFor<OrderModel, OrderCreatedEvent>,
+    IPerspectiveFor<OrderModel, OrderCreatedEvent, OrderUpdatedEvent> {
+
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+
+    public OrderModel Apply(OrderModel currentData, OrderUpdatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should generate associations but deduplicate duplicate pairs
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // Count occurrences of OrderCreatedEvent - should only appear once even though
+    // it's present in both IPerspectiveFor<OrderModel, OrderCreatedEvent> and
+    // IPerspectiveFor<OrderModel, OrderCreatedEvent, OrderUpdatedEvent>
+    var orderCreatedOccurrences = _countOccurrences(generatedSource!, "OrderCreatedEvent");
+    await Assert.That(orderCreatedOccurrences).IsEqualTo(1)
+      .Because("duplicate (PerspectiveClassName, MessageTypeName) pairs should be deduplicated");
+
+    // OrderUpdatedEvent should appear exactly once
+    var orderUpdatedOccurrences = _countOccurrences(generatedSource!, "OrderUpdatedEvent");
+    await Assert.That(orderUpdatedOccurrences).IsEqualTo(1);
+  }
+
+  private static int _countOccurrences(string text, string pattern) {
+    var count = 0;
+    var index = 0;
+    while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) != -1) {
+      count++;
+      index += pattern.Length;
+    }
+    return count;
+  }
 }

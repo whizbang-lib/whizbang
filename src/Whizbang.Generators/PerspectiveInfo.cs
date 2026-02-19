@@ -88,3 +88,30 @@ internal enum ApplyReturnType {
   /// <summary>Returns ApplyResult&lt;TModel&gt; - full flexibility wrapper</summary>
   ApplyResult
 }
+
+/// <summary>
+/// Result of perspective extraction - either valid info or a warning about missing StreamKey.
+/// Used by PerspectiveRunnerGenerator to report WHIZ033 diagnostics.
+/// </summary>
+/// <param name="Info">Valid perspective info (null if warning)</param>
+/// <param name="Warning">Warning about missing StreamKey on model (null if valid)</param>
+internal sealed record PerspectiveOrWarning(
+    PerspectiveInfo? Info,
+    PerspectiveMissingStreamKeyWarning? Warning
+);
+
+/// <summary>
+/// Warning data when a perspective model is missing [StreamKey] attribute.
+/// </summary>
+/// <param name="PerspectiveName">Simple name of the perspective class</param>
+/// <param name="ModelName">Simple name of the model class</param>
+/// <param name="FilePath">Source file path for diagnostic location</param>
+/// <param name="Line">Line number in source file</param>
+/// <param name="Column">Column number in source file</param>
+internal sealed record PerspectiveMissingStreamKeyWarning(
+    string PerspectiveName,
+    string ModelName,
+    string FilePath,
+    int Line,
+    int Column
+);

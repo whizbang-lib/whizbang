@@ -69,6 +69,13 @@ public static class ServiceCollectionExtensions {
       options.MaxChannels
     ));
 
+    // Register infrastructure provisioner for domain topic auto-provisioning
+    services.AddSingleton<IInfrastructureProvisioner>(sp => {
+      var pool = sp.GetRequiredService<RabbitMQChannelPool>();
+      var logger = sp.GetRequiredService<ILogger<RabbitMQInfrastructureProvisioner>>();
+      return new RabbitMQInfrastructureProvisioner(pool, logger);
+    });
+
     // Register transport
     services.AddSingleton<ITransport>(sp => {
       var connection = sp.GetRequiredService<IConnection>();

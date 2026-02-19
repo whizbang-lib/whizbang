@@ -128,9 +128,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     CancellationToken cancellationToken) {
 
     // SQL embedded by source generator from discovered PerspectiveRow<TModel> types
-    const string PerspectiveTablesSchema = #region PERSPECTIVE_TABLES_SCHEMA
-    // Perspective table DDL will be embedded here by the source generator
-    #endregion;
+    const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
 
     if (string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
       logger?.LogInformation("No perspective tables to create (DbContext has no perspectives)");
@@ -239,7 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
           if (!string.IsNullOrEmpty("__SCHEMA__") && "__SCHEMA__" != "public") {
             // After transformation, tables will be qualified with quoted schema: "schema".wh_outbox
             var hasQualified = transformedSql.Contains("\"__SCHEMA__\".wh_outbox") || transformedSql.Contains("\"__SCHEMA__\".wh_inbox");
-            var hasUnqualified = System.Text.RegularExpressions.Regex.IsMatch(transformedSql, @"(?<!\.)(\bwh_outbox\b|\bwh_inbox\b)");
+            var hasUnqualified = System.Text.RegularExpressions.Regex.IsMatch(transformedSql, @"(?<!\.)(\bwh_outbox\b|\bwh_inbox\b)", System.Text.RegularExpressions.RegexOptions.None, System.TimeSpan.FromSeconds(5));
             logger?.LogInformation("DIAGNOSTIC: Transformation check - HasQualified={HasQualified}, HasUnqualified={HasUnqualified}",
               hasQualified, hasUnqualified);
           }
@@ -323,7 +321,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
         $"{quotedSchema}.$1",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+        System.TimeSpan.FromSeconds(5)
       );
     }
 
@@ -347,7 +346,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b(\s*\()",
         $"$1{quotedSchema}.{functionName}$2",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+        System.TimeSpan.FromSeconds(5)
       );
 
       // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] "schema".functionName"
@@ -355,7 +355,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"(DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
         $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+        System.TimeSpan.FromSeconds(5)
       );
 
       // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION "schema".functionName"
@@ -364,7 +365,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"((?:GRANT|REVOKE)\s+.*\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
         $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+        System.TimeSpan.FromSeconds(5)
       );
 
       // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION "schema".functionName"
@@ -373,7 +375,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"(COMMENT\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
         $"$1{quotedSchema}.{functionName}",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+        System.TimeSpan.FromSeconds(5)
       );
     }
 

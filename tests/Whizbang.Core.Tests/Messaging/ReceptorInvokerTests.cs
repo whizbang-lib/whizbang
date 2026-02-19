@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Dispatch;
+using Whizbang.Core.Internal;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -394,8 +396,11 @@ public class ReceptorInvokerTests {
     private readonly List<IMessage> _cascadedMessages = [];
     public List<IMessage> CascadedMessages => _cascadedMessages;
 
-    public Task CascadeAsync(IMessage message, CancellationToken cancellationToken = default) {
-      _cascadedMessages.Add(message);
+    public Task CascadeFromResultAsync(object result, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+      // Extract messages from result (using same logic as DispatcherEventCascader)
+      foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+        _cascadedMessages.Add(message);
+      }
       return Task.CompletedTask;
     }
   }

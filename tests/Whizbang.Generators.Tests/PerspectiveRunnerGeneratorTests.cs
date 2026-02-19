@@ -1258,4 +1258,83 @@ namespace TestNamespace {{
     await Assert.That(runnerSource!).Contains("Evt1");
     await Assert.That(runnerSource!).Contains("Evt25");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ModelMissingStreamKey_EmitsWarningAsync() {
+    // Arrange - perspective with model that has no [StreamKey]
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderReadModel {
+    public string OrderId { get; init; } = """";  // No [StreamKey]!
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - warning should be emitted (WHIZ033)
+    var warning = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ033");
+    await Assert.That(warning).IsNotNull();
+    await Assert.That(warning!.Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderPerspective");
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderReadModel");
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("[StreamKey]");
+
+    // No runner should be generated
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ModelHasStreamKey_NoWarningAsync() {
+    // Arrange - perspective with model that HAS [StreamKey]
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderReadModel {
+    [StreamKey]
+    public string OrderId { get; init; } = """";  // Has [StreamKey]!
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - no WHIZ033 warning should be emitted
+    var warning = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ033");
+    await Assert.That(warning).IsNull();
+
+    // Runner SHOULD be generated
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+  }
 }

@@ -19,30 +19,55 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Reuse the same discovery logic as PerspectiveDiscoveryGenerator
-    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
+    // Extract perspective info or warning for models missing StreamKey
+    var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractPerspectiveOrWarning(ctx, ct)
+    ).Where(static result => result is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndResults = context.CompilationProvider.Combine(perspectiveResults.Collect());
 
     context.RegisterSourceOutput(
-        compilationAndPerspectives,
+        compilationAndResults,
         static (ctx, data) => {
           var compilation = data.Left;
-          var perspectives = data.Right;
-          _generatePerspectiveRunners(ctx, compilation, perspectives!);
+          var results = data.Right;
+
+          // Report warnings for perspectives missing StreamKey on model
+          foreach (var result in results) {
+            if (result!.Warning is { } warning) {
+              ctx.ReportDiagnostic(Diagnostic.Create(
+                  DiagnosticDescriptors.PerspectiveModelMissingStreamKey,
+                  Location.Create(
+                      warning.FilePath,
+                      default,
+                      new Microsoft.CodeAnalysis.Text.LinePositionSpan(
+                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column),
+                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column))),
+                  warning.PerspectiveName,
+                  warning.ModelName
+              ));
+            }
+          }
+
+          // Generate runners for valid perspectives only
+          var validPerspectives = results
+              .Where(r => r!.Info is not null)
+              .Select(r => r!.Info!)
+              .ToImmutableArray();
+
+          _generatePerspectiveRunners(ctx, compilation, validPerspectives);
         }
     );
   }
 
   /// <summary>
-  /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
+  /// Extracts perspective information or warning from a class declaration.
+  /// Returns null if the class doesn't implement IPerspectiveFor or IGlobalPerspectiveFor.
+  /// Returns a warning if the model is missing [StreamKey] attribute.
   /// </summary>
-  private static PerspectiveInfo? _extractPerspectiveInfo(
+  private static PerspectiveOrWarning? _extractPerspectiveOrWarning(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -82,8 +107,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Find StreamKey property on model
     var streamKeyPropertyName = _findModelStreamKeyProperty(modelType);
     if (streamKeyPropertyName is null) {
-      // Cannot generate runner without StreamKey - skip silently
-      return null;
+      // Return warning instead of silently skipping (WHIZ033)
+      var location = classDeclaration.GetLocation();
+      var lineSpan = location.GetLineSpan();
+      return new PerspectiveOrWarning(
+          Info: null,
+          Warning: new PerspectiveMissingStreamKeyWarning(
+              PerspectiveName: classSymbol.Name,
+              ModelName: modelType.Name,
+              FilePath: lineSpan.Path,
+              Line: lineSpan.StartLinePosition.Line,
+              Column: lineSpan.StartLinePosition.Character
+          )
+      );
     }
 
     // Extract StreamKey properties from event types
@@ -102,16 +138,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
-    return new PerspectiveInfo(
-        ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        SimpleName: simpleName,
-        InterfaceTypeArguments: typeArguments,
-        EventTypes: eventTypes.ToArray(),
-        MessageTypeNames: messageTypeNames,
-        StreamKeyPropertyName: streamKeyPropertyName,
-        EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
-        MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
-        EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
+    return new PerspectiveOrWarning(
+        Info: new PerspectiveInfo(
+            ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            SimpleName: simpleName,
+            InterfaceTypeArguments: typeArguments,
+            EventTypes: eventTypes.ToArray(),
+            MessageTypeNames: messageTypeNames,
+            StreamKeyPropertyName: streamKeyPropertyName,
+            EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
+            MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
+            EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
+        ),
+        Warning: null
     );
   }
 

@@ -119,5 +119,7 @@ public class SendNotificationReceptorTests {
       PublishedEvents.Add(eventData!);
       return Task.CompletedTask;
     }
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 }

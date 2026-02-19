@@ -17,6 +17,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="InvokeAsync">
 /// Pre-compiled delegate for AOT-compatible invocation.
 /// Parameters: (service provider for scoped resolution, message object, cancellation token)
+/// Returns: The receptor's return value (null for void receptors, IEvent for event-producing receptors).
 /// The service provider should be from a scope created by the invoker.
 /// </param>
 /// <docs>core-concepts/lifecycle-receptors</docs>
@@ -24,5 +25,5 @@ namespace Whizbang.Core.Messaging;
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
-    Func<IServiceProvider, object, CancellationToken, ValueTask> InvokeAsync
+    Func<IServiceProvider, object, CancellationToken, ValueTask<object?>> InvokeAsync
 );

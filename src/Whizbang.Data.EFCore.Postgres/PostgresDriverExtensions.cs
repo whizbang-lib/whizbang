@@ -58,6 +58,11 @@ public static class PostgresDriverExtensions {
             new PostgresUpsertStrategy()
         );
 
+        // TURNKEY: Invoke perspective runner registration callbacks
+        // This is registered by source-generated module initializer in consumer assembly
+        // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
+        PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
+
         // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
         // Extracts connection string from NpgsqlDataSource at resolution time
         // This ensures workers wait for database schema to be ready before processing

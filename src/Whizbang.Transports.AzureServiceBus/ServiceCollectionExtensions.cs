@@ -1,3 +1,4 @@
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Routing;
@@ -102,6 +103,40 @@ public static class ServiceCollectionExtensions {
 
       // Fall back to default inbox topic
       return new TransportPublishStrategy(transport, readinessCheck);
+    });
+
+    return services;
+  }
+
+  /// <summary>
+  /// Registers infrastructure provisioner for automatic domain topic creation.
+  /// This requires a ServiceBusAdministrationClient which needs Manage permissions.
+  /// </summary>
+  /// <param name="services">The service collection to register with.</param>
+  /// <param name="connectionString">The Azure Service Bus connection string with Manage permissions.</param>
+  /// <returns>The service collection for chaining.</returns>
+  /// <remarks>
+  /// This is separate from AddAzureServiceBusTransport because topic provisioning
+  /// requires elevated permissions (Manage) that may not be available in all environments.
+  /// In production, topics are often pre-provisioned via infrastructure-as-code.
+  /// </remarks>
+  public static IServiceCollection AddAzureServiceBusProvisioner(
+    this IServiceCollection services,
+    string connectionString
+  ) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+    // Register admin client wrapper
+    services.AddSingleton<IServiceBusAdminClient>(sp => {
+      var adminClient = new ServiceBusAdministrationClient(connectionString);
+      return new ServiceBusAdminClientWrapper(adminClient);
+    });
+
+    // Register infrastructure provisioner
+    services.AddSingleton<IInfrastructureProvisioner>(sp => {
+      var adminClient = sp.GetRequiredService<IServiceBusAdminClient>();
+      var logger = sp.GetRequiredService<ILogger<ServiceBusInfrastructureProvisioner>>();
+      return new ServiceBusInfrastructureProvisioner(adminClient, logger);
     });
 
     return services;

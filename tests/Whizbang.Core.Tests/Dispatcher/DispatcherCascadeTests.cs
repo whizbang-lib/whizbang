@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -22,8 +23,14 @@ public class DispatcherCascadeTests {
 
   public record CreateOrderCommand(Guid OrderId, Guid CustomerId);
   public record OrderCreatedResult(Guid OrderId);
+
+  // Events use [DefaultRouting(Local)] for local cascade test verification.
+  // (System default is Outbox for cross-service delivery)
+  [DefaultRouting(DispatchMode.Local)]
   public record OrderCreatedEvent([property: StreamKey] Guid OrderId, Guid CustomerId) : IEvent;
+  [DefaultRouting(DispatchMode.Local)]
   public record OrderShippedEvent([property: StreamKey] Guid OrderId) : IEvent;
+  [DefaultRouting(DispatchMode.Local)]
   public record NotificationSentEvent([property: StreamKey] Guid OrderId, string Type) : IEvent;
 
   // ========================================

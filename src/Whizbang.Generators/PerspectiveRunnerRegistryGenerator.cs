@@ -160,6 +160,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("#nullable enable");
     source.AppendLine();
     source.AppendLine("using System;");
+    source.AppendLine("using System.Runtime.CompilerServices;");
     source.AppendLine("using Microsoft.Extensions.DependencyInjection;");
     source.AppendLine("using Whizbang.Core.Perspectives;");
     source.AppendLine();
@@ -217,13 +218,42 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry, PerspectiveRunnerRegistry>();");
     source.AppendLine();
 
-    // Register each runner
+    // Register each perspective class and its runner
     foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {
+      source.AppendLine($"    services.AddScoped<{perspective.ClassName}>();");
       source.AppendLine($"    services.AddScoped<{perspective.RunnerName}>();");
     }
 
     source.AppendLine();
+    source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
+    source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");
+    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.PerspectiveWorker>();");
+    source.AppendLine();
     source.AppendLine("    return services;");
+    source.AppendLine("  }");
+    source.AppendLine("}");
+    source.AppendLine();
+
+    // Module initializer class for automatic registration
+    source.AppendLine("/// <summary>");
+    source.AppendLine($"/// Auto-generated module initializer for registering {perspectives.Length} perspective runner(s).");
+    source.AppendLine("/// Runs at module load time and registers with PerspectiveRunnerCallbackRegistry (AOT-compatible).");
+    source.AppendLine("/// For test assemblies where ModuleInitializers may not run reliably, call Initialize() explicitly.");
+    source.AppendLine("/// </summary>");
+    source.AppendLine("public static class PerspectiveRunnerInitializer {");
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Module initializer that registers the perspective runner registration callback.");
+    source.AppendLine("  /// This runs automatically when the assembly is loaded (no reflection required).");
+    source.AppendLine("  /// For test assemblies, you can call this method explicitly in test setup.");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  [ModuleInitializer]");
+    source.AppendLine("  public static void Initialize() {");
+    source.AppendLine("    // Register callback with the library's registry");
+    source.AppendLine("    // When .WithDriver.Postgres (or similar) is called, this callback will be invoked");
+    source.AppendLine("    // Wrap in lambda because AddPerspectiveRunners returns IServiceCollection (fluent API)");
+    source.AppendLine("    PerspectiveRunnerCallbackRegistry.RegisterCallback(services => {");
+    source.AppendLine("      _ = PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(services);");
+    source.AppendLine("    });");
     source.AppendLine("  }");
     source.AppendLine("}");
 
