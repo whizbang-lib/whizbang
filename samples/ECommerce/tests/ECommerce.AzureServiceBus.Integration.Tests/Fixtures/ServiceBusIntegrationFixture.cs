@@ -132,6 +132,25 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Refreshes the lens scopes to get fresh DbContexts that can see committed perspective data.
+  /// Call this after waiting for perspective completion but before reading from lenses.
+  /// </summary>
+  /// <remarks>
+  /// EF Core DbContexts cache entities. When a perspective commits data in its own scope,
+  /// the test's scope may still have stale cached data. This method disposes the existing
+  /// scopes and creates fresh ones with new DbContext instances that will read committed data.
+  /// </remarks>
+  public void RefreshLensScopes() {
+    // Dispose existing scopes
+    _inventoryScope?.Dispose();
+    _bffScope?.Dispose();
+
+    // Create fresh scopes with new DbContext instances
+    _inventoryScope = _inventoryHost!.Services.CreateScope();
+    _bffScope = _bffHost!.Services.CreateScope();
+  }
+
+  /// <summary>
   /// Initializes the test fixture by creating PostgreSQL container (TestContainers) and service hosts.
   /// ServiceBus emulator is already pre-created via SharedFixtureSource.
   /// </summary>

@@ -15,8 +15,20 @@ public class InventoryLevelsPerspective :
 
   /// <summary>
   /// Handles ProductCreatedEvent by initializing inventory at 0 quantity.
+  /// If data already exists (InventoryRestockedEvent processed first), preserves existing values.
   /// </summary>
   public InventoryLevelDto Apply(InventoryLevelDto currentData, ProductCreatedEvent @event) {
+    // If data already exists, preserve existing quantities (event ordering resilience)
+    if (currentData != null) {
+      return new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = currentData.Quantity,
+        Reserved = currentData.Reserved,
+        Available = currentData.Available,
+        LastUpdated = currentData.LastUpdated > @event.CreatedAt ? currentData.LastUpdated : @event.CreatedAt
+      };
+    }
+
     return new InventoryLevelDto {
       ProductId = @event.ProductId,
       Quantity = 0,
