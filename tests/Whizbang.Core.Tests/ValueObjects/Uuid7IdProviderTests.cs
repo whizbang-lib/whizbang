@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.ValueObjects;
 
@@ -23,7 +24,7 @@ public class Uuid7IdProviderTests {
     var result = provider.NewGuid();
 
     // Assert
-    await Assert.That(result).IsNotEqualTo(Guid.Empty);
+    await Assert.That(result.Value).IsNotEqualTo(Guid.Empty);
   }
 
   [Test]
@@ -35,7 +36,7 @@ public class Uuid7IdProviderTests {
 
     // Act
     for (int i = 0; i < count; i++) {
-      guids.Add(provider.NewGuid());
+      guids.Add(provider.NewGuid().Value);
     }
 
     // Assert
@@ -46,11 +47,11 @@ public class Uuid7IdProviderTests {
   public async Task NewGuid_CalledSequentially_ShouldReturnTimeOrderedGuidsAsync() {
     // Arrange
     var provider = new Uuid7IdProvider();
-    var previousGuid = provider.NewGuid();
+    var previousGuid = provider.NewGuid().Value;
 
     // Act & Assert
     for (int i = 0; i < 10; i++) {
-      var currentGuid = provider.NewGuid();
+      var currentGuid = provider.NewGuid().Value;
       await Assert.That(currentGuid.CompareTo(previousGuid)).IsGreaterThanOrEqualTo(0);
       previousGuid = currentGuid;
     }
@@ -63,7 +64,7 @@ public class Uuid7IdProviderTests {
 
     // Act
     var result = provider.NewGuid();
-    var bytes = result.ToByteArray();
+    var bytes = result.Value.ToByteArray();
 
     // Assert - UUIDv7 has version bits 0111 in high nibble of byte 7
     var versionByte = bytes[7];
@@ -78,15 +79,16 @@ public class Uuid7IdProviderTests {
 
     // Act
     var result = provider.NewGuid();
+    Guid guidValue = result; // Implicit conversion
 
     // Assert - Can use standard Guid methods
-    var stringRepresentation = result.ToString();
-    var byteArray = result.ToByteArray();
+    var stringRepresentation = guidValue.ToString();
+    var byteArray = guidValue.ToByteArray();
     var parsedGuid = Guid.Parse(stringRepresentation);
 
     await Assert.That(stringRepresentation).IsNotNull();
     await Assert.That(byteArray).Count().IsEqualTo(16);
-    await Assert.That(parsedGuid).IsEqualTo(result);
+    await Assert.That(parsedGuid).IsEqualTo(guidValue);
   }
 
   [Test]
@@ -98,12 +100,28 @@ public class Uuid7IdProviderTests {
 
     // Act
     for (int i = 0; i < count; i++) {
-      guids.Add(provider.NewGuid());
+      guids.Add(provider.NewGuid().Value);
     }
 
     // Assert - Verify all GUIDs are in ascending order
     for (int i = 1; i < guids.Count; i++) {
       await Assert.That(guids[i].CompareTo(guids[i - 1])).IsGreaterThanOrEqualTo(0);
     }
+  }
+
+  [Test]
+  public async Task NewGuid_ShouldReturnTrackedGuidWithCorrectMetadataAsync() {
+    // Arrange
+    var provider = new Uuid7IdProvider();
+
+    // Act
+    var result = provider.NewGuid();
+
+    // Assert - Should have Medo v7 metadata
+    await Assert.That(result.IsTimeOrdered).IsTrue();
+    await Assert.That(result.SubMillisecondPrecision).IsTrue();
+    await Assert.That(result.IsTracking).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadata.Version7) != 0).IsTrue();
+    await Assert.That((result.Metadata & GuidMetadata.SourceMedo) != 0).IsTrue();
   }
 }

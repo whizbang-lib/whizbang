@@ -22,7 +22,7 @@ public class TrackedGuidTests {
   [Arguments(GuidMetadata.SourceExternal, 5)]
   [Arguments(GuidMetadata.SourceUnknown, 6)]
   public async Task GuidMetadata_Flags_HaveCorrectBitPositionsAsync(GuidMetadata flag, int bitPosition) {
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << bitPosition));
+    await Assert.That((ushort)flag).IsEqualTo((ushort)(1 << bitPosition));
   }
 
   [Test]
@@ -486,5 +486,147 @@ public class TrackedGuidTests {
 
     // Assert
     await Assert.That(empty.Value).IsEqualTo(Guid.Empty);
+  }
+
+  // ========================================
+  // FromIntercepted() Tests (for Guid interception)
+  // ========================================
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_PreservesGuidValueAsync() {
+    // Arrange
+    var originalGuid = Guid.NewGuid();
+    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(originalGuid, metadata);
+
+    // Assert
+    await Assert.That(tracked.Value).IsEqualTo(originalGuid);
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_PreservesExactMetadataAsync() {
+    // Arrange
+    var guid = Guid.CreateVersion7();
+    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That(tracked.Metadata).IsEqualTo(metadata);
+  }
+
+  [Test]
+  [Arguments(GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft)]
+  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft)]
+  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMedo)]
+  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMarten)]
+  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceUuidNext)]
+  public async Task TrackedGuid_FromIntercepted_WithVariousMetadata_PreservesMetadataAsync(
+      GuidMetadata metadata) {
+    // Arrange
+    var guid = Guid.CreateVersion7();
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That(tracked.Metadata).IsEqualTo(metadata);
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_IsTracking_ReturnsTrueAsync() {
+    // Arrange - FromIntercepted uses known sources, so should be tracking
+    var guid = Guid.NewGuid();
+    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That(tracked.IsTracking).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_WithV7_IsTimeOrderedAsync() {
+    // Arrange
+    var guid = Guid.CreateVersion7();
+    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That(tracked.IsTimeOrdered).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_WithV4_IsNotTimeOrderedAsync() {
+    // Arrange
+    var guid = Guid.NewGuid();
+    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That(tracked.IsTimeOrdered).IsFalse();
+  }
+
+  // ========================================
+  // Third-Party Source Metadata Tests
+  // ========================================
+
+  [Test]
+  [Arguments(GuidMetadata.SourceMarten, 8)]
+  [Arguments(GuidMetadata.SourceUuidNext, 9)]
+  [Arguments(GuidMetadata.SourceDaanV2, 10)]
+  [Arguments(GuidMetadata.SourceUuids, 11)]
+  [Arguments(GuidMetadata.SourceGuidOne, 12)]
+  [Arguments(GuidMetadata.SourceTaiizor, 13)]
+  public async Task GuidMetadata_ThirdPartySources_HaveCorrectBitPositionsAsync(
+      GuidMetadata flag, int bitPosition) {
+    await Assert.That((ushort)flag).IsEqualTo((ushort)(1 << bitPosition));
+  }
+
+  [Test]
+  public async Task GuidMetadata_ThirdPartySource_CanCombineWithVersionAsync() {
+    // Arrange & Act
+    var martenV7 = GuidMetadata.Version7 | GuidMetadata.SourceMarten;
+
+    // Assert
+    await Assert.That((martenV7 & GuidMetadata.Version7) != 0).IsTrue();
+    await Assert.That((martenV7 & GuidMetadata.SourceMarten) != 0).IsTrue();
+    await Assert.That((martenV7 & GuidMetadata.SourceMedo) != 0).IsFalse();
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_WithMarten_HasCorrectMetadataAsync() {
+    // Arrange - Simulating interception of CombGuidIdGeneration.NewGuid()
+    var guid = Guid.CreateVersion7(); // CombGuid produces v7-like GUIDs
+    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMarten;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That((tracked.Metadata & GuidMetadata.SourceMarten) != 0).IsTrue();
+    await Assert.That(tracked.IsTimeOrdered).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromIntercepted_WithUuidNext_HasCorrectMetadataAsync() {
+    // Arrange - Simulating interception of UUIDNext
+    var guid = Guid.CreateVersion7();
+    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceUuidNext;
+
+    // Act
+    var tracked = TrackedGuid.FromIntercepted(guid, metadata);
+
+    // Assert
+    await Assert.That((tracked.Metadata & GuidMetadata.SourceUuidNext) != 0).IsTrue();
+    await Assert.That(tracked.IsTimeOrdered).IsTrue();
   }
 }

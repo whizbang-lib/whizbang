@@ -575,6 +575,34 @@ public static class DiagnosticDescriptors {
       description: "Raw Guid parameters lose metadata about precision and ordering. Consider using IWhizbangId or a strongly-typed ID generated with [WhizbangId]."
   );
 
+  /// <summary>
+  /// WHIZ058: Info - Guid generation call intercepted and wrapped with TrackedGuid.
+  /// </summary>
+  /// <docs>diagnostics/whiz058</docs>
+  public static readonly DiagnosticDescriptor GuidCallIntercepted = new(
+      id: "WHIZ058",
+      title: "Guid Call Intercepted",
+      messageFormat: "Intercepted {0} at {1}:{2} - wrapped with TrackedGuid for metadata tracking",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A Guid generation call was intercepted and wrapped with TrackedGuid to enable metadata tracking. This allows Whizbang to validate time-ordering requirements at runtime."
+  );
+
+  /// <summary>
+  /// WHIZ059: Info - Guid interception suppressed via attribute or pragma.
+  /// </summary>
+  /// <docs>diagnostics/whiz059</docs>
+  public static readonly DiagnosticDescriptor GuidInterceptionSuppressed = new(
+      id: "WHIZ059",
+      title: "Guid Interception Suppressed",
+      messageFormat: "Interception suppressed for {0} at {1}:{2} via {3}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Guid interception was suppressed by a [SuppressGuidInterception] attribute or #pragma warning disable WHIZ058 directive."
+  );
+
   // ========================================
   // Physical Field Diagnostics (WHIZ801-809)
   // ========================================

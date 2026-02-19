@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace Whizbang.Generators.Tests;
 
@@ -165,5 +166,111 @@ public static class GeneratorTestHelper {
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
+  }
+
+  /// <summary>
+  /// Runs a source generator against the provided source code with custom analyzer options.
+  /// </summary>
+  /// <typeparam name="TGenerator">The type of generator to run</typeparam>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="globalOptions">Global analyzer options (e.g., MSBuild properties)</param>
+  /// <returns>The generator driver result containing generated sources and diagnostics</returns>
+  [RequiresAssemblyFiles()]
+  public static GeneratorDriverRunResult RunGenerator<TGenerator>(
+      string source,
+      Dictionary<string, string> globalOptions)
+      where TGenerator : IIncrementalGenerator, new() {
+
+    // Parse the source code
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+
+    // Get references to assemblies we need
+    var references = new List<MetadataReference>();
+
+    // Add reference to System.Runtime and other basic assemblies
+    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
+
+    // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
+    try {
+      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
+      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
+    } catch {
+      var coreAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Core.dll"
+      );
+      if (File.Exists(coreAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
+      }
+    }
+
+    // Create compilation
+    var compilation = CSharpCompilation.Create(
+        assemblyName: "TestAssembly",
+        syntaxTrees: new[] { syntaxTree },
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+
+    // Create generator instance
+    var generator = new TGenerator();
+
+    // Create options provider
+    var optionsProvider = new TestAnalyzerConfigOptionsProvider(globalOptions);
+
+    // Create generator driver with options provider
+    var driver = CSharpGeneratorDriver.Create(
+        generators: new ISourceGenerator[] { generator.AsSourceGenerator() },
+        optionsProvider: optionsProvider
+    );
+
+    // Run the generator
+    driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
+
+    // Get the results
+    return driver.GetRunResult();
+  }
+
+  /// <summary>
+  /// Test implementation of AnalyzerConfigOptionsProvider for passing MSBuild properties to generators.
+  /// </summary>
+  private sealed class TestAnalyzerConfigOptionsProvider : AnalyzerConfigOptionsProvider {
+    private readonly Dictionary<string, string> _globalOptions;
+
+    public TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions) {
+      _globalOptions = globalOptions;
+    }
+
+    public override AnalyzerConfigOptions GlobalOptions =>
+        new TestAnalyzerConfigOptions(_globalOptions);
+
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) =>
+        TestAnalyzerConfigOptions.Empty;
+
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) =>
+        TestAnalyzerConfigOptions.Empty;
+  }
+
+  /// <summary>
+  /// Test implementation of AnalyzerConfigOptions.
+  /// </summary>
+  private sealed class TestAnalyzerConfigOptions : AnalyzerConfigOptions {
+    private readonly Dictionary<string, string> _options;
+
+    public static readonly TestAnalyzerConfigOptions Empty =
+        new(new Dictionary<string, string>());
+
+    public TestAnalyzerConfigOptions(Dictionary<string, string> options) {
+      _options = options;
+    }
+
+    public override bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value) {
+      return _options.TryGetValue(key, out value!);
+    }
   }
 }

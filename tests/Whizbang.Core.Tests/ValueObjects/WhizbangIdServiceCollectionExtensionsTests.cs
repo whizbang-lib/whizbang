@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.ValueObjects;
 
@@ -275,6 +276,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
       _fixedGuid = fixedGuid;
     }
 
-    public Guid NewGuid() => _fixedGuid;
+    public TrackedGuid NewGuid() =>
+        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
   }
 }
