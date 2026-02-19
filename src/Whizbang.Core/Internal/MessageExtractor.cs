@@ -116,6 +116,11 @@ public static class MessageExtractor {
 
     // Handle Routed<T> wrapper
     if (result is IRouted routed) {
+      // Skip RoutedNone values (discriminated union "no value" marker)
+      if (routed.Mode == DispatchMode.None) {
+        yield break;
+      }
+
       var wrapperMode = routed.Mode;
       var innerValue = routed.Value;
 

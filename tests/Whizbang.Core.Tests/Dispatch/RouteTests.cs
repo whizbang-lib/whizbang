@@ -233,6 +233,51 @@ public class RouteTests {
 
   #endregion
 
+  #region Route.None
+
+  [Test]
+  public async Task None_ReturnsRoutedNoneAsync() {
+    // Act
+    var result = Route.None();
+
+    // Assert - RoutedNone is a struct, check type
+    await Assert.That(result).IsTypeOf<RoutedNone>();
+  }
+
+  [Test]
+  public async Task None_ImplementsIRoutedAsync() {
+    // Act
+    var result = Route.None();
+
+    // Assert - Access via interface
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(result.Value).IsNull();
+  }
+
+  [Test]
+  public async Task None_InTuple_CanBeMixedWithEventsAsync() {
+    // Arrange - Discriminated union tuple: success or failure
+    var successEvent = new TestEvent("Success");
+    var tuple = (success: successEvent, failure: Route.None());
+
+    // Assert - Both elements exist in tuple
+    await Assert.That(tuple.success).IsEqualTo(successEvent);
+    await Assert.That(tuple.failure).IsTypeOf<RoutedNone>();
+  }
+
+  [Test]
+  public async Task None_InTuple_AlternativePathAsync() {
+    // Arrange - Discriminated union: failure path
+    var failureEvent = new TestEvent("Failure");
+    var tuple = (success: Route.None(), failure: failureEvent);
+
+    // Assert
+    await Assert.That(tuple.success).IsTypeOf<RoutedNone>();
+    await Assert.That(tuple.failure).IsEqualTo(failureEvent);
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestEvent(string Name) : IEvent;

@@ -565,15 +565,10 @@ public abstract class Dispatcher(
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
     if (asyncInvoker != null) {
-      // OPTIMIZATION: Skip envelope creation when trace store is null
-      // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _receptorInvoker != null) {
-        return _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
-      }
-
-      // Fast path with cascade support for receptor tuple/array returns
-      // Invoke using delegate, then extract and publish any IEvent instances
-      return _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
+      // Use wrapper that catches InvalidCastException and falls back to RPC extraction
+      // This handles the case where receptor returns a complex type (tuple, etc.)
+      // but caller requests a specific type from within that complex type
+      return _localInvokeWithCastFallbackAsync(asyncInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Fallback to sync receptor
@@ -582,7 +577,58 @@ public abstract class Dispatcher(
       return _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
     }
 
+    // RPC extraction fallback: receptor returns complex type containing TResult
+    // Extract TResult from the result and cascade remaining values
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
+    }
+
     throw new HandlerNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Wrapper that tries the typed invoker first, but falls back to RPC extraction
+  /// on InvalidCastException. This handles the case where the receptor returns a
+  /// complex type (tuple, array, etc.) but the caller requests a specific type.
+  /// </summary>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async ValueTask<TResult> _localInvokeWithCastFallbackAsync<TResult>(
+    ReceptorInvoker<TResult> asyncInvoker,
+    object message,
+    Type messageType,
+    IMessageContext context,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    try {
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _receptorInvoker != null) {
+        return await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
+
+      // Fast path with cascade support for receptor tuple/array returns
+      // Invoke using delegate, then extract and publish any IEvent instances
+      return await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
+    } catch (InvalidCastException) {
+      // The typed invoker failed because the receptor returns a complex type
+      // containing TResult, not TResult directly. Fall back to RPC extraction.
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      CascadeLogger.LogDebug("[RPC] InvalidCastException caught, falling back to RPC extraction for {MessageType} -> {ResultType}",
+        messageType.Name, typeof(TResult).Name);
+#pragma warning restore CA1848
+
+      var anyInvoker = GetReceptorInvokerAny(message, messageType);
+      if (anyInvoker != null) {
+        return await _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
+      }
+
+      // If no invoker found at all, re-throw the original exception
+      throw;
+    }
   }
 
   /// <summary>
@@ -631,6 +677,116 @@ public abstract class Dispatcher(
     var result = await invoker(message);
     await _cascadeEventsFromResultAsync(result, messageType);
     return result;
+  }
+
+  /// <summary>
+  /// RPC extraction path for LocalInvokeAsync when receptor returns a complex type containing TResult.
+  /// Extracts TResult from the result and cascades all remaining values.
+  /// </summary>
+  /// <typeparam name="TResult">The type requested by the RPC caller.</typeparam>
+  /// <param name="invoker">The type-erased receptor invoker.</param>
+  /// <param name="message">The message to dispatch.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <returns>The extracted TResult value.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when TResult cannot be extracted from the receptor result.</exception>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async ValueTask<TResult> _localInvokeWithRpcExtractionAsync<TResult>(
+    Func<object, ValueTask<object?>> invoker,
+    object message,
+    Type messageType
+  ) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[RPC] RpcExtraction: Invoking receptor for {MessageType}, extracting {ResultType}",
+      messageType.Name, typeof(TResult).Name);
+
+    // 1. Invoke receptor to get full result
+    var fullResult = await invoker(message);
+    CascadeLogger.LogDebug("[RPC] RpcExtraction: Receptor returned {ResultType}, IsNull={IsNull}",
+      fullResult?.GetType().Name ?? "null", fullResult == null);
+
+    // 2. Extract the requested TResult from the result
+    if (!Internal.ResponseExtractor.TryExtractResponse<TResult>(fullResult, out var response)) {
+      throw new InvalidOperationException(
+        $"Could not extract {typeof(TResult).Name} from receptor result of type {fullResult?.GetType().Name ?? "null"}. " +
+        $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}.");
+    }
+    CascadeLogger.LogDebug("[RPC] RpcExtraction: Successfully extracted {ResultType}", typeof(TResult).Name);
+
+    // 3. Cascade remaining messages (excluding the extracted response)
+    await _cascadeEventsExcludingResponseAsync(fullResult, response, messageType);
+
+    // 4. Return the extracted response
+    return response!;
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Cascades events from a result, excluding the RPC response that was returned to the caller.
+  /// Uses ReferenceEquals to identify the exact instance to exclude.
+  /// </summary>
+  /// <typeparam name="TResult">The type of the extracted RPC response.</typeparam>
+  /// <param name="result">The full receptor result containing multiple values.</param>
+  /// <param name="extractedResponse">The value that was extracted and returned to the RPC caller.</param>
+  /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async Task _cascadeEventsExcludingResponseAsync<TResult>(
+    object? result,
+    TResult? extractedResponse,
+    Type? originalMessageType = null
+  ) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ResultType={ResultType}, ExtractedType={ExtractedType}",
+      result?.GetType().Name ?? "null", typeof(TResult).Name);
+
+    // Fast path: Skip if result is null
+    if (result == null) {
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Result is null, skipping cascade");
+      return;
+    }
+
+    // Look up receptor default routing from [DefaultRouting] attribute on the receptor
+    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+        ? GetReceptorDefaultRouting(originalMessageType)
+        : null;
+    CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
+
+    // Use MessageExtractor to find all IMessage instances with routing info
+    var extractedCount = 0;
+    var skippedCount = 0;
+    foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+      // Skip the extracted response - it goes to RPC caller, not cascade
+      if (extractedResponse != null && ReferenceEquals(msg, extractedResponse)) {
+        skippedCount++;
+        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Skipping extracted response (ReferenceEquals match)");
+        continue;
+      }
+
+      extractedCount++;
+      var msgType = msg.GetType();
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascading message {Count}: Type={MessageType}, Mode={Mode}",
+        extractedCount, msgType.Name, mode);
+
+      // Local dispatch: Invoke in-process receptors
+      if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Dispatching locally for {MessageType}", msgType.Name);
+        var publisher = GetUntypedReceptorPublisher(msgType);
+        if (publisher != null) {
+          await publisher(msg);
+        }
+      }
+
+      // Outbox dispatch: Write to outbox for cross-service delivery
+      if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Calling CascadeToOutboxAsync for {MessageType}", msgType.Name);
+        await CascadeToOutboxAsync(msg, msgType);
+      }
+    }
+
+    CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascaded {CascadeCount} messages, skipped {SkipCount} (RPC response)",
+      extractedCount, skippedCount);
+#pragma warning restore CA1848
   }
 
   /// <summary>
