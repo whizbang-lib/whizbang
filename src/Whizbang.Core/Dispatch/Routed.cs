@@ -1,6 +1,41 @@
 namespace Whizbang.Core.Dispatch;
 
 /// <summary>
+/// Represents an explicitly empty value in a discriminated union tuple.
+/// Used with <see cref="Route.None"/> to indicate "no value" for a specific path.
+/// </summary>
+/// <remarks>
+/// <para>
+/// RoutedNone is used in discriminated union patterns where a receptor returns
+/// multiple possible outcomes but only one is populated:
+/// </para>
+/// <code>
+/// // Success path - failure is Route.None()
+/// return (success: orderCreated, failure: Route.None());
+///
+/// // Failure path - success is Route.None()
+/// return (success: Route.None(), failure: orderFailed);
+/// </code>
+/// <para>
+/// RoutedNone values are automatically skipped during message extraction and cascade.
+/// They cannot be extracted as RPC responses.
+/// </para>
+/// </remarks>
+/// <docs>core-concepts/rpc-extraction#discriminated-unions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:None_*</tests>
+public readonly struct RoutedNone : IRouted {
+  /// <summary>
+  /// Gets the wrapped value, which is always null for RoutedNone.
+  /// </summary>
+  public object? Value => null;
+
+  /// <summary>
+  /// Gets the dispatch mode, which is always None for RoutedNone.
+  /// </summary>
+  public DispatchMode Mode => DispatchMode.None;
+}
+
+/// <summary>
 /// Non-generic interface for pattern matching on routed values.
 /// Enables MessageExtractor to detect and unwrap Routed&lt;T&gt; without knowing T.
 /// </summary>

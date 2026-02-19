@@ -361,6 +361,111 @@ public class MessageExtractorRoutingTests {
 
   #endregion
 
+  #region Route.None (Discriminated Union Support)
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_RouteNone_IsSkippedAsync() {
+    // Arrange - Route.None() should not produce any messages
+    var routeNone = Route.None();
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(routeNone).ToList();
+
+    // Assert
+    await Assert.That(results).IsEmpty();
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_TupleWithRouteNone_SkipsNoneAsync() {
+    // Arrange - Discriminated union: success path
+    var successEvent = new TestEvent("Success");
+    var tuple = (success: (object)successEvent, failure: Route.None());
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
+
+    // Assert - Only the success event, Route.None() is skipped
+    await Assert.That(results).Count().IsEqualTo(1);
+    await Assert.That(results[0].Message).IsEqualTo(successEvent);
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_TupleWithRouteNone_FailurePathAsync() {
+    // Arrange - Discriminated union: failure path
+    var failureEvent = new TestEvent("Failure");
+    var tuple = (success: Route.None(), failure: (object)failureEvent);
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
+
+    // Assert - Only the failure event
+    await Assert.That(results).Count().IsEqualTo(1);
+    await Assert.That(results[0].Message).IsEqualTo(failureEvent);
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_AllRouteNone_ReturnsEmptyAsync() {
+    // Arrange - Tuple with only Route.None() values
+    var tuple = (Route.None(), Route.None());
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
+
+    // Assert
+    await Assert.That(results).IsEmpty();
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_ThreeWayUnionWithRouteNone_ExtractsOnlyValueAsync() {
+    // Arrange - Three-way discriminated union
+    var validationError = new TestEvent("ValidationFailed");
+    var tuple = (
+      success: Route.None(),
+      validationError: (object)validationError,
+      systemError: Route.None()
+    );
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
+
+    // Assert - Only the validation error event
+    await Assert.That(results).Count().IsEqualTo(1);
+    await Assert.That(results[0].Message).IsEqualTo(validationError);
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_ArrayWithRouteNone_SkipsNoneAsync() {
+    // Arrange - Array with Route.None() values
+    var evt1 = new TestEvent("A");
+    var evt2 = new TestEvent("B");
+    var array = new object[] { evt1, Route.None(), evt2, Route.None() };
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(array).ToList();
+
+    // Assert - Only the events
+    await Assert.That(results).Count().IsEqualTo(2);
+    await Assert.That(results[0].Message).IsEqualTo(evt1);
+    await Assert.That(results[1].Message).IsEqualTo(evt2);
+  }
+
+  [Test]
+  public async Task ExtractMessagesWithRouting_MixedNullAndRouteNone_BothSkippedAsync() {
+    // Arrange - Mix of null and Route.None()
+    var evt = new TestEvent("Event");
+    TestEvent? nullEvent = null;
+    var tuple = (evt1: (object?)evt, evt2: (object?)nullEvent, evt3: Route.None());
+
+    // Act
+    var results = MessageExtractor.ExtractMessagesWithRouting(tuple).ToList();
+
+    // Assert - Only the non-null, non-None event
+    await Assert.That(results).Count().IsEqualTo(1);
+    await Assert.That(results[0].Message).IsEqualTo(evt);
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestEvent(string Name) : IEvent;

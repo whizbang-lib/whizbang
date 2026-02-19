@@ -38,6 +38,28 @@ namespace Whizbang.Core.Dispatch;
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs</tests>
 public static class Route {
   /// <summary>
+  /// Returns a value indicating "no value" for use in discriminated union tuples.
+  /// </summary>
+  /// <returns>A <see cref="RoutedNone"/> value that is skipped during extraction and cascade.</returns>
+  /// <remarks>
+  /// <para>
+  /// Use Route.None() in discriminated union patterns where a receptor returns
+  /// multiple possible outcomes but only one is populated:
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // Success path
+  /// return (success: orderCreated, failure: Route.None());
+  ///
+  /// // Failure path
+  /// return (success: Route.None(), failure: orderFailed);
+  /// </code>
+  /// </example>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:None_*</tests>
+  public static RoutedNone None() => default;
+
+  /// <summary>
   /// Wraps a value for local-only dispatch (in-process receptors).
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
