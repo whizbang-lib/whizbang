@@ -87,7 +87,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
 
       return eventTypeSymbols.Select(eventTypeSymbol => {
-        var messageTypeName = _formatTypeNameForRuntime(eventTypeSymbol);
+        var messageTypeName = TypeNameUtilities.FormatTypeNameForRuntime(eventTypeSymbol);
 
         return new PerspectiveAssociationInfo(
             PerspectiveClassName: simpleClassName,
@@ -99,27 +99,8 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     return results;
   }
 
-  /// <summary>
-  /// Formats a type name for database storage (TypeName, AssemblyName format).
-  /// </summary>
-  private static string _formatTypeNameForRuntime(ITypeSymbol typeSymbol) {
-    if (typeSymbol == null) {
-      throw new ArgumentNullException(nameof(typeSymbol));
-    }
-
-    // Get fully qualified type name WITHOUT global:: prefix
-    var typeName = typeSymbol.ToDisplayString(new SymbolDisplayFormat(
-        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-    ));
-
-    // Get assembly name (simple name only)
-    var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
-        ? arrayType.ElementType.ContainingAssembly.Name
-        : typeSymbol.ContainingAssembly.Name;
-
-    return $"{typeName}, {assemblyName}";
-  }
+  // Note: Type naming utilities have been centralized in TypeNameUtilities.FormatTypeNameForRuntime()
+  // to ensure consistent CLR format (using '+' for nested types) across all generators.
 
   /// <summary>
   /// Gets the simple name from a fully qualified type name.
@@ -152,6 +133,12 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return;
     }
 
+    // Deduplicate perspectives by (PerspectiveClassName, MessageTypeName)
+    // This prevents "ON CONFLICT DO UPDATE command cannot affect row a second time" errors
+    var uniquePerspectives = perspectives
+        .Distinct()
+        .ToImmutableArray();
+
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
@@ -177,7 +164,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     int associationCount = 0;
     bool isFirstAssociation = true;
 
-    foreach (var perspective in perspectives) {
+    foreach (var perspective in uniquePerspectives) {
       // Add comma separator (except for first item)
       if (!isFirstAssociation) {
         associations.AppendLine("    json.AppendLine(\",\");");

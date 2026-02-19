@@ -10,6 +10,8 @@ namespace Whizbang.Generators.Tests;
 public class EFCoreServiceRegistrationGeneratorTests {
 
   // Perspective boilerplate required for generator to produce output
+  // NOTE: The perspective MUST implement IPerspectiveFor<TModel, TEvent> interface(s)
+  // for the EFCorePerspectiveAssociationGenerator to detect it
   private const string PERSPECTIVE_BOILERPLATE = """
     using Whizbang.Core;
     using Whizbang.Core.Perspectives;
@@ -22,16 +24,18 @@ public class EFCoreServiceRegistrationGeneratorTests {
       public string Id { get; init; } = "";
     }
 
-    // Test perspective (requires IPerspectiveStore<TModel> in constructor)
-    public class TestPerspective {
+    // Test perspective implementing IPerspectiveFor interface for generator detection
+    // The Apply method signature must match the interface: TModel Apply(TModel currentData, TEvent eventData)
+    public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
       private readonly IPerspectiveStore<TestModel> _store;
 
       public TestPerspective(IPerspectiveStore<TestModel> store) {
         _store = store;
       }
 
-      public Task Update(TestEvent @event, CancellationToken cancellationToken = default) {
-        return Task.CompletedTask;
+      // Interface requires non-nullable TModel first parameter
+      public TestModel Apply(TestModel currentData, TestEvent eventData) {
+        return currentData with { Id = "updated" };
       }
     }
 
@@ -1306,6 +1310,8 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// <summary>
   /// Test that Step 5 calls RegisterPerspectiveAssociationsAsync with correct parameters.
   /// The generated code uses extension method pattern with schema and assembly name parameters.
+  /// NOTE: The PERSPECTIVE_BOILERPLATE must include a perspective implementing IPerspectiveFor
+  /// for this test to verify Step 5 generates the RegisterPerspectiveAssociationsAsync call.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_Step5UsesExtensionMethodPatternAsync() {
@@ -1334,6 +1340,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
     var sourceText = schemaExtensions!.SourceText.ToString();
 
     // The generated code should call dbContext.RegisterPerspectiveAssociationsAsync(...)
+    // This only happens when perspectives are detected and matched to the DbContext
     await Assert.That(sourceText).Contains("await dbContext.RegisterPerspectiveAssociationsAsync(");
   }
 

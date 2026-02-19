@@ -301,6 +301,85 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     await Assert.That(exists).IsTrue();
   }
 
+  /// <summary>
+  /// Tests that duplicate entries in the JSON input cause a PostgreSQL error.
+  /// This documents why the generator must deduplicate perspective associations.
+  /// The error "ON CONFLICT DO UPDATE command cannot affect row a second time" occurs
+  /// when the same key appears multiple times in a single INSERT statement.
+  /// </summary>
+  [Test]
+  public async Task RegisterMessageAssociations_DuplicateEntriesInJson_ThrowsPostgresExceptionAsync() {
+    // Arrange
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+    await _cleanupAssociationsAsync(conn);
+
+    // JSON with duplicate entries (same message_type, association_type, target_name, service_name)
+    var associationsWithDuplicates = JsonSerializer.Serialize(new[] {
+      new {
+        MessageType = "ProductCreatedEvent",
+        AssociationType = "perspective",
+        TargetName = "ProductCatalogPerspective",
+        ServiceName = "BFF.API"
+      },
+      new {
+        MessageType = "ProductCreatedEvent",
+        AssociationType = "perspective",
+        TargetName = "ProductCatalogPerspective",
+        ServiceName = "BFF.API"
+      } // Duplicate!
+    });
+
+    // Act & Assert - Should throw PostgresException with SQLSTATE 21000
+    await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn);
+    cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associationsWithDuplicates);
+
+    var exception = await Assert.ThrowsAsync<Npgsql.PostgresException>(
+      async () => await cmd.ExecuteNonQueryAsync());
+
+    await Assert.That(exception).IsNotNull();
+    await Assert.That(exception!.SqlState).IsEqualTo("21000"); // cardinality_violation
+    await Assert.That(exception.Message).Contains("ON CONFLICT DO UPDATE command cannot affect row a second time");
+  }
+
+  /// <summary>
+  /// Tests that registering associations is idempotent - calling it multiple times
+  /// with the same data succeeds without errors.
+  /// </summary>
+  [Test]
+  public async Task RegisterMessageAssociations_CalledTwice_IsIdempotentAsync() {
+    // Arrange
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+    await _cleanupAssociationsAsync(conn);
+
+    var associations = JsonSerializer.Serialize(new[] {
+      new {
+        MessageType = "ProductCreatedEvent",
+        AssociationType = "perspective",
+        TargetName = "ProductCatalogPerspective",
+        ServiceName = "BFF.API"
+      },
+      new {
+        MessageType = "ProductUpdatedEvent",
+        AssociationType = "perspective",
+        TargetName = "ProductCatalogPerspective",
+        ServiceName = "BFF.API"
+      }
+    });
+
+    // Act - Call twice
+    for (int i = 0; i < 2; i++) {
+      await using var cmd = new NpgsqlCommand("SELECT * FROM register_message_associations(@p_associations)", conn);
+      cmd.Parameters.AddWithValue("p_associations", NpgsqlTypes.NpgsqlDbType.Jsonb, associations);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    // Assert - Should have exactly 2 associations (no duplicates from multiple calls)
+    var count = await _getAssociationCountAsync(conn);
+    await Assert.That(count).IsEqualTo(2);
+  }
+
   // Helper methods
 
   private static async Task _cleanupAssociationsAsync(NpgsqlConnection conn) {

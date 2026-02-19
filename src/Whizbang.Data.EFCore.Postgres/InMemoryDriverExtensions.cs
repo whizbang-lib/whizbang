@@ -51,6 +51,11 @@ public static class InMemoryDriverExtensions {
             new InMemoryUpsertStrategy()
         );
 
+        // TURNKEY: Invoke perspective runner registration callbacks
+        // This is registered by source-generated module initializer in consumer assembly
+        // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
+        PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
+
         return new WhizbangPerspectiveBuilder(selector.Services);
       }
     }

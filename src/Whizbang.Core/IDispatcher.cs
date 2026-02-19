@@ -294,6 +294,25 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
   Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
+  /// <summary>
+  /// Cascades a message (event or command) with explicit routing mode.
+  /// Called by <see cref="IEventCascader"/> after resolving routing from wrappers and attributes.
+  /// </summary>
+  /// <param name="message">The message to cascade.</param>
+  /// <param name="mode">The dispatch mode (Local, Outbox, or Both).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// Actions based on mode:
+  /// - Local: Invokes in-process receptors only
+  /// - Outbox: Writes to outbox for cross-service delivery only
+  /// - Both: Does both local invocation and outbox write
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  Task CascadeMessageAsync(IMessage message, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
+
   // ========================================
   // BATCH OPERATIONS
   // ========================================

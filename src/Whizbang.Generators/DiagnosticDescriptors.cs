@@ -327,6 +327,21 @@ public static class DiagnosticDescriptors {
       description: "Two or more perspective classes resolve to the same name, which would cause duplicate switch cases in the runner registry."
   );
 
+  /// <summary>
+  /// WHIZ033: Warning - Perspective model missing [StreamKey] attribute.
+  /// </summary>
+  /// <docs>diagnostics/whiz033</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_ModelMissingStreamKey_EmitsWarningAsync</tests>
+  public static readonly DiagnosticDescriptor PerspectiveModelMissingStreamKey = new(
+      id: "WHIZ033",
+      title: "Perspective Model Missing StreamKey",
+      messageFormat: "Perspective '{0}' will not generate a runner because model '{1}' has no property with [StreamKey] attribute",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Perspectives require their model type to have a property marked with [StreamKey] to identify the stream."
+  );
+
   // ========================================
   // Service Registration Diagnostics (WHIZ040-049)
   // ========================================

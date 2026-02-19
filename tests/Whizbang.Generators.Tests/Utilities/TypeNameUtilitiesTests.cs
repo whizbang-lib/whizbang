@@ -330,5 +330,102 @@ namespace TestNamespace {
     await Assert.That(result).Contains("TestAssembly");
   }
 
+  [Test]
+  public async Task FormatTypeNameForRuntime_NestedType_UsesPlusNotDotAsync() {
+    // Arrange - Nested class like AuthContracts.TenantCreatedEvent
+    var source = @"
+namespace TestNamespace {
+    public static class AuthContracts {
+        public class TenantCreatedEvent { }
+    }
+}";
+    var compilation = GeneratorTestHelper.CreateCompilation(source, assemblyName: "TestAssembly");
+    // Use CLR metadata name format with '+' to get the nested type
+    var typeSymbol = compilation.GetTypeByMetadataName("TestNamespace.AuthContracts+TenantCreatedEvent")!;
+
+    // Act
+    var result = TypeNameUtilities.FormatTypeNameForRuntime(typeSymbol);
+
+    // Assert - MUST use '+' for nested types, NOT '.' (CLR format)
+    await Assert.That(result).IsEqualTo("TestNamespace.AuthContracts+TenantCreatedEvent, TestAssembly");
+  }
+
+  [Test]
+  public async Task FormatTypeNameForRuntime_DeeplyNestedType_UsesPlusForAllLevelsAsync() {
+    // Arrange - Deeply nested class: Outer.Middle.Inner
+    var source = @"
+namespace TestNamespace {
+    public static class Outer {
+        public static class Middle {
+            public class Inner { }
+        }
+    }
+}";
+    var compilation = GeneratorTestHelper.CreateCompilation(source, assemblyName: "TestAssembly");
+    var typeSymbol = compilation.GetTypeByMetadataName("TestNamespace.Outer+Middle+Inner")!;
+
+    // Act
+    var result = TypeNameUtilities.FormatTypeNameForRuntime(typeSymbol);
+
+    // Assert - All nested levels use '+'
+    await Assert.That(result).IsEqualTo("TestNamespace.Outer+Middle+Inner, TestAssembly");
+  }
+
+  #endregion
+
+  #region BuildClrTypeName Tests
+
+  [Test]
+  public async Task BuildClrTypeName_TopLevelClass_ReturnsNamespaceAndNameAsync() {
+    // Arrange
+    var source = @"
+namespace TestNamespace {
+    public class SimpleEvent { }
+}";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var typeSymbol = compilation.GetTypeByMetadataName("TestNamespace.SimpleEvent")!;
+
+    // Act
+    var result = TypeNameUtilities.BuildClrTypeName(typeSymbol);
+
+    // Assert
+    await Assert.That(result).IsEqualTo("TestNamespace.SimpleEvent");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_NestedClass_UsesPlusSeparatorAsync() {
+    // Arrange
+    var source = @"
+namespace TestNamespace {
+    public static class Container {
+        public class NestedEvent { }
+    }
+}";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var typeSymbol = compilation.GetTypeByMetadataName("TestNamespace.Container+NestedEvent")!;
+
+    // Act
+    var result = TypeNameUtilities.BuildClrTypeName(typeSymbol);
+
+    // Assert - Uses '+' not '.'
+    await Assert.That(result).IsEqualTo("TestNamespace.Container+NestedEvent");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_GlobalNamespace_ReturnsTypeNameOnlyAsync() {
+    // Arrange - Type in global namespace
+    var source = @"
+public class GlobalEvent { }
+";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var typeSymbol = compilation.GetTypeByMetadataName("GlobalEvent")!;
+
+    // Act
+    var result = TypeNameUtilities.BuildClrTypeName(typeSymbol);
+
+    // Assert
+    await Assert.That(result).IsEqualTo("GlobalEvent");
+  }
+
   #endregion
 }

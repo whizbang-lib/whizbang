@@ -17,6 +17,11 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:GetTableBaseName_TopLevel_ReturnsNameAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:GetTableBaseName_Nested_ReturnsConcatenatedNameAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:FormatTypeNameForRuntime_ReturnsTypeCommaAssemblyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:FormatTypeNameForRuntime_NestedType_UsesPlusNotDotAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:FormatTypeNameForRuntime_DeeplyNestedType_UsesPlusForAllLevelsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:BuildClrTypeName_TopLevelClass_ReturnsNamespaceAndNameAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:BuildClrTypeName_NestedClass_UsesPlusSeparatorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:BuildClrTypeName_GlobalNamespace_ReturnsTypeNameOnlyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:SplitTupleParts_SimpleTuple_SplitsCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:SplitTupleParts_NestedParentheses_PreservesNestedAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeNameUtilitiesTests.cs:SplitTupleParts_Empty_ReturnsEmptyArrayAsync</tests>
@@ -100,21 +105,23 @@ public static class TypeNameUtilities {
   }
 
   /// <summary>
-  /// Formats a type name for runtime use with assembly qualification.
+  /// Formats a type name for runtime/CLR use with assembly qualification.
   /// Returns format: "TypeName, AssemblyName"
-  /// E.g., "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts"
+  /// Uses CLR format where nested types are separated by '+' (not '.').
+  /// E.g., "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts" (top-level)
+  /// E.g., "Namespace.OuterClass+NestedEvent, Assembly" (nested type)
   /// </summary>
-  /// <remarks>Moved from PerspectiveDiscoveryGenerator.</remarks>
+  /// <remarks>
+  /// IMPORTANT: Uses '+' for nested types to match Type.FullName format.
+  /// This is critical for database lookups where event types are stored in CLR format.
+  /// </remarks>
   public static string FormatTypeNameForRuntime(ITypeSymbol typeSymbol) {
     if (typeSymbol == null) {
       throw new ArgumentNullException(nameof(typeSymbol));
     }
 
-    // Get fully qualified type name WITHOUT global:: prefix
-    var typeName = typeSymbol.ToDisplayString(new SymbolDisplayFormat(
-        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-    ));
+    // Build the CLR-format type name with '+' for nested types
+    var typeName = BuildClrTypeName(typeSymbol);
 
     // Get assembly name (simple name only, no version/culture/publicKeyToken)
     // For array types, get assembly from the element type (array types don't have ContainingAssembly)
@@ -124,6 +131,47 @@ public static class TypeNameUtilities {
 
     // Format: "TypeName, AssemblyName"
     return $"{typeName}, {assemblyName}";
+  }
+
+  /// <summary>
+  /// Builds the CLR-format type name with '+' for nested types.
+  /// Namespaces use '.' separator, nested types use '+' separator.
+  /// E.g., "Namespace.OuterClass+NestedClass" for nested types.
+  /// </summary>
+  public static string BuildClrTypeName(ITypeSymbol typeSymbol) {
+    // Handle named types (classes, structs, etc.)
+    if (typeSymbol is INamedTypeSymbol namedType) {
+      // Build the type hierarchy using '+' for nested types
+      var typeChain = new List<string>();
+      INamedTypeSymbol? current = namedType;
+
+      while (current != null) {
+        // Get simple name with generic arity if applicable
+        var name = current.Name;
+        if (current.TypeArguments.Length > 0) {
+          name += "`" + current.TypeArguments.Length;
+        }
+        typeChain.Insert(0, name);
+        current = current.ContainingType;
+      }
+
+      // Join nested types with '+'
+      var typesPart = string.Join("+", typeChain);
+
+      // Get namespace
+      var ns = namedType.ContainingNamespace?.ToDisplayString();
+      if (!string.IsNullOrEmpty(ns) && ns != "<global namespace>") {
+        return $"{ns}.{typesPart}";
+      }
+
+      return typesPart;
+    }
+
+    // Fallback for other type symbols (arrays, etc.)
+    return typeSymbol.ToDisplayString(new SymbolDisplayFormat(
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
+    ));
   }
 
   /// <summary>

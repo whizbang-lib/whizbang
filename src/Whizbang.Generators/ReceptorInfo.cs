@@ -12,13 +12,15 @@ namespace Whizbang.Generators;
 /// <param name="ResponseType">Fully qualified response type (e.g., "MyApp.Events.OrderCreated"), or null for void receptors</param>
 /// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateAsync).</param>
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
+/// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
     string MessageType,
     string? ResponseType,
     string[] LifecycleStages,
-    bool IsSync = false
+    bool IsSync = false,
+    string? DefaultRouting = null
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
@@ -29,4 +31,9 @@ public sealed record ReceptorInfo(
   /// True if receptor has no [FireAt] attributes (should default to ImmediateAsync).
   /// </summary>
   public bool HasDefaultStage => LifecycleStages.Length == 0;
+
+  /// <summary>
+  /// True if receptor has a [DefaultRouting] attribute.
+  /// </summary>
+  public bool HasDefaultRouting => DefaultRouting is not null;
 };

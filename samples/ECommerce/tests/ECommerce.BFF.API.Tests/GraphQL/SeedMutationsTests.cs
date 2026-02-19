@@ -59,6 +59,7 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   /// <summary>
@@ -222,5 +223,6 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 }

@@ -73,6 +73,7 @@ public record SampleOrderCreatedEvent : IEvent {
 /// Generator infers this from "OrderPerspective" -> "Order".
 /// </summary>
 public class Order {
+  [StreamKey]
   public required TestOrderId OrderId { get; init; }
   public required decimal Amount { get; init; }
   public required string Status { get; init; }
