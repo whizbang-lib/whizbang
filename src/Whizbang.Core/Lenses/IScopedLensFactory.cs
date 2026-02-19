@@ -142,4 +142,52 @@ public interface IScopedLensFactory {
   /// <returns>A lens for user's own or shared records.</returns>
   /// <remarks>Equivalent to GetLens(ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal)</remarks>
   TLens GetMyOrSharedLens<TLens>() where TLens : ILensQuery;
+
+  // === Event Store Query Methods ===
+
+  /// <summary>
+  /// Get event store query with composable scope filters.
+  /// </summary>
+  /// <param name="filters">Composable scope filter flags.</param>
+  /// <returns>An event store query with the scope filters applied.</returns>
+  /// <remarks>
+  /// Note: EventStoreRecord.Scope (MessageScope) only supports TenantId and UserId filtering.
+  /// Organization, Customer, and Principal filters are ignored for event queries.
+  /// </remarks>
+  /// <docs>core-concepts/event-store-query</docs>
+  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters);
+
+  /// <summary>
+  /// Get event store query with scope filters AND permission requirement.
+  /// Throws <see cref="Security.Exceptions.AccessDeniedException"/> if permission not satisfied.
+  /// </summary>
+  /// <param name="filters">Composable scope filter flags.</param>
+  /// <param name="requiredPermission">Permission the caller must have.</param>
+  /// <returns>An event store query with the scope filters applied.</returns>
+  /// <docs>core-concepts/event-store-query</docs>
+  Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters, Security.Permission requiredPermission);
+
+  /// <summary>
+  /// Get event store query with no filtering (global/admin access).
+  /// </summary>
+  /// <returns>An event store query with no scope filtering applied.</returns>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.None)</remarks>
+  /// <docs>core-concepts/event-store-query</docs>
+  Messaging.IEventStoreQuery GetGlobalEventStoreQuery();
+
+  /// <summary>
+  /// Get event store query filtered by current tenant only.
+  /// </summary>
+  /// <returns>An event store query filtered by TenantId.</returns>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant)</remarks>
+  /// <docs>core-concepts/event-store-query</docs>
+  Messaging.IEventStoreQuery GetTenantEventStoreQuery();
+
+  /// <summary>
+  /// Get event store query filtered by tenant + user.
+  /// </summary>
+  /// <returns>An event store query filtered by TenantId and UserId.</returns>
+  /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant | ScopeFilter.User)</remarks>
+  /// <docs>core-concepts/event-store-query</docs>
+  Messaging.IEventStoreQuery GetUserEventStoreQuery();
 }
