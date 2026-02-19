@@ -22,7 +22,7 @@ public class CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProduct
       message.Name,
       message.Price);
 
-    // Create ProductCreatedEvent
+    // Create ProductCreatedEvent (will be auto-cascaded when returned)
     var productCreated = new ProductCreatedEvent {
       ProductId = message.ProductId,
       Name = message.Name,
@@ -32,8 +32,8 @@ public class CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProduct
       CreatedAt = DateTime.UtcNow
     };
 
-    // Publish ProductCreatedEvent
-    await _dispatcher.PublishAsync(productCreated);
+    // NOTE: Do NOT manually publish productCreated - it's auto-cascaded when returned from receptor.
+    // The Dispatcher extracts and publishes any IEvent instances from the return value.
 
     // If there's initial stock, also publish InventoryRestockedEvent
     if (message.InitialStock > 0) {
