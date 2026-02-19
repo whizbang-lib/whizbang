@@ -1,3 +1,5 @@
+using Whizbang.Core.ValueObjects;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -11,11 +13,11 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_DeletesSuccessfulMessagesAsync</tests>
 public interface IWhizbangIdProvider {
   /// <summary>
-  /// Generates a new globally unique identifier.
+  /// Generates a new globally unique identifier with tracking metadata.
   /// Default implementation uses UUIDv7 for time-ordered, database-friendly IDs.
   /// </summary>
-  /// <returns>A new Guid value.</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:ImmediateWorkCoordinatorStrategy_EnqueueOutboxMessage_FlushesImmediatelyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_DeletesSuccessfulMessagesAsync</tests>
-  Guid NewGuid();
+  /// <returns>A TrackedGuid with creation metadata for version and source tracking.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithDefaultProvider_ShouldReturnUuidV7Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithCustomProvider_ShouldReturnCustomTrackedGuidAsync</tests>
+  TrackedGuid NewGuid();
 }

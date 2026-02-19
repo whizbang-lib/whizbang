@@ -133,6 +133,21 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
     return new(existing, versionFlag | GuidMetadata.SourceExternal);
   }
 
+  /// <summary>
+  /// Creates a TrackedGuid from an intercepted Guid call with known metadata.
+  /// Used by the GuidInterceptorGenerator to wrap Guid.NewGuid()/CreateVersion7() results.
+  /// </summary>
+  /// <param name="value">The Guid value from the original call</param>
+  /// <param name="metadata">The known metadata for this generation method</param>
+  /// <returns>A TrackedGuid with authoritative tracking metadata</returns>
+  /// <remarks>
+  /// This method is internal because it should only be called by generated interceptor code.
+  /// The metadata is trusted and used exactly as provided, enabling precise tracking of
+  /// how and where the Guid was created.
+  /// </remarks>
+  internal static TrackedGuid FromIntercepted(Guid value, GuidMetadata metadata) =>
+      new(value, metadata);
+
   // ========================================
   // Conversion Operators
   // ========================================
@@ -179,6 +194,18 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
 
   /// <summary>Inequality operator.</summary>
   public static bool operator !=(TrackedGuid left, TrackedGuid right) => !left.Equals(right);
+
+  /// <summary>Equality operator between Guid and TrackedGuid.</summary>
+  public static bool operator ==(Guid left, TrackedGuid right) => left.Equals(right._value);
+
+  /// <summary>Inequality operator between Guid and TrackedGuid.</summary>
+  public static bool operator !=(Guid left, TrackedGuid right) => !left.Equals(right._value);
+
+  /// <summary>Equality operator between TrackedGuid and Guid.</summary>
+  public static bool operator ==(TrackedGuid left, Guid right) => left._value.Equals(right);
+
+  /// <summary>Inequality operator between TrackedGuid and Guid.</summary>
+  public static bool operator !=(TrackedGuid left, Guid right) => !left._value.Equals(right);
 
   /// <summary>Less than operator.</summary>
   public static bool operator <(TrackedGuid left, TrackedGuid right) => left.CompareTo(right) < 0;

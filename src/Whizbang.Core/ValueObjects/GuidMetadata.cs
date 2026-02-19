@@ -6,7 +6,7 @@ namespace Whizbang.Core.ValueObjects;
 /// </summary>
 /// <docs>core-concepts/whizbang-ids#guid-metadata</docs>
 [Flags]
-public enum GuidMetadata : byte {
+public enum GuidMetadata : ushort {
   /// <summary>No metadata set.</summary>
   None = 0,
 
@@ -44,7 +44,29 @@ public enum GuidMetadata : byte {
   SourceUnknown = 1 << 6,
 
   /// <summary>Reserved for future use.</summary>
-  Reserved = 1 << 7
+  Reserved = 1 << 7,
+
+  // ========================================
+  // Third-Party Library Sources (bits 8-15)
+  // ========================================
+
+  /// <summary>Created via Marten's CombGuidIdGeneration.</summary>
+  SourceMarten = 1 << 8,
+
+  /// <summary>Created via UUIDNext library.</summary>
+  SourceUuidNext = 1 << 9,
+
+  /// <summary>Created via DaanV2.UUID.Net library.</summary>
+  SourceDaanV2 = 1 << 10,
+
+  /// <summary>Created via vanbukin/Uuids library.</summary>
+  SourceUuids = 1 << 11,
+
+  /// <summary>Created via GuidOne library.</summary>
+  SourceGuidOne = 1 << 12,
+
+  /// <summary>Created via UUID (Taiizor) library.</summary>
+  SourceTaiizor = 1 << 13
 }
 
 /// <summary>
