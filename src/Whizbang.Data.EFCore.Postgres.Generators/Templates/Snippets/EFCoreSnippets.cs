@@ -132,6 +132,30 @@ __PHYSICAL_FIELD_CONFIGS__
         lifecycleMessageDeserializer
       );
     });
+
+    // Register IEventStoreQuery - scoped (for web APIs, receptors)
+    services.AddScoped<Whizbang.Core.Messaging.IEventStoreQuery>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+    });
+
+    // Register IFilterableEventStoreQuery - scoped (for ScopedLensFactory integration)
+    services.AddScoped<Whizbang.Core.Messaging.IFilterableEventStoreQuery>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+    });
+
+    // Register IScopedEventStoreQuery - singleton (auto-scoping for background services)
+    services.AddSingleton<Whizbang.Core.Messaging.IScopedEventStoreQuery>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Data.EFCore.Postgres.ScopedEventStoreQuery(scopeFactory);
+    });
+
+    // Register IEventStoreQueryFactory - singleton (manual scope control for batch operations)
+    services.AddSingleton<Whizbang.Core.Messaging.IEventStoreQueryFactory>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Data.EFCore.Postgres.EventStoreQueryFactory(scopeFactory);
+    });
     #endregion
   }
 
