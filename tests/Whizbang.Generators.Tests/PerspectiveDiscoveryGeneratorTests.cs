@@ -1428,4 +1428,142 @@ namespace TestNamespace {{
     await Assert.That(generatedSource!).Contains("Evt1");
     await Assert.That(generatedSource!).Contains("Evt25");
   }
+
+  // ==================== Nested Perspective CLR Type Name Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_NestedPerspective_UsesClrTypeNameInMessageAssociationAsync() {
+    // Arrange - Tests that nested perspective classes use CLR format names (Parent+Child)
+    // This is critical for database storage and registry lookup consistency
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record AccountCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid AccountId { get; init; }
+  }
+
+  /// <summary>
+  /// This is a nested perspective class pattern commonly used in DDD.
+  /// The perspective is nested inside the aggregate root class.
+  /// </summary>
+  public static class ActiveAccount {
+    public record Model {
+      [StreamKey]
+      public Guid AccountId { get; init; }
+      public string Name { get; init; } = """";
+    }
+
+    public class Projection : IPerspectiveFor<Model, AccountCreatedEvent> {
+      public Model Apply(Model currentData, AccountCreatedEvent @event) {
+        return currentData;
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - MessageAssociation should use CLR format name with '+' for nested types
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // The target name should be "TestNamespace.ActiveAccount+Projection" (CLR format)
+    // NOT "Projection" (simple name) or "ActiveAccount.Projection" (display format)
+    await Assert.That(generatedSource!).Contains("TestNamespace.ActiveAccount+Projection");
+
+    // Should NOT contain just "Projection" as the target name
+    // (we allow it in other contexts, but the MessageAssociation target must be CLR format)
+    await Assert.That(generatedSource!).Contains(@"""TestNamespace.ActiveAccount+Projection""");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_TopLevelPerspective_UsesClrTypeNameInMessageAssociationAsync() {
+    // Arrange - Tests that top-level perspective classes also use CLR format names
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace.Perspectives {
+  public record OrderCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - MessageAssociation should use CLR format name (namespace.class)
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // The target name should be fully qualified CLR format
+    await Assert.That(generatedSource!).Contains(@"""TestNamespace.Perspectives.OrderPerspective""");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_DeeplyNestedPerspective_UsesClrTypeNameAsync() {
+    // Arrange - Tests deeply nested perspective classes (multiple levels of nesting)
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record SessionEvent : IEvent {
+    [StreamKey]
+    public Guid SessionId { get; init; }
+  }
+
+  /// <summary>
+  /// Two levels of nesting: Sessions.Active.Projection
+  /// CLR format should be: TestNamespace.Sessions+Active+Projection
+  /// </summary>
+  public static class Sessions {
+    public static class Active {
+      public record Model {
+        [StreamKey]
+        public Guid SessionId { get; init; }
+      }
+
+      public class Projection : IPerspectiveFor<Model, SessionEvent> {
+        public Model Apply(Model currentData, SessionEvent @event) {
+          return currentData;
+        }
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - MessageAssociation should use CLR format with multiple '+' for each nesting level
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // The target name should use '+' for each level of nesting
+    await Assert.That(generatedSource!).Contains(@"""TestNamespace.Sessions+Active+Projection""");
+  }
 }

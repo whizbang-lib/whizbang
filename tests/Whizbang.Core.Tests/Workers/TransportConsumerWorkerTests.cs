@@ -445,7 +445,7 @@ internal class FakeDispatcher : IDispatcher {
   ) =>
     throw new NotImplementedException();
 
-  public Task PublishAsync<TEvent>(TEvent eventData) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
     throw new NotImplementedException();
 
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
@@ -476,7 +476,7 @@ internal class FakeDispatcher : IDispatcher {
   public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
-  public Task PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
   public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
@@ -500,6 +500,7 @@ internal class FakeDeliveryReceipt : IDeliveryReceipt {
   public string Destination => "test-destination";
   public DeliveryStatus Status => DeliveryStatus.Delivered;
   public IReadOnlyDictionary<string, JsonElement> Metadata => new Dictionary<string, JsonElement>();
+  public Guid? StreamId => null;
 }
 
 internal class FakeMessageEnvelope : IMessageEnvelope {

@@ -420,7 +420,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // Only log when there's actual work to report
     if (outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0) {
-      _logger?.LogInformation(
+      _logger?.LogDebug(
         "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work",
         outboxWork.Count,
         inboxWork.Count,

@@ -78,8 +78,9 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleClassName = _getSimpleName(className);
+    // Use CLR format name for database storage (e.g., "Namespace.Parent+Child" for nested types)
+    // This is consistent with PerspectiveDiscoveryGenerator and PerspectiveRunnerRegistryGenerator
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
     // Generate one PerspectiveAssociationInfo per event type
     var results = perspectiveInterfaces.SelectMany(perspectiveInterface => {
@@ -90,7 +91,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
         var messageTypeName = TypeNameUtilities.FormatTypeNameForRuntime(eventTypeSymbol);
 
         return new PerspectiveAssociationInfo(
-            PerspectiveClassName: simpleClassName,
+            PerspectiveClrTypeName: clrTypeName,
             MessageTypeName: messageTypeName
         );
       });
@@ -99,22 +100,8 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     return results;
   }
 
-  // Note: Type naming utilities have been centralized in TypeNameUtilities.FormatTypeNameForRuntime()
+  // Note: Type naming utilities have been centralized in TypeNameUtilities.BuildClrTypeName()
   // to ensure consistent CLR format (using '+' for nested types) across all generators.
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    // Handle arrays
-    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
-      var baseType = fullyQualifiedName[..^2];
-      return _getSimpleName(baseType) + "[]";
-    }
-
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
-  }
 
   /// <summary>
   /// Generates the EF Core-specific registration code for perspective associations.
@@ -175,7 +162,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       associations.AppendLine($"    json.Append(\"    {{\");");
       associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{perspective.MessageTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
-      associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClassName}\\\", \");");
+      associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClrTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"ServiceName\\\": \\\"\");");
       associations.AppendLine("    json.Append(serviceName);");
       associations.AppendLine("    json.Append(\"\\\"\");");
@@ -205,9 +192,9 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
 /// <summary>
 /// Value type containing perspective association information for EF Core generation.
 /// </summary>
-/// <param name="PerspectiveClassName">Simple name of the perspective class</param>
+/// <param name="PerspectiveClrTypeName">CLR format type name (e.g., "Namespace.Parent+Child" for nested types)</param>
 /// <param name="MessageTypeName">Database format message type name (TypeName, AssemblyName)</param>
 internal sealed record PerspectiveAssociationInfo(
-    string PerspectiveClassName,
+    string PerspectiveClrTypeName,
     string MessageTypeName
 );

@@ -81,6 +81,24 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
+    // Log registered perspectives at startup for diagnostics
+    await using (var startupScope = _scopeFactory.CreateAsyncScope()) {
+      var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+      if (registry != null) {
+        var registeredPerspectives = registry.GetRegisteredPerspectives();
+        if (registeredPerspectives.Count > 0) {
+          LogRegisteredPerspectivesHeader(_logger, registeredPerspectives.Count);
+          foreach (var p in registeredPerspectives) {
+            LogRegisteredPerspective(_logger, p.ClrTypeName, p.ModelType, p.EventTypes.Count, string.Join(", ", p.EventTypes));
+          }
+        } else {
+          LogNoPerspectivesRegistered(_logger);
+        }
+      } else {
+        LogPerspectiveRegistryNotAvailableAtStartup(_logger);
+      }
+    }
+
     // Process any pending perspective checkpoints IMMEDIATELY on startup (before first polling delay)
     try {
       LogCheckingPendingCheckpoints(_logger);
@@ -291,7 +309,7 @@ public partial class PerspectiveWorker(
 
         var runner = registry.GetRunner(perspectiveName, scope.ServiceProvider);
         if (runner == null) {
-          LogNoPerspectiveRunnerFound(_logger, perspectiveName);
+          LogNoPerspectiveRunnerFound(_logger, perspectiveName, streamId);
           continue;
         }
 
@@ -667,9 +685,9 @@ public partial class PerspectiveWorker(
   [LoggerMessage(
     EventId = 12,
     Level = LogLevel.Warning,
-    Message = "No IPerspectiveRunner found for perspective {PerspectiveName}. Ensure perspective implements IPerspectiveFor<TModel, TEvent> and has [StreamKey] on model. Skipping."
+    Message = "No IPerspectiveRunner found for perspective '{PerspectiveName}' (stream: {StreamId}). See startup log for registered perspectives."
   )]
-  static partial void LogNoPerspectiveRunnerFound(ILogger logger, string perspectiveName);
+  static partial void LogNoPerspectiveRunnerFound(ILogger logger, string perspectiveName, Guid streamId);
 
   [LoggerMessage(
     EventId = 13,
@@ -853,10 +871,51 @@ public partial class PerspectiveWorker(
   /// </summary>
   [LoggerMessage(
     EventId = 32,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "[PerspectiveWorker SCHEMA DIAGNOSTIC] Service={ServiceName} (InstanceId={InstanceId}) is processing checkpoints"
   )]
   static partial void LogProcessingWorkBatchForService(ILogger logger, string serviceName, Guid instanceId);
+
+  /// <summary>
+  /// Logs the header line indicating how many perspectives are registered at startup.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 33,
+    Level = LogLevel.Information,
+    Message = "Registered {Count} perspective(s):"
+  )]
+  static partial void LogRegisteredPerspectivesHeader(ILogger logger, int count);
+
+  /// <summary>
+  /// Logs details of a single registered perspective at startup.
+  /// Shows CLR type name, model type, number of event handlers, and event type names.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 34,
+    Level = LogLevel.Information,
+    Message = "  - {PerspectiveName} (Model: {ModelType}, Events: {EventCount}) [{EventTypes}]"
+  )]
+  static partial void LogRegisteredPerspective(ILogger logger, string perspectiveName, string modelType, int eventCount, string eventTypes);
+
+  /// <summary>
+  /// Logs when no perspectives are registered at startup (potential configuration issue).
+  /// </summary>
+  [LoggerMessage(
+    EventId = 35,
+    Level = LogLevel.Warning,
+    Message = "No perspectives registered. Ensure AddPerspectiveRunners() is called during service registration."
+  )]
+  static partial void LogNoPerspectivesRegistered(ILogger logger);
+
+  /// <summary>
+  /// Logs when IPerspectiveRunnerRegistry is not available at startup.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 36,
+    Level = LogLevel.Debug,
+    Message = "IPerspectiveRunnerRegistry not available at startup (perspectives may be registered lazily)"
+  )]
+  static partial void LogPerspectiveRegistryNotAvailableAtStartup(ILogger logger);
 }
 
 /// <summary>

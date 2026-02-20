@@ -177,4 +177,20 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
 
     return Task.CompletedTask;
   }
+
+  /// <summary>
+  /// Generated override - stores events to event store only (no transport).
+  /// Uses destination=null to store events and create perspective events, but skip transport publishing.
+  /// Zero reflection - uses compile-time type matching for AOT compatibility.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  [DebuggerStepThrough]
+  protected override Task CascadeToEventStoreOnlyAsync(global::Whizbang.Core.IMessage message, Type messageType) {
+    // Generated type-switch dispatch - zero reflection!
+    #region EVENT_STORE_ONLY_CASCADE
+    // This region will be replaced with generated cascade code
+    #endregion
+
+    return Task.CompletedTask;
+  }
 }

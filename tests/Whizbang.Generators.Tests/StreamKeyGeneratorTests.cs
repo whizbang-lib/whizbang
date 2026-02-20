@@ -461,4 +461,157 @@ public class DerivedEvent : BaseJdxEvent {
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("DerivedEvent");
   }
+
+  // ========================================
+  // TryResolveAsGuid tests for IDeliveryReceipt.StreamId extraction
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithGuidProperty_ReturnsGuidAsync() {
+    // Arrange - Event with Guid [StreamKey] property
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace MyApp.Events;
+
+public record OrderCreated([StreamKey] Guid OrderId, string CustomerName) : IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - Should generate TryResolveAsGuid method
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("public static global::System.Guid? TryResolveAsGuid");
+    await Assert.That(code).Contains("TryExtractAsGuid");
+    await Assert.That(code).Contains("OrderCreated");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithStringGuidProperty_ParsesAndReturnsGuidAsync() {
+    // Arrange - Event with string [StreamKey] that could be a Guid
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record PaymentProcessed([StreamKey] string OrderId, decimal Amount) : IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - Should generate TryExtractAsGuid with Guid.TryParse for string
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryResolveAsGuid");
+    await Assert.That(code).Contains("global::System.Guid.TryParse");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithNoStreamKey_ReturnsNullAsync() {
+    // Arrange - No events with [StreamKey] in the compilation
+    var source = """
+namespace MyApp;
+
+public class NotAnEvent {
+  public string Id { get; set; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - TryResolveAsGuid should still be generated but return null for unknown types
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryResolveAsGuid");
+    await Assert.That(code).Contains("return null");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithNonGuidStringProperty_HandlesGracefullyAsync() {
+    // Arrange - Event with non-Guid string [StreamKey] (e.g., email, name)
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record NotificationSent([StreamKey] string CustomerId, string Message) : IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - Should generate with TryParse that returns null for non-Guid strings
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryResolveAsGuid");
+    // Should use TryParse which gracefully returns null for non-Guid strings
+    await Assert.That(code).Contains("global::System.Guid.TryParse");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithNullEvent_ReturnsNullAsync() {
+    // Arrange - Event with [StreamKey]
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace MyApp.Events;
+
+public record OrderCreated([StreamKey] Guid OrderId, string Name) : IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - TryResolveAsGuid should handle null by returning null
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryResolveAsGuid");
+    await Assert.That(code).Contains("if (@event == null) return null");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task TryResolveAsGuid_WithMultipleEventTypes_GeneratesDispatchAsync() {
+    // Arrange - Multiple events to verify type dispatch
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace MyApp.Events;
+
+public record OrderCreated([StreamKey] Guid OrderId, string Name) : IEvent;
+public record OrderShipped([StreamKey] string TrackingId, DateTime ShippedAt) : IEvent;
+public record PaymentReceived([StreamKey] Guid PaymentId, decimal Amount) : IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - Should generate type dispatch for all events
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryResolveAsGuid");
+    await Assert.That(code).Contains("OrderCreated");
+    await Assert.That(code).Contains("OrderShipped");
+    await Assert.That(code).Contains("PaymentReceived");
+  }
 }

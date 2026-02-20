@@ -276,23 +276,27 @@ public interface IDispatcher {
   // ========================================
 
   /// <summary>
-  /// Publishes an event to all interested handlers (fire-and-forget).
-  /// No return value - handlers execute independently.
+  /// Publishes an event to all interested handlers.
+  /// Returns a delivery receipt with StreamId extracted from [StreamKey] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
+  /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
-  Task PublishAsync<TEvent>(TEvent eventData);
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamKey_DeliveryReceiptHasStreamIdAsync</tests>
+  Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData);
 
   /// <summary>
-  /// Publishes an event with dispatch options (fire-and-forget).
+  /// Publishes an event with dispatch options.
+  /// Returns a delivery receipt with StreamId extracted from [StreamKey] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
-  Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
+  Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
   /// <summary>
   /// Cascades a message (event or command) with explicit routing mode.

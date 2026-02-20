@@ -42,8 +42,8 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       var receipts = new List<IDeliveryReceipt>();
       foreach (var message in messages) {
@@ -211,8 +211,8 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       throw new InvalidOperationException("Dispatcher failure");
     }

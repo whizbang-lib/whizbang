@@ -33,6 +33,13 @@ public readonly struct RoutedNone : IRouted {
   /// Gets the dispatch mode, which is always None for RoutedNone.
   /// </summary>
   public DispatchMode Mode => DispatchMode.None;
+
+  /// <summary>
+  /// Converts this routed none to a completed <see cref="ValueTask{T}"/>.
+  /// Enables fluent chaining for receptors that return ValueTask.
+  /// </summary>
+  /// <returns>A completed ValueTask containing this routed none value.</returns>
+  public ValueTask<RoutedNone> AsValueTask() => new(this);
 }
 
 /// <summary>
@@ -129,4 +136,20 @@ public readonly struct Routed<T> : IRouted {
   /// Gets the wrapped value as an object (explicit interface implementation).
   /// </summary>
   object? IRouted.Value => Value;
+
+  /// <summary>
+  /// Converts this routed value to a completed <see cref="ValueTask{T}"/>.
+  /// Enables fluent chaining for receptors that return ValueTask.
+  /// </summary>
+  /// <returns>A completed ValueTask containing this routed value.</returns>
+  /// <example>
+  /// <code>
+  /// // Receptor returning ValueTask directly
+  /// public ValueTask&lt;Routed&lt;OrderCreated&gt;&gt; HandleAsync(CreateOrder command, CancellationToken ct) {
+  ///   return Route.Local(new OrderCreated(command.OrderId)).AsValueTask();
+  /// }
+  /// </code>
+  /// </example>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs:AsValueTask_*</tests>
+  public ValueTask<Routed<T>> AsValueTask() => new(this);
 }

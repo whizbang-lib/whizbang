@@ -244,6 +244,97 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     await Assert.That(extracted[1].Mode).IsEqualTo(DispatchMode.Local);
   }
 
+  /// <summary>
+  /// Verifies that Route.LocalNoPersist() sets LocalNoPersist mode.
+  /// </summary>
+  [Test]
+  public async Task ExtractMessagesWithRouting_RouteLocalNoPersist_SetsLocalNoPersistModeAsync() {
+    // Arrange
+    var evt = new RoutedTestEvent(Guid.NewGuid());
+    var routed = Route.LocalNoPersist(evt);
+
+    // Act
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
+
+    // Assert
+    await Assert.That(extracted).Count().IsEqualTo(1);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+  }
+
+  /// <summary>
+  /// Verifies that Route.EventStoreOnly() sets EventStoreOnly mode.
+  /// </summary>
+  [Test]
+  public async Task ExtractMessagesWithRouting_RouteEventStoreOnly_SetsEventStoreOnlyModeAsync() {
+    // Arrange
+    var evt = new RoutedTestEvent(Guid.NewGuid());
+    var routed = Route.EventStoreOnly(evt);
+
+    // Act
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
+
+    // Assert
+    await Assert.That(extracted).Count().IsEqualTo(1);
+    await Assert.That(extracted[0].Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+  }
+
+  /// <summary>
+  /// Verifies that LocalNoPersist has LocalDispatch flag but NOT EventStore flag.
+  /// </summary>
+  [Test]
+  public async Task ExtractMessagesWithRouting_LocalNoPersist_HasLocalDispatchButNotEventStoreAsync() {
+    // Arrange
+    var evt = new RoutedTestEvent(Guid.NewGuid());
+    var routed = Route.LocalNoPersist(evt);
+
+    // Act
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
+
+    // Assert
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+      .Because("LocalNoPersist should invoke local receptors");
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsFalse()
+      .Because("LocalNoPersist should NOT persist to event store");
+  }
+
+  /// <summary>
+  /// Verifies that EventStoreOnly has EventStore flag but NOT LocalDispatch flag.
+  /// </summary>
+  [Test]
+  public async Task ExtractMessagesWithRouting_EventStoreOnly_HasEventStoreButNotLocalDispatchAsync() {
+    // Arrange
+    var evt = new RoutedTestEvent(Guid.NewGuid());
+    var routed = Route.EventStoreOnly(evt);
+
+    // Act
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
+
+    // Assert
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+      .Because("EventStoreOnly should persist to event store");
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsFalse()
+      .Because("EventStoreOnly should NOT invoke local receptors");
+  }
+
+  /// <summary>
+  /// Verifies that Local mode has BOTH LocalDispatch AND EventStore flags.
+  /// </summary>
+  [Test]
+  public async Task ExtractMessagesWithRouting_Local_HasBothLocalDispatchAndEventStoreAsync() {
+    // Arrange
+    var evt = new RoutedTestEvent(Guid.NewGuid());
+    var routed = Route.Local(evt);
+
+    // Act
+    var extracted = MessageExtractor.ExtractMessagesWithRouting(routed).ToList();
+
+    // Assert
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue()
+      .Because("Local should invoke local receptors");
+    await Assert.That(extracted[0].Mode.HasFlag(DispatchMode.EventStore)).IsTrue()
+      .Because("Local should persist to event store");
+  }
+
   #endregion
 
   #region Integration Tests - Cascade Behavior

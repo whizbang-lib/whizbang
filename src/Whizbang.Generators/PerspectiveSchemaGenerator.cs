@@ -89,8 +89,16 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     }
 
     // Extract class name and generate table name
-    var className = classSymbol.Name;
-    var tableName = _generateTableName(className);
+    // Use CLR type name to handle nested classes correctly (e.g., "Activity+Projection")
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+    // Extract simple name for display (last part after last + or .)
+    var className = clrTypeName.Contains('+')
+        ? clrTypeName.Substring(clrTypeName.LastIndexOf('+') + 1)
+        : clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1);
+    // Generate table name from CLR name (remove + to merge nested names, then snake_case)
+    // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection → activity_projection
+    var tableBaseName = clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1).Replace("+", "");
+    var tableName = _generateTableName(tableBaseName);
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0

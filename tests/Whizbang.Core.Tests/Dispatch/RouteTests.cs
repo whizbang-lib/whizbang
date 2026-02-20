@@ -134,12 +134,12 @@ public class RouteTests {
   }
 
   [Test]
-  public async Task Both_HasFlag_LocalAsync() {
+  public async Task Both_HasFlag_LocalDispatchAsync() {
     // Arrange
     var routed = Route.Both(new TestEvent("Test"));
 
-    // Assert
-    await Assert.That(routed.Mode.HasFlag(DispatchMode.Local)).IsTrue();
+    // Assert - Both includes LocalDispatch for local receptor invocation
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
   }
 
   [Test]
@@ -149,6 +149,214 @@ public class RouteTests {
 
     // Assert
     await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsTrue();
+  }
+
+  [Test]
+  public async Task Both_DoesNotHaveFlag_EventStoreAsync() {
+    // Arrange
+    var routed = Route.Both(new TestEvent("Test"));
+
+    // Assert - Both uses outbox for event storage, not direct EventStore flag
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsFalse();
+  }
+
+  #endregion
+
+  #region Route.LocalNoPersist
+
+  [Test]
+  public async Task LocalNoPersist_WithValue_ReturnsRoutedWithLocalNoPersistModeAsync() {
+    // Arrange
+    var value = new TestEvent("Test");
+
+    // Act
+    var routed = Route.LocalNoPersist(value);
+
+    // Assert
+    await Assert.That(routed.Value).IsEqualTo(value);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+  }
+
+  [Test]
+  public async Task LocalNoPersist_WithArray_ReturnsRoutedArrayWithLocalNoPersistModeAsync() {
+    // Arrange
+    var array = new[] { new TestEvent("A"), new TestEvent("B") };
+
+    // Act
+    var routed = Route.LocalNoPersist(array);
+
+    // Assert
+    await Assert.That(routed.Value).IsEqualTo(array);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+  }
+
+  [Test]
+  public async Task LocalNoPersist_WithNull_ReturnsRoutedNullWithLocalNoPersistModeAsync() {
+    // Act
+    TestEvent? nullValue = null;
+    var routed = Route.LocalNoPersist(nullValue);
+
+    // Assert
+    await Assert.That(routed.Value).IsNull();
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+  }
+
+  [Test]
+  public async Task LocalNoPersist_HasFlag_LocalDispatchAsync() {
+    // Arrange
+    var routed = Route.LocalNoPersist(new TestEvent("Test"));
+
+    // Assert - LocalNoPersist invokes local receptors
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
+  }
+
+  [Test]
+  public async Task LocalNoPersist_DoesNotHaveFlag_EventStoreAsync() {
+    // Arrange
+    var routed = Route.LocalNoPersist(new TestEvent("Test"));
+
+    // Assert - LocalNoPersist does NOT persist to event store
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsFalse();
+  }
+
+  [Test]
+  public async Task LocalNoPersist_DoesNotHaveFlag_OutboxAsync() {
+    // Arrange
+    var routed = Route.LocalNoPersist(new TestEvent("Test"));
+
+    // Assert - LocalNoPersist does NOT use outbox
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
+  }
+
+  [Test]
+  public async Task LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync() {
+    // Arrange
+    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+
+    // Act
+    var routedCollection = Route.LocalNoPersist(events).ToList();
+
+    // Assert
+    await Assert.That(routedCollection).Count().IsEqualTo(3);
+    await Assert.That(routedCollection[0].Value.Name).IsEqualTo("A");
+    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(routedCollection[1].Value.Name).IsEqualTo("B");
+    await Assert.That(routedCollection[2].Value.Name).IsEqualTo("C");
+  }
+
+  #endregion
+
+  #region Route.EventStoreOnly
+
+  [Test]
+  public async Task EventStoreOnly_WithValue_ReturnsRoutedWithEventStoreOnlyModeAsync() {
+    // Arrange
+    var value = new TestEvent("Test");
+
+    // Act
+    var routed = Route.EventStoreOnly(value);
+
+    // Assert
+    await Assert.That(routed.Value).IsEqualTo(value);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+  }
+
+  [Test]
+  public async Task EventStoreOnly_WithArray_ReturnsRoutedArrayWithEventStoreOnlyModeAsync() {
+    // Arrange
+    var array = new[] { new TestEvent("A"), new TestEvent("B") };
+
+    // Act
+    var routed = Route.EventStoreOnly(array);
+
+    // Assert
+    await Assert.That(routed.Value).IsEqualTo(array);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+  }
+
+  [Test]
+  public async Task EventStoreOnly_WithNull_ReturnsRoutedNullWithEventStoreOnlyModeAsync() {
+    // Act
+    TestEvent? nullValue = null;
+    var routed = Route.EventStoreOnly(nullValue);
+
+    // Assert
+    await Assert.That(routed.Value).IsNull();
+    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+  }
+
+  [Test]
+  public async Task EventStoreOnly_HasFlag_EventStoreAsync() {
+    // Arrange
+    var routed = Route.EventStoreOnly(new TestEvent("Test"));
+
+    // Assert - EventStoreOnly persists to event store
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsTrue();
+  }
+
+  [Test]
+  public async Task EventStoreOnly_DoesNotHaveFlag_LocalDispatchAsync() {
+    // Arrange
+    var routed = Route.EventStoreOnly(new TestEvent("Test"));
+
+    // Assert - EventStoreOnly does NOT invoke local receptors
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsFalse();
+  }
+
+  [Test]
+  public async Task EventStoreOnly_DoesNotHaveFlag_OutboxAsync() {
+    // Arrange
+    var routed = Route.EventStoreOnly(new TestEvent("Test"));
+
+    // Assert - EventStoreOnly does NOT use outbox transport
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
+  }
+
+  [Test]
+  public async Task EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync() {
+    // Arrange
+    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+
+    // Act
+    var routedCollection = Route.EventStoreOnly(events).ToList();
+
+    // Assert
+    await Assert.That(routedCollection).Count().IsEqualTo(3);
+    await Assert.That(routedCollection[0].Value.Name).IsEqualTo("A");
+    await Assert.That(routedCollection[0].Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(routedCollection[1].Value.Name).IsEqualTo("B");
+    await Assert.That(routedCollection[2].Value.Name).IsEqualTo("C");
+  }
+
+  #endregion
+
+  #region Route.Local HasFlag Tests (updated for new behavior)
+
+  [Test]
+  public async Task Local_HasFlag_LocalDispatchAsync() {
+    // Arrange
+    var routed = Route.Local(new TestEvent("Test"));
+
+    // Assert - Local invokes local receptors
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.LocalDispatch)).IsTrue();
+  }
+
+  [Test]
+  public async Task Local_HasFlag_EventStoreAsync() {
+    // Arrange
+    var routed = Route.Local(new TestEvent("Test"));
+
+    // Assert - Local now persists to event store
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.EventStore)).IsTrue();
+  }
+
+  [Test]
+  public async Task Local_DoesNotHaveFlag_OutboxAsync() {
+    // Arrange
+    var routed = Route.Local(new TestEvent("Test"));
+
+    // Assert - Local does NOT use outbox transport
+    await Assert.That(routed.Mode.HasFlag(DispatchMode.Outbox)).IsFalse();
   }
 
   #endregion

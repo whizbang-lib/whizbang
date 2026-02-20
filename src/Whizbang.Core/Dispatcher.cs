@@ -73,7 +73,8 @@ public abstract class Dispatcher(
   IEnvelopeSerializer? envelopeSerializer = null,
   IEnvelopeRegistry? envelopeRegistry = null,
   IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-  ILifecycleInvoker? lifecycleInvoker = null
+  ILifecycleInvoker? lifecycleInvoker = null,
+  IStreamIdExtractor? streamIdExtractor = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -83,6 +84,7 @@ public abstract class Dispatcher(
   private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;
   private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
   private readonly IReceptorInvoker? _receptorInvoker = receptorInvoker;
+  private readonly IStreamIdExtractor? _streamIdExtractor = streamIdExtractor ?? serviceProvider.GetService<IStreamIdExtractor>();
   // Lifecycle invoker for runtime-registered receptors (test infrastructure, observers)
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker ?? serviceProvider.GetService<ILifecycleInvoker>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
@@ -238,13 +240,17 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
+    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -316,12 +322,16 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
+    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
     var destination = messageType.Name;
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -403,13 +413,17 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
+    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -474,12 +488,16 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
+    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
     var destination = messageType.Name;
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -1441,8 +1459,9 @@ public abstract class Dispatcher(
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted message {Count}: Type={MessageType}, Mode={Mode}",
         extractedCount, messageType.Name, mode);
 
-      // Local dispatch: Invoke in-process receptors
-      if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+      // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
+      // Check for LocalDispatch flag specifically, not the composite Local mode
+      if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", messageType.Name);
         var publisher = GetUntypedReceptorPublisher(messageType);
         if (publisher != null) {
@@ -1450,7 +1469,16 @@ public abstract class Dispatcher(
         }
       }
 
-      // Outbox dispatch: Write to outbox for cross-service delivery
+      // Event store only: Store to event store without transport (for Local, EventStoreOnly)
+      // When EventStore is set but Outbox is NOT set, store with null destination
+      if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        if (msg is IEvent) {
+          CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
+          await CascadeToEventStoreOnlyAsync(msg, messageType);
+        }
+      }
+
+      // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
       if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
         await CascadeToOutboxAsync(msg, messageType);
@@ -1495,6 +1523,37 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
+  /// Cascades a message to the event store only (no transport).
+  /// Uses destination=null to store events and create perspective events, but skip transport publishing.
+  /// </summary>
+  /// <param name="message">The message to cascade.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <remarks>
+  /// <para>
+  /// This base implementation is a no-op. The source generator creates an override
+  /// with a type-switched dispatch table that calls PublishToOutboxAsync with eventStoreOnly=true.
+  /// This avoids reflection and maintains AOT compatibility.
+  /// </para>
+  /// <para>
+  /// Called by CascadeMessageAsync when DispatchMode.EventStore flag is set without DispatchMode.Outbox.
+  /// Events are stored to wh_event_store and perspective events are created, but transport is skipped.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
+  protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType) {
+    // Base implementation is a no-op.
+    // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync(eventStoreOnly: true).
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogWarning("[CASCADE] CascadeToEventStoreOnlyAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
+      "This means the generated dispatcher does NOT have an override for this message type. " +
+      "The event will NOT be written to the event store!", messageType.Name);
+#pragma warning restore CA1848
+    return Task.CompletedTask;
+  }
+
+  /// <summary>
   /// Publishes an event to all registered handlers.
   /// Uses generated delegate to invoke receptors with zero reflection.
   /// After local handlers complete, publishes to outbox for cross-service delivery (if configured).
@@ -1504,7 +1563,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task PublishAsync<TEvent>(TEvent eventData) {
+  public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
     // S2955 suppressed: TEvent is constrained to IEvent in practice (always reference types)
     // Adding where TEvent : class would be a breaking API change
 #pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
@@ -1527,6 +1586,18 @@ public abstract class Dispatcher(
     // Publish event for cross-service delivery if work coordinator strategy is available
     // process_work_batch will store events to wh_event_store and create perspective events atomically
     await PublishToOutboxAsync(eventData, eventType, messageId);
+
+    // Extract stream ID from [StreamKey] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+    // Return delivery receipt with stream ID
+    var destination = eventType.Name;
+    return DeliveryReceipt.Delivered(
+      messageId,
+      destination,
+      correlationId: null,
+      causationId: null,
+      streamId: streamId);
   }
 
   /// <summary>
@@ -1538,7 +1609,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+  public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
 #pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
     if (eventData == null) {
       throw new ArgumentNullException(nameof(eventData));
@@ -1555,6 +1626,18 @@ public abstract class Dispatcher(
     await publisher(eventData);
 
     await PublishToOutboxAsync(eventData, eventType, messageId);
+
+    // Extract stream ID from [StreamKey] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+    // Return delivery receipt with stream ID
+    var destination = eventType.Name;
+    return DeliveryReceipt.Delivered(
+      messageId,
+      destination,
+      correlationId: null,
+      causationId: null,
+      streamId: streamId);
   }
 
   /// <summary>
@@ -1572,8 +1655,8 @@ public abstract class Dispatcher(
     CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Message={MessageType}, Mode={Mode}", messageType.Name, mode);
 #pragma warning restore CA1848
 
-    // Local dispatch: Invoke in-process receptors
-    if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+    // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
+    if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
 #pragma warning disable CA1848
       CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Dispatching locally for {MessageType}", messageType.Name);
 #pragma warning restore CA1848
@@ -1583,7 +1666,20 @@ public abstract class Dispatcher(
       }
     }
 
-    // Outbox dispatch: Write to outbox for cross-service delivery
+    // Event store only: Store to event store without transport (for Local, EventStoreOnly)
+    // Uses destination=null to store event and create perspective events, but skip transport.
+    // This path is NOT taken if Outbox flag is also set (Outbox handles event storage via transport).
+    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+      // Only events are stored (commands are silently skipped, consistent with current behavior)
+      if (message is IEvent) {
+#pragma warning disable CA1848
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
+#pragma warning restore CA1848
+        await CascadeToEventStoreOnlyAsync(message, messageType);
+      }
+    }
+
+    // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
     if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
 #pragma warning disable CA1848
       CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
@@ -1602,12 +1698,16 @@ public abstract class Dispatcher(
   /// <param name="eventData">The event data to publish.</param>
   /// <param name="eventType">The runtime type of the event.</param>
   /// <param name="messageId">The unique message ID for this event.</param>
+  /// <param name="eventStoreOnly">
+  /// When true, event is stored in event store only (no transport).
+  /// Destination is set to null, which bypasses transport publishing.
+  /// </param>
   /// <remarks>
   /// Protected to allow generated dispatcher to call this method from CascadeToOutboxAsync override.
   /// </remarks>
   /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId) {
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, bool eventStoreOnly = false) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventType.Name, messageId);
 #pragma warning restore CA1848
@@ -1635,7 +1735,8 @@ public abstract class Dispatcher(
       }
 
       // Resolve destination topic using registry and routing strategy
-      var destination = _resolveEventTopic(eventType);
+      // When eventStoreOnly is true, use null destination to bypass transport
+      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
 
       // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
@@ -1648,10 +1749,11 @@ public abstract class Dispatcher(
       var hopMetadata = _createHopMetadata(eventData!, eventType);
 
       // Add hop indicating message is being stored to outbox
+      // When destination is null (event-store-only), use "(event-store)" as topic indicator
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
-        Topic = destination,
+        Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata
       };
@@ -1831,12 +1933,16 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
+      // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
+
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
         envelope.MessageId,
         destination,
         context.CorrelationId,
-        context.CausationId
+        context.CausationId,
+        streamId
       );
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
@@ -1902,12 +2008,16 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
+      // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
         envelope.MessageId,
         destination,
         context.CorrelationId,
-        context.CausationId
+        context.CausationId,
+        streamId
       );
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
@@ -1949,12 +2059,16 @@ public abstract class Dispatcher(
 
         strategy.QueueOutboxMessage(newOutboxMessage);
 
+        // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+        var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
         // Create receipt for this message
         receipts.Add(DeliveryReceipt.Accepted(
           envelope.MessageId,
           destination,
           context.CorrelationId,
-          context.CausationId
+          context.CausationId,
+          streamId
         ));
       }
 
@@ -2105,7 +2219,7 @@ public abstract class Dispatcher(
     IMessageEnvelope<TMessage> envelope,
     TMessage payload,
     Type payloadType,
-    string destination
+    string? destination
   ) {
     // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
     if (typeof(TMessage) == typeof(JsonElement)) {

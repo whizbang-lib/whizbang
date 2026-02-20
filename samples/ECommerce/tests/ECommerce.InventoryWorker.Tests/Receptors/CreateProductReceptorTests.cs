@@ -249,9 +249,9 @@ public class CreateProductReceptorTests {
 internal class TestDispatcher : IDispatcher {
   public List<object> PublishedEvents { get; } = [];
 
-  public Task PublishAsync<TEvent>(TEvent @event) {
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) {
     PublishedEvents.Add(@event!);
-    return Task.CompletedTask;
+    return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(Whizbang.Core.ValueObjects.MessageId.New(), "test"));
   }
 
   // Minimal stub implementations for other IDispatcher methods
@@ -333,7 +333,7 @@ internal class TestDispatcher : IDispatcher {
     throw new NotImplementedException();
   public ValueTask LocalInvokeAsync(object message, DispatchOptions options) =>
     throw new NotImplementedException();
-  public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
   public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;

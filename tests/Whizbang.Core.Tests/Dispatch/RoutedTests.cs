@@ -172,6 +172,93 @@ public class RoutedTests {
 
   #endregion
 
+  #region AsValueTask
+
+  [Test]
+  public async Task AsValueTask_ReturnsCompletedValueTask_WithSameRoutedValueAsync() {
+    // Arrange
+    var value = new TestEvent("Test");
+    var routed = new Routed<TestEvent>(value, DispatchMode.Local);
+
+    // Act
+    var valueTask = routed.AsValueTask();
+
+    // Assert
+    await Assert.That(valueTask.IsCompleted).IsTrue();
+    var result = await valueTask;
+    await Assert.That(result.Value).IsEqualTo(value);
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Local);
+  }
+
+  [Test]
+  public async Task AsValueTask_WithRouteLocal_EnablesFluentChainingAsync() {
+    // Arrange & Act - Simulates receptor return pattern
+    var valueTask = Route.Local(new TestEvent("Fluent")).AsValueTask();
+
+    // Assert
+    await Assert.That(valueTask.IsCompleted).IsTrue();
+    var result = await valueTask;
+    await Assert.That(result.Value.Name).IsEqualTo("Fluent");
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Local);
+  }
+
+  [Test]
+  public async Task AsValueTask_WithRouteOutbox_EnablesFluentChainingAsync() {
+    // Arrange & Act
+    var valueTask = Route.Outbox(new TestEvent("Outbox")).AsValueTask();
+
+    // Assert
+    var result = await valueTask;
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Outbox);
+  }
+
+  [Test]
+  public async Task AsValueTask_WithRouteEventStoreOnly_EnablesFluentChainingAsync() {
+    // Arrange & Act
+    var valueTask = Route.EventStoreOnly(new TestEvent("EventStore")).AsValueTask();
+
+    // Assert
+    var result = await valueTask;
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+  }
+
+  [Test]
+  public async Task AsValueTask_WithRouteLocalNoPersist_EnablesFluentChainingAsync() {
+    // Arrange & Act
+    var valueTask = Route.LocalNoPersist(new TestEvent("NoPersist")).AsValueTask();
+
+    // Assert
+    var result = await valueTask;
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+  }
+
+  [Test]
+  public async Task AsValueTask_WithRouteBoth_EnablesFluentChainingAsync() {
+    // Arrange & Act
+    var valueTask = Route.Both(new TestEvent("Both")).AsValueTask();
+
+    // Assert
+    var result = await valueTask;
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Both);
+  }
+
+  [Test]
+  public async Task RoutedNone_AsValueTask_ReturnsCompletedValueTaskAsync() {
+    // Arrange
+    var routedNone = Route.None();
+
+    // Act
+    var valueTask = routedNone.AsValueTask();
+
+    // Assert
+    await Assert.That(valueTask.IsCompleted).IsTrue();
+    var result = await valueTask;
+    await Assert.That(result.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(result.Value).IsNull();
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestEvent(string Name) : IEvent;

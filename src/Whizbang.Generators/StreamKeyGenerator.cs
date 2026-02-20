@@ -104,7 +104,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
             return new StreamKeyInfo(
                 EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                IsPropertyValueType: property.Type.IsValueType
             );
           }
         }
@@ -131,7 +132,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
             return new StreamKeyInfo(
                 EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                IsPropertyValueType: property.Type.IsValueType
             );
           }
         }
@@ -267,6 +269,26 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
       template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_DISPATCH", dispatchCode.ToString().TrimEnd());
 
+      // Generate TryResolveAsGuid dispatch cases
+      var tryDispatchSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamKeyGenerator).Assembly,
+          "StreamKeySnippets.cs",
+          "TRY_DISPATCH_CASE"
+      );
+
+      var tryDispatchCode = new StringBuilder();
+      tryDispatchCode.AppendLine("// Type-based dispatch returning Guid?");
+      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
+        var info = eventsWithStreamKey[i];
+        var caseCode = tryDispatchSnippet
+            .Replace("__EVENT_TYPE__", info.EventType)
+            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+
+        tryDispatchCode.AppendLine(caseCode);
+      }
+
+      template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_DISPATCH", tryDispatchCode.ToString().TrimEnd());
+
       // Generate extractor methods
       var extractorsCode = new StringBuilder();
       for (int i = 0; i < eventsWithStreamKey.Length; i++) {
@@ -303,12 +325,77 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       }
 
       template = TemplateUtilities.ReplaceRegion(template, "EXTRACTORS", extractorsCode.ToString().TrimEnd());
+
+      // Generate TryExtractAsGuid methods
+      var tryExtractorsCode = new StringBuilder();
+      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
+        var info = eventsWithStreamKey[i];
+        var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
+        var propertyTypeName = info.PropertyType;
+
+        // Determine which TRY_EXTRACTOR snippet to use based on property type
+        var tryExtractorSnippetName = _getTryExtractorSnippetName(propertyTypeName, info.IsPropertyValueType);
+        var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
+            typeof(StreamKeyGenerator).Assembly,
+            "StreamKeySnippets.cs",
+            tryExtractorSnippetName
+        );
+
+        var tryExtractorCode = tryExtractorSnippet
+            .Replace("__EVENT_TYPE__", info.EventType)
+            .Replace("__EVENT_NAME__", simpleName)
+            .Replace("__PROPERTY_NAME__", info.PropertyName);
+
+        if (i > 0) {
+          tryExtractorsCode.AppendLine();
+        }
+        tryExtractorsCode.Append(tryExtractorCode);
+      }
+
+      template = TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", tryExtractorsCode.ToString().TrimEnd());
     } else {
       // No events - leave default throw behavior in Resolve method
       template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_DISPATCH", "");
+      template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_DISPATCH", "");
       template = TemplateUtilities.ReplaceRegion(template, "EXTRACTORS", "");
+      template = TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", "");
     }
 
     context.AddSource("StreamKeyExtractors.g.cs", template);
+  }
+
+  /// <summary>
+  /// Determines which TRY_EXTRACTOR snippet to use based on property type.
+  /// </summary>
+  /// <param name="propertyTypeName">The fully qualified property type name</param>
+  /// <param name="isValueType">Whether the property type is a value type (struct)</param>
+  private static string _getTryExtractorSnippetName(string propertyTypeName, bool isValueType) {
+    // Normalize the type name for comparison
+    var normalizedType = propertyTypeName
+        .Replace("global::", "")
+        .Replace("System.", "");
+
+    // Check for Guid types
+    if (normalizedType is "Guid" or "System.Guid") {
+      return "TRY_EXTRACTOR_GUID";
+    }
+
+    if (normalizedType is "Guid?" or "System.Guid?" or "Nullable<Guid>" or "Nullable<System.Guid>") {
+      return "TRY_EXTRACTOR_NULLABLE_GUID";
+    }
+
+    // Check for string types (reference type, can be null)
+    if (normalizedType.Contains("string", StringComparison.OrdinalIgnoreCase)) {
+      return "TRY_EXTRACTOR_STRING";
+    }
+
+    // Value types (structs including Vogen value objects) cannot be null-checked
+    // Use VALUE_TYPE snippet which calls ToString() directly
+    if (isValueType && !normalizedType.EndsWith("?", StringComparison.Ordinal)) {
+      return "TRY_EXTRACTOR_VALUE_TYPE";
+    }
+
+    // For nullable value types and other reference types
+    return "TRY_EXTRACTOR_OTHER";
   }
 }

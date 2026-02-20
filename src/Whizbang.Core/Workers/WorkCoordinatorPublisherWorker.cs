@@ -657,7 +657,7 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Debug,
     Message = "PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
   )]
-  static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string destination);
+  static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 12,
@@ -671,7 +671,7 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Information,
     Message = "Transport not ready, buffering message {MessageId} (destination: {Destination})"
   )]
-  static partial void LogTransportNotReadyBuffering(ILogger logger, Guid messageId, string destination);
+  static partial void LogTransportNotReadyBuffering(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 14,
@@ -685,7 +685,7 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Debug,
     Message = "About to publish message {MessageId} to {Destination}"
   )]
-  static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string destination);
+  static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 16,
@@ -699,14 +699,14 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Warning,
     Message = "Transport failure for message {MessageId} to {Destination}: {Error}. Renewing lease for retry."
   )]
-  static partial void LogTransportFailureRenewingLease(ILogger logger, Guid messageId, string destination, string error);
+  static partial void LogTransportFailureRenewingLease(ILogger logger, Guid messageId, string? destination, string error);
 
   [LoggerMessage(
     EventId = 18,
     Level = LogLevel.Error,
     Message = "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})"
   )]
-  static partial void LogFailedToPublishMessage(ILogger logger, Guid messageId, string destination, string error, MessageFailureReason reason);
+  static partial void LogFailedToPublishMessage(ILogger logger, Guid messageId, string? destination, string error, MessageFailureReason reason);
 
   [LoggerMessage(
     EventId = 19,

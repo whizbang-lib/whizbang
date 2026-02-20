@@ -138,10 +138,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
             ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
             SimpleName: simpleName,
+            ClrTypeName: clrTypeName,
             InterfaceTypeArguments: typeArguments,
             EventTypes: eventTypes.ToArray(),
             MessageTypeNames: messageTypeNames,

@@ -313,7 +313,7 @@ public class TransportConsumerWorker : BackgroundService {
         return;
       }
 
-      _logger.LogInformation(
+      _logger.LogDebug(
         "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
         envelope.MessageId,
         myWork.Count
@@ -434,7 +434,7 @@ public class TransportConsumerWorker : BackgroundService {
       // 8. Report completions/failures back to database
       await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
-      _logger.LogInformation("Successfully processed message {MessageId}", envelope.MessageId);
+      _logger.LogDebug("Successfully processed message {MessageId}", envelope.MessageId);
     } catch (Exception ex) {
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter

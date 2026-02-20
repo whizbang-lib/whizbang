@@ -413,4 +413,169 @@ public class TransportPublishStrategyTests {
     await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox")
       .Because("Nested class commands ending with 'Command' must be routed to inbox");
   }
+
+  // ========================================
+  // EVENT-STORE-ONLY BYPASS TESTS
+  // ========================================
+  // These tests verify that messages with null/empty destination
+  // (event-store-only mode) skip transport but return success.
+
+  [Test]
+  public async Task PublishAsync_WithNullDestination_SkipsTransportAndReturnsSuccessAsync() {
+    // Arrange - Null destination indicates event-store-only mode
+    // Event is stored in wh_event_store but should not be transported
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = null, // Event-store-only mode
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Events.OrderCreatedEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue()
+      .Because("Event-store-only messages should return success");
+    await Assert.That(result.MessageId).IsEqualTo(messageId);
+    await Assert.That(result.CompletedStatus).IsEqualTo(MessageProcessingStatus.Published)
+      .Because("Message should be marked as published even though transport was skipped");
+    await Assert.That(result.Error).IsNull();
+  }
+
+  [Test]
+  public async Task PublishAsync_WithEmptyDestination_SkipsTransportAndReturnsSuccessAsync() {
+    // Arrange - Empty string destination also indicates event-store-only mode
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "", // Empty destination = event-store-only mode
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.OrderUpdatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Events.OrderUpdatedEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue()
+      .Because("Event-store-only messages with empty destination should return success");
+    await Assert.That(result.CompletedStatus).IsEqualTo(MessageProcessingStatus.Published);
+  }
+
+  [Test]
+  public async Task PublishAsync_WithNullDestination_TransportNotCalledAsync() {
+    // Arrange - Verify transport is never invoked for event-store-only messages
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = null, // Event-store-only mode
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.OrderDeletedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Events.OrderDeletedEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert - Transport should NOT have been called
+    await Assert.That(transport.LastPublishedEnvelope).IsNull()
+      .Because("Transport should not be called for event-store-only messages");
+    await Assert.That(transport.LastPublishedDestination).IsNull()
+      .Because("No destination should be set when transport is skipped");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithNullDestination_DoesNotThrowEvenIfTransportWouldFailAsync() {
+    // Arrange - Even if transport would throw, event-store-only should succeed
+    var transport = new TestTransport {
+      PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport should not be called"))
+    };
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = null, // Event-store-only mode
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.TestEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Events.TestEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert - Should succeed without calling transport
+    await Assert.That(result.Success).IsTrue()
+      .Because("Event-store-only should bypass transport entirely");
+    await Assert.That(transport.LastPublishedEnvelope).IsNull()
+      .Because("Transport should not be called");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithValidDestination_StillCallsTransportAsync() {
+    // Arrange - Messages with valid destination should still use transport
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events", // Valid destination = use transport
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderShippedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderShippedEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert - Transport should be called for valid destinations
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedEnvelope).IsNotNull()
+      .Because("Transport should be called for messages with valid destination");
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("myapp.orders.events");
+  }
 }

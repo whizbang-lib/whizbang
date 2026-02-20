@@ -46,10 +46,10 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
 
-    // Assert - Should use qualified name "DraftJobStatus.Projection" in switch case
+    // Assert - Should use CLR format name "TestNamespace.DraftJobStatus+Projection" in switch case
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"DraftJobStatus.Projection\"");
+    await Assert.That(registrySource!).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
     // Should NOT use just "Projection"
     await Assert.That(registrySource!).DoesNotContain("\"Projection\" =>");
   }
@@ -85,10 +85,10 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
 
-    // Assert - Should use simple name "OrderPerspective" in switch case
+    // Assert - Should use CLR format name "TestNamespace.OrderPerspective" in switch case
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"OrderPerspective\"");
+    await Assert.That(registrySource!).Contains("\"TestNamespace.OrderPerspective\"");
   }
 
   [Test]
@@ -199,11 +199,11 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
 
-    // Assert - Should have distinct names for each nested class
+    // Assert - Should have distinct CLR format names for each nested class
     var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
     await Assert.That(registrySource).IsNotNull();
-    await Assert.That(registrySource!).Contains("\"DraftJobStatus.Projection\"");
-    await Assert.That(registrySource!).Contains("\"ActiveJobStatus.Projection\"");
+    await Assert.That(registrySource!).Contains("\"TestNamespace.DraftJobStatus+Projection\"");
+    await Assert.That(registrySource!).Contains("\"TestNamespace.ActiveJobStatus+Projection\"");
     // Should NOT have a collision error since names are different
     var diagnostics = result.Diagnostics;
     var whiz032 = diagnostics.FirstOrDefault(d => d.Id == "WHIZ032");

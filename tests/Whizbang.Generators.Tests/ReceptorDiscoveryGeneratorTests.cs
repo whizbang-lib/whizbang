@@ -1482,4 +1482,208 @@ public class BatchReceptor : IReceptor<ProcessBatch, ItemProcessed[]> {
   }
 
   #endregion
+
+  #region Routed<T> Response Type Unwrapping Tests
+
+  /// <summary>
+  /// Tests that receptors returning Routed&lt;T&gt; have the inner type T extracted
+  /// for cascade generation, not Routed&lt;T&gt; itself.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedResponse_ExtractsInnerTypeForCascadeAsync() {
+    // Arrange - Receptor returning Routed<T> wrapper
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record ProcessedEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>> {
+  public ValueTask<Routed<ProcessedEvent>> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    return Route.Outbox(new ProcessedEvent { Id = message.Id }).AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate cascade for ProcessedEvent (inner type), NOT Routed<ProcessedEvent>
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    // Should contain ProcessedEvent (the inner type) in cascade
+    await Assert.That(dispatcher).Contains("ProcessedEvent");
+
+    // Extract just the CascadeToOutboxAsync method content to verify no Routed<> in cascade
+    var cascadeStart = dispatcher.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade should NOT contain Routed<> wrapper type - only the inner type
+    await Assert.That(cascadeSection).DoesNotContain("Routed<");
+    await Assert.That(cascadeSection).Contains("ProcessedEvent");
+  }
+
+  /// <summary>
+  /// Tests that receptors returning RoutedNone are handled correctly (no cascade).
+  /// RoutedNone is allowed in DI registration, but should NOT appear in cascade sections.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedNoneResponse_DoesNotGenerateCascadeAsync() {
+    // Arrange - Receptor returning RoutedNone (no events to cascade)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ValidateCommand : ICommand {
+  public string Data { get; init; } = string.Empty;
+}
+
+public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
+  public ValueTask<RoutedNone> HandleAsync(ValidateCommand message, CancellationToken ct = default) {
+    return Route.None().AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT generate cascade code for RoutedNone
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Extract just the CascadeToOutboxAsync method content
+    var cascadeStart = dispatcher!.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade section should NOT contain RoutedNone (nothing to cascade)
+    await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
+    // Cascade should just return Task.CompletedTask (no events)
+    await Assert.That(cascadeSection).Contains("return Task.CompletedTask");
+  }
+
+  /// <summary>
+  /// Tests that WHIZ001 diagnostic reports the receptor discovery correctly.
+  /// Note: GetSimpleName simplifies generic types, so Routed&lt;ProcessedEvent&gt; becomes ProcessedEvent&gt;
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedResponse_ReportsReceptorInDiagnosticAsync() {
+    // Arrange - Receptor returning Routed<T>
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand;
+
+public record ProcessedEvent : IEvent;
+
+public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>> {
+  public ValueTask<Routed<ProcessedEvent>> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    return Route.Outbox(new ProcessedEvent()).AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - WHIZ001 should report the receptor was discovered
+    var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
+    var whiz001 = infos.FirstOrDefault(d => d.Id == "WHIZ001");
+    await Assert.That(whiz001).IsNotNull();
+    // Should report the receptor class
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessReceptor");
+    // Should report the message type
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessCommand");
+    // The response type is shown (GetSimpleName simplifies generics but leaves trailing >)
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessedEvent");
+  }
+
+  /// <summary>
+  /// Tests that tuple containing Routed&lt;T&gt; values extracts the inner types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTupleOfRoutedResponses_ExtractsInnerTypesAsync() {
+    // Arrange - Receptor returning tuple with Routed wrappers (discriminated union pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand;
+
+public record SuccessEvent : IEvent;
+public record FailureEvent : IEvent;
+
+public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, Routed<FailureEvent>)> {
+  public ValueTask<(Routed<SuccessEvent>, Routed<FailureEvent>)> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    // Success path - returns success event, empty failure
+    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchMode.None)));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should extract both inner types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Extract just the CascadeToOutboxAsync method content to verify no Routed<> in cascade
+    var cascadeStart = dispatcher!.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade should contain both inner event types (unwrapped from Routed<>)
+    await Assert.That(cascadeSection).Contains("SuccessEvent");
+    await Assert.That(cascadeSection).Contains("FailureEvent");
+    // Cascade should NOT contain Routed<> wrapper type
+    await Assert.That(cascadeSection).DoesNotContain("Routed<");
+  }
+
+  #endregion
 }

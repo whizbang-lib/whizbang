@@ -556,4 +556,147 @@ public class PerspectiveSchemaGeneratorTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNull();
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedPerspective_GeneratesUniqueTableNameAsync() {
+    // Arrange - Nested Projection class inside Activity parent
+    // Bug: classSymbol.Name returns just "Projection", causing table name collision
+    var source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestNamespace {
+              public record TestEvent : IEvent {
+                public Guid StreamId { get; init; }
+              }
+
+              public static class Activity {
+                public class Model {
+                  [StreamKey]
+                  public Guid Id { get; set; }
+                  public string Name { get; set; } = "";
+                }
+
+                public class Projection : IPerspectiveFor<Model, TestEvent> {
+                  public Model Apply(Model currentData, TestEvent @event) {
+                    return currentData;
+                  }
+                }
+              }
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+
+    // Assert - Should generate table name including parent class: "activity_projection"
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS activity_projection")
+      .Because("nested perspective should include parent class in table name");
+    await Assert.That(generatedSource).DoesNotContain("CREATE TABLE IF NOT EXISTS projection (")
+      .Because("table name should not be just 'projection' for nested class");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleNestedProjections_GeneratesDistinctTableNamesAsync() {
+    // Arrange - Two nested Projection classes that should NOT collide
+    var source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestNamespace {
+              public record TestEvent : IEvent {
+                public Guid StreamId { get; init; }
+              }
+
+              public static class Activity {
+                public class Model {
+                  [StreamKey]
+                  public Guid Id { get; set; }
+                }
+
+                public class Projection : IPerspectiveFor<Model, TestEvent> {
+                  public Model Apply(Model currentData, TestEvent @event) {
+                    return currentData;
+                  }
+                }
+              }
+
+              public static class Session {
+                public class Model {
+                  [StreamKey]
+                  public Guid Id { get; set; }
+                }
+
+                public class Projection : IPerspectiveFor<Model, TestEvent> {
+                  public Model Apply(Model currentData, TestEvent @event) {
+                    return currentData;
+                  }
+                }
+              }
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+
+    // Assert - Should generate distinct table names for each nested projection
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("activity_projection")
+      .Because("Activity.Projection should generate activity_projection table");
+    await Assert.That(generatedSource).Contains("session_projection")
+      .Because("Session.Projection should generate session_projection table");
+
+    // Count occurrences of CREATE TABLE - should be exactly 2
+    var createTableCount = generatedSource.Split("CREATE TABLE IF NOT EXISTS").Length - 1;
+    await Assert.That(createTableCount).IsEqualTo(2)
+      .Because("each nested Projection should have its own table");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeeplyNestedPerspective_GeneratesCorrectTableNameAsync() {
+    // Arrange - Deeply nested perspective (multiple levels of nesting)
+    var source = """
+            using System;
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+
+            namespace TestNamespace {
+              public record TestEvent : IEvent {
+                public Guid StreamId { get; init; }
+              }
+
+              public static class Sessions {
+                public static class Active {
+                  public class Model {
+                    [StreamKey]
+                    public Guid Id { get; set; }
+                  }
+
+                  public class Projection : IPerspectiveFor<Model, TestEvent> {
+                    public Model Apply(Model currentData, TestEvent @event) {
+                      return currentData;
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+
+    // Assert - Should generate table name with all nesting levels: "sessions_active_projection"
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("sessions_active_projection")
+      .Because("deeply nested perspective should include all parent classes in table name");
+  }
 }

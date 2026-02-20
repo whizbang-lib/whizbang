@@ -250,7 +250,7 @@ public class DapperWorkCoordinator(
       })
       .ToList();
 
-    _logger?.LogInformation(
+    _logger?.LogDebug(
       "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work",
       outboxWork.Count,
       inboxWork.Count,
