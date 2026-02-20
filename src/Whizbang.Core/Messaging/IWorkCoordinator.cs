@@ -363,8 +363,10 @@ public record OutboxMessage {
 
   /// <summary>
   /// Destination to publish to (topic name).
+  /// Null for local-only events that should be stored in event store but not transported.
+  /// When null, event is persisted but transport publishing is skipped.
   /// </summary>
-  public required string Destination { get; init; }
+  public string? Destination { get; init; }
 
   /// <summary>
   /// Complete MessageEnvelope object (including payload as JsonElement, hops, metadata).
@@ -538,8 +540,10 @@ public record OutboxWork {
 
   /// <summary>
   /// Destination to publish to (topic name).
+  /// Null for local-only events that were stored but should not be transported.
+  /// Transport publishing should be skipped when destination is null.
   /// </summary>
-  public required string Destination { get; init; }
+  public string? Destination { get; init; }
 
   /// <summary>
   /// Complete MessageEnvelope object with JsonElement payload.

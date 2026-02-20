@@ -96,6 +96,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Compute nested-aware simple name
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
     // Generate one PerspectiveInfo per implemented interface
     var results = perspectiveInterfaces.Select(perspectiveInterface => {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
@@ -122,6 +125,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return new PerspectiveInfo(
           ClassName: className,
           SimpleName: simpleName,
+          ClrTypeName: clrTypeName,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
@@ -360,7 +364,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     bool isFirst = true;
 
     foreach (var perspective in perspectives) {
-      var perspectiveClassName = TypeNameUtilities.GetSimpleName(perspective.ClassName);
+      // Use CLR format name for database storage (e.g., "Namespace.Parent+Child")
+      // This is consistent with registry lookup and avoids naming collisions
+      var perspectiveClassName = perspective.ClrTypeName;
 
       // Use MessageTypeNames which already has the correct database format
       foreach (var messageTypeName in perspective.MessageTypeNames) {

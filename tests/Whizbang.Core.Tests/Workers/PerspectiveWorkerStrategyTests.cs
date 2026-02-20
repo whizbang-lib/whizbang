@@ -191,9 +191,196 @@ public class PerspectiveWorkerStrategyTests {
       .Because("Instant strategy should report failures immediately via coordinator");
   }
 
+  // ==================== CLR Type Name Registry Lookup Tests ====================
+
+  [Test]
+  public async Task PerspectiveWorker_WithClrTypeName_LooksUpRunnerCorrectly_Async() {
+    // Arrange - Simulate database returning CLR format name (e.g., "Namespace.Parent+Child")
+    // This is the correct format that should match the generated registry
+    var strategy = new InstantCompletionStrategy();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+
+    // Database returns work with CLR format perspective name
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "TestNamespace.ActiveAccount+Projection", // CLR format with '+'
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      strategy,
+      databaseReadiness,
+      null
+    );
+
+    // Act - Run worker and wait for completion to be reported
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+
+    // Wait for completion to be reported (deterministic, no timers!)
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+
+    cts.Cancel();
+    try {
+      await workerTask;
+    } catch (OperationCanceledException) {
+      // Expected during shutdown
+    }
+
+    // Assert - Registry should have been called with CLR format name and found a runner
+    await Assert.That(registry.LastLookedUpName).IsEqualTo("TestNamespace.ActiveAccount+Projection")
+      .Because("Registry should be called with exact CLR format name from database");
+    await Assert.That(registry.RunnerWasFound).IsTrue()
+      .Because("Registry should find runner when CLR format name matches");
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("Worker should report completion when runner is found and executed");
+  }
+
+  [Test]
+  public async Task PerspectiveWorker_WithMismatchedName_FailsToFindRunner_Async() {
+    // Arrange - Simulate database returning WRONG format (just "Projection" instead of CLR format)
+    // This was the bug: the generator was using GetSimpleName which returned just "Projection"
+    var strategy = new InstantCompletionStrategy();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+
+    // Database returns work with INCORRECT simple name (the bug!)
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Projection", // WRONG: Just simple name, not CLR format
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      strategy,
+      databaseReadiness,
+      null
+    );
+
+    // Act - Run worker and wait for registry lookup to occur
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+
+    // Wait for registry to signal that lookup occurred (deterministic, no timers!)
+    await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
+
+    cts.Cancel();
+    try {
+      await workerTask;
+    } catch (OperationCanceledException) {
+      // Expected during shutdown
+    }
+
+    // Assert - Registry lookup failed because name doesn't match CLR format
+    await Assert.That(registry.LastLookedUpName).IsEqualTo("Projection")
+      .Because("Registry should receive the name as-is from the database");
+    await Assert.That(registry.RunnerWasFound).IsFalse()
+      .Because("Registry should NOT find runner when simple name doesn't match CLR format");
+    await Assert.That(coordinator.ReportCompletionCallCount).IsEqualTo(0)
+      .Because("No completion should be reported when runner is not found");
+  }
+
+  [Test]
+  public async Task PerspectiveWorker_WithDeeplyNestedClrName_LooksUpRunnerCorrectly_Async() {
+    // Arrange - Tests deeply nested types: "Namespace.Parent+Child+GrandChild"
+    var strategy = new InstantCompletionStrategy();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new ClrTypeNameAwarePerspectiveRunnerRegistry();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+
+    // Database returns work with deeply nested CLR format name
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "TestNamespace.Sessions+Active+Projection", // Multiple nesting levels
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      strategy,
+      databaseReadiness,
+      null
+    );
+
+    // Act - Run worker and wait for registry lookup to occur
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+
+    // Wait for registry to signal that lookup occurred (deterministic, no timers!)
+    await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
+
+    cts.Cancel();
+    try {
+      await workerTask;
+    } catch (OperationCanceledException) {
+      // Expected during shutdown
+    }
+
+    // Assert - Registry should handle multiple '+' nesting levels correctly
+    await Assert.That(registry.LastLookedUpName).IsEqualTo("TestNamespace.Sessions+Active+Projection")
+      .Because("Registry should be called with deeply nested CLR format name");
+    await Assert.That(registry.RunnerWasFound).IsTrue()
+      .Because("Registry should find runner for deeply nested CLR format names");
+  }
+
   #region Test Fakes
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
+    private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     public int ReportCompletionCallCount { get; private set; }
@@ -202,6 +389,18 @@ public class PerspectiveWorkerStrategyTests {
     public List<PerspectiveCheckpointFailure> FailuresReceivedViaProcessWorkBatch { get; } = [];
     public bool ReturnWorkOnEveryCycle { get; set; }
     public PerspectiveWork? PerspectiveWorkTemplate { get; set; }
+
+    /// <summary>
+    /// Waits for a completion to be reported via ReportPerspectiveCompletionAsync.
+    /// </summary>
+    public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _completionReported.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Completion was not reported within {timeout}");
+      }
+    }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -232,6 +431,7 @@ public class PerspectiveWorkerStrategyTests {
       PerspectiveCheckpointCompletion completion,
       CancellationToken cancellationToken = default) {
       ReportCompletionCallCount++;
+      _completionReported.TrySetResult();
       return Task.CompletedTask;
     }
 
@@ -249,6 +449,7 @@ public class PerspectiveWorkerStrategyTests {
       return Task.FromResult<PerspectiveCheckpointInfo?>(null);
     }
   }
+
 
   private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
@@ -280,6 +481,10 @@ public class PerspectiveWorkerStrategyTests {
     public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
       return new FakePerspectiveRunner { ShouldThrow = ShouldThrow };
     }
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
+      return [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];
+    }
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
@@ -300,6 +505,76 @@ public class PerspectiveWorkerStrategyTests {
         LastEventId = Guid.NewGuid(),
         Status = PerspectiveProcessingStatus.Completed
       });
+    }
+  }
+
+  /// <summary>
+  /// A fake registry that simulates the generated PerspectiveRunnerRegistry behavior.
+  /// It only returns runners for CLR format names (e.g., "Namespace.Parent+Child")
+  /// and tracks lookup attempts for test assertions.
+  /// Uses synchronization primitives to signal when lookups occur.
+  /// </summary>
+  private sealed class ClrTypeNameAwarePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    private readonly TaskCompletionSource _lookupCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Simulates the generated registry's switch statement with CLR format names
+    private readonly HashSet<string> _registeredClrNames = [
+      "TestNamespace.ActiveAccount+Projection",
+      "TestNamespace.Sessions+Active+Projection",
+      "TestNamespace.Perspectives.OrderPerspective",
+      "Test.FakePerspective"
+    ];
+
+    public string? LastLookedUpName { get; private set; }
+    public bool RunnerWasFound { get; private set; }
+
+    /// <summary>
+    /// Waits deterministically for a registry lookup to occur, no timers!
+    /// </summary>
+    public async Task WaitForLookupAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _lookupCompleted.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Registry lookup did not occur within {timeout}");
+      }
+    }
+
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
+      LastLookedUpName = perspectiveName;
+      RunnerWasFound = _registeredClrNames.Contains(perspectiveName);
+
+      // Signal that lookup has occurred
+      _lookupCompleted.TrySetResult();
+
+      if (RunnerWasFound) {
+        return new FakePerspectiveRunner();
+      }
+
+      return null;
+    }
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
+      return [
+        new PerspectiveRegistrationInfo(
+          "TestNamespace.ActiveAccount+Projection",
+          "global::TestNamespace.ActiveAccount.Projection",
+          "global::TestNamespace.ActiveAccount.Model",
+          ["global::TestNamespace.AccountCreatedEvent"]
+        ),
+        new PerspectiveRegistrationInfo(
+          "TestNamespace.Sessions+Active+Projection",
+          "global::TestNamespace.Sessions.Active.Projection",
+          "global::TestNamespace.Sessions.Active.Model",
+          ["global::TestNamespace.SessionEvent"]
+        ),
+        new PerspectiveRegistrationInfo(
+          "TestNamespace.Perspectives.OrderPerspective",
+          "global::TestNamespace.Perspectives.OrderPerspective",
+          "global::TestNamespace.Perspectives.OrderModel",
+          ["global::TestNamespace.Perspectives.OrderCreatedEvent"]
+        )
+      ];
     }
   }
 

@@ -409,7 +409,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     Level = LogLevel.Trace,
     Message = "Queued outbox message {MessageId} for {Destination}"
   )]
-  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string destination);
+  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 3,

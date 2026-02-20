@@ -66,4 +66,120 @@ public class StreamKeySnippets {
 
     return string.Empty;
   }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryResolveAsGuid dispatch routing.
+  /// </summary>
+  public Guid? TryDispatchExample() {
+    #region TRY_DISPATCH_CASE
+    if (@event is __EVENT_TYPE__ e__INDEX__) {
+      return TryExtractAsGuid(e__INDEX__);
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryExtractAsGuid method for Guid properties.
+  /// </summary>
+  public Guid? TryExtractorGuidExample() {
+    #region TRY_EXTRACTOR_GUID
+    /// <summary>
+    /// Tries to extract stream key from __EVENT_NAME__ as a Guid.
+    /// Returns null if the key is null or not a valid Guid.
+    /// </summary>
+    private static global::System.Guid? TryExtractAsGuid(__EVENT_TYPE__ @event) {
+      return @event.__PROPERTY_NAME__;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryExtractAsGuid method for nullable Guid properties.
+  /// </summary>
+  public Guid? TryExtractorNullableGuidExample() {
+    #region TRY_EXTRACTOR_NULLABLE_GUID
+    /// <summary>
+    /// Tries to extract stream key from __EVENT_NAME__ as a Guid.
+    /// Returns null if the key is null or not a valid Guid.
+    /// </summary>
+    private static global::System.Guid? TryExtractAsGuid(__EVENT_TYPE__ @event) {
+      return @event.__PROPERTY_NAME__;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryExtractAsGuid method for string properties.
+  /// </summary>
+  public Guid? TryExtractorStringExample() {
+    #region TRY_EXTRACTOR_STRING
+    /// <summary>
+    /// Tries to extract stream key from __EVENT_NAME__ as a Guid.
+    /// Returns null if the key is null, empty, or not a valid Guid.
+    /// </summary>
+    private static global::System.Guid? TryExtractAsGuid(__EVENT_TYPE__ @event) {
+      var key = @event.__PROPERTY_NAME__;
+      if (key is null || string.IsNullOrWhiteSpace(key)) {
+        return null;
+      }
+      return global::System.Guid.TryParse(key, out var guid) ? guid : null;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryExtractAsGuid method for nullable reference types.
+  /// Uses ToString() to get string representation and parse as Guid.
+  /// </summary>
+  public Guid? TryExtractorOtherExample() {
+    #region TRY_EXTRACTOR_OTHER
+    /// <summary>
+    /// Tries to extract stream key from __EVENT_NAME__ as a Guid.
+    /// Returns null if the key is null or not a valid Guid.
+    /// </summary>
+    private static global::System.Guid? TryExtractAsGuid(__EVENT_TYPE__ @event) {
+      var key = @event.__PROPERTY_NAME__;
+      if (key is null) {
+        return null;
+      }
+      var keyString = key.ToString();
+      if (string.IsNullOrWhiteSpace(keyString)) {
+        return null;
+      }
+      return global::System.Guid.TryParse(keyString, out var guid) ? guid : null;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for TryExtractAsGuid method for non-nullable value types.
+  /// Uses ToString() to get string representation and parse as Guid.
+  /// </summary>
+  public Guid? TryExtractorValueTypeExample() {
+    #region TRY_EXTRACTOR_VALUE_TYPE
+    /// <summary>
+    /// Tries to extract stream key from __EVENT_NAME__ as a Guid.
+    /// Returns null if the key is not a valid Guid.
+    /// </summary>
+    private static global::System.Guid? TryExtractAsGuid(__EVENT_TYPE__ @event) {
+      var keyString = @event.__PROPERTY_NAME__.ToString();
+      if (string.IsNullOrWhiteSpace(keyString)) {
+        return null;
+      }
+      return global::System.Guid.TryParse(keyString, out var guid) ? guid : null;
+    }
+    #endregion
+
+    return null;
+  }
 }

@@ -30,7 +30,28 @@ public static partial class StreamKeyExtractors {
       "Ensure the event type has a property or parameter marked with [StreamKey].");
   }
 
+  /// <summary>
+  /// Tries to resolve the stream key from an event and parse it as a Guid.
+  /// Returns null if the event has no [StreamKey] or the key is not a valid Guid.
+  /// Used by IDeliveryReceipt.StreamId extraction.
+  /// </summary>
+  /// <param name="event">The event to extract the stream key from</param>
+  /// <returns>The stream key as a Guid if found and parseable, otherwise null</returns>
+  public static global::System.Guid? TryResolveAsGuid(global::Whizbang.Core.IEvent? @event) {
+    if (@event == null) return null;
+
+    #region TRY_RESOLVE_DISPATCH
+    // Type-based dispatch returning Guid?
+    #endregion
+
+    return null;
+  }
+
   #region EXTRACTORS
   // Individual extractor methods for each event type
+  #endregion
+
+  #region TRY_EXTRACT_METHODS
+  // Individual TryExtractAsGuid methods for each event type
   #endregion
 }

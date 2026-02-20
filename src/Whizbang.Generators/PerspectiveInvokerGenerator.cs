@@ -113,9 +113,13 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Compute nested-aware simple name
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         SimpleName: simpleName,
+        ClrTypeName: clrTypeName,
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes,
         MessageTypeNames: messageTypeNames

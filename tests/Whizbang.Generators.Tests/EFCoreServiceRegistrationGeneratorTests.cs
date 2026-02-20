@@ -845,6 +845,131 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("_scope_gin");
   }
 
+  /// <summary>
+  /// Test that perspective DDL includes physical fields marked with [PhysicalField] attribute.
+  /// Physical fields should be added as separate columns in the CREATE TABLE statement.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesPhysicalFieldsInDDLAsync() {
+    // Arrange - Model with [PhysicalField] attributes
+    var source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record EmbeddingModel {
+        [StreamKey]
+        public Guid Id { get; init; }
+
+        [PhysicalField(Indexed = true)]
+        public Guid? ActivityId { get; init; }
+
+        [PhysicalField(Indexed = true)]
+        public string? ActivityTreeId { get; init; }
+
+        public string Name { get; init; } = "";
+      }
+
+      public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, TestEvent> {
+        public EmbeddingModel Apply(EmbeddingModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should include physical fields as columns in CREATE TABLE
+    await Assert.That(sourceText).Contains("activity_id UUID")
+      .Because("Physical field ActivityId should be in DDL as activity_id UUID column");
+    await Assert.That(sourceText).Contains("activity_tree_id TEXT")
+      .Because("Physical field ActivityTreeId should be in DDL as activity_tree_id TEXT column");
+
+    // Should include indexes for physical fields marked with Indexed = true
+    await Assert.That(sourceText).Contains("_activity_id")
+      .Because("Physical field with Indexed=true should have an index");
+    await Assert.That(sourceText).Contains("_activity_tree_id")
+      .Because("Physical field with Indexed=true should have an index");
+  }
+
+  /// <summary>
+  /// Test that perspective DDL includes vector fields marked with [VectorField] attribute.
+  /// Vector fields should use pgvector's vector type with specified dimensions.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesVectorFieldsInDDLAsync() {
+    // Arrange - Model with [VectorField] attribute
+    var source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record EmbeddingModel {
+        [StreamKey]
+        public Guid Id { get; init; }
+
+        [VectorField(1536)]
+        public float[]? Embeddings { get; init; }
+
+        public string Name { get; init; } = "";
+      }
+
+      public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, TestEvent> {
+        public EmbeddingModel Apply(EmbeddingModel currentData, TestEvent @event) {
+          return currentData;
+        }
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should include vector field with dimensions
+    await Assert.That(sourceText).Contains("vector(1536)")
+      .Because("Vector field should be in DDL with correct dimensions");
+
+    // Should include vector index with ivfflat method
+    await Assert.That(sourceText).Contains("ivfflat")
+      .Because("Vector field should have ivfflat index");
+  }
+
   #endregion
 
   #region Nested Model Class Tests

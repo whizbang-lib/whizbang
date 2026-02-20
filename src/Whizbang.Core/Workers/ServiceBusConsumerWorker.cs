@@ -529,14 +529,14 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 10,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Message {MessageId} accepted for processing ({WorkCount} inbox work items)"
   )]
   static partial void LogMessageAcceptedForProcessing(ILogger logger, MessageId messageId, int workCount);
 
   [LoggerMessage(
     EventId = 11,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Invoked perspectives for {EventType} (message {MessageId})"
   )]
   static partial void LogInvokedPerspectives(ILogger logger, string eventType, Guid messageId);
@@ -564,7 +564,7 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 15,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Successfully processed message {MessageId}"
   )]
   static partial void LogSuccessfullyProcessedMessage(ILogger logger, MessageId messageId);

@@ -124,6 +124,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
       // Found IReceptor<TMessage, TResponse> - regular async receptor with response
+      // Keep the full response type (including Routed<T>) for DI registration
+      // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -156,6 +158,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     if (syncReceptorInterface is not null && syncReceptorInterface.TypeArguments.Length == 2) {
       // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
+      // Keep the full response type (including Routed<T>) for DI registration
+      // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: syncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -271,8 +275,43 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Unwraps Routed&lt;T&gt; wrapper type names from string representation.
+  /// Handles patterns like "global::Whizbang.Core.Dispatch.Routed&lt;global::MyApp.MyEvent&gt;".
+  /// Returns null for RoutedNone types, the inner type for Routed&lt;T&gt;, or the original for non-Routed types.
+  /// </summary>
+  /// <param name="typeName">The fully qualified type name to unwrap.</param>
+  /// <returns>The unwrapped type name, or null for RoutedNone.</returns>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithTupleOfRoutedResponses_*</tests>
+  private static string? _unwrapRoutedTypeString(string typeName) {
+    // Check for RoutedNone - skip in cascade
+    if (typeName.Contains("RoutedNone")) {
+      return null;
+    }
+
+    // Check for Routed<T> pattern - extract inner type
+    // Pattern: global::Whizbang.Core.Dispatch.Routed<InnerType> or Whizbang.Core.Dispatch.Routed<InnerType>
+    const string routedPrefix1 = "global::Whizbang.Core.Dispatch.Routed<";
+    const string routedPrefix2 = "Whizbang.Core.Dispatch.Routed<";
+
+    if (typeName.StartsWith(routedPrefix1, StringComparison.Ordinal)) {
+      // Extract inner type: remove prefix and trailing >
+      var inner = typeName.Substring(routedPrefix1.Length, typeName.Length - routedPrefix1.Length - 1);
+      return inner;
+    }
+
+    if (typeName.StartsWith(routedPrefix2, StringComparison.Ordinal)) {
+      var inner = typeName.Substring(routedPrefix2.Length, typeName.Length - routedPrefix2.Length - 1);
+      return inner;
+    }
+
+    // Not a Routed wrapper - return as-is
+    return typeName;
+  }
+
+  /// <summary>
   /// Extracts unique event types from receptor response types for outbox cascade generation.
   /// Handles simple event types, tuples (extracts all event elements), and arrays (extracts element type).
+  /// Also unwraps Routed&lt;T&gt; wrappers to extract inner types.
   /// Returns fully qualified type names for AOT-compatible type-switch generation.
   /// </summary>
   /// <param name="receptors">The collection of discovered receptors.</param>
@@ -294,23 +333,36 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (responseType.StartsWith("(", StringComparison.Ordinal) && responseType.EndsWith(")", StringComparison.Ordinal)) {
         var tupleElements = _extractTupleElements(responseType);
         foreach (var element in tupleElements) {
-          // Elements from tuples may also be arrays - extract element type
-          if (element.EndsWith("[]", StringComparison.Ordinal)) {
-            var elementType = element.Substring(0, element.Length - 2);
+          // Unwrap Routed<T> if present
+          var unwrappedElement = _unwrapRoutedTypeString(element);
+          if (unwrappedElement is null) {
+            continue;  // Skip RoutedNone
+          }
+
+          // Elements may also be arrays - extract element type
+          if (unwrappedElement.EndsWith("[]", StringComparison.Ordinal)) {
+            var elementType = unwrappedElement.Substring(0, unwrappedElement.Length - 2);
             eventTypes.Add(elementType);
           } else {
-            eventTypes.Add(element);
+            eventTypes.Add(unwrappedElement);
           }
         }
       }
       // Handle array types: Type[] - extract element type
       else if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
         var elementType = responseType.Substring(0, responseType.Length - 2);
-        eventTypes.Add(elementType);
+        // Unwrap Routed<T> if present
+        var unwrappedElementType = _unwrapRoutedTypeString(elementType);
+        if (unwrappedElementType is not null) {
+          eventTypes.Add(unwrappedElementType);
+        }
       }
-      // Simple event type
+      // Simple type - unwrap Routed<T> if present
       else {
-        eventTypes.Add(responseType);
+        var unwrappedType = _unwrapRoutedTypeString(responseType);
+        if (unwrappedType is not null) {
+          eventTypes.Add(unwrappedType);
+        }
       }
     }
 
@@ -786,6 +838,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine();
     }
 
+    // Generate event store only cascade type-switch (for storing events without transport)
+    // Uses eventStoreOnly: true to set destination=null, bypassing transport publishing
+    var eventStoreOnlyCascade = new StringBuilder();
+
+    foreach (var eventType in eventTypes) {
+      eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
+      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), eventStoreOnly: true);");
+      eventStoreOnlyCascade.AppendLine($"      }}");
+      eventStoreOnlyCascade.AppendLine();
+    }
+
     // Replace template markers using regex for robustness
     // This handles variations in whitespace and formatting
     var result = template;
@@ -809,6 +872,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "ANY_SEND_ROUTING", anySendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_DEFAULT_ROUTING", receptorDefaultRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "OUTBOX_CASCADE", outboxCascade.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "EVENT_STORE_ONLY_CASCADE", eventStoreOnlyCascade.ToString());
 
     return result;
   }

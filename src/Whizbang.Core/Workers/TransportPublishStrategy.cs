@@ -69,8 +69,29 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// <param name="work">The outbox work item containing the message to publish</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Result indicating success/failure and any error details</returns>
+  /// <remarks>
+  /// <para>
+  /// When <paramref name="work"/> has a null/empty destination, the message is an event-store-only
+  /// message (from Route.Local or Route.EventStoreOnly). These messages are stored in the event store
+  /// via process_work_batch but should not be transported. Returns success immediately.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullDestination_*</tests>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     try {
+      // Skip transport publishing for event-store-only messages (destination is null)
+      // These messages are stored in event store via process_work_batch but should not be transported
+      if (string.IsNullOrEmpty(work.Destination)) {
+        Console.WriteLine($"[TransportPublishStrategy.PublishAsync] Skipping transport for event-store-only message: {work.MessageType}");
+        return new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = true,
+          CompletedStatus = MessageProcessingStatus.Published,  // Mark as published (processed)
+          Error = null
+        };
+      }
+
       // Resolve transport destination
       // PRIMARY: Uses destination from outbox (set correctly by Dispatcher when IOutboxRoutingStrategy is configured)
       // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
@@ -134,6 +155,13 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     }
 
     // Events use destination directly (already resolved to namespace topic)
+    // Null check should never trigger due to early return in PublishAsync, but be defensive
+    if (string.IsNullOrEmpty(work.Destination)) {
+      throw new InvalidOperationException(
+        $"Event destination cannot be null or empty at this point. " +
+        $"Event-store-only messages should be handled by early return in PublishAsync. " +
+        $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
+    }
     return new TransportDestination(work.Destination);
   }
 

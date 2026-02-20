@@ -26,8 +26,9 @@ public static class TestConstants {
   /// - 5 receptors from DispatcherRpcExtractionTests.cs (TupleReturningReceptor, MultiEventReceptor,
   ///     SimpleReceptor, InventoryReservedTracker, PaymentInitiatedTracker)
   /// - 5 additional receptors from other test files
+  /// - 2 receptors from DispatcherDeliveryReceiptTests.cs (CreateOrderReceptor, ProcessPaymentReceptor)
   ///
-  /// Total: 51 receptors
+  /// Total: 53 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 51;
+  public const int EXPECTED_RECEPTOR_COUNT = 53;
 }

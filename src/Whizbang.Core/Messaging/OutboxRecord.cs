@@ -31,9 +31,13 @@ public sealed class OutboxRecord {
   /// <summary>
   /// The destination to publish to (topic, queue, etc.).
   /// Used by outbox processor to route messages.
+  /// Null indicates event-store-only mode (transport is bypassed).
   /// </summary>
+  /// <docs>core-concepts/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
-  public required string Destination { get; set; }
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteLocal_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
+  public string? Destination { get; set; }
 
   /// <summary>
   /// Fully-qualified message type name (e.g., "MyApp.Events.OrderCreated", "MyApp.Commands.CreateOrder").

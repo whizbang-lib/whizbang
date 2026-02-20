@@ -266,4 +266,94 @@ namespace TestNamespace {
     }
     return count;
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedPerspective_UsesClrTypeNameWithPlusSeparatorAsync() {
+    // Arrange - A nested perspective class inside an Activity parent class
+    // This is a common pattern: Activity { Model, Projection }
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record CreatedEvent : IEvent {
+    public Guid StreamId { get; init; }
+  }
+
+  public static class Activity {
+    public class Model {
+      [StreamKey]
+      public Guid Id { get; set; }
+      public string Name { get; set; } = """";
+    }
+
+    // Nested perspective class - should be registered as ""TestNamespace.Activity+Projection""
+    public class Projection : IPerspectiveFor<Model, CreatedEvent> {
+      public Model Apply(Model currentData, CreatedEvent @event) {
+        return currentData;
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should use CLR format with '+' for nested types
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // The perspective name should use CLR format: "Namespace.Parent+Child"
+    // NOT just "Projection" or "Activity.Projection"
+    await Assert.That(generatedSource!).Contains("TestNamespace.Activity+Projection")
+      .Because("nested perspective should use CLR format with '+' separator");
+
+    // Should NOT contain just "Projection" without the parent
+    // (checking that the TargetName includes the parent)
+    await Assert.That(generatedSource!).DoesNotContain("\"TargetName\\\": \\\"Projection\\\"")
+      .Because("nested perspective should include parent class in name");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeeplyNestedPerspective_UsesClrTypeNameAsync() {
+    // Arrange - A deeply nested perspective class (multiple levels)
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record SessionEvent : IEvent {
+    public Guid StreamId { get; init; }
+  }
+
+  public static class Sessions {
+    public static class Active {
+      public class Model {
+        [StreamKey]
+        public Guid Id { get; set; }
+      }
+
+      // Deeply nested: Sessions > Active > Projection
+      public class Projection : IPerspectiveFor<Model, SessionEvent> {
+        public Model Apply(Model currentData, SessionEvent @event) {
+          return currentData;
+        }
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should use CLR format with '+' for all nesting levels
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // The perspective name should use CLR format: "Namespace.Parent+Child+GrandChild"
+    await Assert.That(generatedSource!).Contains("TestNamespace.Sessions+Active+Projection")
+      .Because("deeply nested perspective should use CLR format with '+' for each nesting level");
+  }
 }

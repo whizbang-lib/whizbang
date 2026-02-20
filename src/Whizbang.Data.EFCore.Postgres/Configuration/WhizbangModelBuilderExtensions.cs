@@ -77,7 +77,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
-      entity.Property(e => e.Destination).HasColumnName("destination").IsRequired();
+      entity.Property(e => e.Destination).HasColumnName("destination"); // Nullable for event-store-only mode
       entity.Property(e => e.MessageType).HasColumnName("message_type").IsRequired();
       entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();

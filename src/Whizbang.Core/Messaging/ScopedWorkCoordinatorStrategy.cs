@@ -290,7 +290,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     Level = LogLevel.Trace,
     Message = "Queued outbox message {MessageId} for {Destination}"
   )]
-  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string destination);
+  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 2,
@@ -329,7 +329,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
   [LoggerMessage(
     EventId = 7,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Outbox flush: Queued={Queued} | Inbox flush: Queued={InboxQueued}"
   )]
   static partial void LogFlushSummary(ILogger logger, int queued, int inboxQueued);
@@ -381,7 +381,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     Level = LogLevel.Debug,
     Message = "Returned outbox work: MessageId={MessageId}, Destination={Destination}, IsNewlyStored={IsNewlyStored}"
   )]
-  static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string destination, bool isNewlyStored);
+  static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string? destination, bool isNewlyStored);
 
   [LoggerMessage(
     EventId = 15,

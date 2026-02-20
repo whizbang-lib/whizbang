@@ -580,7 +580,7 @@ public class TransportConsumerWorkerResilienceTests {
       throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) =>
       throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData) =>
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
       throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull =>
       throw new NotImplementedException();
@@ -592,7 +592,7 @@ public class TransportConsumerWorkerResilienceTests {
       throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
       throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
       throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
       throw new NotImplementedException();
