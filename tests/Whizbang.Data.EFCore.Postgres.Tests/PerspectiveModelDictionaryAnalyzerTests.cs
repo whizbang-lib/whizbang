@@ -233,4 +233,80 @@ public class PerspectiveModelDictionaryAnalyzerTests {
     await Assert.That(diagnostics).Count().IsEqualTo(1);
     await Assert.That(diagnostics[0].Id).IsEqualTo("WHIZ810");
   }
+
+  /// <summary>
+  /// Verifies that [NotMapped] Dictionary properties are NOT flagged.
+  /// </summary>
+  [Test]
+  public async Task PerspectiveModel_WithNotMappedDictionary_NoDiagnosticAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using System.Collections.Generic;
+            using System.ComponentModel.DataAnnotations.Schema;
+
+            namespace Whizbang.Core.Perspectives {
+                public interface IPerspectiveFor<TModel> { }
+                public interface IPerspectiveFor<TModel, TEvent1> : IPerspectiveFor<TModel> { }
+            }
+
+            namespace TestNamespace {
+                public class TestModel {
+                    public Guid Id { get; set; }
+                    [NotMapped]
+                    public Dictionary<string, string> Fields { get; set; } = new();
+                }
+
+                public record TestEvent(Guid Id);
+
+                public class TestPerspective : Whizbang.Core.Perspectives.IPerspectiveFor<TestModel, TestEvent> {
+                    public TestModel Apply(TestModel? model, TestEvent evt) => model ?? new();
+                }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>(source);
+
+    // Assert
+    await Assert.That(diagnostics).IsEmpty();
+  }
+
+  /// <summary>
+  /// Verifies that [JsonIgnore] Dictionary properties are NOT flagged.
+  /// </summary>
+  [Test]
+  public async Task PerspectiveModel_WithJsonIgnoreDictionary_NoDiagnosticAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using System.Collections.Generic;
+            using System.Text.Json.Serialization;
+
+            namespace Whizbang.Core.Perspectives {
+                public interface IPerspectiveFor<TModel> { }
+                public interface IPerspectiveFor<TModel, TEvent1> : IPerspectiveFor<TModel> { }
+            }
+
+            namespace TestNamespace {
+                public class TestModel {
+                    public Guid Id { get; set; }
+                    [JsonIgnore]
+                    public Dictionary<string, string> CachedData { get; set; } = new();
+                }
+
+                public record TestEvent(Guid Id);
+
+                public class TestPerspective : Whizbang.Core.Perspectives.IPerspectiveFor<TestModel, TestEvent> {
+                    public TestModel Apply(TestModel? model, TestEvent evt) => model ?? new();
+                }
+            }
+            """;
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelDictionaryAnalyzer>(source);
+
+    // Assert
+    await Assert.That(diagnostics).IsEmpty();
+  }
 }

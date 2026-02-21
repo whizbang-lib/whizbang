@@ -84,6 +84,11 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
+      // Skip properties marked as not mapped/ignored by EF Core or JSON serialization
+      if (_isPropertyIgnored(member)) {
+        continue;
+      }
+
       var propType = member.Type as INamedTypeSymbol;
       if (propType == null) {
         continue;
@@ -161,6 +166,43 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       var name = type.Name;
       return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
              "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
+  /// Properties with these attributes are not persisted, so Dictionary usage is fine.
+  /// </summary>
+  /// <remarks>
+  /// Note: Fluent API .Ignore() in OnModelCreating cannot be detected at compile time.
+  /// This only checks attribute-based exclusions.
+  /// </remarks>
+  private static bool _isPropertyIgnored(IPropertySymbol property) {
+    foreach (var attr in property.GetAttributes()) {
+      var attrName = attr.AttributeClass?.ToDisplayString();
+      if (attrName == null) {
+        continue;
+      }
+
+      // EF Core [NotMapped] - property is not mapped to database
+      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") {
+        return true;
+      }
+
+      // System.Text.Json [JsonIgnore] - property is not serialized
+      if (attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute") {
+        return true;
+      }
+
+      // Newtonsoft.Json [JsonIgnore] - property is not serialized
+      if (attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
+        return true;
+      }
+
+      // EF Core [BackingField] with no property mapping could indicate custom handling
+      // but typically the property is still mapped, so we don't exclude based on this
     }
 
     return false;
