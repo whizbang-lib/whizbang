@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -91,7 +92,8 @@ public static class LifecycleInvocationHelper {
           };
 
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-          await lifecycleInvoker.InvokeAsync(message, asyncStage, outboxContext, ct);
+          var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
         }
 
         // Process inbox messages with MessageSource.Inbox context
@@ -106,7 +108,8 @@ public static class LifecycleInvocationHelper {
           };
 
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-          await lifecycleInvoker.InvokeAsync(message, asyncStage, inboxContext, ct);
+          var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
         }
       } catch (Exception ex) {
         if (logger != null) {
@@ -130,7 +133,8 @@ public static class LifecycleInvocationHelper {
       };
 
       var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-      await lifecycleInvoker.InvokeAsync(message, inlineStage, outboxContext, ct);
+      var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
     }
 
     // Process inbox messages with MessageSource.Inbox context
@@ -145,7 +149,8 @@ public static class LifecycleInvocationHelper {
       };
 
       var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-      await lifecycleInvoker.InvokeAsync(message, inlineStage, inboxContext, ct);
+      var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
     }
   }
 
@@ -213,7 +218,8 @@ public static class LifecycleInvocationHelper {
           };
 
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-          await lifecycleInvoker.InvokeAsync(message, asyncStage, outboxContext, ct);
+          var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
         }
 
         // Process inbox messages with MessageSource.Inbox context
@@ -228,7 +234,8 @@ public static class LifecycleInvocationHelper {
           };
 
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-          await lifecycleInvoker.InvokeAsync(message, asyncStage, inboxContext, ct);
+          var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
         }
       } catch (Exception ex) {
         if (logger != null) {

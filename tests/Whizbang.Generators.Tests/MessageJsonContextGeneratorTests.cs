@@ -953,6 +953,362 @@ public record SharedItem {
     await Assert.That(factorySignatureCount).IsEqualTo(1);
   }
 
+  // ==================== Direct Property Nested Type Discovery Tests ====================
+
+  /// <summary>
+  /// Tests direct property nested type discovery: non-collection properties should be discovered.
+  /// Example: MessageContent Content (not List&lt;MessageContent&gt;) should still discover MessageContent.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDirectPropertyNestedType_DiscoversNestedTypeAsync() {
+    // Arrange - Event with direct property (not a collection) that references a nested type
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record ParentEvent : IEvent {
+    public string Id { get; init; } = "";
+    public ChildModel Child { get; init; } = new();
+}
+
+public record ChildModel {
+    public string Name { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - ChildModel should be discovered even though it's a direct property, not a collection
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("ParentEvent");
+    // This is the critical assertion - ChildModel should be discovered
+    await Assert.That(code).Contains("ChildModel");
+  }
+
+  /// <summary>
+  /// Tests deep direct property nesting: A → B → C should discover both B and C.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDeepDirectPropertyNesting_DiscoversAllTypesAsync() {
+    // Arrange - Event with chain of direct properties: TopMessage → MiddleModel → DeepModel
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record TopMessage : ICommand {
+    public string Id { get; init; } = "";
+    public MiddleModel Middle { get; init; } = new();
+}
+
+public record MiddleModel {
+    public string Name { get; init; } = "";
+    public DeepModel Deep { get; init; } = new();
+}
+
+public record DeepModel {
+    public decimal Value { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both MiddleModel and DeepModel should be discovered recursively
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TopMessage");
+    await Assert.That(code).Contains("MiddleModel");
+    await Assert.That(code).Contains("DeepModel");
+  }
+
+  /// <summary>
+  /// Tests mixed scenario: message with both collection and direct property nested types.
+  /// Both should be discovered correctly.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMixedCollectionAndDirectNestedTypes_DiscoversAllTypesAsync() {
+    // Arrange - Event with both List<CollectionItem> and DirectItem
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record MixedEvent : IEvent {
+    public List<CollectionItem> Items { get; init; } = new();
+    public DirectItem Direct { get; init; } = new();
+}
+
+public record CollectionItem {
+    public string CollectionValue { get; init; } = "";
+}
+
+public record DirectItem {
+    public string DirectValue { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both CollectionItem AND DirectItem should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("MixedEvent");
+    await Assert.That(code).Contains("CollectionItem");  // From List<T>
+    await Assert.That(code).Contains("DirectItem");      // From direct property
+  }
+
+  // ==================== Struct Nested Type Discovery Tests ====================
+
+  /// <summary>
+  /// Tests that get-only properties (not just init-only) get null setters.
+  /// This tests the root cause fix: p.SetMethod?.IsInitOnly ?? false was wrong
+  /// because { get; } properties have SetMethod == null, not IsInitOnly == true.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractMessageTypeInfo</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithGetOnlyProperty_UsesNullSetterAsync() {
+    // Arrange - Event with a nested type that has a get-only property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record GetOnlyEvent : IEvent {
+    public string Id { get; init; } = "";
+    public GetOnlyModel Data { get; init; } = new("default");
+}
+
+// Simulates Permission pattern: get-only property with constructor
+public class GetOnlyModel {
+    public string Value { get; }  // GET-ONLY - no setter at all!
+    public GetOnlyModel(string value) => Value = value;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors from trying to set readonly property
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Verify it uses null setter, not property assignment
+    await Assert.That(code!).DoesNotContain("GetOnlyModel)obj).Value = ");
+  }
+
+  /// <summary>
+  /// Tests record struct nested type discovery with primary constructor.
+  /// Structs should be discovered and have factory methods generated.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRecordStructNestedType_DiscoversStructAsync() {
+    // Arrange - Event with record struct direct property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record ParentEvent : IEvent {
+    public string Id { get; init; } = "";
+    public NestedStruct Data { get; init; }
+}
+
+public readonly record struct NestedStruct(string Value);
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - NestedStruct discovered and factory method generated
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("NestedStruct");
+    await Assert.That(code).Contains("Create_TestApp_NestedStruct");
+  }
+
+  /// <summary>
+  /// Tests readonly record struct with get-only property uses constructor initialization.
+  /// This is the complete test for struct support: discovery + correct code generation.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync() {
+    // Arrange - Command with readonly record struct property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record MessageWithPermission : ICommand {
+    public string Id { get; init; } = "";
+    public PermissionValue Permission { get; init; }
+}
+
+public readonly record struct PermissionValue(string Value);
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No errors and uses constructor, not setters
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Verify constructor-based creation
+    await Assert.That(code!).Contains("new global::TestApp.PermissionValue(");
+    // Verify no property setter generated
+    await Assert.That(code).DoesNotContain("PermissionValue)obj).Value = ");
+  }
+
+  /// <summary>
+  /// Tests that nested collections (List&lt;List&lt;T&gt;&gt;) don't cause invalid factory methods.
+  /// The element type of List&lt;List&lt;T&gt;&gt; is List&lt;T&gt; which is a System.* type
+  /// and should be skipped, not have a factory method generated.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedCollections_SkipsSystemTypesAsync() {
+    // Arrange - Event with nested collection (List<List<T>>)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record NestedCollectionEvent : IEvent {
+    public string Id { get; init; } = "";
+    public List<List<string>> Matrix { get; init; } = new();
+    public List<List<CustomItem>> CustomMatrix { get; init; } = new();
+}
+
+public record CustomItem(string Value);
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No errors (no invalid factory methods for List<T>)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should have factory for CustomItem (the innermost custom type)
+    await Assert.That(code!).Contains("CustomItem");
+
+    // Should NOT have factory for List<T> (System.* type)
+    await Assert.That(code).DoesNotContain("Create_System_Collections_Generic_List");
+    await Assert.That(code).DoesNotContain("_List_System_Collections");
+  }
+
+  /// <summary>
+  /// Tests that computed read-only properties (expression-bodied) are excluded from
+  /// constructor parameters and object initializers.
+  /// Properties like `public bool HasFiles => Files.Count > 0` cannot be assigned to.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithComputedReadOnlyProperty_ExcludesFromConstructorAsync() {
+    // Arrange - Class with computed read-only property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record FileContext : ICommand {
+    public string Id { get; init; } = "";
+    public List<string> Files { get; init; } = new();
+    public bool HasFiles => Files.Count > 0;  // Computed read-only property
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // HasFiles should NOT be in the object initializer (it's computed/read-only and cannot be assigned)
+    // The ObjectWithParameterizedConstructorCreator should NOT include: HasFiles = (bool)args[x]
+    await Assert.That(code!).DoesNotContain("HasFiles = (bool)args");
+
+    // HasFiles should also NOT have a setter lambda
+    await Assert.That(code).DoesNotContain("FileContext)obj).HasFiles = ");
+  }
+
+  /// <summary>
+  /// Tests that abstract types are not instantiated directly.
+  /// Abstract classes cannot be created with 'new' - the generator should skip
+  /// generating factory methods for abstract types or use polymorphic handling.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithAbstractNestedType_SkipsDirectInstantiationAsync() {
+    // Arrange - Message with abstract type property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record MessageWithAbstract : ICommand {
+    public string Id { get; init; } = "";
+    public AbstractFieldSettings Settings { get; init; } = null!;
+}
+
+public abstract class AbstractFieldSettings {
+    public string Name { get; init; } = "";
+}
+
+public class ConcreteFieldSettings : AbstractFieldSettings {
+    public string Value { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No errors (shouldn't try to instantiate abstract type)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should NOT try to instantiate abstract class with 'new'
+    await Assert.That(code!).DoesNotContain("new global::TestApp.AbstractFieldSettings()");
+    await Assert.That(code).DoesNotContain("new global::TestApp.AbstractFieldSettings(");
+  }
+
   // ==================== Enum Discovery Tests (100% branch coverage) ====================
 
   /// <summary>
@@ -1378,5 +1734,170 @@ public record GlobalCommand(string Data) : ICommand;
 
     // Should use simple name for global namespace type
     await Assert.That(code!).Contains("GlobalCommand, TestAssembly");
+  }
+
+  // ==================== WhizbangId Skip Tests ====================
+
+  /// <summary>
+  /// Tests that types with [WhizbangId] attribute are skipped during nested type discovery.
+  /// WhizbangId types have their own converters generated by WhizbangIdGenerator
+  /// and should NOT have JsonTypeInfo generated by MessageJsonContextGenerator.
+  /// This prevents incorrect empty-object metadata from overriding proper converter handling.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_hasWhizbangIdAttribute</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync() {
+    // Arrange - Message with a property using [WhizbangId] type
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+[WhizbangId]
+public readonly partial struct ProductId;
+
+public record CreateProductCommand(ProductId ProductId, string Name) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // The message itself should be discovered
+    await Assert.That(code!).Contains("CreateProductCommand");
+
+    // ProductId should NOT have a factory method generated
+    // (would create incorrect empty-object metadata)
+    await Assert.That(code).DoesNotContain("Create_TestApp_ProductId");
+    await Assert.That(code).DoesNotContain("_TestApp_ProductId");
+  }
+
+  /// <summary>
+  /// Tests that multiple WhizbangId types in a single message are all skipped.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_hasWhizbangIdAttribute</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleWhizbangIdProperties_SkipsAllConvertersAsync() {
+    // Arrange - Message with multiple [WhizbangId] types
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+[WhizbangId]
+public readonly partial struct OrderId;
+
+[WhizbangId]
+public readonly partial struct CustomerId;
+
+[WhizbangId]
+public readonly partial struct ProductId;
+
+public record CreateOrderCommand(OrderId OrderId, CustomerId CustomerId, ProductId ProductId, string Details) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // The message itself should be discovered
+    await Assert.That(code!).Contains("CreateOrderCommand");
+
+    // None of the WhizbangId types should have factory methods
+    await Assert.That(code).DoesNotContain("Create_TestApp_OrderId");
+    await Assert.That(code).DoesNotContain("Create_TestApp_CustomerId");
+    await Assert.That(code).DoesNotContain("Create_TestApp_ProductId");
+  }
+
+  /// <summary>
+  /// Tests that WhizbangId types in collections use GetOrCreateTypeInfo delegation.
+  /// The List&lt;WhizbangIdType&gt; factory is generated but delegates element info to WhizbangIdJsonContext.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_hasWhizbangIdAttribute</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithWhizbangIdInCollection_UsesTypeInfoDelegationAsync() {
+    // Arrange - Message with List<WhizbangIdType>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+[WhizbangId]
+public readonly partial struct ItemId;
+
+public record ProcessItemsCommand(List<ItemId> ItemIds, string BatchName) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // The message itself should be discovered
+    await Assert.That(code!).Contains("ProcessItemsCommand");
+
+    // ItemId should NOT have a direct factory method (Create_TestApp_ItemId)
+    // because it has its own converter from WhizbangIdGenerator
+    await Assert.That(code).DoesNotContain("Create_TestApp_ItemId(");
+
+    // List<ItemId> SHOULD have a factory (it needs to be serializable)
+    await Assert.That(code).Contains("CreateList_TestApp_ItemId");
+
+    // But it should use GetOrCreateTypeInfo for element info (delegates to WhizbangIdJsonContext)
+    await Assert.That(code).Contains("GetOrCreateTypeInfo<global::TestApp.ItemId>(options)");
+  }
+
+  /// <summary>
+  /// Tests that non-WhizbangId struct types ARE still discovered (regression test).
+  /// Only types with [WhizbangId] attribute should be skipped.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_hasWhizbangIdAttribute</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNonWhizbangIdStruct_StillDiscoveredAsync() {
+    // Arrange - Message with regular struct (no [WhizbangId])
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+// Regular struct without [WhizbangId] - should be discovered
+public readonly record struct GeoCoordinate(double Latitude, double Longitude);
+
+public record LocationCommand(GeoCoordinate Location, string Name) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // The message should be discovered
+    await Assert.That(code!).Contains("LocationCommand");
+
+    // GeoCoordinate SHOULD have a factory (not a WhizbangId)
+    await Assert.That(code).Contains("Create_TestApp_GeoCoordinate");
   }
 }

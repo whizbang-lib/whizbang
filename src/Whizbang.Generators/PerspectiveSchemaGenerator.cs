@@ -29,30 +29,49 @@ namespace Whizbang.Generators;
 /// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).
+/// Table names are configurable via MSBuild properties:
+/// - WhizbangStripTableNameSuffixes (default: true) - Strip common suffixes like Model, Projection, Dto
+/// - WhizbangTableNameSuffixesToStrip (default: ReadModel,Model,Projection,Dto,View) - Suffixes to strip
 /// </summary>
 [Generator]
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
+    // Read table name configuration from MSBuild properties
+    var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectTableNameConfig
+    );
+
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveSchemaInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
+
+    // Combine perspective candidates with table name configuration
+    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig);
 
     // Collect all perspectives and generate schemas
     context.RegisterSourceOutput(
-        perspectiveCandidates.Collect(),
-        static (ctx, perspectives) => _generatePerspectiveSchemas(ctx, perspectives!)
+        perspectivesWithConfig,
+        static (ctx, data) => {
+          var (candidates, config) = data;
+          var perspectives = candidates
+              .Where(c => c is not null)
+              .Select(c => _buildPerspectiveSchemaInfo(c!, config))
+              .ToImmutableArray();
+          _generatePerspectiveSchemas(ctx, perspectives);
+        }
     );
   }
 
   /// <summary>
-  /// Extracts perspective schema information from a class declaration.
+  /// Extracts perspective candidate information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor.
+  /// Does not apply table name configuration - that happens in _buildPerspectiveSchemaInfo.
   /// </summary>
-  private static PerspectiveSchemaInfo? _extractPerspectiveSchemaInfo(
+  private static PerspectiveCandidate? _extractPerspectiveCandidate(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -88,17 +107,16 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Extract class name and generate table name
+    // Extract class name and table base name
     // Use CLR type name to handle nested classes correctly (e.g., "Activity+Projection")
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
     // Extract simple name for display (last part after last + or .)
     var className = clrTypeName.Contains('+')
         ? clrTypeName.Substring(clrTypeName.LastIndexOf('+') + 1)
         : clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1);
-    // Generate table name from CLR name (remove + to merge nested names, then snake_case)
-    // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection → activity_projection
+    // Extract table base name from CLR name (remove + to merge nested names)
+    // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection
     var tableBaseName = clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1).Replace("+", "");
-    var tableName = _generateTableName(tableBaseName);
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
@@ -118,15 +136,37 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Discover physical fields on model properties
     var physicalFields = _discoverPhysicalFields(modelProperties);
 
-    return new PerspectiveSchemaInfo(
+    return new PerspectiveCandidate(
         ClassName: className,
         FullyQualifiedClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         ModelClassName: modelClassName,
-        TableName: tableName,
+        TableBaseName: tableBaseName,
         PropertyCount: propertyCount,
         EstimatedSizeBytes: estimatedSize,
         StorageMode: storageMode,
         PhysicalFields: physicalFields
+    );
+  }
+
+  /// <summary>
+  /// Builds the final PerspectiveSchemaInfo from a candidate by applying table name configuration.
+  /// </summary>
+  private static PerspectiveSchemaInfo _buildPerspectiveSchemaInfo(
+      PerspectiveCandidate candidate,
+      TableNameConfig config) {
+
+    // Generate table name using shared utility with configurable suffix stripping
+    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+
+    return new PerspectiveSchemaInfo(
+        ClassName: candidate.ClassName,
+        FullyQualifiedClassName: candidate.FullyQualifiedClassName,
+        ModelClassName: candidate.ModelClassName,
+        TableName: tableName,
+        PropertyCount: candidate.PropertyCount,
+        EstimatedSizeBytes: candidate.EstimatedSizeBytes,
+        StorageMode: candidate.StorageMode,
+        PhysicalFields: candidate.PhysicalFields
     );
   }
 
@@ -217,7 +257,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     }
 
     // Default column name is snake_case of property name
-    var finalColumnName = columnName ?? _generateTableName(propertyName);
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
 
     return new PhysicalFieldInfo(
         PropertyName: propertyName,
@@ -284,7 +324,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     }
 
     // Default column name is snake_case of property name
-    var finalColumnName = columnName ?? _generateTableName(propertyName);
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
 
     // If not indexed, set index type to None
     if (!isIndexed) {
@@ -550,22 +590,6 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates a snake_case table name from a PascalCase class name.
-  /// Example: "OrderSummaryPerspective" -> "order_summary_perspective"
-  /// </summary>
-  private static string _generateTableName(string className) {
-    var sb = new StringBuilder();
-    for (int i = 0; i < className.Length; i++) {
-      var c = className[i];
-      if (i > 0 && char.IsUpper(c)) {
-        sb.Append('_');
-      }
-      sb.Append(char.ToLowerInvariant(c));
-    }
-    return sb.ToString();
-  }
-
-  /// <summary>
   /// Estimates JSON size based on property count (rough heuristic).
   /// Assumes average property: {"propertyName": "averageValue"} ~= 40 bytes
   /// </summary>
@@ -613,3 +637,26 @@ public enum GeneratorFieldStorageMode {
   /// <summary>Physical columns contain marked fields; JSONB contains remainder only</summary>
   Split = 2
 }
+
+/// <summary>
+/// Intermediate value type for perspective discovery before table name config is applied.
+/// Separates syntax/semantic extraction from configuration-dependent table name generation.
+/// </summary>
+/// <param name="ClassName">Simple class name (e.g., "OrderSummaryProjection")</param>
+/// <param name="FullyQualifiedClassName">Fully qualified class name</param>
+/// <param name="ModelClassName">Simple class name of the model type</param>
+/// <param name="TableBaseName">Base name for table generation (nested classes merged, e.g., "ActivityProjection")</param>
+/// <param name="PropertyCount">Number of properties for size estimation</param>
+/// <param name="EstimatedSizeBytes">Estimated JSON size in bytes</param>
+/// <param name="StorageMode">Field storage mode from [PerspectiveStorage] attribute</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+internal sealed record PerspectiveCandidate(
+    string ClassName,
+    string FullyQualifiedClassName,
+    string ModelClassName,
+    string TableBaseName,
+    int PropertyCount,
+    int EstimatedSizeBytes,
+    GeneratorFieldStorageMode StorageMode,
+    PhysicalFieldInfo[] PhysicalFields
+);

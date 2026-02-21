@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -126,13 +127,26 @@ public partial class ServiceBusConsumerWorker(
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
-      var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+      var scopedProvider = scope.ServiceProvider;
+
+      // Establish security context FIRST (before any business logic)
+      // This populates IScopeContextAccessor.Current so all scoped services can access security context
+      var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
+      if (securityProvider is not null) {
+        var securityContext = await securityProvider.EstablishContextAsync(envelope, scopedProvider, ct);
+        if (securityContext is not null) {
+          var accessor = scopedProvider.GetRequiredService<IScopeContextAccessor>();
+          accessor.Current = securityContext;
+        }
+      }
+
+      var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
       LogProcessingMessage(_logger, envelope.MessageId);
 
       // 1. Serialize envelope to InboxMessage
       // Pass scope so we can resolve IEnvelopeSerializer if needed
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
+      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
 
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
@@ -183,6 +197,8 @@ public partial class ServiceBusConsumerWorker(
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreInboxAsync,
@@ -193,10 +209,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
         }
       }
 
@@ -230,6 +246,8 @@ public partial class ServiceBusConsumerWorker(
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostInboxAsync,
@@ -240,10 +258,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
         }
       }
 

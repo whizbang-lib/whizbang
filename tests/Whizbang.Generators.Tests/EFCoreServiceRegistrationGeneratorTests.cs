@@ -1058,7 +1058,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   /// <summary>
   /// Test that perspectives with nested Model classes generate correct table names.
   /// Nested Model classes should have table names that include the parent type.
-  /// E.g., "wh_per_active_job_template_model" not just "wh_per_model"
+  /// E.g., "wh_per_active_job_template" (Model suffix stripped) not just "wh_per_model"
   /// </summary>
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesCorrectTableNamesAsync() {
@@ -1103,9 +1103,10 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Table name should include both parent and nested type
-    // "ActiveJobTemplate.Model" -> "wh_per_active_job_template_model"
-    await Assert.That(sourceText).Contains("wh_per_active_job_template_model");
+    // Table name should include parent type (nested class scenario)
+    // "ActiveJobTemplate.Model" → base name "active_job_template_model" → "Model" suffix stripped
+    // → final table name: "wh_per_active_job_template"
+    await Assert.That(sourceText).Contains("wh_per_active_job_template");
 
     // Should NOT have just "wh_per_model" (which would be the bug)
     // We can verify indirectly by ensuring the parent name is included

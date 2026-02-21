@@ -261,6 +261,7 @@ public class DispatcherSecurityPropagationTests {
     return (serviceProvider.GetRequiredService<IDispatcher>(), serviceProvider);
   }
 
+
   /// <summary>
   /// Creates a dispatcher WITHOUT IScopeContextAccessor registered.
   /// </summary>
@@ -287,6 +288,7 @@ public class DispatcherSecurityPropagationTests {
     var serviceProvider = services.BuildServiceProvider();
     return (serviceProvider.GetRequiredService<IDispatcher>(), serviceProvider);
   }
+
 }
 
 // Test message types for security propagation tests (outside class for source generator discovery)

@@ -61,6 +61,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     #region REGISTER_ASSOCIATIONS
     #endregion
 
+    // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
+    logger?.LogInformation("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
+
     logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
   }
 
@@ -331,6 +335,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
     // they must have schema-qualified function names to avoid overwriting each other's functions.
     var functionNames = new[] {
       "register_message_associations",
+      "reconcile_perspective_registry",
       "process_work_batch",
       "process_inbox_batch",
       "process_outbox_batch",
@@ -381,6 +386,89 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
     }
 
     return transformedSql;
+  }
+
+  /// <summary>
+  /// Reconciles perspective registry by calling the reconcile_perspective_registry SQL function.
+  /// This tracks CLR type → table name mappings for schema drift detection and auto-migration.
+  /// Perspective metadata (CLR type, table name, schema JSON, hash) is generated at build time.
+  /// </summary>
+  private static async Task ReconcilePerspectiveRegistryAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    // Perspective metadata JSON embedded by source generator
+    // Format: [{"ClrTypeName":"...","TableName":"...","SchemaJson":{...},"SchemaHash":"...","ServiceName":"..."}]
+    const string PerspectiveRegistryJson = __PERSPECTIVE_REGISTRY_JSON__;
+
+    if (string.IsNullOrWhiteSpace(PerspectiveRegistryJson) || PerspectiveRegistryJson == "[]") {
+      logger?.LogInformation("No perspectives to register (DbContext has no perspectives)");
+      return;
+    }
+
+    try {
+      // Note: __QUOTED_SCHEMA__ includes double quotes for PostgreSQL reserved keyword safety (e.g., "user")
+      var sql = @"
+        SELECT * FROM __QUOTED_SCHEMA__.reconcile_perspective_registry(
+          @p_perspectives::JSONB,
+          @p_service_name
+        )";
+
+      // Parse and log results
+      using var command = dbContext.Database.GetDbConnection().CreateCommand();
+      command.CommandText = sql;
+
+      var perspectivesParam = command.CreateParameter();
+      perspectivesParam.ParameterName = "@p_perspectives";
+      perspectivesParam.Value = PerspectiveRegistryJson;
+      command.Parameters.Add(perspectivesParam);
+
+      var serviceNameParam = command.CreateParameter();
+      serviceNameParam.ParameterName = "@p_service_name";
+      serviceNameParam.Value = "__SERVICE_NAME__";
+      command.Parameters.Add(serviceNameParam);
+
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+
+      using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      var insertedCount = 0;
+      var updatedCount = 0;
+      var renamedCount = 0;
+      var driftCount = 0;
+
+      while (await reader.ReadAsync(cancellationToken)) {
+        var action = reader.GetString(0);
+        var clrType = reader.GetString(1);
+        var oldTable = reader.IsDBNull(2) ? null : reader.GetString(2);
+        var newTable = reader.GetString(3);
+
+        switch (action) {
+          case "inserted":
+            insertedCount++;
+            logger?.LogInformation("Registered new perspective: {ClrType} → {Table}", clrType, newTable);
+            break;
+          case "renamed":
+            renamedCount++;
+            logger?.LogWarning("Renamed perspective table: {ClrType} from {OldTable} → {NewTable}", clrType, oldTable, newTable);
+            break;
+          case "drift_detected":
+            driftCount++;
+            logger?.LogWarning("Schema drift detected for perspective: {ClrType} ({Table})", clrType, newTable);
+            break;
+          case "updated":
+            updatedCount++;
+            break;
+        }
+      }
+
+      logger?.LogInformation("Perspective registry reconciliation complete: {Inserted} inserted, {Updated} updated, {Renamed} renamed, {Drift} drift warnings",
+        insertedCount, updatedCount, renamedCount, driftCount);
+
+    } catch (Exception ex) {
+      logger?.LogWarning(ex, "Failed to reconcile perspective registry (function may not exist yet)");
+      // Don't throw - registry reconciliation is informational, not critical
+    }
   }
 
 }

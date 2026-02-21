@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -19,6 +20,10 @@ public interface IEventCascader {
   /// Applies routing based on wrapper type and [DefaultRouting] attributes.
   /// </summary>
   /// <param name="result">The receptor's return value (may be single message, tuple, array, or Route wrapper).</param>
+  /// <param name="sourceEnvelope">
+  /// The source envelope that caused this cascade (e.g., the command envelope).
+  /// Used to inherit SecurityContext for cascaded messages when ambient context is unavailable.
+  /// </param>
   /// <param name="receptorDefault">Optional default routing from receptor's [DefaultRouting] attribute.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task representing the async operation.</returns>
@@ -30,6 +35,11 @@ public interface IEventCascader {
   /// 3. Receptor's [DefaultRouting] attribute (receptorDefault parameter)
   /// 4. System default: Outbox
   /// </para>
+  /// <para>
+  /// Security context inheritance: Each cascaded message gets its own new envelope.
+  /// The SecurityContext in the new envelope's initial hop is inherited from the
+  /// sourceEnvelope's current security context when ambient context is unavailable.
+  /// </para>
   /// </remarks>
-  Task CascadeFromResultAsync(object result, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default);
+  Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default);
 }

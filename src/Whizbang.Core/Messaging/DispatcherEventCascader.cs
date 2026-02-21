@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Internal;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -42,7 +43,7 @@ public sealed class DispatcherEventCascader : IEventCascader {
   }
 
   /// <inheritdoc/>
-  public async Task CascadeFromResultAsync(object result, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+  public async Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(result);
 
     // Lazily resolve dispatcher on first use (avoids circular dependency)
@@ -52,7 +53,8 @@ public sealed class DispatcherEventCascader : IEventCascader {
     // Handles tuples, arrays, Route wrappers, and [DefaultRouting] attributes
     foreach (var (message, mode) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
       cancellationToken.ThrowIfCancellationRequested();
-      await _dispatcher.CascadeMessageAsync(message, mode, cancellationToken).ConfigureAwait(false);
+      // Pass sourceEnvelope so cascaded messages can inherit SecurityContext
+      await _dispatcher.CascadeMessageAsync(message, sourceEnvelope, mode, cancellationToken).ConfigureAwait(false);
     }
   }
 }

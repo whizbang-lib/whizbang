@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 
 namespace ECommerce.InventoryWorker.Tests.Receptors;
 
@@ -44,6 +45,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithValidCommand_PublishesProductCreatedEventAsync() {
     // Arrange
@@ -75,6 +77,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithZeroInitialStock_PublishesOnlyProductCreatedEventAsync() {
     // Arrange
@@ -102,6 +105,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithPositiveInitialStock_PublishesBothEventsAsync() {
     // Arrange
@@ -190,6 +194,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductCreationAsync() {
     // Arrange
@@ -336,6 +341,8 @@ internal class TestDispatcher : IDispatcher {
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
   public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 }
 

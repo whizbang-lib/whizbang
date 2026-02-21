@@ -17,6 +17,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// - PerspectiveRow&lt;TModel&gt; entities (discovered from IPerspectiveFor&lt;TModel&gt; perspectives)
 /// - InboxRecord, OutboxRecord, EventStoreRecord, ServiceInstanceRecord (fixed Whizbang entities)
 /// Uses EF Core 10 ComplexProperty().ToJson() for JSONB columns (Postgres).
+/// Table names are configurable via MSBuild properties:
+/// - WhizbangStripTableNameSuffixes (default: true) - Strip common suffixes like Model, Projection, Dto
+/// - WhizbangTableNameSuffixesToStrip (default: ReadModel,Model,Projection,Dto,View) - Suffixes to strip
 /// </summary>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedCode_ImplementsIDiagnosticsInterfaceAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_HasCorrectGeneratorNameAsync</tests>
@@ -36,10 +39,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_WithNoPerspectives_ReportsZeroAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
+    // Read table name configuration from MSBuild properties
+    var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectTableNameConfig
+    );
+
     // Discover classes implementing IPerspectiveFor<TModel>
-    var perspectiveClasses = context.SyntaxProvider.CreateSyntaxProvider(
+    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveCandidate(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover DbContexts with [WhizbangDbContext] attribute to extract schema
@@ -48,16 +56,20 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractDbContextSchema(ctx, ct)
     ).Where(static schema => schema is not null);
 
-    //  Combine perspectives and DbContext schema with compilation
-    var perspectivesWithDbContextAndCompilation = perspectiveClasses.Collect()
+    // Combine perspective candidates with table name configuration
+    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig);
+
+    //  Combine with DbContext schema and compilation
+    var allData = perspectivesWithConfig
         .Combine(dbContextClasses.Collect())
         .Combine(context.CompilationProvider);
 
     // Generate ModelBuilder extension method with all Whizbang entities
     context.RegisterSourceOutput(
-        perspectivesWithDbContextAndCompilation,
+        allData,
         static (ctx, data) => {
-          var perspectives = data.Left.Left;
+          var candidates = data.Left.Left.Left;
+          var config = data.Left.Left.Right;
           var dbContextSchemas = data.Left.Right;
           var compilation = data.Right;
 
@@ -67,11 +79,17 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
             return;
           }
 
+          // Build PerspectiveInfo with table names using config
+          var perspectives = candidates
+              .Where(c => c is not null)
+              .Select(c => _buildPerspectiveInfo(c!, config))
+              .ToImmutableArray();
+
           // Extract schema from first DbContext (typically one per project)
           // If no DbContext found or no schema specified, defaults to null and generator will derive from namespace
           string? schema = dbContextSchemas.IsEmpty ? null : dbContextSchemas[0];
 
-          _generateModelBuilderExtension(ctx, perspectives!, schema);
+          _generateModelBuilderExtension(ctx, perspectives, schema);
         }
     );
   }
@@ -165,14 +183,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class implementing IPerspectiveFor.
+  /// Extracts perspective candidate information from a class implementing IPerspectiveFor.
   /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
   /// Returns null if the class doesn't implement the interface.
+  /// Does not apply table name configuration - that happens in _buildPerspectiveInfo.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
-  private static PerspectiveInfo? _extractPerspectiveInfo(
+  private static PerspectiveCandidate? _extractPerspectiveCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -203,15 +222,31 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var modelType = perspectiveForInterface.TypeArguments[0];
     // Use GetTableBaseName to handle nested types correctly (e.g., ActiveJobTemplate.Model -> ActiveJobTemplateModel)
     var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
-    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(tableBaseName);
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
 
-    return new PerspectiveInfo(
+    return new PerspectiveCandidate(
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        TableName: tableName,
+        TableBaseName: tableBaseName,
         PhysicalFields: physicalFields
+    );
+  }
+
+  /// <summary>
+  /// Builds the final PerspectiveInfo from a candidate by applying table name configuration.
+  /// </summary>
+  private static PerspectiveInfo _buildPerspectiveInfo(
+      PerspectiveCandidate candidate,
+      TableNameConfig config) {
+
+    // Generate table name using shared utility with configurable suffix stripping
+    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+
+    return new PerspectiveInfo(
+        ModelTypeName: candidate.ModelTypeName,
+        TableName: tableName,
+        PhysicalFields: candidate.PhysicalFields
     );
   }
 

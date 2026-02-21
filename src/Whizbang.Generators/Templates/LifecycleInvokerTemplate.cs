@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -37,15 +38,17 @@ public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.
   /// </summary>
   [DebuggerStepThrough]
   public async ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
 
-    if (message is null) {
-      throw new ArgumentNullException(nameof(message));
+    if (envelope is null) {
+      throw new ArgumentNullException(nameof(envelope));
     }
 
+    // Extract payload from envelope for type-based routing
+    var message = envelope.Payload;
     var messageType = message.GetType();
 
     // Generated compile-time routing based on [FireAt] attributes

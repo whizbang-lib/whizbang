@@ -355,7 +355,7 @@ public partial class PerspectiveWorker(
                 // PrePerspectiveAsync (non-blocking)
                 foreach (var envelope in upcomingEvents) {
                   await _lifecycleInvoker.InvokeAsync(
-                    envelope.Payload,
+                    envelope,
                     LifecycleStage.PrePerspectiveAsync,
                     context,
                     cancellationToken
@@ -366,7 +366,7 @@ public partial class PerspectiveWorker(
                 context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
                 foreach (var envelope in upcomingEvents) {
                   await _lifecycleInvoker.InvokeAsync(
-                    envelope.Payload,
+                    envelope,
                     LifecycleStage.PrePerspectiveInline,
                     context,
                     cancellationToken
@@ -589,7 +589,7 @@ public partial class PerspectiveWorker(
       // Invoke receptors for each event
       foreach (var envelope in processedEvents) {
         await _lifecycleInvoker.InvokeAsync(
-          envelope.Payload,
+          envelope,
           stage,
           context,
           cancellationToken

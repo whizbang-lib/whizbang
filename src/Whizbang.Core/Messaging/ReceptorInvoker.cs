@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Messaging;
 
@@ -24,9 +25,9 @@ namespace Whizbang.Core.Messaging;
 /// No runtime logic is needed to determine when a receptor fires - it's all compile-time categorization.
 /// </para>
 /// <para>
-/// <strong>Scoped Services:</strong> This invoker creates a new scope for each invocation to ensure
-/// receptors with scoped dependencies (like IEventStore) can be resolved correctly, even when
-/// called from singleton services like TransportConsumerWorker.
+/// <strong>Scoped Service:</strong> This invoker is registered as a scoped service and uses the
+/// ambient scope for resolving dependencies. Workers create a scope per message, then resolve
+/// the invoker from that scope. This follows industry patterns from MediatR and MassTransit.
 /// </para>
 /// <para>
 /// <strong>Event Cascading:</strong> When receptors return IEvent instances (directly, in tuples, or arrays),
@@ -37,44 +38,68 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
-  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly IServiceProvider _scopedProvider;
   private readonly IEventCascader? _eventCascader;
 
   /// <summary>
   /// Creates a new ReceptorInvoker.
   /// </summary>
   /// <param name="registry">The receptor registry to query for discovered receptors.</param>
-  /// <param name="scopeFactory">Factory to create service scopes for resolving scoped dependencies.</param>
-  public ReceptorInvoker(IReceptorRegistry registry, IServiceScopeFactory scopeFactory)
-    : this(registry, scopeFactory, eventCascader: null) {
+  /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
+  public ReceptorInvoker(IReceptorRegistry registry, IServiceProvider scopedProvider)
+    : this(registry, scopedProvider, eventCascader: null) {
   }
 
   /// <summary>
   /// Creates a new ReceptorInvoker with event cascading support.
   /// </summary>
   /// <param name="registry">The receptor registry to query for discovered receptors.</param>
-  /// <param name="scopeFactory">Factory to create service scopes for resolving scoped dependencies.</param>
+  /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
   /// <param name="eventCascader">Optional cascader for publishing events returned by receptors.</param>
-  public ReceptorInvoker(IReceptorRegistry registry, IServiceScopeFactory scopeFactory, IEventCascader? eventCascader) {
+  /// <remarks>
+  /// <para>
+  /// <strong>Security Context:</strong> When <see cref="IMessageSecurityContextProvider"/> is registered,
+  /// it will be resolved from the scoped provider during message processing to establish security context.
+  /// </para>
+  /// <para>
+  /// When a security provider is available, the invoker will:
+  /// </para>
+  /// <list type="number">
+  /// <item><description>Extract security context from the message envelope's hops</description></item>
+  /// <item><description>Call <see cref="IMessageSecurityContextProvider.EstablishContextAsync"/> to establish security context</description></item>
+  /// <item><description>Set <see cref="IScopeContextAccessor.Current"/> with the established context</description></item>
+  /// </list>
+  /// <para>
+  /// This enables scoped services (like UserContextManager) to access security information during receptor execution.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/message-security#lifecycle-receptors</docs>
+  public ReceptorInvoker(
+    IReceptorRegistry registry,
+    IServiceProvider scopedProvider,
+    IEventCascader? eventCascader) {
     ArgumentNullException.ThrowIfNull(registry);
-    ArgumentNullException.ThrowIfNull(scopeFactory);
+    ArgumentNullException.ThrowIfNull(scopedProvider);
     _registry = registry;
-    _scopeFactory = scopeFactory;
+    _scopedProvider = scopedProvider;
     _eventCascader = eventCascader;
   }
 
   /// <inheritdoc/>
   public async ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(envelope);
 
     // Note: context is available for receptors that need metadata about the invocation
     // (stream ID, message source, etc.) but is not used by the invoker itself.
     // Receptors can access it if needed for logging, tracing, or conditional logic.
     _ = context; // Currently unused by invoker, but passed to receptors if needed
+
+    // Extract payload from envelope - this is what receptors receive
+    var message = envelope.Payload;
 
     // GetType() is AOT-safe - returns the runtime type
     var messageType = message.GetType();
@@ -88,22 +113,51 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       return;
     }
 
-    // Create a scope to resolve scoped dependencies (e.g., IEventStore, DbContext)
-    // This is critical when called from singleton services like TransportConsumerWorker
-    using var scope = _scopeFactory.CreateScope();
-    var scopedProvider = scope.ServiceProvider;
+    // Use the injected scoped provider directly - no CreateScope needed
+    // This invoker is registered as scoped and uses the ambient scope from the worker
+    var securityProvider = _scopedProvider.GetService<IMessageSecurityContextProvider>();
+
+    // Establish security context from the envelope before invoking receptors
+    // This enables scoped services (like UserContextManager) to access security information
+    if (securityProvider is not null) {
+      var securityContext = await securityProvider
+        .EstablishContextAsync(envelope, _scopedProvider, cancellationToken)
+        .ConfigureAwait(false);
+
+      if (securityContext is not null) {
+        var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
+        if (accessor is not null) {
+          accessor.Current = securityContext;
+        }
+      }
+    }
+
+    // Set message context from envelope for injectable IMessageContext
+    // This enables receptors to inject IMessageContext and access MessageId, CorrelationId, UserId, etc.
+    var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
+    if (messageContextAccessor is not null) {
+      var securityContext = envelope.GetCurrentSecurityContext();
+      messageContextAccessor.Current = new MessageContext {
+        MessageId = envelope.MessageId,
+        CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
+        CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
+        Timestamp = envelope.GetMessageTimestamp(),
+        UserId = securityContext?.UserId
+      };
+    }
 
     foreach (var receptor in receptors) {
       // InvokeAsync is a pre-compiled delegate (no reflection)
       // Pass the scoped provider so receptor can be resolved with its dependencies
-      var result = await receptor.InvokeAsync(scopedProvider, message, cancellationToken).ConfigureAwait(false);
+      var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);
 
       // Cascade any IMessage instances (events and commands) from the receptor's return value
       // Handles tuples, arrays, Route wrappers via IEventCascader
+      // Pass source envelope so cascaded messages can inherit SecurityContext
       // Note: Receptor default routing not passed through - routing is determined by
       // message attributes, Route wrappers, or system default (Outbox)
       if (result is not null && _eventCascader is not null) {
-        await _eventCascader.CascadeFromResultAsync(result, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+        await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
       }
     }
   }
@@ -119,7 +173,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
 internal sealed class NullReceptorInvoker : IReceptorInvoker {
   /// <inheritdoc/>
   public ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {

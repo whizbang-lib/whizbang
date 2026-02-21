@@ -21,6 +21,8 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
   /// - IScopeContextAccessor (scoped)
+  /// - IMessageContextAccessor (scoped) - provides access to current message context
+  /// - IMessageContext (scoped) - injectable message context with UserId from security context
   /// - MessageHopSecurityExtractor (default extractor, priority 100)
   ///
   /// Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
@@ -56,6 +58,13 @@ public static class MessageSecurityServiceCollectionExtensions {
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+
+    // Register scoped IMessageContextAccessor for accessing current message context
+    services.TryAddScoped<IMessageContextAccessor, MessageContextAccessor>();
+
+    // Register scoped IMessageContext that reads from accessors
+    // Enables DI injection of IMessageContext in receptors with UserId from security context
+    services.TryAddScoped<IMessageContext, ScopedMessageContext>();
 
     // Register default extractor
     services.AddSecurityExtractor<MessageHopSecurityExtractor>();

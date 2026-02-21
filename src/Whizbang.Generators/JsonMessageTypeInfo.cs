@@ -39,13 +39,15 @@ internal sealed record JsonMessageTypeInfo(
 /// <param name="Name">Property name</param>
 /// <param name="Type">Fully qualified type name</param>
 /// <param name="IsValueType">True if the property's underlying type is a value type (struct, enum, primitive). Used to determine correct typeof() expression for nullable types.</param>
-/// <param name="IsInitOnly">True if property has init-only setter</param>
+/// <param name="IsInitOnly">True if property has init-only setter (can only be set via constructor or init)</param>
+/// <param name="CanWrite">True if property has a setter (init or regular). False for computed/read-only properties.</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record PropertyInfo(
     string Name,
     string Type,
     bool IsValueType,
-    bool IsInitOnly
+    bool IsInitOnly,
+    bool CanWrite
 );
 
 /// <summary>

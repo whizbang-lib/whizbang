@@ -484,8 +484,10 @@ public class PerspectiveSchemaGeneratorTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Check table creation uses correct name (not starting with underscore)
-    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS order_perspective (");
+    // Check table creation uses correct name with wh_per_ prefix
+    // orderPerspective → wh_per_order_perspective ("Perspective" is NOT in default suffix list)
+    // The test verifies lowercase class names don't get leading underscores
+    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS wh_per_order_perspective (");
   }
 
   [Test]
@@ -591,11 +593,12 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should generate table name including parent class: "activity_projection"
+    // Assert - Should generate table name with wh_per_ prefix and suffix stripped
+    // Activity.Projection → ActivityProjection → wh_per_activity (Projection suffix stripped)
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS activity_projection")
-      .Because("nested perspective should include parent class in table name");
+    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS wh_per_activity")
+      .Because("nested perspective should include parent class and have wh_per_ prefix");
     await Assert.That(generatedSource).DoesNotContain("CREATE TABLE IF NOT EXISTS projection (")
       .Because("table name should not be just 'projection' for nested class");
   }
@@ -645,13 +648,15 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should generate distinct table names for each nested projection
+    // Assert - Should generate distinct table names with wh_per_ prefix and suffix stripped
+    // Activity.Projection → ActivityProjection → wh_per_activity
+    // Session.Projection → SessionProjection → wh_per_session
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("activity_projection")
-      .Because("Activity.Projection should generate activity_projection table");
-    await Assert.That(generatedSource).Contains("session_projection")
-      .Because("Session.Projection should generate session_projection table");
+    await Assert.That(generatedSource!).Contains("wh_per_activity")
+      .Because("Activity.Projection should generate wh_per_activity table");
+    await Assert.That(generatedSource).Contains("wh_per_session")
+      .Because("Session.Projection should generate wh_per_session table");
 
     // Count occurrences of CREATE TABLE - should be exactly 2
     var createTableCount = generatedSource.Split("CREATE TABLE IF NOT EXISTS").Length - 1;
@@ -693,10 +698,11 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should generate table name with all nesting levels: "sessions_active_projection"
+    // Assert - Should generate table name with wh_per_ prefix, all nesting levels, and suffix stripped
+    // Sessions.Active.Projection → SessionsActiveProjection → wh_per_sessions_active
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("sessions_active_projection")
-      .Because("deeply nested perspective should include all parent classes in table name");
+    await Assert.That(generatedSource!).Contains("wh_per_sessions_active")
+      .Because("deeply nested perspective should include all parent classes with wh_per_ prefix");
   }
 }

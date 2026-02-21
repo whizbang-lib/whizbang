@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -324,5 +325,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       }
       return null;
     }
+
+    public SecurityContext? GetCurrentSecurityContext() => null;
   }
 }
