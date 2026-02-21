@@ -14,6 +14,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 
 #region NAMESPACE
@@ -55,14 +56,25 @@ namespace Whizbang.Core.Generated {
     /// This is required because they may be registered as Scoped (e.g., EF Core implementations).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This method also registers IReceptorRegistry and IReceptorInvoker for lifecycle stage invocation.
     /// You don't need to call AddWhizbangReceptorRegistry() separately.
+    /// </para>
+    /// <para>
+    /// <strong>Security Context Propagation</strong>: Registers IScopeContextAccessor by default for automatic
+    /// security context propagation to outgoing messages. To disable propagation, configure MessageSecurityOptions:
+    /// <code>options.PropagateToOutgoingMessages = false;</code>
+    /// </para>
     /// </remarks>
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
       // Register receptor registry first (dispatcher depends on IReceptorInvoker)
       services.AddWhizbangReceptorRegistry();
+
+      // Register IScopeContextAccessor for automatic security context propagation
+      // Uses TryAdd to allow user override if needed
+      services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
 
       services.AddSingleton<IDispatcher>(sp => {
         var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -71,15 +83,17 @@ namespace Whizbang.Core.Generated {
         var topicRegistry = sp.GetService<ITopicRegistry>();
         var topicRoutingStrategy = sp.GetService<ITopicRoutingStrategy>();
         var aggregateIdExtractor = sp.GetService<IAggregateIdExtractor>();
-        var receptorInvoker = sp.GetService<IReceptorInvoker>();
         var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
         var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
         var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
         var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
+        // IReceptorRegistry is singleton - safe to resolve here
+        // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
+        var receptorRegistry = sp.GetService<IReceptorRegistry>();
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, receptorRegistry);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
@@ -113,17 +127,26 @@ namespace Whizbang.Core.Generated {
     }
 
     /// <summary>
-    /// Registers the generated zero-reflection receptor registry.
+    /// Registers the generated zero-reflection receptor registry and invoker.
     /// Pre-categorizes ALL receptors by lifecycle stage at compile time:
     /// - Receptors WITH [FireAt(X)] are registered at stage X only
     /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
-    /// Registered as Singleton since it's stateless (delegates are pre-compiled).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>IReceptorRegistry</strong> is registered as Singleton since it's stateless (delegates are pre-compiled).
+    /// </para>
+    /// <para>
+    /// <strong>IReceptorInvoker</strong> is registered as Scoped to ensure receptors can resolve scoped dependencies.
+    /// Workers create a scope per message, resolve the invoker from that scope, and the invoker uses
+    /// the ambient scoped provider for resolving receptors. This follows the MediatR/MassTransit pattern.
+    /// </para>
+    /// </remarks>
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangReceptorRegistry(this IServiceCollection services) {
       services.AddSingleton<IReceptorRegistry, GeneratedReceptorRegistry>();
-      services.AddSingleton<IReceptorInvoker, ReceptorInvoker>();
+      services.AddScoped<IReceptorInvoker, ReceptorInvoker>();
       return services;
     }
   }
