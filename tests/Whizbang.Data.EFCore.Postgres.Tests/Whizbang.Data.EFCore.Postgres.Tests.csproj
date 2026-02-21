@@ -8,6 +8,8 @@
     <ProjectReference Include="..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
     <!-- Reference the generator to discover perspectives in this project -->
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- Reference the generator assembly directly for testing analyzer classes -->
+    <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" ReferenceOutputAssembly="true" />
     <!-- Reference the WhizbangId generator to generate strongly-typed test IDs -->
     <ProjectReference Include="..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
@@ -24,6 +26,9 @@
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
+    <!-- Roslyn packages for analyzer testing -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
   </ItemGroup>
 
   <PropertyGroup>
