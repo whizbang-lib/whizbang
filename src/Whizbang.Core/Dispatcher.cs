@@ -13,6 +13,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -59,8 +60,8 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -74,7 +75,8 @@ public abstract class Dispatcher(
   IEnvelopeRegistry? envelopeRegistry = null,
   IOutboxRoutingStrategy? outboxRoutingStrategy = null,
   ILifecycleInvoker? lifecycleInvoker = null,
-  IStreamIdExtractor? streamIdExtractor = null
+  IStreamIdExtractor? streamIdExtractor = null,
+  IReceptorRegistry? receptorRegistry = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -83,7 +85,9 @@ public abstract class Dispatcher(
   private readonly ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;
   private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
-  private readonly IReceptorInvoker? _receptorInvoker = receptorInvoker;
+  // NOTE: receptorInvoker parameter retained for API compatibility but not used
+  // IReceptorInvoker is now scoped and resolved by workers, not the Dispatcher
+  private readonly IReceptorRegistry? _receptorRegistry = receptorRegistry ?? serviceProvider.GetService<IReceptorRegistry>();
   private readonly IStreamIdExtractor? _streamIdExtractor = streamIdExtractor ?? serviceProvider.GetService<IStreamIdExtractor>();
   // Lifecycle invoker for runtime-registered receptors (test infrastructure, observers)
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker ?? serviceProvider.GetService<ILifecycleInvoker>();
@@ -95,9 +99,12 @@ public abstract class Dispatcher(
   private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
   // Owned domains for routing decisions - resolved from RoutingOptions if available
   private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
+  // Security context accessor for propagating security context to outgoing messages
+  private readonly IScopeContextAccessor? _scopeContextAccessor = serviceProvider.GetService<IScopeContextAccessor>();
 
-  // Unused parameter retained for backward compatibility with generated code
+  // Unused parameters retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
+  private readonly IReceptorInvoker? __ = receptorInvoker;
 
   // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
   private ILogger? _cascadeLogger;
@@ -111,6 +118,27 @@ public abstract class Dispatcher(
   private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
     var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
     return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+  }
+
+  /// <summary>
+  /// Extracts security context from the ambient scope if propagation is enabled.
+  /// Returns null if no context is available or propagation is disabled.
+  /// </summary>
+  /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
+  private SecurityContext? _getSecurityContextForPropagation() {
+    if (_scopeContextAccessor?.Current is not ImmutableScopeContext ctx) {
+      return null;
+    }
+
+    if (!ctx.ShouldPropagate) {
+      return null;
+    }
+
+    return new SecurityContext {
+      UserId = ctx.Scope.UserId,
+      TenantId = ctx.Scope.TenantId
+    };
   }
 
   /// <summary>
@@ -225,15 +253,15 @@ public abstract class Dispatcher(
         };
 
         // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
 
         // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
 
         // Fire LocalImmediateInline stage (blocking, local-only)
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -398,15 +426,15 @@ public abstract class Dispatcher(
         };
 
         // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
 
         // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
 
         // Fire LocalImmediateInline stage (blocking, local-only)
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -478,11 +506,11 @@ public abstract class Dispatcher(
           AttemptNumber = null
         };
 
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
         lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
+        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
       }
     } finally {
       _envelopeRegistry?.Unregister(envelope);
@@ -602,7 +630,7 @@ public abstract class Dispatcher(
       return _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
     }
 
-    throw new HandlerNotFoundException(messageType);
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -624,7 +652,7 @@ public abstract class Dispatcher(
     try {
       // OPTIMIZATION: Skip envelope creation when trace store is null
       // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _receptorInvoker != null) {
+      if (_traceStore != null || _receptorRegistry != null) {
         return await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -892,11 +920,11 @@ public abstract class Dispatcher(
     var messageType = typeof(TMessage);
 
     // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _receptorInvoker != null) {
+    if (_traceStore != null || _receptorRegistry != null) {
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
@@ -1053,7 +1081,7 @@ public abstract class Dispatcher(
       return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
     }
 
-    throw new HandlerNotFoundException(messageType);
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -1110,7 +1138,7 @@ public abstract class Dispatcher(
     if (asyncInvoker != null) {
       // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
       // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _receptorInvoker != null) {
+      if (_traceStore != null || _receptorRegistry != null) {
         return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -1135,7 +1163,7 @@ public abstract class Dispatcher(
       return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
     }
 
-    throw new HandlerNotFoundException(messageType);
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -1218,7 +1246,7 @@ public abstract class Dispatcher(
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
-      if (_traceStore != null || _receptorInvoker != null) {
+      if (_traceStore != null || _receptorRegistry != null) {
         return await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
       }
       options.CancellationToken.ThrowIfCancellationRequested();
@@ -1231,7 +1259,7 @@ public abstract class Dispatcher(
       return await _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
     }
 
-    throw new HandlerNotFoundException(messageType);
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -1268,7 +1296,7 @@ public abstract class Dispatcher(
       return;
     }
 
-    throw new HandlerNotFoundException(messageType);
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -1358,7 +1386,8 @@ public abstract class Dispatcher(
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Metadata = hopMetadata
+      Metadata = hopMetadata,
+      SecurityContext = _getSecurityContextForPropagation()
     };
 
     envelope.AddHop(hop);
@@ -1397,7 +1426,8 @@ public abstract class Dispatcher(
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Metadata = hopMetadata
+      Metadata = hopMetadata,
+      SecurityContext = _getSecurityContextForPropagation()
     };
 
     envelope.AddHop(hop);
@@ -1755,7 +1785,8 @@ public abstract class Dispatcher(
         ServiceInstance = _instanceProvider.ToInfo(),
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
-        Metadata = hopMetadata
+        Metadata = hopMetadata,
+        SecurityContext = _getSecurityContextForPropagation()
       };
       envelope.AddHop(hop);
 
@@ -1912,7 +1943,7 @@ public abstract class Dispatcher(
           "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
           messageType.Name);
 #pragma warning restore CA1848
-        throw new HandlerNotFoundException(messageType);
+        throw new ReceptorNotFoundException(messageType);
       }
 
       // Resolve destination using registry and routing strategy
@@ -1985,7 +2016,7 @@ public abstract class Dispatcher(
           "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
           messageType.Name);
 #pragma warning restore CA1848
-        throw new HandlerNotFoundException(messageType);
+        throw new ReceptorNotFoundException(messageType);
       }
 
       // Resolve destination using registry and routing strategy
