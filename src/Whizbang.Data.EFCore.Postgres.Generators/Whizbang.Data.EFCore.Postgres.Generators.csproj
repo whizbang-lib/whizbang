@@ -43,6 +43,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <!-- JSON serialization for schema hashing (ILMerged from Shared) -->
+    <PackageReference Include="System.Text.Json" PrivateAssets="all" />
     <!-- ILRepack to merge Shared DLL into generator DLL -->
     <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
   </ItemGroup>

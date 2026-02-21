@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Observability;
@@ -68,6 +69,16 @@ public interface IMessageEnvelope {
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMetadata_ReturnsLatestValue_WhenKeyExistsInMultipleHopsAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMetadata_IgnoresCausationHopsAsync</tests>
   JsonElement? GetMetadata(string key);
+
+  /// <summary>
+  /// Gets the current security context by walking backwards through current message hops until a non-null value is found.
+  /// Filters to only HopType.Current hops (ignores causation hops).
+  /// </summary>
+  /// <returns>The security context from the most recent current hop, or null if no hops have a security context</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsMostRecentNonNullValueAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_IgnoresCausationHopsAsync</tests>
+  SecurityContext? GetCurrentSecurityContext();
 }
 
 /// <summary>

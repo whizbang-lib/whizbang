@@ -547,11 +547,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId, now, outboxMessages });
 
     // Act - Report perspective completion (processed up to eventId2)
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
     var perspectiveCompletions = new[] {
       new {
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         PerspectiveName = "ProductListPerspective",
-        LastEventId = eventId2,
+        LastEventId = (Guid)eventId2,
         Status = (short)1  // PerspectiveProcessingStatus.Completed
       }
     };
@@ -569,7 +570,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new {
         instanceId,
         now,
-        completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
+        completions = JsonSerializer.Serialize(perspectiveCompletions)
       });
 
     // Assert - Checkpoint should be updated with eventId2
@@ -620,17 +621,18 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId, now, outboxMessages });
 
     // Act - Report completions for BOTH perspectives (but at different points)
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
     var perspectiveCompletions = new[] {
       new {
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         PerspectiveName = "ProductListPerspective",
-        LastEventId = eventId2,  // Processed both events
+        LastEventId = (Guid)eventId2,  // Processed both events
         Status = (short)1
       },
       new {
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         PerspectiveName = "ProductDetailsPerspective",
-        LastEventId = eventId1,  // Only processed first event
+        LastEventId = (Guid)eventId1,  // Only processed first event
         Status = (short)1
       }
     };
@@ -648,7 +650,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new {
         instanceId,
         now,
-        completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
+        completions = JsonSerializer.Serialize(perspectiveCompletions)
       });
 
     // Assert - Both checkpoints should be updated independently
@@ -693,11 +695,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId, now, outboxMessages });
 
     // Act - Report perspective FAILURE
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
     var perspectiveFailures = new[] {
       new {
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         PerspectiveName = "ProductListPerspective",
-        LastEventId = eventId,
+        LastEventId = (Guid)eventId,
         Status = (short)2,  // PerspectiveProcessingStatus.Failed
         Error = "Database connection timeout"
       }
@@ -716,7 +719,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new {
         instanceId,
         now,
-        failures = System.Text.Json.JsonSerializer.Serialize(perspectiveFailures)
+        failures = JsonSerializer.Serialize(perspectiveFailures)
       });
 
     // Assert - Checkpoint should be updated with failed status AND error message

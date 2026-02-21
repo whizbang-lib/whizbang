@@ -30,13 +30,16 @@ public interface ILifecycleInvoker {
   /// Includes both compile-time discovered receptors (via [FireAt] attributes) and
   /// runtime registered receptors (via ILifecycleReceptorRegistry).
   /// </summary>
-  /// <param name="message">The message to pass to receptors</param>
+  /// <param name="envelope">The message envelope containing the payload and metadata (hops, security context)</param>
   /// <param name="stage">The lifecycle stage at which to invoke receptors</param>
   /// <param name="context">Optional context providing metadata about the invocation (stream ID, perspective name, etc.)</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when all receptors have been invoked</returns>
+  /// <remarks>
+  /// The invoker extracts the payload from the envelope and invokes all registered handlers.
+  /// </remarks>
   ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default);

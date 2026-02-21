@@ -207,6 +207,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
       (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
+      (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };

@@ -33,6 +33,10 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithNestedCustomType_DiscoversAndGeneratesForBothAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithPrimitiveListProperty_SkipsNestedTypeDiscoveryAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithInternalNestedType_IncludesReferenceButSkipsFactoryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithGetOnlyProperty_UsesNullSetterAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithRecordStructNestedType_DiscoversStructAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync</tests>
+/// <docs>v1.0.0/source-generators/json-contexts</docs>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
 /// This context handles message types discovered in the current assembly.
@@ -42,6 +46,7 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
+  private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
   // Template placeholders
@@ -233,17 +238,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
             IsValueType: _isValueType(p.Type),
-            IsInitOnly: p.SetMethod?.IsInitOnly ?? false
+            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+            CanWrite: p.SetMethod != null
         ))
         .ToArray();
 
-    // Detect if type has a parameterized constructor matching all properties
+    // Detect if type has a parameterized constructor matching all writable properties
     // This is true for records with primary constructors like: record MyRecord(string Prop1, int Prop2)
     // This is false for records with required properties like: record MyRecord { public required string Prop1 { get; init; } }
+    // Computed properties (CanWrite = false) are excluded from constructor matching
+    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
     bool hasParameterizedConstructor = typeSymbol.Constructors.Any(c =>
         c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == properties.Length &&
-        c.Parameters.All(p => properties.Any(prop =>
+        c.Parameters.Length == writableProperties.Length &&
+        c.Parameters.All(p => writableProperties.Any(prop =>
             prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
 
     return new JsonMessageTypeInfo(
@@ -673,7 +681,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         // Note: No trailing comma - the template snippet adds the comma after __SETTER__
         // Note: No comment for null - a // comment would hide the template's trailing comma
         // Note: Use null-forgiving operator (!) to suppress CS8601 warnings - STJ handles null checking
-        var setter = prop.IsInitOnly
+        // Computed properties (CanWrite = false) and init-only properties get null setter
+        var setter = !prop.CanWrite || prop.IsInitOnly
             ? "null"
             : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
@@ -688,13 +697,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
 
+      // Filter to only writable properties for constructor params and object initializer
+      // Computed properties (CanWrite = false) cannot be assigned and are excluded
+      var writableProperties = message.Properties.Where(p => p.CanWrite).ToArray();
+
       // Generate different code based on constructor type
       if (message.HasParameterizedConstructor) {
         // Type has parameterized constructor (e.g., record with primary constructor)
-        // Generate constructor parameters using snippet
-        sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{message.Properties.Length}];");
-        for (int i = 0; i < message.Properties.Length; i++) {
-          var prop = message.Properties[i];
+        // Generate constructor parameters using snippet (only writable properties)
+        sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
+        for (int i = 0; i < writableProperties.Length; i++) {
+          var prop = writableProperties[i];
           var parameterCode = parameterInfoSnippet
               .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
               .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
@@ -707,9 +720,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         // Create JsonObjectInfoValues with parameterized constructor
         sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
         sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
-        for (int i = 0; i < message.Properties.Length; i++) {
-          var prop = message.Properties[i];
-          var comma = i < message.Properties.Length - 1 ? "," : "";
+        for (int i = 0; i < writableProperties.Length; i++) {
+          var prop = writableProperties[i];
+          var comma = i < writableProperties.Length - 1 ? "," : "";
           sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
         }
         sb.AppendLine("      ),");
@@ -719,10 +732,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       } else {
         // Type has no parameterized constructor but has init-only properties (e.g., record with required properties)
         // Use object initializer syntax to set init-only properties during construction
-        // Generate constructor parameters using snippet
-        sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{message.Properties.Length}];");
-        for (int i = 0; i < message.Properties.Length; i++) {
-          var prop = message.Properties[i];
+        // Generate constructor parameters using snippet (only writable properties)
+        sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
+        for (int i = 0; i < writableProperties.Length; i++) {
+          var prop = writableProperties[i];
           var parameterCode = parameterInfoSnippet
               .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
               .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
@@ -732,12 +745,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
         sb.AppendLine();
 
-        // Create JsonObjectInfoValues with object initializer
+        // Create JsonObjectInfoValues with object initializer (only writable properties)
         sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
         sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
-        for (int i = 0; i < message.Properties.Length; i++) {
-          var prop = message.Properties[i];
-          var comma = i < message.Properties.Length - 1 ? "," : "";
+        for (int i = 0; i < writableProperties.Length; i++) {
+          var prop = writableProperties[i];
+          var comma = i < writableProperties.Length - 1 ? "," : "";
           sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
         }
         sb.AppendLine("      },");
@@ -883,11 +896,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Discovers nested custom types used in message properties (e.g., OrderLineItem inside List&lt;OrderLineItem&gt;).
   /// Uses queue-based recursion to discover deeply nested types (e.g., Event → Stage → Step → Action).
+  /// Also discovers types used as direct properties (non-collection), not just collection element types.
   /// These types need JsonTypeInfo generated for AOT serialization to work properly.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDeeplyNestedTypes_DiscoversAllLevelsAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithCircularReferences_HandlesWithoutInfiniteLoopAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithSelfReferencingType_HandlesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDirectPropertyNestedType_DiscoversNestedTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDeepDirectPropertyNesting_DiscoversAllTypesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithMixedCollectionAndDirectNestedTypes_DiscoversAllTypesAsync</tests>
   private static ImmutableArray<JsonMessageTypeInfo> _discoverNestedTypes(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
@@ -904,27 +921,59 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var currentType = typesToProcess.Dequeue();
 
       foreach (var property in currentType.Properties) {
-        // Extract element type from generic collections
+        // Try to extract type from collections first, then check for direct property types
         var elementTypeName = _extractElementType(property.Type);
-        if (elementTypeName == null) {
+        var typeNameToProcess = elementTypeName ?? _extractDirectPropertyType(property.Type);
+
+        if (typeNameToProcess == null) {
           continue;
         }
 
         // Skip if already processed (handles circular and self-references)
-        if (processedTypes.Contains(elementTypeName)) {
+        if (processedTypes.Contains(typeNameToProcess)) {
           continue;
         }
 
         // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(elementTypeName)) {
+        if (_isPrimitiveOrFrameworkType(typeNameToProcess)) {
+          continue;
+        }
+
+        // Skip System.* types (collections, framework types) - STJ handles these natively
+        // This handles cases like List<List<T>> where element type is List<T>
+        if (typeNameToProcess.StartsWith("global::System.", StringComparison.Ordinal)) {
           continue;
         }
 
         // Try to get public type symbol
-        var typeSymbol = _tryGetPublicTypeSymbol(elementTypeName, compilation);
+        var typeSymbol = _tryGetPublicTypeSymbol(typeNameToProcess, compilation);
         if (typeSymbol == null) {
           continue;
         }
+
+        // Skip enums - they're handled by _discoverEnumTypes
+        if (typeSymbol.TypeKind == TypeKind.Enum) {
+          continue;
+        }
+
+        // Skip abstract types - they cannot be instantiated directly
+        // STJ handles these via polymorphic deserialization or user-provided converters
+        if (typeSymbol.IsAbstract) {
+          continue;
+        }
+
+        // Skip [WhizbangId] types - they have their own converters generated by WhizbangIdGenerator
+        // If we generate JsonTypeInfo here, it will incorrectly create an empty object metadata
+        // that overrides the proper converter-based handling from WhizbangIdJsonContext
+        // Note: We check for the attribute, not IWhizbangId interface, because generators run in parallel
+        // and MessageJsonContextGenerator may not see the interface that WhizbangIdGenerator adds
+        if (_hasWhizbangIdAttribute(typeSymbol)) {
+          continue;
+        }
+
+        // Note: Structs (including record struct) are now supported.
+        // The IsInitOnly fix (SetMethod == null || IsInitOnly) properly handles
+        // get-only properties, so structs work correctly with constructor initialization.
 
         // Extract properties and detect constructor
         var nestedProperties = _extractPropertiesFromType(typeSymbol);
@@ -935,7 +984,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Build nested type info
         var nestedTypeInfo = new JsonMessageTypeInfo(
-            FullyQualifiedName: elementTypeName,
+            FullyQualifiedName: typeNameToProcess,
             ClrTypeName: clrTypeName,
             SimpleName: typeSymbol.Name,
             IsCommand: false,  // Nested types are not commands/events
@@ -945,8 +994,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             HasParameterizedConstructor: hasParameterizedConstructor
         );
 
-        nestedTypes[elementTypeName] = nestedTypeInfo;
-        processedTypes.Add(elementTypeName);
+        nestedTypes[typeNameToProcess] = nestedTypeInfo;
+        processedTypes.Add(typeNameToProcess);
 
         // Queue for recursive processing - discovers deeply nested types
         typesToProcess.Enqueue(nestedTypeInfo);
@@ -1070,6 +1119,54 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Checks if a type is a collection type that would be handled by _extractElementType.
+  /// </summary>
+  private static bool _isCollectionType(string fullyQualifiedTypeName) {
+    return fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.List<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IList<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IEnumerable<", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Extracts type name from a direct (non-collection) property.
+  /// Returns null if the type is a primitive, framework type, or collection.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDirectPropertyNestedType_DiscoversNestedTypeAsync</tests>
+  private static string? _extractDirectPropertyType(string fullyQualifiedTypeName) {
+    // Strip nullable suffix if present
+    var typeName = fullyQualifiedTypeName;
+    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
+      typeName = typeName[..^1];
+    }
+
+    // Skip primitive and framework types
+    if (_isPrimitiveOrFrameworkType(typeName)) {
+      return null;
+    }
+
+    // Skip all System.* types - they're either handled natively by STJ or shouldn't be discovered
+    if (typeName.StartsWith("global::System.", StringComparison.Ordinal)) {
+      return null;
+    }
+
+    // Skip collection types (handled by _extractElementType)
+    if (_isCollectionType(typeName)) {
+      return null;
+    }
+
+    // Skip array types
+    if (typeName.EndsWith("[]", StringComparison.Ordinal)) {
+      return null;
+    }
+
+    // Return the type name for non-primitive, non-collection types
+    return typeName;
+  }
+
+  /// <summary>
   /// Checks if a type is a primitive or framework type that doesn't need custom JsonTypeInfo.
   /// </summary>
   private static bool _isPrimitiveOrFrameworkType(string fullyQualifiedTypeName) {
@@ -1150,6 +1247,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var property in type.Properties) {
         var elementTypeName = _extractElementType(property.Type);
         if (elementTypeName == null) {
+          continue;
+        }
+
+        // Skip System.* element types (nested collections like List<List<T>>)
+        // System.Text.Json handles nested collections natively - no custom factory needed
+        // This also prevents invalid method names with <> characters
+        if (elementTypeName.StartsWith("global::System.", StringComparison.Ordinal)) {
           continue;
         }
 
@@ -1287,6 +1391,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   // ========================================
 
   /// <summary>
+  /// Checks if a type has the [WhizbangId] attribute.
+  /// Types with [WhizbangId] have their own JSON converters generated by WhizbangIdGenerator
+  /// and should NOT have JsonTypeInfo generated by MessageJsonContextGenerator.
+  /// We check for the attribute (not IWhizbangId interface) because generators run in parallel -
+  /// MessageJsonContextGenerator may not see the interface that WhizbangIdGenerator adds.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync</tests>
+  private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
+    return typeSymbol.GetAttributes().Any(a =>
+        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+  }
+
+  /// <summary>
   /// Attempts to get a public type symbol from the compilation.
   /// Returns null if type doesn't exist or isn't public.
   /// </summary>
@@ -1315,19 +1432,22 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
             IsValueType: _isValueType(p.Type),
-            IsInitOnly: p.SetMethod?.IsInitOnly ?? false
+            IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+            CanWrite: p.SetMethod != null
         ))
         .ToArray();
   }
 
   /// <summary>
-  /// Checks if a type has a parameterized constructor matching its properties.
+  /// Checks if a type has a parameterized constructor matching its writable properties.
+  /// Computed properties (CanWrite = false) are excluded from constructor matching.
   /// </summary>
   private static bool _hasMatchingParameterizedConstructor(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
+    var writableProperties = properties.Where(p => p.CanWrite).ToArray();
     return typeSymbol.Constructors.Any(c =>
         c.DeclaredAccessibility == Accessibility.Public &&
-        c.Parameters.Length == properties.Length &&
-        c.Parameters.All(p => properties.Any(prop =>
+        c.Parameters.Length == writableProperties.Length &&
+        c.Parameters.All(p => writableProperties.Any(prop =>
             prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
   }
 

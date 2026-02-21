@@ -833,7 +833,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var eventType in eventTypes) {
       outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New());");
+      // Pass sourceEnvelope for security context inheritance
+      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), sourceEnvelope);");
       outboxCascade.AppendLine($"      }}");
       outboxCascade.AppendLine();
     }
@@ -844,7 +845,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var eventType in eventTypes) {
       eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), eventStoreOnly: true);");
+      // Pass sourceEnvelope for security context inheritance
+      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), sourceEnvelope, eventStoreOnly: true);");
       eventStoreOnlyCascade.AppendLine($"      }}");
       eventStoreOnlyCascade.AppendLine();
     }

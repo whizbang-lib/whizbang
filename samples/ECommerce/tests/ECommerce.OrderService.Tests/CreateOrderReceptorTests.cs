@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace ECommerce.OrderService.Tests;
 
@@ -65,6 +66,8 @@ public class CreateOrderReceptorTests {
       return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(Whizbang.Core.ValueObjects.MessageId.New(), "test"));
     }
     public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
   }
 

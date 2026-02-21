@@ -1,4 +1,4 @@
--- Migration: 008_1_CreateActiveStreamsTable.sql
+-- Migration: 007_CreateActiveStreamsTable.sql
 -- Date: 2025-12-25
 -- Description: Creates wh_active_streams table for ephemeral stream ownership coordination.
 --              This table tracks which instance owns each active stream, enabling sticky

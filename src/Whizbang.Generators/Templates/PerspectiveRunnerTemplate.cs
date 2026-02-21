@@ -82,7 +82,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Track progress
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
-    var processedEvents = new List<(object Event, Guid EventId)>();  // Track events for PostPerspectiveInline (fires AFTER save)
+    var processedEvents = new List<Whizbang.Core.Observability.MessageEnvelope<Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
@@ -125,7 +125,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
-        var firstEvent = events[0].Payload;  // Peek at first event for receptor routing
+        var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
 
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveAsync,
@@ -139,7 +139,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
         // However, we track it to ensure completion before returning from RunAsync.
         var preAsyncTask = _lifecycleInvoker.InvokeAsync(
-          firstEvent,  // Pass first event for type-based receptor routing
+          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
           LifecycleStage.PrePerspectiveAsync,
           context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
           cancellationToken
@@ -148,7 +148,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Fire INLINE hooks (blocking, transactional)
         await _lifecycleInvoker.InvokeAsync(
-          firstEvent,  // Pass first event for type-based receptor routing
+          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
           LifecycleStage.PrePerspectiveInline,
           context with { CurrentStage = LifecycleStage.PrePerspectiveInline },
           cancellationToken
@@ -185,8 +185,9 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             break;
         }
 
-        // Track event for PostPerspective lifecycle hooks (fire AFTER save completes)
-        processedEvents.Add((@event, envelope.MessageId.Value));
+        // Track envelope for PostPerspective lifecycle hooks (fire AFTER save completes)
+        // Envelope preserved for security context propagation
+        processedEvents.Add(envelope);
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
@@ -229,20 +230,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
-        foreach (var (evt, eventId) in processedEvents) {
+        foreach (var envelope in processedEvents) {
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-            EventId = eventId,
+            EventId = envelope.MessageId.Value,
             LastProcessedEventId = lastSuccessfulEventId
           };
 
           // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
           // Note: We don't await this immediately, allowing perspective processing to complete.
           // However, we track it to ensure completion before returning from RunAsync.
+          // Envelope passed to preserve security context from message hops
           var postAsyncTask = _lifecycleInvoker.InvokeAsync(
-            evt,
+            envelope,
             LifecycleStage.PostPerspectiveAsync,
             context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
             cancellationToken

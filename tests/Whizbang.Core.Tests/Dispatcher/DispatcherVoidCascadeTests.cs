@@ -181,6 +181,27 @@ public class DispatcherVoidCascadeTests {
       .Because("Void LocalInvokeAsync with context should cascade events from non-void receptor returns");
   }
 
+  /// <summary>
+  /// When using void LocalInvokeAsync with DispatchOptions, events should still cascade.
+  /// This tests the _localInvokeVoidWithOptionsAsync path.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task VoidLocalInvokeAsync_WithDispatchOptions_CascadesReturnedEventsAsync() {
+    // Arrange
+    VoidCascadeEventTracker.Reset();
+    var dispatcher = _createDispatcher();
+    var command = new ProcessOrderCommand(Guid.NewGuid(), Guid.NewGuid());
+    var options = new DispatchOptions { CancellationToken = CancellationToken.None };
+
+    // Act - Use void LocalInvokeAsync with DispatchOptions
+    await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - The event should be cascaded and tracked
+    await Assert.That(VoidCascadeEventTracker.Count).IsEqualTo(1)
+      .Because("Void LocalInvokeAsync with DispatchOptions should cascade events from non-void receptor returns");
+  }
+
   #endregion
 
   #region Helper Methods

@@ -5,6 +5,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -52,28 +53,28 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
     var exception = await Assert.That(async () => await dispatcher.SendAsync(unknownCommand))
-        .ThrowsExactly<HandlerNotFoundException>();
+        .ThrowsExactly<ReceptorNotFoundException>();
 
     await Assert.That(exception?.Message).Contains("UnknownCommand");
     await Assert.That(exception?.MessageType).IsEqualTo(typeof(UnknownCommand));
   }
 
   [Test]
-  public async Task LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
     var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<UnknownCommand, object>(unknownCommand))
-        .ThrowsExactly<HandlerNotFoundException>();
+        .ThrowsExactly<ReceptorNotFoundException>();
 
     await Assert.That(exception?.Message).Contains("UnknownCommand");
   }
@@ -397,14 +398,14 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new UnknownCommand();
 
     // Act & Assert
     await Assert.That(async () => await dispatcher.LocalInvokeAsync(command))
-      .ThrowsExactly<HandlerNotFoundException>();
+      .ThrowsExactly<ReceptorNotFoundException>();
   }
 
   [Test]
@@ -1020,7 +1021,7 @@ public class DispatcherTests {
     public int InvokeCount { get; private set; }
     public LifecycleStage? LastStage { get; private set; }
 
-    public ValueTask InvokeAsync(object message, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       InvokeCount++;
       LastStage = stage;
       return ValueTask.CompletedTask;

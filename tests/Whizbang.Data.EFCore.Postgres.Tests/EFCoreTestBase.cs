@@ -6,8 +6,10 @@ using Pgvector;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Testing.Containers;
@@ -23,12 +25,18 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <remarks>
 /// Uses NotInParallel to prevent database contention when multiple tests
 /// compete for the shared PostgreSQL container connections.
+/// Dapper type handlers are registered via <see cref="DapperTypeHandlers"/> module initializer.
 /// </remarks>
 [NotInParallel("EFCorePostgresTests")]
 public abstract class EFCoreTestBase : IAsyncDisposable {
   static EFCoreTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
+
+    // Force Whizbang.Data.Dapper.Custom assembly to load, which triggers its module initializer
+    // to register TrackedGuidHandler with Dapper. Without this, the assembly might not load
+    // until too late, causing TrackedGuid parameters to fail.
+    _ = typeof(TrackedGuidHandler).Assembly;
   }
 
   private string? _testDatabaseName;
@@ -209,5 +217,6 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;
     public JsonElement? GetMetadata(string key) => null;
+    public SecurityContext? GetCurrentSecurityContext() => null;
   }
 }

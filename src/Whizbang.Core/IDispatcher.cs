@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core;
 
@@ -27,7 +28,7 @@ public interface IDispatcher {
   /// <param name="message">The message to send</param>
   /// <returns>Delivery receipt with correlation information</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync</tests>
   Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull;
 
@@ -118,7 +119,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>The typed business result from the receptor</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull;
 
@@ -204,7 +205,7 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_ShouldInvokeWithoutReturningResultAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_SynchronousCompletion_ShouldNotAllocateAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithTracing_StoresEnvelopeAsync</tests>
   ValueTask LocalInvokeAsync(object message);
 
@@ -303,6 +304,10 @@ public interface IDispatcher {
   /// Called by <see cref="IEventCascader"/> after resolving routing from wrappers and attributes.
   /// </summary>
   /// <param name="message">The message to cascade.</param>
+  /// <param name="sourceEnvelope">
+  /// The source envelope that caused this cascade (e.g., the command envelope).
+  /// Used to inherit SecurityContext for the cascaded message when ambient context is unavailable.
+  /// </param>
   /// <param name="mode">The dispatch mode (Local, Outbox, or Both).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>A task representing the asynchronous operation.</returns>
@@ -313,9 +318,14 @@ public interface IDispatcher {
   /// - Outbox: Writes to outbox for cross-service delivery only
   /// - Both: Does both local invocation and outbox write
   /// </para>
+  /// <para>
+  /// Security context inheritance: The cascaded message gets its own new envelope.
+  /// The SecurityContext in the new envelope's initial hop is inherited from the
+  /// sourceEnvelope's current security context when ambient context is unavailable.
+  /// </para>
   /// </remarks>
   /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
-  Task CascadeMessageAsync(IMessage message, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
+  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
 
   // ========================================
   // BATCH OPERATIONS

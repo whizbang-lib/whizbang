@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -45,7 +46,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -86,7 +86,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -135,7 +134,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -182,7 +180,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -230,7 +227,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -279,7 +275,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -490,6 +485,9 @@ internal class FakeDispatcher : IDispatcher {
 
   public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
+
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 }
 
 internal class FakeDeliveryReceipt : IDeliveryReceipt {
@@ -531,6 +529,7 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public CorrelationId? GetCorrelationId() => _hops[0].CorrelationId;
   public MessageId? GetCausationId() => _hops[0].CausationId;
   public JsonElement? GetMetadata(string key) => null;
+  public SecurityContext? GetCurrentSecurityContext() => null;
 }
 
 internal class DelayedReadinessCheck : ITransportReadinessCheck {

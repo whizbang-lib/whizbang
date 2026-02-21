@@ -3,6 +3,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Extractors;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Security;
 
@@ -27,6 +28,128 @@ public class MessageSecurityServiceCollectionExtensionsTests {
     // Assert - IScopeContextAccessor is registered
     var accessor = provider.GetService<IScopeContextAccessor>();
     await Assert.That(accessor).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddWhizbangMessageSecurity_RegistersMessageContextAccessorAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var accessor = scope.ServiceProvider.GetService<IMessageContextAccessor>();
+
+    // Assert
+    await Assert.That(accessor).IsNotNull();
+    await Assert.That(accessor).IsTypeOf<MessageContextAccessor>();
+  }
+
+  [Test]
+  public async Task AddWhizbangMessageSecurity_RegistersIMessageContextAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var context = scope.ServiceProvider.GetService<IMessageContext>();
+
+    // Assert - IMessageContext should be resolvable
+    await Assert.That(context).IsNotNull();
+  }
+
+  [Test]
+  public async Task IMessageContext_ReadsUserIdFromScopeContextAccessorAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var scopeContextAccessor = scope.ServiceProvider.GetRequiredService<IScopeContextAccessor>();
+    var messageContext = scope.ServiceProvider.GetRequiredService<IMessageContext>();
+
+    // Set up security context with UserId
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = "test-user-123", TenantId = "tenant-456" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    // Act & Assert - IMessageContext.UserId should read from scope context
+    await Assert.That(messageContext.UserId).IsEqualTo("test-user-123");
+  }
+
+  [Test]
+  public async Task IMessageContext_ReadsFromMessageContextAccessorAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var messageContextAccessor = scope.ServiceProvider.GetRequiredService<IMessageContextAccessor>();
+    var messageContext = scope.ServiceProvider.GetRequiredService<IMessageContext>();
+
+    // Set up message context
+    var correlationId = CorrelationId.New();
+    var messageId = MessageId.New();
+    var causationId = MessageId.New();
+    var timestamp = DateTimeOffset.UtcNow;
+
+    messageContextAccessor.Current = new MessageContext {
+      MessageId = messageId,
+      CorrelationId = correlationId,
+      CausationId = causationId,
+      Timestamp = timestamp
+    };
+
+    // Act & Assert - IMessageContext should read from message context accessor
+    await Assert.That(messageContext.MessageId).IsEqualTo(messageId);
+    await Assert.That(messageContext.CorrelationId).IsEqualTo(correlationId);
+    await Assert.That(messageContext.CausationId).IsEqualTo(causationId);
+    await Assert.That(messageContext.Timestamp).IsEqualTo(timestamp);
+  }
+
+  [Test]
+  public async Task IMessageContext_UserIdPrefersSecurityContext_OverMessageContextAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    var provider = services.BuildServiceProvider();
+
+    using var scope = provider.CreateScope();
+    var scopeContextAccessor = scope.ServiceProvider.GetRequiredService<IScopeContextAccessor>();
+    var messageContextAccessor = scope.ServiceProvider.GetRequiredService<IMessageContextAccessor>();
+    var messageContext = scope.ServiceProvider.GetRequiredService<IMessageContext>();
+
+    // Set up security context with UserId
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = "security-user" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    // Also set up message context with different UserId
+    messageContextAccessor.Current = new MessageContext {
+      UserId = "message-user"
+    };
+
+    // Act & Assert - UserId should come from security context (higher priority)
+    await Assert.That(messageContext.UserId).IsEqualTo("security-user");
   }
 
   [Test]

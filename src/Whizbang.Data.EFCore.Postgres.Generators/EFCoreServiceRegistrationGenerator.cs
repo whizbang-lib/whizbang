@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
@@ -6,6 +7,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
@@ -49,11 +51,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         $"// Looking for: IPerspectiveFor<TModel> interfaces");
     });
 
+    // Extract table name configuration from MSBuild properties (WhizbangStripTableNameSuffixes, etc.)
+    var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectTableNameConfig
+    );
+
     // Discover all perspective classes that implement IPerspectiveFor<TModel>
-    var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
+    // Phase 1: Extract candidates (config-independent data only)
+    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveModelCandidate(ctx, ct)
     ).Where(static info => info is not null);
+
+    // Phase 2: Combine candidates with config and build final PerspectiveModelInfo
+    var perspectives = perspectiveCandidates.Combine(tableNameConfig)
+        .Select(static (pair, _) => _buildPerspectiveModelInfo(pair.Left!, pair.Right))
+        .Where(static info => info is not null);
 
     // Discover DbContext classes
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
@@ -299,13 +312,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class implementing IPerspectiveFor.
+  /// Extracts perspective candidate information from a class implementing IPerspectiveFor.
   /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
   /// Returns null if the class doesn't implement the interface.
+  /// This is Phase 1 of the pipeline - extracts config-independent data only.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
-  private static PerspectiveModelInfo? _extractPerspectiveInfo(
+  private static PerspectiveModelCandidate? _extractPerspectiveModelCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -329,7 +343,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
     var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
-    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(tableBaseName);
     var dbSetPropertyName = TypeNameUtilities.GetDbSetPropertyName(modelType);
 
     // Extract physical fields from model type
@@ -348,14 +361,39 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       keys = Array.Empty<string>();
     }
 
-    return new PerspectiveModelInfo(
+    return new PerspectiveModelCandidate(
         PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         DbSetPropertyName: dbSetPropertyName,
-        TableName: tableName,
+        TableBaseName: tableBaseName,
         NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
         Keys: keys,
         PhysicalFields: physicalFields
+    );
+  }
+
+  /// <summary>
+  /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
+  /// This is Phase 2 of the pipeline - applies config-dependent table name generation.
+  /// </summary>
+  /// <param name="candidate">The perspective candidate with config-independent data</param>
+  /// <param name="config">Table name configuration from MSBuild properties</param>
+  /// <returns>Final PerspectiveModelInfo with generated table name</returns>
+  private static PerspectiveModelInfo? _buildPerspectiveModelInfo(
+      PerspectiveModelCandidate candidate,
+      TableNameConfig config) {
+
+    // Apply table name configuration to generate final table name
+    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
+
+    return new PerspectiveModelInfo(
+        PerspectiveClassName: candidate.PerspectiveClassName,
+        ModelTypeName: candidate.ModelTypeName,
+        DbSetPropertyName: candidate.DbSetPropertyName,
+        TableName: tableName,
+        NamespaceHint: candidate.NamespaceHint,
+        Keys: candidate.Keys,
+        PhysicalFields: candidate.PhysicalFields
     );
   }
 
@@ -942,9 +980,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           migrationsCode
       );
 
+      // Get assembly name for service identification
+      var assemblyName = compilation.AssemblyName ?? "Unknown";
+
       // Replace REGISTER_ASSOCIATIONS region with call to RegisterPerspectiveAssociationsAsync
       // Only generate the call if this DbContext has matching perspectives (otherwise the extension method won't exist)
-      var assemblyName = compilation.AssemblyName ?? "Unknown";
       string registerAssociationsCode;
       if (matchingPerspectives.Count > 0) {
         registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
@@ -957,6 +997,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           registerAssociationsCode
       );
 
+      // Generate perspective registry JSON for CLR type → table name tracking
+      string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
+
       // Replace placeholders
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
@@ -966,6 +1009,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__QUOTED_SCHEMA__", $"\"\"{dbContext.Schema}\"\"");
       // __SCHEMA__ is used in C# contexts (like HasDefaultSchema) where EF Core handles quoting
       template = template.Replace("__SCHEMA__", dbContext.Schema);
+      // __PERSPECTIVE_REGISTRY_JSON__ contains CLR type → table name mappings with schema hash
+      template = template.Replace("__PERSPECTIVE_REGISTRY_JSON__", perspectiveRegistryJson);
+      // __SERVICE_NAME__ is the assembly name for service identification
+      template = template.Replace("__SERVICE_NAME__", assemblyName);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 
@@ -1088,6 +1135,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {quotedSchema};");
     sb.AppendLine();
 
+    // Check if any perspectives have vector fields - if so, create pgvector extension
+    var hasVectorFields = perspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
+    if (hasVectorFields) {
+      sb.AppendLine("-- Create pgvector extension for vector similarity search");
+      sb.AppendLine("CREATE EXTENSION IF NOT EXISTS vector;");
+      sb.AppendLine();
+    }
+
     // Get unique tables (same table might be referenced by multiple perspectives)
     var uniqueTables = perspectives
       .GroupBy(p => p.TableName)
@@ -1144,15 +1199,27 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       foreach (var field in perspective.PhysicalFields) {
         if (field.IsIndexed) {
           if (field.IsVector && field.VectorDimensions.HasValue) {
-            // Vector index with ivfflat
-            sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
-            sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+            // pgvector index dimension limits:
+            // - ivfflat: max 2000 dimensions
+            // - hnsw: max 2000 dimensions (pgvector < 0.7.0) or 16000 (pgvector >= 0.7.0)
+            // To be safe with all pgvector versions, skip index for > 2000 dimensions
+            // The column still works for queries, just without index acceleration
+            if (field.VectorDimensions.Value <= 2000) {
+              sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
+              sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+              sb.AppendLine();
+            } else {
+              sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({field.VectorDimensions.Value} dimensions > 2000 limit)");
+              sb.AppendLine($"-- Vector queries will still work but without index acceleration");
+              sb.AppendLine($"-- To enable indexing, upgrade to pgvector >= 0.7.0 and manually create an hnsw index");
+              sb.AppendLine();
+            }
           } else {
             // Regular B-tree index
             sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}");
             sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+            sb.AppendLine();
           }
-          sb.AppendLine();
         }
       }
     }
@@ -1175,6 +1242,115 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, uniqueTables.Count, sql.Length));
 
     return $"@\"{sql}\"";
+  }
+
+  /// <summary>
+  /// Generates perspective registry JSON for CLR type → table name tracking.
+  /// Used by reconcile_perspective_registry() function for schema drift detection.
+  /// </summary>
+  /// <param name="perspectives">List of perspectives to register</param>
+  /// <param name="serviceName">Assembly name for service identification</param>
+  /// <returns>JSON string ready for C# embedding (escaped quotes)</returns>
+  private static string _generatePerspectiveRegistryJson(
+      List<PerspectiveModelInfo> perspectives,
+      string serviceName) {
+
+    if (perspectives.Count == 0) {
+      return "\"[]\"";  // Empty JSON array as C# string literal
+    }
+
+    var sb = new StringBuilder();
+    sb.Append('[');
+
+    for (int i = 0; i < perspectives.Count; i++) {
+      var perspective = perspectives[i];
+
+      // Build schema object for this perspective
+      var schemaColumns = new List<ColumnSchema> {
+        new("id", "uuid", false, true, false, null),
+        new("data", "jsonb", false, false, false, null),
+        new("metadata", "jsonb", false, false, false, null),
+        new("scope", "jsonb", false, false, false, null),
+        new("created_at", "timestamptz", false, false, false, null),
+        new("updated_at", "timestamptz", false, false, false, null),
+        new("version", "integer", false, false, false, null)
+      };
+
+      // Add physical fields to schema
+      foreach (var field in perspective.PhysicalFields) {
+        var postgresType = _getPostgresColumnType(field).ToLowerInvariant();
+        schemaColumns.Add(new ColumnSchema(
+            field.ColumnName,
+            postgresType,
+            true,  // Physical fields are nullable
+            false, // Not primary key
+            field.IsVector,
+            field.VectorDimensions
+        ));
+      }
+
+      // Build indexes
+      var schemaIndexes = new List<IndexSchema> {
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_created_at", new List<string> { "created_at" }, "btree", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_data_gin", new List<string> { "data" }, "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_metadata_gin", new List<string> { "metadata" }, "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_scope_gin", new List<string> { "scope" }, "gin", false)
+      };
+
+      // Add indexes for physical fields
+      var shortName = perspective.TableName.Replace("wh_per_", "");
+      foreach (var field in perspective.PhysicalFields) {
+        if (field.IsIndexed) {
+          // Skip vector indexes for > 2000 dimensions (pgvector limit in older versions)
+          if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
+            continue; // No index for high-dimensional vectors
+          }
+
+          var indexType = field.IsVector ? "ivfflat" : "btree";
+          schemaIndexes.Add(new IndexSchema(
+              $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
+              new List<string> { field.ColumnName },
+              indexType,
+              false
+          ));
+        }
+      }
+
+      // Create schema and compute hash
+      var tableSchema = new PerspectiveTableSchema(schemaColumns, schemaIndexes);
+      var schemaJson = SchemaHashUtilities.ToCanonicalJson(tableSchema);
+      var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
+
+      // Build JSON object for this perspective
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append('{');
+      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelTypeName)}\",");
+      sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
+      sb.Append($"\"SchemaJson\":{schemaJson},");
+      sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
+      sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\"");
+      sb.Append('}');
+    }
+
+    sb.Append(']');
+
+    // Escape for C# string literal (double the quotes)
+    var json = sb.ToString().Replace("\"", "\\\"");
+    return $"\"{json}\"";
+  }
+
+  /// <summary>
+  /// Escapes a string for use in JSON (handles special characters).
+  /// </summary>
+  private static string _escapeJsonString(string value) {
+    return value
+        .Replace("\\", "\\\\")
+        .Replace("\"", "\\\"")
+        .Replace("\n", "\\n")
+        .Replace("\r", "\\r")
+        .Replace("\t", "\\t");
   }
 }
 
@@ -1208,6 +1384,26 @@ internal sealed record PerspectiveModelInfo(
     string ModelTypeName,
     string DbSetPropertyName,
     string TableName,
+    string NamespaceHint,
+    string[] Keys,
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields);
+
+/// <summary>
+/// Intermediate candidate for perspective model discovery before table name config is applied.
+/// Separates syntax/semantic extraction from configuration-dependent table name generation.
+/// </summary>
+/// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
+/// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="DbSetPropertyName">Property name for DbSet</param>
+/// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
+/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
+/// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+internal sealed record PerspectiveModelCandidate(
+    string PerspectiveClassName,
+    string ModelTypeName,
+    string DbSetPropertyName,
+    string TableBaseName,
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields);

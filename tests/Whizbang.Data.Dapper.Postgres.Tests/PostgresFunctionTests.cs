@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -287,8 +288,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId, streamId, now });
 
     // Prepare completion with Published flag (4)
-    var completions = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { MessageId = messageId, Status = 4 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var completions = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, Status = 4 }
     });
 
     // Act
@@ -326,8 +328,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId, streamId, now });
 
     // Prepare completion with Published flag (4)
-    var completions = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { MessageId = messageId, Status = 4 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var completions = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, Status = 4 }
     });
 
     // Act
@@ -363,8 +366,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId, streamId, now });
 
     // Prepare completion with EventStored flag (2)
-    var completions = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { MessageId = messageId, Status = 2 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var completions = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, Status = 2 }
     });
 
     // Act
@@ -408,8 +412,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { workId, streamId, perspectiveName, eventId, now });
 
     // Prepare completion
-    var completions = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { EventWorkId = workId, StatusFlags = 1 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var completions = JsonSerializer.Serialize(new[] {
+      new { EventWorkId = (Guid)workId, StatusFlags = 1 }
     });
 
     // Act
@@ -471,8 +476,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       });
 
     // Prepare completed events
-    var completedEvents = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { StreamId = streamId, PerspectiveName = perspectiveName }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var completedEvents = JsonSerializer.Serialize(new[] {
+      new { StreamId = (Guid)streamId, PerspectiveName = perspectiveName }
     });
 
     // Act
@@ -505,8 +511,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId, streamId, now });
 
     // Prepare failure with Failed flag (32768)
-    var failures = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { MessageId = messageId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var failures = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
     });
 
     // Act
@@ -557,8 +564,9 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { workId, streamId, eventId, now });
 
     // Prepare failure
-    var failures = System.Text.Json.JsonSerializer.Serialize(new[] {
-      new { EventWorkId = workId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var failures = JsonSerializer.Serialize(new[] {
+      new { EventWorkId = (Guid)workId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
     });
 
     // Act
@@ -590,16 +598,17 @@ public class PostgresFunctionTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     // Prepare message
-    var messages = System.Text.Json.JsonSerializer.Serialize(new[] {
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var messages = JsonSerializer.Serialize(new[] {
       new {
-        MessageId = messageId,
+        MessageId = (Guid)messageId,
         Destination = "test-destination",
         MessageType = "TestEvent",
         EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
         EnvelopeData = "{}",
         Metadata = "{}",
         Scope = (string?)null,
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         IsEvent = false
       }
     });
@@ -642,11 +651,12 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { eventId, streamId, now });
 
     // Prepare event
-    var events = System.Text.Json.JsonSerializer.Serialize(new[] {
+    // Note: Cast TrackedGuid to Guid for anonymous type serialization
+    var events = JsonSerializer.Serialize(new[] {
       new {
-        StreamId = streamId,
+        StreamId = (Guid)streamId,
         PerspectiveName = perspectiveName,
-        EventId = eventId
+        EventId = (Guid)eventId
       }
     });
 

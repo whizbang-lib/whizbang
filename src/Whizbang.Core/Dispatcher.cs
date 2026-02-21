@@ -1303,6 +1303,15 @@ public abstract class Dispatcher(
       return;
     }
 
+    // Fallback: Try to find any receptor (including those that return values)
+    // This allows void LocalInvokeAsync to call receptors that return events for cascading
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      options.CancellationToken.ThrowIfCancellationRequested();
+      await _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+      return;
+    }
+
     throw new ReceptorNotFoundException(messageType);
   }
 
@@ -1548,7 +1557,7 @@ public abstract class Dispatcher(
   /// </remarks>
   /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
-  protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType) {
+  protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null) {
     // Base implementation is a no-op.
     // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync.
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -1579,7 +1588,7 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
-  protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType) {
+  protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null) {
     // Base implementation is a no-op.
     // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync(eventStoreOnly: true).
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -1682,7 +1691,7 @@ public abstract class Dispatcher(
   /// Called by IEventCascader after resolving routing from wrappers and attributes.
   /// </summary>
   /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
-  public async Task CascadeMessageAsync(IMessage message, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
+  public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -1712,7 +1721,7 @@ public abstract class Dispatcher(
 #pragma warning disable CA1848
         CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
 #pragma warning restore CA1848
-        await CascadeToEventStoreOnlyAsync(message, messageType);
+        await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope);
       }
     }
 
@@ -1721,7 +1730,7 @@ public abstract class Dispatcher(
 #pragma warning disable CA1848
       CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
 #pragma warning restore CA1848
-      await CascadeToOutboxAsync(message, messageType);
+      await CascadeToOutboxAsync(message, messageType, sourceEnvelope);
     }
   }
 
@@ -1740,11 +1749,18 @@ public abstract class Dispatcher(
   /// Destination is set to null, which bypasses transport publishing.
   /// </param>
   /// <remarks>
+  /// <para>
   /// Protected to allow generated dispatcher to call this method from CascadeToOutboxAsync override.
+  /// </para>
+  /// <para>
+  /// Security context inheritance: The new envelope's initial hop inherits SecurityContext from
+  /// the sourceEnvelope when ambient context (ScopeContextAccessor.CurrentContext) is unavailable.
+  /// This ensures cascaded events carry the security context from their originating command.
+  /// </para>
   /// </remarks>
   /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
-  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, bool eventStoreOnly = false) {
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventType.Name, messageId);
 #pragma warning restore CA1848
@@ -1787,13 +1803,14 @@ public abstract class Dispatcher(
 
       // Add hop indicating message is being stored to outbox
       // When destination is null (event-store-only), use "(event-store)" as topic indicator
+      // SecurityContext: First try ambient context, then inherit from source envelope
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = _getSecurityContextForPropagation()
+        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext()
       };
       envelope.AddHop(hop);
 

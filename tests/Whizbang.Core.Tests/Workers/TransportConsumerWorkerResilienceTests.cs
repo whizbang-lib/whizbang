@@ -405,7 +405,6 @@ public class TransportConsumerWorkerResilienceTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      receptorInvoker: null,
       lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
@@ -601,6 +600,8 @@ public class TransportConsumerWorkerResilienceTests {
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
       throw new NotImplementedException();
     public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
   }
 

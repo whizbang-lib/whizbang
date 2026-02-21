@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whizbang-lib.github.io/schemas/perspective-schema.json",
+  "title": "Perspective Table Schema",
+  "description": "Schema definition for perspective table metadata stored in wh_perspective_registry. Used for schema drift detection and auto-migration.",
+  "type": "object",
+  "required": ["columns", "indexes"],
+  "properties": {
+    "columns": {
+      "type": "array",
+      "description": "List of columns in the perspective table",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name in snake_case (e.g., 'id', 'data', 'created_at')"
+          },
+          "type": {
+            "type": "string",
+            "description": "PostgreSQL column type (lowercase)",
+            "enum": ["uuid", "jsonb", "text", "integer", "bigint", "smallint", "boolean", "timestamptz", "date", "time", "numeric", "bytea", "vector"]
+          },
+          "nullable": {
+            "type": "boolean",
+            "description": "Whether the column allows NULL values",
+            "default": false
+          },
+          "isPrimaryKey": {
+            "type": "boolean",
+            "description": "Whether this column is the primary key",
+            "default": false
+          },
+          "isVector": {
+            "type": "boolean",
+            "description": "Whether this is a vector column for embeddings",
+            "default": false
+          },
+          "vectorDimensions": {
+            "type": "integer",
+            "description": "Number of dimensions for vector columns",
+            "minimum": 1,
+            "maximum": 16000
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "indexes": {
+      "type": "array",
+      "description": "List of indexes on the perspective table",
+      "items": {
+        "type": "object",
+        "required": ["name", "columns", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Index name (e.g., 'idx_order_created_at')"
+          },
+          "columns": {
+            "type": "array",
+            "description": "List of column names included in the index",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "type": {
+            "type": "string",
+            "description": "Index type (lowercase)",
+            "enum": ["btree", "gin", "ivfflat", "hnsw"]
+          },
+          "isUnique": {
+            "type": "boolean",
+            "description": "Whether this is a unique index",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "columns": [
+        {"name": "id", "type": "uuid", "isPrimaryKey": true},
+        {"name": "data", "type": "jsonb"},
+        {"name": "metadata", "type": "jsonb"},
+        {"name": "scope", "type": "jsonb"},
+        {"name": "created_at", "type": "timestamptz"},
+        {"name": "updated_at", "type": "timestamptz"},
+        {"name": "version", "type": "integer"}
+      ],
+      "indexes": [
+        {"name": "idx_order_created_at", "columns": ["created_at"], "type": "btree"},
+        {"name": "idx_order_data_gin", "columns": ["data"], "type": "gin"}
+      ]
+    }
+  ]
+}

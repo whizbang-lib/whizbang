@@ -34,13 +34,15 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
 
   /// <inheritdoc/>
   public async ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
 
-    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(envelope);
 
+    // Extract payload from envelope - this is what handlers receive
+    var message = envelope.Payload;
     var messageType = message.GetType();
 
     // Get pre-compiled AOT-compatible invocation delegates from registry

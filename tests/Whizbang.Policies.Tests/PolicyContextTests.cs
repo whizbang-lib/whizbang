@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Policies.Tests.Generated;
 
@@ -495,6 +496,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
   public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
   public JsonElement? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
+  public SecurityContext? GetCurrentSecurityContext() => null;
 
   // Explicit implementation of base interface Payload property
   object IMessageEnvelope.Payload => Payload!;

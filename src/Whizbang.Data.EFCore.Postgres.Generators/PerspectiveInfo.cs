@@ -25,3 +25,16 @@ internal sealed record PerspectiveInfo(
     string TableName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields
 );
+
+/// <summary>
+/// Intermediate value type for perspective discovery before table name config is applied.
+/// Separates syntax/semantic extraction from configuration-dependent table name generation.
+/// </summary>
+/// <param name="ModelTypeName">Fully qualified model type name (e.g., "global::MyApp.Orders.OrderSummary")</param>
+/// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+internal sealed record PerspectiveCandidate(
+    string ModelTypeName,
+    string TableBaseName,
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields
+);

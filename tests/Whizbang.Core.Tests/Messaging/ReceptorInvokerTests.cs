@@ -9,7 +9,11 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Internal;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -31,12 +35,23 @@ public class ReceptorInvokerTests {
   private sealed record TestEvent(Guid Id, string Data) : IEvent;
 
   /// <summary>
-  /// Creates a service scope factory that returns a fresh ServiceProvider each time.
+  /// Creates a service provider for testing.
+  /// ReceptorInvoker now uses ambient scope (scoped service) instead of creating its own scope.
   /// </summary>
-  private static IServiceScopeFactory _createScopeFactory() {
+  private static ServiceProvider _createServiceProvider() {
     var services = new ServiceCollection();
-    var provider = services.BuildServiceProvider();
-    return provider.GetRequiredService<IServiceScopeFactory>();
+    return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// Wraps a message in an IMessageEnvelope for testing.
+  /// </summary>
+  private static MessageEnvelope<T> _wrapInEnvelope<T>(T message) where T : notnull {
+    return new MessageEnvelope<T> {
+      MessageId = MessageId.From(TrackedGuid.NewMedo()),
+      Payload = message,
+      Hops = []
+    };
   }
 
   /// <summary>
@@ -61,11 +76,11 @@ public class ReceptorInvokerTests {
     // Register a receptor at PostInboxInline (like a receptor with [FireAt(PostInboxInline)])
     registry.RegisterReceptor<TestMessage>("PostInboxReceptor", LifecycleStage.PostInboxInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
@@ -85,11 +100,11 @@ public class ReceptorInvokerTests {
     // Register a receptor at PostInboxInline only
     registry.RegisterReceptor<TestMessage>("PostInboxReceptor", LifecycleStage.PostInboxInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act - Try to invoke at PreOutboxInline (wrong stage)
-    await invoker.InvokeAsync(message, LifecycleStage.PreOutboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PreOutboxInline);
 
     // Assert - Receptor should NOT be invoked
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
@@ -110,11 +125,11 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.PreOutboxInline);
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.LocalImmediateInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act - Invoke at PostInboxInline
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
@@ -135,11 +150,11 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.PreOutboxInline);
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.LocalImmediateInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PreOutboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PreOutboxInline);
 
     // Assert
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
@@ -160,11 +175,11 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.PreOutboxInline);
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.LocalImmediateInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.LocalImmediateInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.LocalImmediateInline);
 
     // Assert
     await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
@@ -185,11 +200,11 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.PreOutboxInline);
     registry.RegisterReceptor<TestMessage>("DefaultReceptor", LifecycleStage.LocalImmediateInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act - Invoke at PreInboxInline (NOT a default stage)
-    await invoker.InvokeAsync(message, LifecycleStage.PreInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PreInboxInline);
 
     // Assert - Receptor should NOT be invoked
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
@@ -208,11 +223,11 @@ public class ReceptorInvokerTests {
     registry.RegisterReceptor<TestMessage>("Receptor1", LifecycleStage.PostInboxInline);
     registry.RegisterReceptor<TestMessage>("Receptor2", LifecycleStage.PostInboxInline);
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - Both receptors should be invoked
     await Assert.That(tracker.Invocations).Count().IsEqualTo(2);
@@ -230,11 +245,11 @@ public class ReceptorInvokerTests {
     var registry = new TestReceptorRegistry(tracker);
     // Don't register any receptors for TestMessage
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory());
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
     var message = new TestMessage("test");
 
     // Act & Assert - Should not throw
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
   }
 
@@ -261,11 +276,11 @@ public class ReceptorInvokerTests {
       returnedEvent
     );
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), cascadeTracker);
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - The returned event should have been cascaded
     await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(1);
@@ -291,11 +306,11 @@ public class ReceptorInvokerTests {
       (event1, event2)
     );
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), cascadeTracker);
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - Both events should have been cascaded
     await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(2);
@@ -325,11 +340,11 @@ public class ReceptorInvokerTests {
       events
     );
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), cascadeTracker);
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - All events should have been cascaded
     await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(3);
@@ -352,11 +367,11 @@ public class ReceptorInvokerTests {
       null
     );
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), cascadeTracker);
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - No events should have been cascaded
     await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(0);
@@ -379,11 +394,11 @@ public class ReceptorInvokerTests {
       "just a string result"
     );
 
-    var invoker = new ReceptorInvoker(registry, _createScopeFactory(), cascadeTracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), cascadeTracker);
     var message = new TestMessage("test");
 
     // Act
-    await invoker.InvokeAsync(message, LifecycleStage.PostInboxInline);
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
 
     // Assert - No events should have been cascaded
     await Assert.That(cascadeTracker.CascadedMessages).Count().IsEqualTo(0);
@@ -396,7 +411,7 @@ public class ReceptorInvokerTests {
     private readonly List<IMessage> _cascadedMessages = [];
     public List<IMessage> CascadedMessages => _cascadedMessages;
 
-    public Task CascadeFromResultAsync(object result, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
       // Extract messages from result (using same logic as DispatcherEventCascader)
       foreach (var (message, _) in MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
         _cascadedMessages.Add(message);
@@ -464,5 +479,322 @@ public class ReceptorInvokerTests {
       var key = (messageType, stage);
       return _receptors.TryGetValue(key, out var list) ? list : [];
     }
+
+    /// <summary>
+    /// Registers a receptor with a callback that runs during invocation.
+    /// Used to test security context timing.
+    /// </summary>
+    public void RegisterReceptorWithCallback<TMessage>(
+        string receptorId,
+        LifecycleStage stage,
+        Action callback) {
+      var key = (typeof(TMessage), stage);
+      if (!_receptors.TryGetValue(key, out var list)) {
+        list = [];
+        _receptors[key] = list;
+      }
+
+      list.Add(new ReceptorInfo(
+          typeof(TMessage),
+          receptorId,
+          (sp, msg, ct) => {
+            callback();
+            _tracker.RecordInvocation(receptorId, stage);
+            return ValueTask.FromResult<object?>(null);
+          }));
+    }
+
+    /// <summary>
+    /// Registers a receptor that checks the service provider state.
+    /// Used to verify scoped services have security context.
+    /// </summary>
+    public void RegisterReceptorWithServiceCheck<TMessage>(
+        string receptorId,
+        LifecycleStage stage,
+        Action<IServiceProvider> checkCallback) {
+      var key = (typeof(TMessage), stage);
+      if (!_receptors.TryGetValue(key, out var list)) {
+        list = [];
+        _receptors[key] = list;
+      }
+
+      list.Add(new ReceptorInfo(
+          typeof(TMessage),
+          receptorId,
+          (sp, msg, ct) => {
+            checkCallback(sp);
+            _tracker.RecordInvocation(receptorId, stage);
+            return ValueTask.FromResult<object?>(null);
+          }));
+    }
   }
+
+  // ========================================
+  // ENVELOPE-BASED INVOCATION TESTS
+  // These tests are for the new envelope-based signature (TDD RED phase)
+  // ========================================
+
+  #region Envelope Extraction Tests
+
+  /// <summary>
+  /// Verifies that InvokeAsync with envelope extracts payload and invokes receptor.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithEnvelope_ExtractsPayloadAndInvokesReceptorAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+    var message = new TestMessage("envelope-test");
+    var envelope = _createEnvelope(message);
+
+    // Act - This will fail until interface changes to accept envelope
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that InvokeAsync with null envelope throws ArgumentNullException.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    // Act & Assert - This will fail until interface changes
+    await Assert.ThrowsAsync<ArgumentNullException>(async () =>
+        await invoker.InvokeAsync((IMessageEnvelope)null!, LifecycleStage.PostInboxInline));
+  }
+
+  #endregion
+
+  #region Security Context Tests
+
+  /// <summary>
+  /// Verifies that security context is established BEFORE receptors are invoked.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithSecurityProvider_EstablishesContextBeforeReceptorAsync() {
+    // Arrange
+    var contextEstablished = false;
+    var contextEstablishedBeforeReceptor = false;
+
+    var securityProvider = new TestSecurityContextProvider(
+        onEstablish: () => { contextEstablished = true; });
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
+    var provider = services.BuildServiceProvider();
+
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptorWithCallback<TestMessage>(
+        "SecureReceptor",
+        LifecycleStage.PostInboxInline,
+        callback: () => { contextEstablishedBeforeReceptor = contextEstablished; });
+
+    // Security provider is resolved from the service provider
+    var invoker = new ReceptorInvoker(registry, provider, null);
+    var envelope = _createEnvelope(new TestMessage("secure"));
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(contextEstablished).IsTrue();
+    await Assert.That(contextEstablishedBeforeReceptor).IsTrue();
+  }
+
+  /// <summary>
+  /// Verifies that IScopeContextAccessor.Current is set after security context establishment.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithSecurityProvider_SetsAccessorCurrentAsync() {
+    // Arrange
+    var expectedContext = new TestScopeContext();
+    var securityProvider = new TestSecurityContextProvider(returns: expectedContext);
+
+    var services = new ServiceCollection();
+    var accessor = new TestScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(accessor);
+    services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
+
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var provider = services.BuildServiceProvider();
+
+    // Security provider is resolved from the service provider
+    var invoker = new ReceptorInvoker(registry, provider, null);
+    var envelope = _createEnvelope(new TestMessage("test"));
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - accessor should have been set during the scope
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsEqualTo(expectedContext);
+  }
+
+  /// <summary>
+  /// Verifies that when security provider returns null, accessor is not set.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SecurityProviderReturnsNull_DoesNotSetAccessorAsync() {
+    // Arrange
+    var securityProvider = new TestSecurityContextProvider(returns: null);
+
+    var services = new ServiceCollection();
+    var accessor = new TestScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(accessor);
+    services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
+
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var provider = services.BuildServiceProvider();
+
+    // Security provider is resolved from the service provider
+    var invoker = new ReceptorInvoker(registry, provider, null);
+    var envelope = _createEnvelope(new TestMessage("test"));
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsFalse();
+  }
+
+  /// <summary>
+  /// Verifies that without a security provider, receptors still get invoked (backwards compatibility).
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithNullSecurityProvider_StillInvokesReceptorsAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    // No security provider registered - invoker should handle this gracefully
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null);
+    var envelope = _createEnvelope(new TestMessage("test"));
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that the envelope is passed to the security provider.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithSecurityProvider_PassesEnvelopeToProviderAsync() {
+    // Arrange
+    IMessageEnvelope? receivedEnvelope = null;
+    var securityProvider = new TestSecurityContextProvider(
+        onEstablish: () => { },
+        captureEnvelope: env => { receivedEnvelope = env; });
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
+    var provider = services.BuildServiceProvider();
+
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, provider, null);
+
+    var message = new TestMessage("envelope-test");
+    var envelope = _createEnvelope(message);
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(receivedEnvelope).IsNotNull();
+    await Assert.That(receivedEnvelope!.MessageId).IsEqualTo(envelope.MessageId);
+  }
+
+  #endregion
+
+  #region Test Helpers for Envelope Tests
+
+  private static MessageEnvelope<TMessage> _createEnvelope<TMessage>(TMessage message) {
+    return new MessageEnvelope<TMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = message,
+      Hops = [new MessageHop { Type = HopType.Current, ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+  }
+
+  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
+    private readonly Action? _onEstablish;
+    private readonly IScopeContext? _returns;
+    private readonly Action<IMessageEnvelope>? _captureEnvelope;
+
+    public TestSecurityContextProvider(
+        Action? onEstablish = null,
+        IScopeContext? returns = null,
+        Action<IMessageEnvelope>? captureEnvelope = null) {
+      _onEstablish = onEstablish;
+      _returns = returns;
+      _captureEnvelope = captureEnvelope;
+    }
+
+    public ValueTask<IScopeContext?> EstablishContextAsync(
+        IMessageEnvelope envelope,
+        IServiceProvider scopedProvider,
+        CancellationToken cancellationToken = default) {
+      _captureEnvelope?.Invoke(envelope);
+      _onEstablish?.Invoke();
+      return ValueTask.FromResult(_returns);
+    }
+  }
+
+  private sealed class TestScopeContextAccessor : IScopeContextAccessor {
+    public bool WasSet { get; private set; }
+    public IScopeContext? LastSetContext { get; private set; }
+
+    private IScopeContext? _current;
+    public IScopeContext? Current {
+      get => _current;
+      set {
+        WasSet = true;
+        LastSetContext = value;
+        _current = value;
+      }
+    }
+  }
+
+  private sealed class TestScopeContext : IScopeContext {
+    public PerspectiveScope Scope => new();
+    public IReadOnlySet<string> Roles => new HashSet<string>();
+    public IReadOnlySet<Permission> Permissions => new HashSet<Permission>();
+    public IReadOnlySet<SecurityPrincipalId> SecurityPrincipals => new HashSet<SecurityPrincipalId>();
+    public IReadOnlyDictionary<string, string> Claims => new Dictionary<string, string>();
+    public string? ActualPrincipal => null;
+    public string? EffectivePrincipal => null;
+    public SecurityContextType ContextType => SecurityContextType.User;
+
+    public bool HasPermission(Permission permission) => false;
+    public bool HasAnyPermission(params Permission[] permissions) => false;
+    public bool HasAllPermissions(params Permission[] permissions) => false;
+    public bool HasRole(string roleName) => false;
+    public bool HasAnyRole(params string[] roleNames) => false;
+    public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
+    public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
+  }
+
+  #endregion
 }

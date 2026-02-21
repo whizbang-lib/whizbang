@@ -4,6 +4,7 @@ using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
+
 /// <summary>
 /// Invokes receptors based on lifecycle stage and [FireAt] attributes.
 /// Handles both explicit stage targeting and default stage behavior.
@@ -39,13 +40,17 @@ public interface IReceptorInvoker {
   /// <summary>
   /// Invokes all receptors for the message at the specified lifecycle stage.
   /// </summary>
-  /// <param name="message">The message to pass to receptors.</param>
+  /// <param name="envelope">The message envelope containing the payload and metadata (hops, security context).</param>
   /// <param name="stage">The lifecycle stage at which to invoke receptors.</param>
   /// <param name="context">Optional context providing metadata about the invocation (stream ID, message source, etc.).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>Task that completes when all receptors have been invoked.</returns>
+  /// <remarks>
+  /// The invoker extracts the payload from the envelope, establishes security context
+  /// (if IMessageSecurityContextProvider is configured), then invokes all registered receptors.
+  /// </remarks>
   ValueTask InvokeAsync(
-      object message,
+      IMessageEnvelope envelope,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default);

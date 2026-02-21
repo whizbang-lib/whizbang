@@ -24,6 +24,15 @@ public sealed class ScopeContext : IScopeContext {
   public required IReadOnlyDictionary<string, string> Claims { get; init; }
 
   /// <inheritdoc />
+  public string? ActualPrincipal { get; init; }
+
+  /// <inheritdoc />
+  public string? EffectivePrincipal { get; init; }
+
+  /// <inheritdoc />
+  public SecurityContextType ContextType { get; init; } = SecurityContextType.User;
+
+  /// <inheritdoc />
   public bool HasPermission(Permission permission) =>
     Permissions.Any(p => p.Matches(permission));
 

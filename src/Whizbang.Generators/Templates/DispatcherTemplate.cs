@@ -38,12 +38,12 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     ITopicRegistry? topicRegistry = null,
     ITopicRoutingStrategy? topicRoutingStrategy = null,
     IAggregateIdExtractor? aggregateIdExtractor = null,
-    IReceptorInvoker? receptorInvoker = null,
     IEnvelopeSerializer? envelopeSerializer = null,
     IEnvelopeRegistry? envelopeRegistry = null,
     IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-    ILifecycleInvoker? lifecycleInvoker = null
-  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker) {
+    ILifecycleInvoker? lifecycleInvoker = null,
+    IReceptorRegistry? receptorRegistry = null
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, streamIdExtractor: null, receptorRegistry) {
     _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 
@@ -166,10 +166,11 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// <summary>
   /// Generated override - publishes cascaded events to outbox using type-switch dispatch.
   /// Zero reflection - uses compile-time type matching for AOT compatibility.
+  /// Passes sourceEnvelope to PublishToOutboxAsync for security context inheritance.
   /// </summary>
   /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
   [DebuggerStepThrough]
-  protected override Task CascadeToOutboxAsync(global::Whizbang.Core.IMessage message, Type messageType) {
+  protected override Task CascadeToOutboxAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null) {
     // Generated type-switch dispatch - zero reflection!
     #region OUTBOX_CASCADE
     // This region will be replaced with generated cascade code
@@ -182,10 +183,11 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Generated override - stores events to event store only (no transport).
   /// Uses destination=null to store events and create perspective events, but skip transport publishing.
   /// Zero reflection - uses compile-time type matching for AOT compatibility.
+  /// Passes sourceEnvelope to PublishToOutboxAsync for security context inheritance.
   /// </summary>
   /// <docs>core-concepts/dispatcher#event-store-only</docs>
   [DebuggerStepThrough]
-  protected override Task CascadeToEventStoreOnlyAsync(global::Whizbang.Core.IMessage message, Type messageType) {
+  protected override Task CascadeToEventStoreOnlyAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null) {
     // Generated type-switch dispatch - zero reflection!
     #region EVENT_STORE_ONLY_CASCADE
     // This region will be replaced with generated cascade code

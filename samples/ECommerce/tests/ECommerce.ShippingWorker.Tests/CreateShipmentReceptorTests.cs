@@ -5,6 +5,7 @@ using ECommerce.ShippingWorker.Receptors;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.ShippingWorker.Tests;
@@ -116,6 +117,8 @@ public class CreateShipmentReceptorTests {
       return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(MessageId.New(), "test"));
     }
     public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
   }
 }

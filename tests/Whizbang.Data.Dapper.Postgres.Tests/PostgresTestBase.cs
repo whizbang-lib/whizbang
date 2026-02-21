@@ -1,4 +1,3 @@
-using System.Data;
 using Dapper;
 using Npgsql;
 using TUnit.Core;
@@ -16,26 +15,19 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// This approach avoids the previous issue where each test created its own container,
 /// causing 60+ simultaneous container startups and Docker resource exhaustion.
 /// </summary>
+/// <remarks>
+/// Dapper type handlers for TrackedGuid and DateTimeOffset are registered via
+/// <see cref="DapperTypeHandlers"/> module initializer.
+/// </remarks>
 public abstract class PostgresTestBase : IAsyncDisposable {
   static PostgresTestBase() {
     // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 
-    // Register Dapper type handler to convert DateTime to DateTimeOffset
-    SqlMapper.AddTypeHandler(new DateTimeOffsetHandler());
-  }
-
-  private sealed class DateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset> {
-    public override DateTimeOffset Parse(object value) {
-      if (value is DateTime dt) {
-        return new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
-      }
-      return (DateTimeOffset)value;
-    }
-
-    public override void SetValue(IDbDataParameter parameter, DateTimeOffset value) {
-      parameter.Value = value;
-    }
+    // Force Whizbang.Data.Dapper.Custom assembly to load, which triggers its module initializer
+    // to register TrackedGuidHandler with Dapper. Without this, the assembly might not load
+    // until too late, causing TrackedGuid parameters to fail.
+    _ = typeof(TrackedGuidHandler).Assembly;
   }
 
   private string? _testDatabaseName;
@@ -148,8 +140,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "004_CreateAcquirePerspectiveCheckpointFunction.sql",
       "005_CreateCompletePerspectiveCheckpointFunction.sql",
       "006_CreateNormalizeEventTypeFunction.sql",
+      "007_CreateActiveStreamsTable.sql",
       "008_CreateMessageAssociationRegistry.sql",
-      "008_1_CreateActiveStreamsTable.sql",
       "009_CreatePerspectiveEventsTable.sql",
       "010_RegisterInstanceHeartbeat.sql",
       "011_CleanupStaleInstances.sql",

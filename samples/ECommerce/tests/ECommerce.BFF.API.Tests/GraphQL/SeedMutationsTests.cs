@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.BFF.API.Tests.GraphQL;
@@ -60,6 +61,7 @@ public class SeedMutationsTests {
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
     public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   /// <summary>
@@ -224,5 +226,6 @@ public class SeedMutationsTests {
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
     public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 }

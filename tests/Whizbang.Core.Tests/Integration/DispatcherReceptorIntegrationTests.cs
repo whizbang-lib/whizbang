@@ -251,7 +251,7 @@ public class DispatcherReceptorIntegrationTests {
   /// Tests handler not found error through the complete stack
   /// </summary>
   [Test]
-  public async Task Integration_UnregisteredMessage_ShouldThrowHandlerNotFoundAsync() {
+  public async Task Integration_UnregisteredMessage_ShouldThrowReceptorNotFoundAsync() {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
@@ -269,7 +269,7 @@ public class DispatcherReceptorIntegrationTests {
     // Act & Assert
     var exception = await Assert.That(async () =>
         await dispatcher.LocalInvokeAsync<PlaceOrder, OrderPlaced>(command))
-        .ThrowsExactly<HandlerNotFoundException>();
+        .ThrowsExactly<ReceptorNotFoundException>();
 
     await Assert.That(exception!.Message).Contains("PlaceOrder");
   }

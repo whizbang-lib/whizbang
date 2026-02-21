@@ -8,6 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 
 namespace Whizbang.Core.Workers;
@@ -176,15 +177,16 @@ public static class TransportConsumerBuilderExtensions {
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
     builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
 
-    // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
+    // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
-    builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
+    // Scoped registration follows industry patterns (MediatR, MassTransit) - workers
+    // create a scope per message and resolve the invoker from that scope.
+    builder.Services.TryAddScoped<IReceptorInvoker>(sp => {
       // Try to get the generated registry (if AddWhizbangReceptorRegistry was called)
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
-        var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
         var eventCascader = sp.GetService<IEventCascader>();
-        return new ReceptorInvoker(registry, scopeFactory, eventCascader);
+        return new ReceptorInvoker(registry, sp, eventCascader);
       }
 
       // Fallback: return a no-op invoker if no registry is available
@@ -294,15 +296,16 @@ public static class TransportConsumerBuilderExtensions {
     // IDispatcher → IReceptorInvoker → IEventCascader → IDispatcher)
     builder.Services.TryAddSingleton<IEventCascader>(sp => new DispatcherEventCascader(sp));
 
-    // Register IReceptorInvoker if not already registered (required by TransportConsumerWorker)
+    // Register IReceptorInvoker as scoped (required by TransportConsumerWorker)
     // Uses TryAdd to avoid overwriting if AddWhizbangReceptorRegistry() was already called
-    builder.Services.TryAddSingleton<IReceptorInvoker>(sp => {
+    // Scoped registration follows industry patterns (MediatR, MassTransit) - workers
+    // create a scope per message and resolve the invoker from that scope.
+    builder.Services.TryAddScoped<IReceptorInvoker>(sp => {
       // Try to get the generated registry (if AddWhizbangReceptorRegistry was called)
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
-        var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
         var eventCascader = sp.GetService<IEventCascader>();
-        return new ReceptorInvoker(registry, scopeFactory, eventCascader);
+        return new ReceptorInvoker(registry, sp, eventCascader);
       }
 
       // Fallback: return a no-op invoker if no registry is available

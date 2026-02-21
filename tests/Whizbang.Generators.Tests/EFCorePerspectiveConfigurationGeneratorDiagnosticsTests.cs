@@ -157,7 +157,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
     await Assert.That(generatedCode).Contains("LogDiscoveryDiagnostics");
     await Assert.That(generatedCode).Contains("ProductDto");
-    await Assert.That(generatedCode).Contains("wh_per_product_dto");  // Whizbang table name with prefix
+    // ProductDto → wh_per_product (Dto suffix stripped by default configuration)
+    await Assert.That(generatedCode).Contains("wh_per_product");
   }
 
   /// <summary>
