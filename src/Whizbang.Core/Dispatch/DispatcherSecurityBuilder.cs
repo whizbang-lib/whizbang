@@ -37,7 +37,6 @@ namespace Whizbang.Core.Dispatch;
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public sealed class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
   private readonly SecurityContextType _contextType;
   private readonly string? _effectivePrincipal;
   private readonly string? _actualPrincipal;
@@ -46,18 +45,15 @@ public sealed class DispatcherSecurityBuilder {
   /// Creates a new security builder for dispatching with explicit security context.
   /// </summary>
   /// <param name="dispatcher">The dispatcher to use for sending messages.</param>
-  /// <param name="scopeContextAccessor">The scope context accessor for setting security context.</param>
   /// <param name="contextType">The type of security context being established.</param>
   /// <param name="effectivePrincipal">The effective principal (identity the operation runs as).</param>
   /// <param name="actualPrincipal">The actual principal (who initiated the operation, may be null for true system ops).</param>
   internal DispatcherSecurityBuilder(
     IDispatcher dispatcher,
-    IScopeContextAccessor scopeContextAccessor,
     SecurityContextType contextType,
     string? effectivePrincipal,
     string? actualPrincipal) {
     _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
     _contextType = contextType;
     _effectivePrincipal = effectivePrincipal;
     _actualPrincipal = actualPrincipal;
@@ -77,12 +73,12 @@ public sealed class DispatcherSecurityBuilder {
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       return await _dispatcher.SendAsync(message);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
@@ -102,12 +98,12 @@ public sealed class DispatcherSecurityBuilder {
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       return await _dispatcher.SendAsync(message, context, callerMemberName, callerFilePath, callerLineNumber);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
@@ -124,12 +120,12 @@ public sealed class DispatcherSecurityBuilder {
     // Check cancellation before doing any work
     options.CancellationToken.ThrowIfCancellationRequested();
 
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       return await _dispatcher.SendAsync(message, options);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
@@ -140,12 +136,12 @@ public sealed class DispatcherSecurityBuilder {
   /// <param name="eventData">The event to publish.</param>
   /// <returns>Delivery receipt with correlation information.</returns>
   public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       return await _dispatcher.PublishAsync(eventData);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
@@ -157,12 +153,12 @@ public sealed class DispatcherSecurityBuilder {
   /// <param name="message">The message to process.</param>
   /// <returns>The typed business result from the receptor.</returns>
   public async ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       return await _dispatcher.LocalInvokeAsync<TMessage, TResult>(message);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
@@ -173,12 +169,12 @@ public sealed class DispatcherSecurityBuilder {
   /// <param name="message">The message to process.</param>
   /// <returns>ValueTask representing the completion.</returns>
   public async ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull {
-    var previousContext = _scopeContextAccessor.Current;
+    var previousContext = ScopeContextAccessor.CurrentContext;
     try {
-      _scopeContextAccessor.Current = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = _createExplicitContext();
       await _dispatcher.LocalInvokeAsync(message);
     } finally {
-      _scopeContextAccessor.Current = previousContext;
+      ScopeContextAccessor.CurrentContext = previousContext;
     }
   }
 
