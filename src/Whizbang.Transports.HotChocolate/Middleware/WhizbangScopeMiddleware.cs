@@ -39,14 +39,21 @@ public class WhizbangScopeMiddleware {
     var principals = _extractPrincipals(context);
     var claims = _extractClaims(context);
 
-    // Set the scope context for this request
-    scopeContextAccessor.Current = new RequestScopeContext {
+    // Create SecurityExtraction with all extracted data
+    var extraction = new SecurityExtraction {
       Scope = scope,
       Roles = roles,
       Permissions = permissions,
       SecurityPrincipals = principals,
-      Claims = claims
+      Claims = claims,
+      Source = "HttpContext",
+      ActualPrincipal = scope.UserId,
+      EffectivePrincipal = scope.UserId,
+      ContextType = SecurityContextType.User
     };
+
+    // Wrap in ImmutableScopeContext for Dispatcher compatibility
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
 
     await _next(context);
   }
@@ -162,43 +169,6 @@ public class WhizbangScopeMiddleware {
 
     return claims;
   }
-}
-
-/// <summary>
-/// Scope context implementation for HTTP requests.
-/// </summary>
-internal sealed class RequestScopeContext : IScopeContext {
-  public required PerspectiveScope Scope { get; init; }
-  public required IReadOnlySet<string> Roles { get; init; }
-  public required IReadOnlySet<Permission> Permissions { get; init; }
-  public required IReadOnlySet<SecurityPrincipalId> SecurityPrincipals { get; init; }
-  public required IReadOnlyDictionary<string, string> Claims { get; init; }
-
-  public bool HasPermission(Permission permission) {
-    foreach (var p in Permissions) {
-      if (p.Matches(permission)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  public bool HasAnyPermission(params Permission[] permissions) =>
-      permissions.Any(HasPermission);
-
-  public bool HasAllPermissions(params Permission[] permissions) =>
-      permissions.All(HasPermission);
-
-  public bool HasRole(string roleName) => Roles.Contains(roleName);
-
-  public bool HasAnyRole(params string[] roleNames) =>
-      roleNames.Any(r => Roles.Contains(r));
-
-  public bool IsMemberOfAny(params SecurityPrincipalId[] principals) =>
-      principals.Any(p => SecurityPrincipals.Contains(p));
-
-  public bool IsMemberOfAll(params SecurityPrincipalId[] principals) =>
-      principals.All(p => SecurityPrincipals.Contains(p));
 }
 
 /// <summary>

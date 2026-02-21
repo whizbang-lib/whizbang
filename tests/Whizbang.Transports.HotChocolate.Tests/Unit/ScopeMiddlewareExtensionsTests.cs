@@ -7,7 +7,7 @@ using Whizbang.Transports.HotChocolate.Middleware;
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
 
 /// <summary>
-/// Tests for <see cref="ScopeMiddlewareExtensions"/> and <see cref="AsyncLocalScopeContextAccessor"/>.
+/// Tests for <see cref="ScopeMiddlewareExtensions"/>.
 /// Verifies service registration and middleware pipeline configuration.
 /// </summary>
 /// <tests>src/Whizbang.Transports.HotChocolate/Middleware/ScopeMiddlewareExtensions.cs</tests>
@@ -29,7 +29,7 @@ public class ScopeMiddlewareExtensionsTests {
   }
 
   [Test]
-  public async Task AddWhizbangScope_ShouldRegisterAsAsyncLocalScopeContextAccessorAsync() {
+  public async Task AddWhizbangScope_ShouldRegisterAsScopeContextAccessorAsync() {
     // Arrange
     var services = new ServiceCollection();
 
@@ -37,9 +37,9 @@ public class ScopeMiddlewareExtensionsTests {
     services.AddWhizbangScope();
     var provider = services.BuildServiceProvider();
 
-    // Assert
+    // Assert - Now uses Core's ScopeContextAccessor (with static AsyncLocal)
     var accessor = provider.GetRequiredService<IScopeContextAccessor>();
-    await Assert.That(accessor).IsTypeOf<AsyncLocalScopeContextAccessor>();
+    await Assert.That(accessor).IsTypeOf<ScopeContextAccessor>();
   }
 
   [Test]
@@ -160,21 +160,22 @@ public class ScopeMiddlewareExtensionsTests {
 
   #endregion
 
-  #region AsyncLocalScopeContextAccessor
+  #region ScopeContextAccessor
 
   [Test]
-  public async Task AsyncLocalScopeContextAccessor_Current_ShouldBeNullByDefaultAsync() {
-    // Arrange
-    var accessor = new AsyncLocalScopeContextAccessor();
+  public async Task ScopeContextAccessor_Current_ShouldBeNullByDefaultAsync() {
+    // Arrange - Clear any existing context first (static AsyncLocal)
+    ScopeContextAccessor.CurrentContext = null;
+    var accessor = new ScopeContextAccessor();
 
     // Assert
     await Assert.That(accessor.Current).IsNull();
   }
 
   [Test]
-  public async Task AsyncLocalScopeContextAccessor_Current_ShouldGetAndSetValueAsync() {
+  public async Task ScopeContextAccessor_Current_ShouldGetAndSetValueAsync() {
     // Arrange
-    var accessor = new AsyncLocalScopeContextAccessor();
+    var accessor = new ScopeContextAccessor();
     var scopeContext = _createSimpleScopeContext();
 
     // Act
@@ -182,12 +183,15 @@ public class ScopeMiddlewareExtensionsTests {
 
     // Assert
     await Assert.That(accessor.Current).IsSameReferenceAs(scopeContext);
+
+    // Cleanup
+    accessor.Current = null;
   }
 
   [Test]
-  public async Task AsyncLocalScopeContextAccessor_ShouldIsolateAcrossAsyncFlowsAsync() {
+  public async Task ScopeContextAccessor_ShouldIsolateAcrossAsyncFlowsAsync() {
     // Arrange
-    var accessor = new AsyncLocalScopeContextAccessor();
+    var accessor = new ScopeContextAccessor();
     var scopeContext1 = _createSimpleScopeContext();
     var scopeContext2 = _createSimpleScopeContext();
 
@@ -205,12 +209,15 @@ public class ScopeMiddlewareExtensionsTests {
     await Assert.That(accessor.Current).IsSameReferenceAs(scopeContext1);
     // The child saw the parent's value (AsyncLocal flows down)
     await Assert.That(capturedInTask).IsSameReferenceAs(scopeContext1);
+
+    // Cleanup
+    accessor.Current = null;
   }
 
   [Test]
-  public async Task AsyncLocalScopeContextAccessor_ShouldAllowSettingToNullAsync() {
+  public async Task ScopeContextAccessor_ShouldAllowSettingToNullAsync() {
     // Arrange
-    var accessor = new AsyncLocalScopeContextAccessor();
+    var accessor = new ScopeContextAccessor();
     accessor.Current = _createSimpleScopeContext();
 
     // Act
@@ -220,18 +227,44 @@ public class ScopeMiddlewareExtensionsTests {
     await Assert.That(accessor.Current).IsNull();
   }
 
+  [Test]
+  public async Task ScopeContextAccessor_StaticAndInstance_ShouldShareStateAsync() {
+    // This test verifies that static CurrentContext and instance Current
+    // share the same underlying AsyncLocal storage - critical for Dispatcher compatibility
+    var accessor = new ScopeContextAccessor();
+    var scopeContext = _createSimpleScopeContext();
+
+    // Act - set via instance
+    accessor.Current = scopeContext;
+
+    // Assert - should be readable via static accessor
+    await Assert.That(ScopeContextAccessor.CurrentContext).IsSameReferenceAs(scopeContext);
+
+    // Act - set via static
+    var scopeContext2 = _createSimpleScopeContext();
+    ScopeContextAccessor.CurrentContext = scopeContext2;
+
+    // Assert - should be readable via instance
+    await Assert.That(accessor.Current).IsSameReferenceAs(scopeContext2);
+
+    // Cleanup
+    accessor.Current = null;
+  }
+
   #endregion
 
   #region Helpers
 
-  private static RequestScopeContext _createSimpleScopeContext() {
-    return new RequestScopeContext {
+  private static ImmutableScopeContext _createSimpleScopeContext() {
+    var extraction = new SecurityExtraction {
       Scope = new Core.Lenses.PerspectiveScope(),
       Roles = new HashSet<string>(),
       Permissions = new HashSet<Core.Security.Permission>(),
       SecurityPrincipals = new HashSet<Core.Security.SecurityPrincipalId>(),
-      Claims = new Dictionary<string, string>()
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
     };
+    return new ImmutableScopeContext(extraction, shouldPropagate: true);
   }
 
   #endregion
