@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Dapper;
 using ECommerce.BFF.API.Generated;
@@ -17,6 +18,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -464,6 +466,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    // CRITICAL: Without this, PostPerspectiveInline lifecycle callbacks don't fire, breaking PerspectiveCompletionWaiter
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
+
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -491,20 +497,35 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Azure Service Bus consumer for InventoryWorker
     // CRITICAL: InventoryWorker MUST subscribe to receive its own published events to store them in local event store
     // Without this, events go to outbox → ServiceBus but never get stored to inventory.wh_event_store for perspectives
-    var inventoryConsumerOptions = new ServiceBusConsumerOptions();
-    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-00-b"));  // topic-00 subscription
-    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-01-b"));  // topic-01 subscription
+    // Using TransportConsumerWorker (generic) instead of ServiceBusConsumerWorker for consistent behavior with RabbitMQ
+    var inventoryConsumerOptions = new TransportConsumerOptions();
+    // For Azure Service Bus: Address = topic name, RoutingKey = subscription name
+    inventoryConsumerOptions.Destinations.Add(new TransportDestination(
+      Address: topicA,  // topic-00
+      RoutingKey: "sub-00-b",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+      }
+    ));
+    inventoryConsumerOptions.Destinations.Add(new TransportDestination(
+      Address: topicB,  // topic-01
+      RoutingKey: "sub-01-b",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+      }
+    ));
     builder.Services.AddSingleton(inventoryConsumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
+    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+      new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
         inventoryConsumerOptions,
-        sp.GetService<ILifecycleInvoker>(),  // Add lifecycle invoker for Inbox stages
-        sp.GetService<ILifecycleMessageDeserializer>()  // Add lifecycle deserializer
+        new SubscriptionResilienceOptions(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions,
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
+        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
 
@@ -639,6 +660,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    // CRITICAL: Without this, PostPerspectiveInline lifecycle callbacks don't fire, breaking PerspectiveCompletionWaiter
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
+
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -655,20 +680,35 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
     // BFF subscribes to generic topics with generic subscriptions (sub-00-a, sub-01-a)
-    var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-00-a"));  // topic-00 subscription
-    consumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-01-a"));  // topic-01 subscription
+    // Using TransportConsumerWorker (generic) instead of ServiceBusConsumerWorker for consistent behavior with RabbitMQ
+    var consumerOptions = new TransportConsumerOptions();
+    // For Azure Service Bus: Address = topic name, RoutingKey = subscription name
+    consumerOptions.Destinations.Add(new TransportDestination(
+      Address: topicA,  // topic-00
+      RoutingKey: "sub-00-a",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
+    ));
+    consumerOptions.Destinations.Add(new TransportDestination(
+      Address: topicB,  // topic-01
+      RoutingKey: "sub-01-a",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
+    ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
+    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+      new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
         consumerOptions,
-        sp.GetService<ILifecycleInvoker>(),  // Add lifecycle invoker for Inbox stages
-        sp.GetService<ILifecycleMessageDeserializer>()  // Add lifecycle deserializer
+        new SubscriptionResilienceOptions(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions,
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
+        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
 
