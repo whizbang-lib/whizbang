@@ -27,8 +27,11 @@ public static class TestConstants {
   ///     SimpleReceptor, InventoryReservedTracker, PaymentInitiatedTracker)
   /// - 5 additional receptors from other test files
   /// - 2 receptors from DispatcherDeliveryReceiptTests.cs (CreateOrderReceptor, ProcessPaymentReceptor)
+  /// - 1 receptor from SecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
+  /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
+  ///     DispatcherSecurityBuilderVoidReceptor)
   ///
-  /// Total: 53 receptors
+  /// Total: 56 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 53;
+  public const int EXPECTED_RECEPTOR_COUNT = 56;
 }
