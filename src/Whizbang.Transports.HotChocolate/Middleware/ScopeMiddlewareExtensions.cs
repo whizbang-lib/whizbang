@@ -30,7 +30,7 @@ public static class ScopeMiddlewareExtensions {
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection for chaining.</returns>
   public static IServiceCollection AddWhizbangScope(this IServiceCollection services) {
-    services.AddSingleton<IScopeContextAccessor, AsyncLocalScopeContextAccessor>();
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
     return services;
   }
 
@@ -43,7 +43,7 @@ public static class ScopeMiddlewareExtensions {
   public static IServiceCollection AddWhizbangScope(
       this IServiceCollection services,
       Action<WhizbangScopeOptions> configure) {
-    services.AddSingleton<IScopeContextAccessor, AsyncLocalScopeContextAccessor>();
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
 
     var options = new WhizbangScopeOptions();
     configure(options);
@@ -74,18 +74,5 @@ public static class ScopeMiddlewareExtensions {
     var options = new WhizbangScopeOptions();
     configure(options);
     return app.UseMiddleware<WhizbangScopeMiddleware>(options);
-  }
-}
-
-/// <summary>
-/// AsyncLocal-based implementation of <see cref="IScopeContextAccessor"/>.
-/// Provides request-scoped access to the current scope context.
-/// </summary>
-internal sealed class AsyncLocalScopeContextAccessor : IScopeContextAccessor {
-  private readonly AsyncLocal<IScopeContext?> _current = new();
-
-  public IScopeContext? Current {
-    get => _current.Value;
-    set => _current.Value = value;
   }
 }

@@ -7,7 +7,7 @@ using Whizbang.Transports.HotChocolate.Middleware;
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
 
 /// <summary>
-/// Tests for <see cref="WhizbangScopeMiddleware"/> and <see cref="RequestScopeContext"/>.
+/// Tests for <see cref="WhizbangScopeMiddleware"/>.
 /// Verifies scope extraction from HTTP claims and headers.
 /// </summary>
 /// <tests>src/Whizbang.Transports.HotChocolate/Middleware/WhizbangScopeMiddleware.cs</tests>
@@ -26,6 +26,56 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current).IsNotNull();
+  }
+
+  [Test]
+  public async Task InvokeAsync_ShouldSetImmutableScopeContext_ForDispatcherCompatibilityAsync() {
+    // Arrange - This test verifies the fix for the ImmutableScopeContext requirement
+    // The Dispatcher checks: if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx)
+    var accessor = new TestScopeContextAccessor();
+    var middleware = new WhizbangScopeMiddleware(_ => Task.CompletedTask);
+    var context = _createContextWithClaims(
+      ("tenant_id", "tenant-123"),
+      (ClaimTypes.NameIdentifier, "user-456")
+    );
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert - Must be ImmutableScopeContext, not just IScopeContext
+    await Assert.That(accessor.Current).IsTypeOf<ImmutableScopeContext>();
+  }
+
+  [Test]
+  public async Task InvokeAsync_ImmutableScopeContext_ShouldHaveCorrectSourceAsync() {
+    // Arrange
+    var accessor = new TestScopeContextAccessor();
+    var middleware = new WhizbangScopeMiddleware(_ => Task.CompletedTask);
+    var context = new DefaultHttpContext();
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    var immutableContext = accessor.Current as ImmutableScopeContext;
+    await Assert.That(immutableContext).IsNotNull();
+    await Assert.That(immutableContext!.Source).IsEqualTo("HttpContext");
+  }
+
+  [Test]
+  public async Task InvokeAsync_ImmutableScopeContext_ShouldPropagateAsync() {
+    // Arrange - ShouldPropagate must be true for security context to flow to outgoing messages
+    var accessor = new TestScopeContextAccessor();
+    var middleware = new WhizbangScopeMiddleware(_ => Task.CompletedTask);
+    var context = new DefaultHttpContext();
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    var immutableContext = accessor.Current as ImmutableScopeContext;
+    await Assert.That(immutableContext).IsNotNull();
+    await Assert.That(immutableContext!.ShouldPropagate).IsTrue();
   }
 
   [Test]
@@ -597,7 +647,7 @@ public class WhizbangScopeMiddlewareTests {
 
   #endregion
 
-  #region RequestScopeContext - Permission Methods
+  #region ImmutableScopeContext - Permission Methods
 
   [Test]
   public async Task HasPermission_WithMatchingPermission_ShouldReturnTrueAsync() {
@@ -667,7 +717,7 @@ public class WhizbangScopeMiddlewareTests {
 
   #endregion
 
-  #region RequestScopeContext - Role Methods
+  #region ImmutableScopeContext - Role Methods
 
   [Test]
   public async Task HasRole_WithMatchingRole_ShouldReturnTrueAsync() {
@@ -707,7 +757,7 @@ public class WhizbangScopeMiddlewareTests {
 
   #endregion
 
-  #region RequestScopeContext - Principal Methods
+  #region ImmutableScopeContext - Principal Methods
 
   [Test]
   public async Task IsMemberOfAny_WithMatchingPrincipal_ShouldReturnTrueAsync() {
@@ -819,17 +869,19 @@ public class WhizbangScopeMiddlewareTests {
     return context;
   }
 
-  private static RequestScopeContext _createScopeContext(
+  private static ImmutableScopeContext _createScopeContext(
       string[]? roles = null,
       string[]? permissions = null,
       SecurityPrincipalId[]? principals = null) {
-    return new RequestScopeContext {
+    var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope(),
       Roles = new HashSet<string>(roles ?? []),
       Permissions = new HashSet<Permission>((permissions ?? []).Select(p => new Permission(p))),
       SecurityPrincipals = new HashSet<SecurityPrincipalId>(principals ?? []),
-      Claims = new Dictionary<string, string>()
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
     };
+    return new ImmutableScopeContext(extraction, shouldPropagate: true);
   }
 
   #endregion
