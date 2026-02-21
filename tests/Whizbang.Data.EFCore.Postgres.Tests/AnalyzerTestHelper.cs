@@ -35,6 +35,13 @@ public static class AnalyzerTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
+    // Add reference to System.ComponentModel.Annotations (for [NotMapped] attribute)
+    // Note: NotMappedAttribute is in System.ComponentModel.Annotations, not DataAnnotations
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Annotations.dll")));
+
+    // Add reference to System.Text.Json (for [JsonIgnore] attribute)
+    references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute).Assembly.Location));
+
     // Add reference to Whizbang.Core (for IPerspectiveFor, etc.)
     try {
       var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
