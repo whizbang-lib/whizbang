@@ -1900,4 +1900,630 @@ public record LocationCommand(GeoCoordinate Location, string Name) : ICommand;
     // GeoCoordinate SHOULD have a factory (not a WhizbangId)
     await Assert.That(code).Contains("Create_TestApp_GeoCoordinate");
   }
+
+  // ==================== Nullable Value Type List Tests ====================
+
+  /// <summary>
+  /// Primary bug fix test: Verifies that List&lt;Guid?&gt; is generated correctly.
+  /// The bug was that _discoverListTypes skipped ALL System.* types including Guid?,
+  /// when it should only skip collection types (List&lt;List&lt;T&gt;&gt;).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableGuid_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<Guid?> property
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessIdsCommand(List<Guid?> OptionalIds) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<Guid?> factory method SHOULD be generated
+    // ElementUniqueIdentifier: "global::System.Guid?" -> "System_Guid__Nullable"
+    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("CreateList_System_Guid__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;int?&gt; is generated correctly.
+  /// Generator normalizes 'int' keyword alias to 'System.Int32' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableInt_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<int?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessCountsCommand(List<int?> OptionalCounts) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<int?> factory method SHOULD be generated
+    // Generator normalizes 'int' -> 'global::System.Int32' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Int32?>");
+    await Assert.That(code).Contains("CreateList_System_Int32__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;DateTime?&gt; is generated correctly.
+  /// DateTime has no C# keyword alias, so uses fully qualified name.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableDateTime_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<DateTime?> property
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessDatesCommand(List<DateTime?> OptionalDates) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<DateTime?> factory method SHOULD be generated
+    // DateTime has no keyword alias - uses fully qualified name
+    await Assert.That(code!).Contains("List<global::System.DateTime?>");
+    await Assert.That(code).Contains("CreateList_System_DateTime__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;decimal?&gt; is generated correctly.
+  /// Generator normalizes 'decimal' keyword alias to 'System.Decimal' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableDecimal_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<decimal?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessAmountsCommand(List<decimal?> OptionalAmounts) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<decimal?> factory method SHOULD be generated
+    // Generator normalizes 'decimal' -> 'global::System.Decimal' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Decimal?>");
+    await Assert.That(code).Contains("CreateList_System_Decimal__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;DateTimeOffset?&gt; is generated correctly.
+  /// DateTimeOffset has no C# keyword alias, so uses fully qualified name.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableDateTimeOffset_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<DateTimeOffset?> property
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessTimestampsCommand(List<DateTimeOffset?> OptionalTimestamps) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<DateTimeOffset?> factory method SHOULD be generated
+    // DateTimeOffset has no keyword alias - uses fully qualified name
+    await Assert.That(code!).Contains("List<global::System.DateTimeOffset?>");
+    await Assert.That(code).Contains("CreateList_System_DateTimeOffset__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;bool?&gt; is generated correctly.
+  /// Generator normalizes 'bool' keyword alias to 'System.Boolean' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableBool_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<bool?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessFlagsCommand(List<bool?> OptionalFlags) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<bool?> factory method SHOULD be generated
+    // Generator normalizes 'bool' -> 'global::System.Boolean' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Boolean?>");
+    await Assert.That(code).Contains("CreateList_System_Boolean__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;long?&gt; is generated correctly.
+  /// Generator normalizes 'long' keyword alias to 'System.Int64' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableLong_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<long?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessLongIdsCommand(List<long?> OptionalIds) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<long?> factory method SHOULD be generated
+    // Generator normalizes 'long' -> 'global::System.Int64' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Int64?>");
+    await Assert.That(code).Contains("CreateList_System_Int64__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;short?&gt; is generated correctly.
+  /// Generator normalizes 'short' keyword alias to 'System.Int16' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableShort_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<short?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessShortValuesCommand(List<short?> OptionalValues) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<short?> factory method SHOULD be generated
+    // Generator normalizes 'short' -> 'global::System.Int16' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Int16?>");
+    await Assert.That(code).Contains("CreateList_System_Int16__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;byte?&gt; is generated correctly.
+  /// Generator normalizes 'byte' keyword alias to 'System.Byte' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableByte_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<byte?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessBytesCommand(List<byte?> OptionalBytes) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<byte?> factory method SHOULD be generated
+    // Generator normalizes 'byte' -> 'global::System.Byte' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Byte?>");
+    await Assert.That(code).Contains("CreateList_System_Byte__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;float?&gt; is generated correctly.
+  /// Generator normalizes 'float' keyword alias to 'System.Single' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableFloat_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<float?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessFloatsCommand(List<float?> OptionalFloats) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<float?> factory method SHOULD be generated
+    // Generator normalizes 'float' -> 'global::System.Single' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Single?>");
+    await Assert.That(code).Contains("CreateList_System_Single__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;double?&gt; is generated correctly.
+  /// Generator normalizes 'double' keyword alias to 'System.Double' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableDouble_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<double?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessDoublesCommand(List<double?> OptionalDoubles) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<double?> factory method SHOULD be generated
+    // Generator normalizes 'double' -> 'global::System.Double' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Double?>");
+    await Assert.That(code).Contains("CreateList_System_Double__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;char?&gt; is generated correctly.
+  /// Generator normalizes 'char' keyword alias to 'System.Char' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableChar_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<char?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessCharsCommand(List<char?> OptionalChars) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<char?> factory method SHOULD be generated
+    // Generator normalizes 'char' -> 'global::System.Char' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.Char?>");
+    await Assert.That(code).Contains("CreateList_System_Char__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that multiple nullable value type lists in one message are all generated.
+  /// Verifies that all keyword aliases are normalized to fully qualified names.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleNullableValueTypeLists_GeneratesAllFactoriesAsync() {
+    // Arrange - Message with multiple nullable value type lists
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessMixedCommand(
+    List<Guid?> OptionalIds,
+    List<int?> OptionalCounts,
+    List<DateTime?> OptionalDates,
+    List<decimal?> OptionalAmounts
+) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All nullable value type list factories SHOULD be generated with fully qualified names
+    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("List<global::System.Int32?>");
+    await Assert.That(code).Contains("List<global::System.DateTime?>");
+    await Assert.That(code).Contains("List<global::System.Decimal?>");
+  }
+
+  /// <summary>
+  /// Regression test: Verifies that nested collections (List&lt;List&lt;T&gt;&gt;) are still skipped.
+  /// The fix for nullable value types should not break handling of nested collections.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNestedCollections_StillSkipsCollectionTypesAsync() {
+    // Arrange - Message with nested collection (should be skipped)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record MatrixCommand(List<List<int>> Matrix) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should NOT have factory for List<List<int>> (nested collections skipped)
+    // The element type is System.Collections.Generic.List<int> which should be skipped
+    await Assert.That(code!).DoesNotContain("CreateList_System_Collections_Generic_List");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;uint?&gt; is generated correctly.
+  /// Generator normalizes 'uint' keyword alias to 'System.UInt32' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableUInt_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<uint?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessUIntCommand(List<uint?> OptionalValues) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<uint?> factory method SHOULD be generated
+    // Generator normalizes 'uint' -> 'global::System.UInt32' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.UInt32?>");
+    await Assert.That(code).Contains("CreateList_System_UInt32__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;ulong?&gt; is generated correctly.
+  /// Generator normalizes 'ulong' keyword alias to 'System.UInt64' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableULong_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<ulong?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessULongCommand(List<ulong?> OptionalValues) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<ulong?> factory method SHOULD be generated
+    // Generator normalizes 'ulong' -> 'global::System.UInt64' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.UInt64?>");
+    await Assert.That(code).Contains("CreateList_System_UInt64__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;ushort?&gt; is generated correctly.
+  /// Generator normalizes 'ushort' keyword alias to 'System.UInt16' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableUShort_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<ushort?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessUShortCommand(List<ushort?> OptionalValues) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<ushort?> factory method SHOULD be generated
+    // Generator normalizes 'ushort' -> 'global::System.UInt16' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.UInt16?>");
+    await Assert.That(code).Contains("CreateList_System_UInt16__Nullable");
+  }
+
+  /// <summary>
+  /// Tests that List&lt;sbyte?&gt; is generated correctly.
+  /// Generator normalizes 'sbyte' keyword alias to 'System.SByte' for consistent naming.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfNullableSByte_GeneratesListFactoryAsync() {
+    // Arrange - Message with List<sbyte?> property
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ProcessSByteCommand(List<sbyte?> OptionalValues) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<sbyte?> factory method SHOULD be generated
+    // Generator normalizes 'sbyte' -> 'global::System.SByte' for consistent naming
+    await Assert.That(code!).Contains("List<global::System.SByte?>");
+    await Assert.That(code).Contains("CreateList_System_SByte__Nullable");
+  }
+
+  /// <summary>
+  /// Tests the distinction between nullable value types (should be generated)
+  /// and nested collections (should be skipped) in the same message.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMixOfNullableValueTypesAndNestedCollections_HandlesCorrectlyAsync() {
+    // Arrange - Message with both nullable value type list AND nested collection
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record MixedCollectionsCommand(
+    List<Guid?> OptionalIds,           // Should be generated
+    List<List<string>> NestedStrings   // Should be skipped
+) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // List<Guid?> SHOULD be generated (nullable value type)
+    await Assert.That(code!).Contains("List<global::System.Guid?>");
+    await Assert.That(code).Contains("CreateList_System_Guid__Nullable");
+
+    // List<List<string>> should NOT have factory (nested collection)
+    await Assert.That(code).DoesNotContain("CreateList_System_Collections");
+  }
 }

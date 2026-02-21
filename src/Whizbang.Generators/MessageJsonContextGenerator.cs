@@ -1195,6 +1195,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Normalizes C# keyword aliases to their fully qualified CLR type names.
+  /// This ensures consistent naming for generated identifiers (e.g., CreateList_System_Int32__Nullable instead of CreateList_int__Nullable).
+  /// Handles both nullable (int?) and non-nullable (int) forms.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithListOfNullableInt_GeneratesListFactoryAsync</tests>
+  private static string _normalizeKeywordAliases(string typeName) {
+    // Map of C# keyword aliases to their fully qualified CLR names
+    var keywordToClrType = new Dictionary<string, string> {
+      { "int", "global::System.Int32" },
+      { "uint", "global::System.UInt32" },
+      { "long", "global::System.Int64" },
+      { "ulong", "global::System.UInt64" },
+      { "short", "global::System.Int16" },
+      { "ushort", "global::System.UInt16" },
+      { "byte", "global::System.Byte" },
+      { "sbyte", "global::System.SByte" },
+      { "bool", "global::System.Boolean" },
+      { "char", "global::System.Char" },
+      { "float", "global::System.Single" },
+      { "double", "global::System.Double" },
+      { "decimal", "global::System.Decimal" },
+      { "string", "global::System.String" },
+      { "object", "global::System.Object" }
+    };
+
+    // Check for nullable suffix
+    var isNullable = typeName.EndsWith("?", StringComparison.Ordinal);
+    var baseTypeName = isNullable ? typeName[..^1] : typeName;
+
+    // Try to normalize the base type
+    if (keywordToClrType.TryGetValue(baseTypeName, out var clrTypeName)) {
+      return isNullable ? clrTypeName + "?" : clrTypeName;
+    }
+
+    // Return as-is if not a keyword alias
+    return typeName;
+  }
+
+  /// <summary>
   /// Discovers WhizbangId JSON converters by examining property types in messages.
   /// Infers converter names for types that look like ID types (e.g., ProductId -> ProductIdJsonConverter).
   /// Uses naming conventions since source generators run in parallel and generated types may not be visible.
@@ -1245,15 +1284,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
-        var elementTypeName = _extractElementType(property.Type);
-        if (elementTypeName == null) {
+        var rawElementTypeName = _extractElementType(property.Type);
+        if (rawElementTypeName == null) {
           continue;
         }
 
-        // Skip System.* element types (nested collections like List<List<T>>)
+        // Normalize C# keyword aliases (int, bool, decimal) to fully qualified names
+        // This ensures consistent naming for generated identifiers (e.g., CreateList_System_Int32__Nullable)
+        var elementTypeName = _normalizeKeywordAliases(rawElementTypeName);
+
+        // Skip nested collection types (List<List<T>>, List<IEnumerable<T>>, etc.)
         // System.Text.Json handles nested collections natively - no custom factory needed
         // This also prevents invalid method names with <> characters
-        if (elementTypeName.StartsWith("global::System.", StringComparison.Ordinal)) {
+        // BUT: DO include nullable value types (Guid?, int?, DateTime?, etc.)
+        if (_isNestedCollectionType(elementTypeName)) {
           continue;
         }
 
@@ -1276,6 +1320,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return listTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Determines whether an element type is a nested collection type.
+  /// Nested collections (List&lt;List&lt;T&gt;&gt;, List&lt;IEnumerable&lt;T&gt;&gt;, etc.) are handled natively by System.Text.Json.
+  /// This returns false for value types like Guid?, int?, DateTime? which need explicit List&lt;T&gt; factories.
+  /// </summary>
+  private static bool _isNestedCollectionType(string elementTypeName) {
+    // Only skip actual collection types, not value types like Guid?, int?, etc.
+    // Collection types live under System.Collections.* or System.Linq.*
+    return elementTypeName.StartsWith("global::System.Collections.", StringComparison.Ordinal) ||
+           elementTypeName.StartsWith("global::System.Linq.", StringComparison.Ordinal);
   }
 
   /// <summary>
