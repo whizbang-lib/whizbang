@@ -1,4 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Dispatch;
@@ -47,9 +46,6 @@ public static class DispatcherSecurityExtensions {
   /// </summary>
   /// <param name="dispatcher">The dispatcher instance.</param>
   /// <returns>A builder for dispatching with system security context.</returns>
-  /// <exception cref="InvalidOperationException">
-  /// Thrown when <see cref="IScopeContextAccessor"/> is not available in the service provider.
-  /// </exception>
   /// <example>
   /// <code>
   /// // Timer job (no user context)
@@ -60,14 +56,11 @@ public static class DispatcherSecurityExtensions {
   /// </code>
   /// </example>
   public static DispatcherSecurityBuilder AsSystem(this IDispatcher dispatcher) {
-    var accessor = _getAccessor(dispatcher);
-
-    // Capture current user as "actual principal" if one exists
-    var actualPrincipal = accessor.Current?.Scope?.UserId;
+    // Capture current user as "actual principal" if one exists (uses static accessor)
+    var actualPrincipal = ScopeContextAccessor.CurrentContext?.Scope?.UserId;
 
     return new DispatcherSecurityBuilder(
       dispatcher,
-      accessor,
       SecurityContextType.System,
       effectivePrincipal: "SYSTEM",
       actualPrincipal: actualPrincipal);
@@ -86,9 +79,6 @@ public static class DispatcherSecurityExtensions {
   /// <exception cref="ArgumentException">
   /// Thrown when <paramref name="effectiveIdentity"/> is empty or whitespace.
   /// </exception>
-  /// <exception cref="InvalidOperationException">
-  /// Thrown when <see cref="IScopeContextAccessor"/> is not available in the service provider.
-  /// </exception>
   /// <example>
   /// <code>
   /// // Support staff impersonating a customer for debugging
@@ -100,35 +90,13 @@ public static class DispatcherSecurityExtensions {
     ArgumentNullException.ThrowIfNull(effectiveIdentity, nameof(effectiveIdentity));
     ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity, nameof(effectiveIdentity));
 
-    var accessor = _getAccessor(dispatcher);
-
-    // Capture current user as "actual principal"
-    var actualPrincipal = accessor.Current?.Scope?.UserId;
+    // Capture current user as "actual principal" (uses static accessor)
+    var actualPrincipal = ScopeContextAccessor.CurrentContext?.Scope?.UserId;
 
     return new DispatcherSecurityBuilder(
       dispatcher,
-      accessor,
       SecurityContextType.Impersonated,
       effectivePrincipal: effectiveIdentity,
       actualPrincipal: actualPrincipal);
-  }
-
-  private static IScopeContextAccessor _getAccessor(IDispatcher dispatcher) {
-    // Access service provider from the concrete Dispatcher type
-    if (dispatcher is not Dispatcher concreteDispatcher) {
-      throw new InvalidOperationException(
-        $"Security context extensions require the dispatcher to be of type '{typeof(Dispatcher).FullName}'. " +
-        $"Received '{dispatcher.GetType().FullName}'.");
-    }
-
-    var accessor = concreteDispatcher.InternalServiceProvider.GetService<IScopeContextAccessor>();
-    if (accessor is null) {
-      throw new InvalidOperationException(
-        $"'{nameof(IScopeContextAccessor)}' is not registered in the service provider. " +
-        $"Call 'services.AddWhizbangDispatcher()' which registers it automatically, " +
-        $"or register it manually with 'services.AddSingleton<IScopeContextAccessor, ScopeContextAccessor>()'.");
-    }
-
-    return accessor;
   }
 }

@@ -99,8 +99,8 @@ public abstract class Dispatcher(
   private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
   // Owned domains for routing decisions - resolved from RoutingOptions if available
   private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
-  // Security context accessor for propagating security context to outgoing messages
-  private readonly IScopeContextAccessor? _scopeContextAccessor = serviceProvider.GetService<IScopeContextAccessor>();
+  // Security context accessor is resolved lazily from scope - it's a scoped service
+  // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
   // Unused parameters retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
@@ -126,8 +126,9 @@ public abstract class Dispatcher(
   /// </summary>
   /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
-  private SecurityContext? _getSecurityContextForPropagation() {
-    if (_scopeContextAccessor?.Current is not ImmutableScopeContext ctx) {
+  private static SecurityContext? _getSecurityContextForPropagation() {
+    // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
+    if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
       return null;
     }
 
@@ -148,6 +149,12 @@ public abstract class Dispatcher(
 #pragma warning disable IDE1006 // CA1707 takes precedence - protected properties should not have underscores
   protected IServiceProvider ServiceProvider => _internalServiceProvider;
 #pragma warning restore IDE1006
+
+  /// <summary>
+  /// Gets the service provider for extension methods (security context, etc.).
+  /// Internal access for DispatcherSecurityExtensions.
+  /// </summary>
+  internal IServiceProvider InternalServiceProvider => _internalServiceProvider;
 
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment

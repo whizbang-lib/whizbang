@@ -20,7 +20,7 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// <remarks>
   /// This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
-  /// - IScopeContextAccessor (singleton - uses AsyncLocal for per-request isolation)
+  /// - IScopeContextAccessor (scoped)
   /// - MessageHopSecurityExtractor (default extractor, priority 100)
   ///
   /// Additional extractors can be registered using AddSecurityExtractor&lt;T&gt;().
@@ -54,8 +54,8 @@ public static class MessageSecurityServiceCollectionExtensions {
     // Register options as singleton
     services.AddSingleton(options);
 
-    // Register singleton IScopeContextAccessor (uses AsyncLocal for per-request isolation)
-    services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
+    // Register scoped IScopeContextAccessor
+    services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();
 
     // Register default extractor
     services.AddSecurityExtractor<MessageHopSecurityExtractor>();
