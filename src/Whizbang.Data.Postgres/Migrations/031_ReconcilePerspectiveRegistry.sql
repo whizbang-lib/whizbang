@@ -138,13 +138,15 @@ BEGIN
     END IF;
 
     -- Return the action for this perspective
+    -- Explicit casts ensure RECORD column types match RETURNS TABLE exactly
+    -- (jsonb ->> returns TEXT, but RETURNS TABLE expects VARCHAR)
     RETURN QUERY SELECT
-      v_action,
-      v_perspective.clr_type_name,
-      v_old_table_name,
-      v_perspective.table_name,
-      v_old_schema_hash,
-      v_perspective.schema_hash;
+      v_action::VARCHAR,
+      v_perspective.clr_type_name::VARCHAR,
+      v_old_table_name::VARCHAR,
+      v_perspective.table_name::VARCHAR,
+      v_old_schema_hash::VARCHAR,
+      v_perspective.schema_hash::VARCHAR;
   END LOOP;
 
   RETURN;
