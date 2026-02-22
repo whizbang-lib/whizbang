@@ -1511,6 +1511,8 @@ public abstract class Dispatcher(
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", messageType.Name);
         var publisher = GetUntypedReceptorPublisher(messageType);
         if (publisher != null) {
+          // Establish message context for cascade: propagates UserId from parent scope
+          Security.SecurityContextHelper.EstablishMessageContextForCascade();
           await publisher(msg);
         }
       }
