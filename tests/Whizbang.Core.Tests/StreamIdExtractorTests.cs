@@ -9,7 +9,7 @@ namespace Whizbang.Core.Tests;
 
 /// <summary>
 /// Tests for StreamIdExtractor.
-/// Verifies [StreamKey] (events) and [AggregateId] (commands) extraction priority.
+/// Verifies [StreamId] (events) and [StreamId] (commands) extraction priority.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs</tests>
 [Category("StreamId")]
@@ -20,44 +20,43 @@ public class StreamIdExtractorTests {
   // Test Events and Commands
   // ========================================
 
-  /// <summary>Event with [StreamKey] attribute</summary>
-  public record TestEventWithStreamKey([property: StreamKey] Guid OrderId, string Name) : IEvent;
+  /// <summary>Event with [StreamId] attribute</summary>
+  public record TestEventWithStreamId([property: StreamId] Guid OrderId, string Name) : IEvent;
 
-  /// <summary>Event with both [StreamKey] and [AggregateId] (StreamKey should be preferred)</summary>
-  public record TestEventWithBothAttributes(
-    [property: StreamKey] Guid StreamId,
-    [property: AggregateId] Guid AggregateId,
+  /// <summary>Event with [StreamId] attribute on StreamId property</summary>
+  public record TestEventWithStreamIdMark(
+    [property: StreamId] Guid StreamId,
     string Name
   ) : IEvent;
 
-  /// <summary>Event with only [AggregateId] (fallback)</summary>
-#pragma warning disable WHIZ009 // Intentionally missing [StreamKey] for testing fallback behavior
-  public record TestEventWithAggregateIdOnly([property: AggregateId] Guid AggregateId, string Name) : IEvent;
+  /// <summary>Event with only [StreamId] (fallback)</summary>
+#pragma warning disable WHIZ009 // Intentionally missing [StreamId] for testing fallback behavior
+  public record TestEventWithStreamIdOnly([property: StreamId] Guid StreamId, string Name) : IEvent;
 #pragma warning restore WHIZ009
 
   /// <summary>Event with neither attribute</summary>
-#pragma warning disable WHIZ009 // Intentionally missing [StreamKey] for testing null return behavior
+#pragma warning disable WHIZ009 // Intentionally missing [StreamId] for testing null return behavior
   public record TestEventWithNoAttributes(string Name) : IEvent;
 #pragma warning restore WHIZ009
 
-  /// <summary>Command with [AggregateId] attribute</summary>
-  public record TestCommandWithAggregateId([property: AggregateId] Guid OrderId, string Data) : ICommand;
+  /// <summary>Command with [StreamId] attribute</summary>
+  public record TestCommandWithStreamId([property: StreamId] Guid OrderId, string Data) : ICommand;
 
-  /// <summary>Command without [AggregateId] attribute</summary>
-  public record TestCommandWithNoAggregateId(string Data) : ICommand;
+  /// <summary>Command without [StreamId] attribute</summary>
+  public record TestCommandWithNoStreamId(string Data) : ICommand;
 
-  /// <summary>Regular message (not IEvent or ICommand) with [AggregateId]</summary>
-  public record TestMessageWithAggregateId([property: AggregateId] Guid Id, string Data) : IMessage;
+  /// <summary>Regular message (not IEvent or ICommand) with [StreamId]</summary>
+  public record TestMessageWithStreamId([property: StreamId] Guid Id, string Data) : IMessage;
 
   // ========================================
   // IEvent Tests
   // ========================================
 
   [Test]
-  public async Task ExtractStreamId_EventWithStreamKey_ReturnsStreamKeyValueAsync() {
+  public async Task ExtractStreamId_EventWithStreamId_ReturnsStreamIdValueAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();
-    var @event = new TestEventWithStreamKey(expectedId, "Test");
+    var @event = new TestEventWithStreamId(expectedId, "Test");
     var extractor = new TestStreamIdExtractor();
 
     // Act
@@ -69,38 +68,36 @@ public class StreamIdExtractorTests {
   }
 
   [Test]
-  public async Task ExtractStreamId_EventWithStreamKeyAndAggregateId_PrefersStreamKeyAsync() {
+  public async Task ExtractStreamId_EventWithStreamIdAttribute_ExtractsStreamIdAsync() {
     // Arrange
-    var streamKeyId = Guid.NewGuid();
-    var aggregateId = Guid.NewGuid();
-    var @event = new TestEventWithBothAttributes(streamKeyId, aggregateId, "Test");
+    var expectedId = Guid.NewGuid();
+    var @event = new TestEventWithStreamIdMark(expectedId, "Test");
     var extractor = new TestStreamIdExtractor();
 
     // Act
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
-    // Assert - Should use [StreamKey], not [AggregateId]
+    // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!.Value).IsEqualTo(streamKeyId);
-    await Assert.That(result.Value).IsNotEqualTo(aggregateId);
+    await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
   [Test]
-  public async Task ExtractStreamId_EventWithoutStreamKey_FallsBackToAggregateIdAsync() {
+  public async Task ExtractStreamId_EventWithoutStreamId_FallsBackToStreamIdAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();
-    var @event = new TestEventWithAggregateIdOnly(expectedId, "Test");
+    var @event = new TestEventWithStreamIdOnly(expectedId, "Test");
 
-    // Create mock for IAggregateIdExtractor
-    var mockExtractor = new AggregateIdExtractorMock();
-    mockExtractor.SetupExtractAggregateId(@event, @event.GetType(), expectedId);
+    // Create mock for IStreamIdExtractor
+    var mockExtractor = new StreamIdExtractorMock();
+    mockExtractor.SetupExtractStreamId(@event, @event.GetType(), expectedId);
 
     var extractor = new TestStreamIdExtractor(mockExtractor);
 
     // Act
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
-    // Assert - Should fall back to [AggregateId]
+    // Assert - Should fall back to [StreamId]
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
@@ -110,9 +107,9 @@ public class StreamIdExtractorTests {
     // Arrange
     var @event = new TestEventWithNoAttributes("Test");
 
-    // Mock returns null (no [AggregateId] found)
-    var mockExtractor = new AggregateIdExtractorMock();
-    mockExtractor.SetupExtractAggregateId(@event, @event.GetType(), null);
+    // Mock returns null (no [StreamId] found)
+    var mockExtractor = new StreamIdExtractorMock();
+    mockExtractor.SetupExtractStreamId(@event, @event.GetType(), null);
 
     var extractor = new TestStreamIdExtractor(mockExtractor);
 
@@ -128,13 +125,13 @@ public class StreamIdExtractorTests {
   // ========================================
 
   [Test]
-  public async Task ExtractStreamId_CommandWithAggregateId_ReturnsAggregateIdAsync() {
+  public async Task ExtractStreamId_CommandWithStreamId_ReturnsStreamIdAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();
-    var command = new TestCommandWithAggregateId(expectedId, "Test");
+    var command = new TestCommandWithStreamId(expectedId, "Test");
 
-    var mockExtractor = new AggregateIdExtractorMock();
-    mockExtractor.SetupExtractAggregateId(command, command.GetType(), expectedId);
+    var mockExtractor = new StreamIdExtractorMock();
+    mockExtractor.SetupExtractStreamId(command, command.GetType(), expectedId);
 
     var extractor = new TestStreamIdExtractor(mockExtractor);
 
@@ -147,12 +144,12 @@ public class StreamIdExtractorTests {
   }
 
   [Test]
-  public async Task ExtractStreamId_CommandWithoutAggregateId_ReturnsNullAsync() {
+  public async Task ExtractStreamId_CommandWithoutStreamId_ReturnsNullAsync() {
     // Arrange
-    var command = new TestCommandWithNoAggregateId("Test");
+    var command = new TestCommandWithNoStreamId("Test");
 
-    var mockExtractor = new AggregateIdExtractorMock();
-    mockExtractor.SetupExtractAggregateId(command, command.GetType(), null);
+    var mockExtractor = new StreamIdExtractorMock();
+    mockExtractor.SetupExtractStreamId(command, command.GetType(), null);
 
     var extractor = new TestStreamIdExtractor(mockExtractor);
 
@@ -180,47 +177,47 @@ public class StreamIdExtractorTests {
   }
 
   [Test]
-  public async Task ExtractStreamId_NonEventNonCommand_UsesAggregateIdAsync() {
+  public async Task ExtractStreamId_NonEventNonCommand_UsesStreamIdAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();
-    var message = new TestMessageWithAggregateId(expectedId, "Test");
+    var message = new TestMessageWithStreamId(expectedId, "Test");
 
-    var mockExtractor = new AggregateIdExtractorMock();
-    mockExtractor.SetupExtractAggregateId(message, message.GetType(), expectedId);
+    var mockExtractor = new StreamIdExtractorMock();
+    mockExtractor.SetupExtractStreamId(message, message.GetType(), expectedId);
 
     var extractor = new TestStreamIdExtractor(mockExtractor);
 
     // Act
     var result = extractor.ExtractStreamId(message, message.GetType());
 
-    // Assert - Should use [AggregateId] since not an IEvent with [StreamKey]
+    // Assert - Should use [StreamId] since not an IEvent with [StreamId]
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
   [Test]
-  public async Task ExtractStreamId_NoExtractorProvided_UsesStreamKeyOnlyForEventsAsync() {
+  public async Task ExtractStreamId_NoExtractorProvided_UsesStreamIdOnlyForEventsAsync() {
     // Arrange
     var expectedId = Guid.NewGuid();
-    var @event = new TestEventWithStreamKey(expectedId, "Test");
+    var @event = new TestEventWithStreamId(expectedId, "Test");
 
-    // No IAggregateIdExtractor provided
+    // No IStreamIdExtractor provided
     var extractor = new TestStreamIdExtractor(null);
 
     // Act
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
-    // Assert - Should still work via [StreamKey]
+    // Assert - Should still work via [StreamId]
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
   [Test]
-  public async Task ExtractStreamId_NoExtractorAndNoStreamKey_ReturnsNullAsync() {
+  public async Task ExtractStreamId_NoExtractorAndNoStreamId_ReturnsNullAsync() {
     // Arrange
-    var command = new TestCommandWithAggregateId(Guid.NewGuid(), "Test");
+    var command = new TestCommandWithStreamId(Guid.NewGuid(), "Test");
 
-    // No IAggregateIdExtractor provided, and command has no [StreamKey]
+    // No IStreamIdExtractor provided, and command has no [StreamId]
     var extractor = new TestStreamIdExtractor(null);
 
     // Act
@@ -236,13 +233,13 @@ public class StreamIdExtractorTests {
 
   /// <summary>
   /// Test-specific StreamIdExtractor that uses the test project's generated extractors.
-  /// This is needed because the test project generates its own StreamKeyExtractors
+  /// This is needed because the test project generates its own StreamIdExtractors
   /// in Whizbang.Core.Tests.Generated, separate from Whizbang.Core.Generated.
   /// </summary>
   private sealed class TestStreamIdExtractor : IStreamIdExtractor {
-    private readonly IAggregateIdExtractor? _aggregateIdExtractor;
+    private readonly IStreamIdExtractor? _aggregateIdExtractor;
 
-    public TestStreamIdExtractor(IAggregateIdExtractor? aggregateIdExtractor = null) {
+    public TestStreamIdExtractor(IStreamIdExtractor? aggregateIdExtractor = null) {
       _aggregateIdExtractor = aggregateIdExtractor;
     }
 
@@ -251,30 +248,30 @@ public class StreamIdExtractorTests {
         return null;
       }
 
-      // For IEvent: Try [StreamKey] first using the test project's generated extractors
+      // For IEvent: Try [StreamId] first using the test project's generated extractors
       if (message is IEvent @event) {
-        var streamId = StreamKeyExtractors.TryResolveAsGuid(@event);
+        var streamId = StreamIdExtractors.TryResolveAsGuid(@event);
         if (streamId.HasValue) {
           return streamId.Value;
         }
       }
 
-      // Fall back to [AggregateId]
-      return _aggregateIdExtractor?.ExtractAggregateId(message, messageType);
+      // Fall back to [StreamId]
+      return _aggregateIdExtractor?.ExtractStreamId(message, messageType);
     }
   }
 
   /// <summary>
-  /// Simple mock for IAggregateIdExtractor.
+  /// Simple mock for IStreamIdExtractor.
   /// </summary>
-  private sealed class AggregateIdExtractorMock : IAggregateIdExtractor {
+  private sealed class StreamIdExtractorMock : IStreamIdExtractor {
     private readonly Dictionary<(object, Type), Guid?> _results = new();
 
-    public void SetupExtractAggregateId(object message, Type messageType, Guid? result) {
+    public void SetupExtractStreamId(object message, Type messageType, Guid? result) {
       _results[(message, messageType)] = result;
     }
 
-    public Guid? ExtractAggregateId(object message, Type messageType) {
+    public Guid? ExtractStreamId(object message, Type messageType) {
       return _results.TryGetValue((message, messageType), out var result) ? result : null;
     }
   }

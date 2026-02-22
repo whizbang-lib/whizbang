@@ -50,7 +50,7 @@ public interface IDeliveryReceipt {
 
   /// <summary>
   /// Stream ID the message belongs to, if applicable.
-  /// Extracted from [StreamKey] (events) or [AggregateId] (commands).
+  /// Extracted from [StreamId] attribute on events, commands, and DTOs.
   /// </summary>
   /// <docs>core-concepts/delivery-receipts</docs>
   Guid? StreamId { get; }

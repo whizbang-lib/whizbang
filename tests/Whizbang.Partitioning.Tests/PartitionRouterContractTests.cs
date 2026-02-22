@@ -60,7 +60,7 @@ public abstract class PartitionRouterContractTests {
   }
 
   [Test]
-  public async Task SelectPartition_SameStreamKey_ShouldReturnSamePartitionAsync() {
+  public async Task SelectPartition_SameStreamId_ShouldReturnSamePartitionAsync() {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
@@ -78,7 +78,7 @@ public abstract class PartitionRouterContractTests {
   }
 
   [Test]
-  public async Task SelectPartition_DifferentStreamKeys_ShouldDistributeEvenlyAsync() {
+  public async Task SelectPartition_DifferentStreamIds_ShouldDistributeEvenlyAsync() {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
@@ -128,7 +128,7 @@ public abstract class PartitionRouterContractTests {
   }
 
   [Test]
-  public async Task SelectPartition_EmptyStreamKey_ShouldNotThrowAsync() {
+  public async Task SelectPartition_EmptyStreamId_ShouldNotThrowAsync() {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();
@@ -142,7 +142,7 @@ public abstract class PartitionRouterContractTests {
   }
 
   [Test]
-  public async Task SelectPartition_NullStreamKey_ShouldNotThrowAsync() {
+  public async Task SelectPartition_NullStreamId_ShouldNotThrowAsync() {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();

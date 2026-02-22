@@ -10,48 +10,116 @@ namespace Whizbang.Core.Generated;
 #endregion
 
 /// <summary>
-/// Generated stream key extractors for zero-reflection AOT compatibility.
+/// Generated stream ID extractors for zero-reflection AOT compatibility.
+/// Handles [StreamId] attribute on events, commands, and perspective models.
 /// </summary>
 public static partial class StreamIdExtractors {
 
   /// <summary>
-  /// Resolves the stream key from an event using generated extractors.
+  /// Resolves the stream ID from an event using generated extractors.
   /// Zero-reflection alternative to StreamIdResolver.Resolve().
   /// </summary>
   public static string Resolve(global::Whizbang.Core.IEvent @event) {
     global::System.ArgumentNullException.ThrowIfNull(@event);
 
-    #region RESOLVE_DISPATCH
-    // Type-based dispatch to correct extractor
+    #region RESOLVE_EVENT_DISPATCH
+    // Type-based dispatch to correct extractor for events
     #endregion
 
     throw new global::System.InvalidOperationException(
-      $"No stream key extractor found for event type '{@event.GetType().Name}'. " +
+      $"No stream ID extractor found for event type '{@event.GetType().Name}'. " +
       "Ensure the event type has a property or parameter marked with [StreamId].");
   }
 
   /// <summary>
-  /// Tries to resolve the stream key from an event and parse it as a Guid.
+  /// Resolves the stream ID from a command using generated extractors.
+  /// Zero-reflection alternative to StreamIdResolver.Resolve().
+  /// </summary>
+  public static string Resolve(global::Whizbang.Core.ICommand command) {
+    global::System.ArgumentNullException.ThrowIfNull(command);
+
+    #region RESOLVE_COMMAND_DISPATCH
+    // Type-based dispatch to correct extractor for commands
+    #endregion
+
+    throw new global::System.InvalidOperationException(
+      $"No stream ID extractor found for command type '{command.GetType().Name}'. " +
+      "Ensure the command type has a property marked with [StreamId].");
+  }
+
+  /// <summary>
+  /// Tries to resolve the stream ID from an event and parse it as a Guid.
   /// Returns null if the event has no [StreamId] or the key is not a valid Guid.
   /// Used by IDeliveryReceipt.StreamId extraction.
   /// </summary>
-  /// <param name="event">The event to extract the stream key from</param>
-  /// <returns>The stream key as a Guid if found and parseable, otherwise null</returns>
+  /// <param name="event">The event to extract the stream ID from</param>
+  /// <returns>The stream ID as a Guid if found and parseable, otherwise null</returns>
   public static global::System.Guid? TryResolveAsGuid(global::Whizbang.Core.IEvent? @event) {
     if (@event == null) return null;
 
-    #region TRY_RESOLVE_DISPATCH
-    // Type-based dispatch returning Guid?
+    #region TRY_RESOLVE_EVENT_DISPATCH
+    // Type-based dispatch returning Guid? for events
     #endregion
 
     return null;
   }
 
-  #region EXTRACTORS
+  /// <summary>
+  /// Tries to resolve the stream ID from a command and parse it as a Guid.
+  /// Returns null if the command has no [StreamId] or the ID is not a valid Guid.
+  /// Used by IDeliveryReceipt.StreamId extraction.
+  /// </summary>
+  /// <param name="command">The command to extract the stream ID from</param>
+  /// <returns>The stream ID as a Guid if found and parseable, otherwise null</returns>
+  public static global::System.Guid? TryResolveAsGuid(global::Whizbang.Core.ICommand? command) {
+    if (command == null) return null;
+
+    #region TRY_RESOLVE_COMMAND_DISPATCH
+    // Type-based dispatch returning Guid? for commands
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Tries to resolve the stream ID from any message object and parse it as a Guid.
+  /// Returns null if the message has no [StreamId] or the ID is not a valid Guid.
+  /// Used for perspective DTOs and other message types.
+  /// </summary>
+  /// <param name="message">The message to extract the stream ID from</param>
+  /// <returns>The stream ID as a Guid if found and parseable, otherwise null</returns>
+  public static global::System.Guid? TryResolveAsGuid(object? message) {
+    if (message == null) return null;
+
+    // Try specific interfaces first for better performance
+    if (message is global::Whizbang.Core.IEvent @event) {
+      return TryResolveAsGuid(@event);
+    }
+
+    if (message is global::Whizbang.Core.ICommand command) {
+      return TryResolveAsGuid(command);
+    }
+
+    #region TRY_RESOLVE_OTHER_DISPATCH
+    // Type-based dispatch for perspective DTOs and other types
+    #endregion
+
+    return null;
+  }
+
+  #region EVENT_EXTRACTORS
   // Individual extractor methods for each event type
   #endregion
 
+  #region COMMAND_EXTRACTORS
+  // Individual extractor methods for each command type
+  #endregion
+
+  #region OTHER_EXTRACTORS
+  // Individual extractor methods for perspective DTOs and other types
+  #endregion
+
   #region TRY_EXTRACT_METHODS
-  // Individual TryExtractAsGuid methods for each event type
+  // Individual TryExtractAsGuid methods for all types
   #endregion
 }

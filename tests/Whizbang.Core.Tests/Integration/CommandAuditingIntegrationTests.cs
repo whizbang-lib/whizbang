@@ -21,9 +21,9 @@ public class CommandAuditingIntegrationTests {
   public sealed record CancelOrder(Guid OrderId, string Reason);
 
   // Test responses (past tense - events) - unique names to avoid generator conflicts
-  public sealed record CmdAuditTestOrderCreated([property: StreamKey] Guid OrderId, Guid CustomerId) : IEvent;
-  public sealed record CmdAuditTestPaymentProcessed([property: StreamKey] Guid PaymentId, Guid OrderId) : IEvent;
-  public sealed record CmdAuditTestOrderCancelled([property: StreamKey] Guid OrderId, DateTimeOffset CancelledAt) : IEvent;
+  public sealed record CmdAuditTestOrderCreated([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
+  public sealed record CmdAuditTestPaymentProcessed([property: StreamId] Guid PaymentId, Guid OrderId) : IEvent;
+  public sealed record CmdAuditTestOrderCancelled([property: StreamId] Guid OrderId, DateTimeOffset CancelledAt) : IEvent;
 
   [Test]
   public async Task CommandAuditing_WhenEnabled_EmitsCommandAudited_Async() {

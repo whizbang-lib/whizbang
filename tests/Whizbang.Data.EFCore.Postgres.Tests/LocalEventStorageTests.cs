@@ -32,50 +32,50 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// <summary>
   /// Test command that triggers LocalStoredEvent.
   /// </summary>
-  public record TriggerLocalStoredCommand([property: StreamKey] Guid StreamId, string Data);
+  public record TriggerLocalStoredCommand([property: StreamId] Guid StreamId, string Data);
 
   /// <summary>
   /// Test command that triggers LocalNoPersistEvent.
   /// </summary>
-  public record TriggerLocalNoPersistCommand([property: StreamKey] Guid StreamId, string Data);
+  public record TriggerLocalNoPersistCommand([property: StreamId] Guid StreamId, string Data);
 
   /// <summary>
   /// Test command that triggers EventStoreOnlyEvent.
   /// </summary>
-  public record TriggerEventStoreOnlyCommand([property: StreamKey] Guid StreamId, string Data);
+  public record TriggerEventStoreOnlyCommand([property: StreamId] Guid StreamId, string Data);
 
   /// <summary>
   /// Test command that triggers OutboxRoutedEvent.
   /// </summary>
-  public record TriggerOutboxCommand([property: StreamKey] Guid StreamId, string Data);
+  public record TriggerOutboxCommand([property: StreamId] Guid StreamId, string Data);
 
   /// <summary>
   /// Test event routed to event store only (Route.Local with new behavior).
   /// Uses default LocalDispatch | EventStore mode.
   /// </summary>
   [DefaultRouting(DispatchMode.Local)]
-  public record LocalStoredEvent([property: StreamKey] Guid StreamId, string Data) : IEvent;
+  public record LocalStoredEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event with no persistence (Route.LocalNoPersist).
   /// Uses LocalDispatch mode only - no event store, no transport.
   /// </summary>
   [DefaultRouting(DispatchMode.LocalNoPersist)]
-  public record LocalNoPersistEvent([property: StreamKey] Guid StreamId, string Data) : IEvent;
+  public record LocalNoPersistEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event routed to event store only without local dispatch.
   /// Uses EventStoreOnly mode - stores to event store, no local receptors, no transport.
   /// </summary>
   [DefaultRouting(DispatchMode.EventStoreOnly)]
-  public record EventStoreOnlyEvent([property: StreamKey] Guid StreamId, string Data) : IEvent;
+  public record EventStoreOnlyEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   /// <summary>
   /// Test event routed to outbox with transport.
   /// Uses Outbox mode - standard outbox flow with transport.
   /// </summary>
   [DefaultRouting(DispatchMode.Outbox)]
-  public record OutboxRoutedEvent([property: StreamKey] Guid StreamId, string Data) : IEvent;
+  public record OutboxRoutedEvent([property: StreamId] Guid StreamId, string Data) : IEvent;
 
   #endregion
 
@@ -414,7 +414,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// <summary>
   /// Events stored via Route.Local should have a valid StreamId when cascaded.
   /// The StreamId is used for event store ordering and partitioning.
-  /// Note: StreamId extraction from [StreamKey] requires top-level types for source generators.
+  /// Note: StreamId extraction from [StreamId] requires top-level types for source generators.
   /// Nested test types fall back to MessageId as StreamId, which is still valid for partitioning.
   /// </summary>
   [Test]
@@ -436,7 +436,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
     await strategy.FlushAsync(WorkBatchFlags.None);
 
-    // Assert - Event should have a StreamId set (either from [StreamKey] or MessageId fallback)
+    // Assert - Event should have a StreamId set (either from [StreamId] or MessageId fallback)
     await using var dbContext = CreateDbContext();
     var outboxMessages = await dbContext.Outbox.ToListAsync();
 
@@ -450,7 +450,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
 
   /// <summary>
   /// Events stored via Route.EventStoreOnly should have a valid StreamId when cascaded.
-  /// Note: StreamId extraction from [StreamKey] requires top-level types for source generators.
+  /// Note: StreamId extraction from [StreamId] requires top-level types for source generators.
   /// Nested test types fall back to MessageId as StreamId, which is still valid for partitioning.
   /// </summary>
   [Test]
@@ -472,7 +472,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
     await strategy.FlushAsync(WorkBatchFlags.None);
 
-    // Assert - Event should have a StreamId set (either from [StreamKey] or MessageId fallback)
+    // Assert - Event should have a StreamId set (either from [StreamId] or MessageId fallback)
     await using var dbContext = CreateDbContext();
     var outboxMessages = await dbContext.Outbox.ToListAsync();
 

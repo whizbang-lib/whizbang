@@ -43,7 +43,7 @@ public class InMemorySequenceProvider : ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Cancelled_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>

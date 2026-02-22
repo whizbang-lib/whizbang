@@ -411,7 +411,7 @@ public class DispatcherTransportBridgeTests {
   }
 
   public record TestResult : IEvent {
-    [StreamKey]
+    [StreamId]
     public int Result { get; init; }
   }
 

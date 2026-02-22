@@ -198,12 +198,12 @@ public class PolicyEngineTests {
   }
 
   [Test]
-  public async Task PolicyConfiguration_ShouldSupportStreamKeyAsync() {
+  public async Task PolicyConfiguration_ShouldSupportStreamIdAsync() {
     // Arrange
     var engine = new PolicyEngine();
 
     engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UseStreamKey("order-123");
+      config.UseStreamId("order-123");
     });
 
     var message = new OrderCommand("order-123", 100m);
@@ -214,7 +214,7 @@ public class PolicyEngineTests {
     var policyConfig = await engine.MatchAsync(context);
 
     // Assert
-    await Assert.That(policyConfig!.StreamKey).IsEqualTo("order-123");
+    await Assert.That(policyConfig!.StreamId).IsEqualTo("order-123");
   }
 
   [Test]

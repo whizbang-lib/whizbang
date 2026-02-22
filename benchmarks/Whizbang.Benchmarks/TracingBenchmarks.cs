@@ -42,7 +42,7 @@ public class TracingBenchmarks {
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
-      StreamKey = "stream-123",
+      StreamId = "stream-123",
       PartitionIndex = 0,
       SequenceNumber = 1
     };

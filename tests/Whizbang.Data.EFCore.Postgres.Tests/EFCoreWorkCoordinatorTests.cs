@@ -2499,19 +2499,19 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
   /// <summary>
   /// Minimal reproduction test for event storage issue.
-  /// Tests that events with [StreamKey] are properly stored in wh_event_store.
+  /// Tests that events with [StreamId] are properly stored in wh_event_store.
   /// </summary>
   [Test]
-  public async Task ProcessWorkBatchAsync_EventWithStreamKey_StoresInEventStoreAsync() {
+  public async Task ProcessWorkBatchAsync_EventWithStreamId_StoresInEventStoreAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
-    // Create a simple test event with StreamKey
+    // Create a simple test event with StreamId
     var testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
     var productId = _idProvider.NewGuid();
     var messageId = _idProvider.NewGuid();
 
-    // Simulate event payload with StreamKey (ProductId)
+    // Simulate event payload with StreamId (ProductId)
     var eventPayload = $$"""
     {
       "ProductId": "{{productId}}",
@@ -2538,7 +2538,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         JsonContextRegistry.CreateCombinedOptions()
       )!,
       EnvelopeType = envelopeType,
-      StreamId = productId,  // This should be extracted from [StreamKey] attribute
+      StreamId = productId,  // This should be extracted from [StreamId] attribute
       IsEvent = true,        // Mark as event
       MessageType = testEventType,
       Metadata = new EnvelopeMetadata {
@@ -2616,7 +2616,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         var storedEventType = reader.GetString(reader.GetOrdinal("event_type"));
 
         await Assert.That(storedStreamId).IsEqualTo(productId)
-          .Because("Stream ID should match the ProductId from [StreamKey]");
+          .Because("Stream ID should match the ProductId from [StreamId]");
         await Assert.That(storedEventType).IsEqualTo(testEventType);
       }
     } finally {

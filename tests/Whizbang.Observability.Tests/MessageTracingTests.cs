@@ -134,7 +134,7 @@ public class MessageTracingTests {
       },
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
-      StreamKey = "test-stream",
+      StreamId = "test-stream",
       ExecutionStrategy = "SerialExecutor"
     };
 
@@ -278,7 +278,7 @@ public class MessageTracingTests {
   }
 
   [Test]
-  public async Task MessageEnvelope_GetCurrentStreamKey_ReturnsNull_WhenNoHopsAsync() {
+  public async Task MessageEnvelope_GetCurrentStreamId_ReturnsNull_WhenNoHopsAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -294,14 +294,14 @@ public class MessageTracingTests {
     };
 
     // Act
-    var streamKey = envelope.GetCurrentStreamKey();
+    var streamKey = envelope.GetCurrentStreamId();
 
     // Assert
     await Assert.That(streamKey).IsNull();
   }
 
   [Test]
-  public async Task MessageEnvelope_GetCurrentStreamKey_ReturnsMostRecentNonNullStreamKeyAsync() {
+  public async Task MessageEnvelope_GetCurrentStreamId_ReturnsMostRecentNonNullStreamIdAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -323,7 +323,7 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      StreamKey = "stream-1"
+      StreamId = "stream-1"
     });
 
     envelope.AddHop(new MessageHop {
@@ -333,7 +333,7 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      StreamKey = "stream-2"
+      StreamId = "stream-2"
     });
 
     envelope.AddHop(new MessageHop {
@@ -343,11 +343,11 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      StreamKey = "" // Empty should be skipped
+      StreamId = "" // Empty should be skipped
     });
 
     // Act
-    var streamKey = envelope.GetCurrentStreamKey();
+    var streamKey = envelope.GetCurrentStreamId();
 
     // Assert
     await Assert.That(streamKey).IsEqualTo("stream-2");
@@ -1007,7 +1007,7 @@ public class MessageTracingTests {
       },
       Timestamp = timestamp,
       Topic = "test-topic",
-      StreamKey = "test-stream",
+      StreamId = "test-stream",
       PartitionIndex = 5,
       SequenceNumber = 100,
       ExecutionStrategy = "ParallelExecutor",
@@ -1023,7 +1023,7 @@ public class MessageTracingTests {
     await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("test-machine");
     await Assert.That(hop.Timestamp).IsEqualTo(timestamp);
     await Assert.That(hop.Topic).IsEqualTo("test-topic");
-    await Assert.That(hop.StreamKey).IsEqualTo("test-stream");
+    await Assert.That(hop.StreamId).IsEqualTo("test-stream");
     await Assert.That(hop.PartitionIndex).IsEqualTo(5);
     await Assert.That(hop.SequenceNumber).IsEqualTo(100);
     await Assert.That(hop.ExecutionStrategy).IsEqualTo("ParallelExecutor");
@@ -1432,7 +1432,7 @@ public class MessageTracingTests {
   }
 
   [Test]
-  public async Task MessageEnvelope_GetCurrentStreamKey_IgnoresCausationHopsAsync() {
+  public async Task MessageEnvelope_GetCurrentStreamId_IgnoresCausationHopsAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -1450,7 +1450,7 @@ public class MessageTracingTests {
 
             ProcessId = 12345
 
-          }, Type = HopType.Causation, StreamKey = "old-stream" },
+          }, Type = HopType.Causation, StreamId = "old-stream" },
         new MessageHop {
 
           ServiceInstance = new ServiceInstanceInfo {
@@ -1463,12 +1463,12 @@ public class MessageTracingTests {
 
             ProcessId = 12345
 
-          }, Type = HopType.Current, StreamKey = "current-stream" }
+          }, Type = HopType.Current, StreamId = "current-stream" }
       ]
     };
 
     // Act
-    var streamKey = envelope.GetCurrentStreamKey();
+    var streamKey = envelope.GetCurrentStreamId();
 
     // Assert
     await Assert.That(streamKey).IsEqualTo("current-stream");
@@ -1840,7 +1840,7 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(hop.Topic).IsEqualTo("orders");
-    await Assert.That(hop.StreamKey).IsEqualTo("order-123");
+    await Assert.That(hop.StreamId).IsEqualTo("order-123");
     await Assert.That(hop.ExecutionStrategy).IsEqualTo("SerialExecutor");
   }
 

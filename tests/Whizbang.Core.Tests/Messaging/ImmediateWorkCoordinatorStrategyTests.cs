@@ -16,7 +16,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Simple test message for envelope creation
-  public record _testEvent([StreamKey] string Data) : IEvent;
+  public record _testEvent([StreamId] string Data) : IEvent;
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy

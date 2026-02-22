@@ -25,7 +25,7 @@ public class InfrastructureJsonContextTests {
       },
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
-      StreamKey = "test-stream",
+      StreamId = "test-stream",
       ExecutionStrategy = "SerialExecutor"
     };
 
@@ -56,7 +56,7 @@ public class InfrastructureJsonContextTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          StreamKey = "test-stream",
+          StreamId = "test-stream",
           ExecutionStrategy = "SerialExecutor"
         }
       ]
@@ -107,7 +107,7 @@ public class InfrastructureJsonContextTests {
       },
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
-      StreamKey = "test-stream",
+      StreamId = "test-stream",
       ExecutionStrategy = "SerialExecutor",
       Metadata = null, // Explicitly null
       SecurityContext = null, // Explicitly null

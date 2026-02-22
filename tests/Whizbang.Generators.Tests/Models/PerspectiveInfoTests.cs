@@ -21,7 +21,7 @@ public class PerspectiveInfoTests {
       EventType: "global::MyApp.Events.ProductCreated",
       StateType: "global::MyApp.ProductDto",
       TableName: "product_dtos",
-      StreamKeyType: "global::MyApp.ProductId"
+      StreamIdType: "global::MyApp.ProductId"
     );
 
     var info2 = new PerspectiveInfo(
@@ -29,7 +29,7 @@ public class PerspectiveInfoTests {
       EventType: "global::MyApp.Events.ProductCreated",
       StateType: "global::MyApp.ProductDto",
       TableName: "product_dtos",
-      StreamKeyType: "global::MyApp.ProductId"
+      StreamIdType: "global::MyApp.ProductId"
     );
 
     // Act & Assert - Value equality should work
@@ -89,23 +89,23 @@ public class PerspectiveInfoTests {
   }
 
   [Test]
-  public async Task PerspectiveInfo_WithNullableStreamKeyType_WorksCorrectlyAsync() {
-    // Arrange - StreamKeyType nullable for non-aggregate perspectives
+  public async Task PerspectiveInfo_WithNullableStreamIdType_WorksCorrectlyAsync() {
+    // Arrange - StreamIdType nullable for non-aggregate perspectives
     var info = new PerspectiveInfo(
       HandlerType: "global::MyApp.ProductPerspective",
       EventType: "global::MyApp.Events.ProductCreated",
       StateType: "global::MyApp.ProductDto",
       TableName: "product_dtos",
-      StreamKeyType: null
+      StreamIdType: null
     );
 
     // Act & Assert
-    await Assert.That(info.StreamKeyType).IsNull();
+    await Assert.That(info.StreamIdType).IsNull();
   }
 
   [Test]
-  public async Task PerspectiveInfo_DefaultStreamKeyType_IsNullAsync() {
-    // Arrange - StreamKeyType defaults to null when not provided
+  public async Task PerspectiveInfo_DefaultStreamIdType_IsNullAsync() {
+    // Arrange - StreamIdType defaults to null when not provided
     var info = new PerspectiveInfo(
       HandlerType: "global::MyApp.ProductPerspective",
       EventType: "global::MyApp.Events.ProductCreated",
@@ -114,7 +114,7 @@ public class PerspectiveInfoTests {
     );
 
     // Act & Assert
-    await Assert.That(info.StreamKeyType).IsNull();
+    await Assert.That(info.StreamIdType).IsNull();
   }
 
   [Test]
@@ -125,7 +125,7 @@ public class PerspectiveInfoTests {
       EventType: "global::MyApp.Events.ProductCreated",
       StateType: "global::MyApp.ProductDto",
       TableName: "product_dtos",
-      StreamKeyType: "global::MyApp.ProductId"
+      StreamIdType: "global::MyApp.ProductId"
     );
 
     // Act & Assert
@@ -133,7 +133,7 @@ public class PerspectiveInfoTests {
     await Assert.That(info.EventType).IsEqualTo("global::MyApp.Events.ProductCreated");
     await Assert.That(info.StateType).IsEqualTo("global::MyApp.ProductDto");
     await Assert.That(info.TableName).IsEqualTo("product_dtos");
-    await Assert.That(info.StreamKeyType).IsEqualTo("global::MyApp.ProductId");
+    await Assert.That(info.StreamIdType).IsEqualTo("global::MyApp.ProductId");
   }
 
   [Test]

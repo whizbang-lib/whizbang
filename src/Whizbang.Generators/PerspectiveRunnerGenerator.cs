@@ -19,7 +19,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Extract perspective info or warning for models missing StreamKey
+    // Extract perspective info or warning for models missing StreamId
     var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => _extractPerspectiveOrWarning(ctx, ct)
@@ -34,11 +34,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           var compilation = data.Left;
           var results = data.Right;
 
-          // Report warnings for perspectives missing StreamKey on model
+          // Report warnings for perspectives missing StreamId on model
           foreach (var result in results) {
             if (result!.Warning is { } warning) {
               ctx.ReportDiagnostic(Diagnostic.Create(
-                  DiagnosticDescriptors.PerspectiveModelMissingStreamKey,
+                  DiagnosticDescriptors.PerspectiveModelMissingStreamId,
                   Location.Create(
                       warning.FilePath,
                       default,
@@ -65,7 +65,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts perspective information or warning from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor or IGlobalPerspectiveFor.
-  /// Returns a warning if the model is missing [StreamKey] attribute.
+  /// Returns a warning if the model is missing [StreamId] attribute.
   /// </summary>
   private static PerspectiveOrWarning? _extractPerspectiveOrWarning(
       GeneratorSyntaxContext context,
@@ -104,15 +104,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find StreamKey property on model
-    var streamKeyPropertyName = _findModelStreamKeyProperty(modelType);
+    // Find StreamId property on model
+    var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
       // Return warning instead of silently skipping (WHIZ033)
       var location = classDeclaration.GetLocation();
       var lineSpan = location.GetLineSpan();
       return new PerspectiveOrWarning(
           Info: null,
-          Warning: new PerspectiveMissingStreamKeyWarning(
+          Warning: new PerspectiveMissingStreamIdWarning(
               PerspectiveName: classSymbol.Name,
               ModelName: modelType.Name,
               FilePath: lineSpan.Path,
@@ -122,8 +122,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       );
     }
 
-    // Extract StreamKey properties from event types
-    var eventStreamKeys = _extractEventStreamKeysFromTypes(eventTypes, eventTypeSymbols);
+    // Extract StreamId properties from event types
+    var eventStreamIds = _extractEventStreamIdsFromTypes(eventTypes, eventTypeSymbols);
 
     // Build type arguments and message type names
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
@@ -149,8 +149,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             InterfaceTypeArguments: typeArguments,
             EventTypes: eventTypes.ToArray(),
             MessageTypeNames: messageTypeNames,
-            StreamKeyPropertyName: streamKeyPropertyName,
-            EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
+            StreamIdPropertyName: streamKeyPropertyName,
+            EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
         ),
@@ -159,16 +159,16 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts the StreamKey property name from an event type.
-  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type.
+  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
   /// </summary>
-  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
     foreach (var member in eventTypeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        var hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           return property.Name;
         }
       }
@@ -295,15 +295,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
-    // Generate ExtractStreamId methods (one per event type with StreamKey)
+    // Generate ExtractStreamId methods (one per event type with StreamId)
     var extractStreamIdMethods = new StringBuilder();
-    if (perspective.EventStreamKeys != null) {
-      foreach (var eventStreamKey in perspective.EventStreamKeys) {
+    if (perspective.EventStreamIds != null) {
+      foreach (var eventStreamId in perspective.EventStreamIds) {
         extractStreamIdMethods.AppendLine($"  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
         extractStreamIdMethods.AppendLine($"  /// </summary>");
-        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
-        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
+        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
+        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
         extractStreamIdMethods.AppendLine($"  }}");
         extractStreamIdMethods.AppendLine();
       }
@@ -320,7 +320,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
-    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamKeyPropertyName!);
+    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamIdPropertyName!);
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
@@ -405,15 +405,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Finds the property with [StreamKey] attribute on a model type.
+  /// Finds the property with [StreamId] attribute on a model type.
   /// </summary>
-  private static string? _findModelStreamKeyProperty(ITypeSymbol modelType) {
+  private static string? _findModelStreamIdProperty(ITypeSymbol modelType) {
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        var hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           return property.Name;
         }
       }
@@ -422,23 +422,23 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts StreamKey properties from event types.
+  /// Extracts StreamId properties from event types.
   /// </summary>
-  private static List<EventStreamKeyInfo> _extractEventStreamKeysFromTypes(List<string> eventTypes, List<ITypeSymbol> eventTypeSymbols) {
-    var eventStreamKeys = new List<EventStreamKeyInfo>();
+  private static List<EventStreamIdInfo> _extractEventStreamIdsFromTypes(List<string> eventTypes, List<ITypeSymbol> eventTypeSymbols) {
+    var eventStreamIds = new List<EventStreamIdInfo>();
     for (int i = 0; i < eventTypes.Count; i++) {
       var eventTypeName = eventTypes[i];
       var eventTypeSymbol = eventTypeSymbols[i];
 
-      var eventStreamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
-      if (eventStreamKeyProp != null) {
-        eventStreamKeys.Add(new EventStreamKeyInfo(
+      var eventStreamIdProp = _extractStreamIdProperty(eventTypeSymbol);
+      if (eventStreamIdProp != null) {
+        eventStreamIds.Add(new EventStreamIdInfo(
             EventTypeName: eventTypeName,
-            StreamKeyPropertyName: eventStreamKeyProp
+            StreamIdPropertyName: eventStreamIdProp
         ));
       }
     }
-    return eventStreamKeys;
+    return eventStreamIds;
   }
 
   /// <summary>

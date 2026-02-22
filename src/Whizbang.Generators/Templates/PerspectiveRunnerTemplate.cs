@@ -369,7 +369,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
   #region EXTRACT_STREAM_ID_METHODS
   // Generated ExtractStreamId methods go here (one per event type)
-  // These methods extract the stream ID from each event's [StreamKey] property
+  // These methods extract the stream ID from each event's [StreamId] property
   #endregion
 
   /// <summary>

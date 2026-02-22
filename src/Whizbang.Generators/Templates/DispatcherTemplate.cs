@@ -37,13 +37,12 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     JsonSerializerOptions? jsonOptions = null,
     ITopicRegistry? topicRegistry = null,
     ITopicRoutingStrategy? topicRoutingStrategy = null,
-    IAggregateIdExtractor? aggregateIdExtractor = null,
     IEnvelopeSerializer? envelopeSerializer = null,
     IEnvelopeRegistry? envelopeRegistry = null,
     IOutboxRoutingStrategy? outboxRoutingStrategy = null,
     ILifecycleInvoker? lifecycleInvoker = null,
     IReceptorRegistry? receptorRegistry = null
-  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, streamIdExtractor: null, receptorRegistry) {
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, streamIdExtractor: null, receptorRegistry) {
     _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 

@@ -865,7 +865,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       [PerspectiveStorage(FieldStorageMode.Split)]
       public record EmbeddingModel {
-        [StreamKey]
+        [StreamId]
         public Guid Id { get; init; }
 
         [PhysicalField(Indexed = true)]
@@ -931,7 +931,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       [PerspectiveStorage(FieldStorageMode.Split)]
       public record EmbeddingModel {
-        [StreamKey]
+        [StreamId]
         public Guid Id { get; init; }
 
         [VectorField(1536)]
@@ -1016,7 +1016,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
       public class ActiveJobTemplatePerspective : IPerspectiveFor<ActiveJobTemplate.Model> {
         private readonly IPerspectiveStore<ActiveJobTemplate.Model> _store;
         public ActiveJobTemplatePerspective(IPerspectiveStore<ActiveJobTemplate.Model> store) => _store = store;
-        public string StreamKey { get; } = "job";
+        public string StreamId { get; } = "job";
         public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
       }
 
@@ -1024,7 +1024,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
       public class TaskItemPerspective : IPerspectiveFor<TaskItem.Model> {
         private readonly IPerspectiveStore<TaskItem.Model> _store;
         public TaskItemPerspective(IPerspectiveStore<TaskItem.Model> store) => _store = store;
-        public string StreamKey { get; } = "task";
+        public string StreamId { get; } = "task";
         public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
       }
 
@@ -1084,7 +1084,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
       public class ActiveJobTemplatePerspective : IPerspectiveFor<ActiveJobTemplate.Model> {
         private readonly IPerspectiveStore<ActiveJobTemplate.Model> _store;
         public ActiveJobTemplatePerspective(IPerspectiveStore<ActiveJobTemplate.Model> store) => _store = store;
-        public string StreamKey { get; } = "job";
+        public string StreamId { get; } = "job";
         public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
       }
 

@@ -240,7 +240,7 @@ public class IMessageSerializerTests {
   }
 
   [Test]
-  public async Task RoundTrip_PreservesTopicStreamKeyPartitionAsync() {
+  public async Task RoundTrip_PreservesTopicStreamIdPartitionAsync() {
     // Arrange
     var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
@@ -256,7 +256,7 @@ public class IMessageSerializerTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "orders.events",
-          StreamKey = "order-123",
+          StreamId = "order-123",
           PartitionIndex = 5
         }
       ]
@@ -269,7 +269,7 @@ public class IMessageSerializerTests {
     // Assert
     var typed = (MessageEnvelope<TestMessage>)deserialized;
     await Assert.That(typed.GetCurrentTopic()).IsEqualTo("orders.events");
-    await Assert.That(typed.GetCurrentStreamKey()).IsEqualTo("order-123");
+    await Assert.That(typed.GetCurrentStreamId()).IsEqualTo("order-123");
     await Assert.That(typed.GetCurrentPartitionIndex()).IsEqualTo(5);
   }
 
@@ -349,7 +349,7 @@ public class IMessageSerializerTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = string.Empty,
-          StreamKey = string.Empty,
+          StreamId = string.Empty,
           Metadata = null
         }
       ]
@@ -359,10 +359,10 @@ public class IMessageSerializerTests {
     var bytes = await serializer.SerializeAsync(original);
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
-    // Assert - Should not throw, GetCurrentTopic/StreamKey treat empty strings as null
+    // Assert - Should not throw, GetCurrentTopic/StreamId treat empty strings as null
     var typed = (MessageEnvelope<TestMessage>)deserialized;
     await Assert.That(typed.GetCurrentTopic()).IsNull();
-    await Assert.That(typed.GetCurrentStreamKey()).IsNull();
+    await Assert.That(typed.GetCurrentStreamId()).IsNull();
   }
 
   // Helper methods

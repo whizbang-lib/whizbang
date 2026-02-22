@@ -12,22 +12,22 @@ namespace Whizbang.Core.Tests.Internal;
 public class ResponseExtractorTests {
   // Test types for extraction scenarios
   public record OrderCreated : IEvent {
-    [StreamKey]
+    [StreamId]
     public required string OrderId { get; init; }
   }
 
   public record InventoryReserved : IEvent {
-    [StreamKey]
+    [StreamId]
     public required string ProductId { get; init; }
   }
 
   public record PaymentProcessed : IEvent {
-    [StreamKey]
+    [StreamId]
     public required decimal Amount { get; init; }
   }
 
   public record CacheInvalidated : IEvent {
-    [StreamKey]
+    [StreamId]
     public required string Key { get; init; }
   }
 

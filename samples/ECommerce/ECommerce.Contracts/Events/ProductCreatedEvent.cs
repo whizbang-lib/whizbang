@@ -6,8 +6,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when a new product is added to the catalog
 /// </summary>
 public record ProductCreatedEvent : IEvent {
-  [AggregateId]
-  [StreamKey]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public required string Name { get; init; }
   public required string Description { get; init; }

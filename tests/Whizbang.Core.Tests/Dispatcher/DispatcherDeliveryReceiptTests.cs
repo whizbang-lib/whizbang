@@ -15,7 +15,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// <summary>
 /// Tests for Dispatcher delivery receipt StreamId functionality.
 /// Verifies that IDeliveryReceipt.StreamId is correctly populated from
-/// [StreamKey] (events) and [AggregateId] (commands).
+/// [StreamId] (events) and [StreamId] (commands).
 /// </summary>
 [Category("Dispatcher")]
 [Category("DeliveryReceipt")]
@@ -26,35 +26,34 @@ public class DispatcherDeliveryReceiptTests {
   // Test Events and Commands
   // ========================================
 
-  /// <summary>Event with [StreamKey] attribute</summary>
-  public record OrderCreatedEvent([property: StreamKey] Guid OrderId, string CustomerName) : IEvent;
+  /// <summary>Event with [StreamId] attribute</summary>
+  public record OrderCreatedEvent([property: StreamId] Guid OrderId, string CustomerName) : IEvent;
 
-  /// <summary>Event with both [StreamKey] and [AggregateId]</summary>
+  /// <summary>Event with [StreamId] attribute</summary>
   public record ProductCreatedEvent(
-    [property: StreamKey] Guid ProductStreamId,
-    [property: AggregateId] Guid ProductAggregateId,
+    [property: StreamId] Guid ProductStreamId,
     string Name
   ) : IEvent;
 
-  /// <summary>Event with only [AggregateId] (no [StreamKey])</summary>
-#pragma warning disable WHIZ009 // Intentionally missing [StreamKey] for testing fallback behavior
-  public record InventoryAdjustedEvent([property: AggregateId] Guid ProductId, int Quantity) : IEvent;
+  /// <summary>Event with only [StreamId] (no [StreamId])</summary>
+#pragma warning disable WHIZ009 // Intentionally missing [StreamId] for testing fallback behavior
+  public record InventoryAdjustedEvent([property: StreamId] Guid ProductId, int Quantity) : IEvent;
 #pragma warning restore WHIZ009
 
-  /// <summary>Command with [AggregateId] attribute</summary>
-  public record CreateOrderCommand([property: AggregateId] Guid OrderId, string Description) : ICommand;
+  /// <summary>Command with [StreamId] attribute</summary>
+  public record CreateOrderCommand([property: StreamId] Guid OrderId, string Description) : ICommand;
 
   /// <summary>Response for CreateOrderCommand</summary>
   public record CreateOrderResponse(Guid OrderId);
 
-  /// <summary>Command without [AggregateId] attribute</summary>
+  /// <summary>Command without [StreamId] attribute</summary>
   public record ProcessPaymentCommand(decimal Amount) : ICommand;
 
   /// <summary>Response for ProcessPaymentCommand</summary>
   public record ProcessPaymentResponse(bool Success);
 
-  /// <summary>Event without [StreamKey] attribute</summary>
-#pragma warning disable WHIZ009 // Intentionally missing [StreamKey] for testing null return behavior
+  /// <summary>Event without [StreamId] attribute</summary>
+#pragma warning disable WHIZ009 // Intentionally missing [StreamId] for testing null return behavior
   public record SystemNotificationEvent(string Message) : IEvent;
 #pragma warning restore WHIZ009
 
@@ -81,7 +80,7 @@ public class DispatcherDeliveryReceiptTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_CommandWithAggregateId_DeliveryReceiptHasStreamIdAsync() {
+  public async Task SendAsync_CommandWithStreamId_DeliveryReceiptHasStreamIdAsync() {
     // Arrange
     var orderId = Guid.NewGuid();
     var command = new CreateOrderCommand(orderId, "Test Order");
@@ -92,14 +91,14 @@ public class DispatcherDeliveryReceiptTests {
     var receipt = await dispatcher.SendAsync(command);
 
     // Assert - After Dispatcher is updated to use IStreamIdExtractor,
-    // this should return the StreamId from [AggregateId]
+    // this should return the StreamId from [StreamId]
     await Assert.That(receipt.StreamId).IsNotNull();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
 
   [Test]
-  public async Task SendAsync_CommandWithoutAggregateId_StreamIdIsNullAsync() {
+  public async Task SendAsync_CommandWithoutStreamId_StreamIdIsNullAsync() {
     // Arrange
     var command = new ProcessPaymentCommand(100.00m);
 
@@ -108,7 +107,7 @@ public class DispatcherDeliveryReceiptTests {
     // Act
     var receipt = await dispatcher.SendAsync(command);
 
-    // Assert - No [AggregateId], so StreamId should be null
+    // Assert - No [StreamId], so StreamId should be null
     await Assert.That(receipt.StreamId).IsNull();
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
@@ -128,11 +127,11 @@ public class DispatcherDeliveryReceiptTests {
 
   // ========================================
   // IEvent Tests (PublishAsync returns IDeliveryReceipt)
-  // These tests verify StreamId is correctly extracted from [StreamKey] attribute.
+  // These tests verify StreamId is correctly extracted from [StreamId] attribute.
   // ========================================
 
   [Test]
-  public async Task PublishAsync_EventWithStreamKey_DeliveryReceiptHasStreamIdAsync() {
+  public async Task PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync() {
     // Arrange
     var orderId = Guid.NewGuid();
     var @event = new OrderCreatedEvent(orderId, "Test Customer");
@@ -142,32 +141,30 @@ public class DispatcherDeliveryReceiptTests {
     // Act
     var receipt = await dispatcher.PublishAsync(@event);
 
-    // Assert - StreamId should be extracted from [StreamKey] attribute
+    // Assert - StreamId should be extracted from [StreamId] attribute
     await Assert.That(receipt.StreamId).IsNotNull();
     await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
 
   [Test]
-  public async Task PublishAsync_EventWithStreamKeyAndAggregateId_UsesStreamKeyAsync() {
+  public async Task PublishAsync_EventWithStreamId_ExtractsStreamIdAsync() {
     // Arrange
-    var streamKeyId = Guid.NewGuid();
-    var aggregateId = Guid.NewGuid();
-    var @event = new ProductCreatedEvent(streamKeyId, aggregateId, "Test Product");
+    var expectedId = Guid.NewGuid();
+    var @event = new ProductCreatedEvent(expectedId, "Test Product");
 
     var dispatcher = _createDispatcher();
 
     // Act
     var receipt = await dispatcher.PublishAsync(@event);
 
-    // Assert - Should prefer [StreamKey] over [AggregateId]
+    // Assert
     await Assert.That(receipt.StreamId).IsNotNull();
-    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamKeyId);
-    await Assert.That(receipt.StreamId.Value).IsNotEqualTo(aggregateId);
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(expectedId);
   }
 
   [Test]
-  public async Task PublishAsync_EventWithoutStreamKey_StreamIdIsNullAsync() {
+  public async Task PublishAsync_EventWithoutStreamId_StreamIdIsNullAsync() {
     // Arrange
     var @event = new SystemNotificationEvent("Test notification");
 
@@ -176,7 +173,7 @@ public class DispatcherDeliveryReceiptTests {
     // Act
     var receipt = await dispatcher.PublishAsync(@event);
 
-    // Assert - No [StreamKey], so StreamId should be null
+    // Assert - No [StreamId], so StreamId should be null
     await Assert.That(receipt.StreamId).IsNull();
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
   }
@@ -186,7 +183,7 @@ public class DispatcherDeliveryReceiptTests {
   // ========================================
 
   [Test]
-  public async Task StreamIdExtractor_EventWithStreamKey_ReturnsStreamKeyValueAsync() {
+  public async Task StreamIdExtractor_EventWithStreamId_ReturnsStreamIdValueAsync() {
     // Arrange
     var orderId = Guid.NewGuid();
     var @event = new OrderCreatedEvent(orderId, "Test Customer");
@@ -201,20 +198,18 @@ public class DispatcherDeliveryReceiptTests {
   }
 
   [Test]
-  public async Task StreamIdExtractor_EventWithStreamKeyAndAggregateId_PrefersStreamKeyAsync() {
+  public async Task StreamIdExtractor_EventWithStreamId_ExtractsStreamIdAsync() {
     // Arrange
-    var streamId = Guid.NewGuid();
-    var aggregateId = Guid.NewGuid();
-    var @event = new ProductCreatedEvent(streamId, aggregateId, "Test Product");
+    var expectedId = Guid.NewGuid();
+    var @event = new ProductCreatedEvent(expectedId, "Test Product");
     var extractor = new TestStreamIdExtractor();
 
     // Act
     var result = extractor.ExtractStreamId(@event, @event.GetType());
 
-    // Assert - Should use [StreamKey], not [AggregateId]
+    // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!.Value).IsEqualTo(streamId);
-    await Assert.That(result.Value).IsNotEqualTo(aggregateId);
+    await Assert.That(result!.Value).IsEqualTo(expectedId);
   }
 
   [Test]
@@ -251,7 +246,6 @@ public class DispatcherDeliveryReceiptTests {
 
     // Register test-specific IStreamIdExtractor that uses the test project's generated extractors
     services.AddSingleton<IStreamIdExtractor, TestStreamIdExtractor>();
-    services.AddSingleton<IAggregateIdExtractor, AggregateIdExtractor>();
 
     var serviceProvider = services.BuildServiceProvider();
     return serviceProvider.GetRequiredService<IDispatcher>();
@@ -282,31 +276,34 @@ public class DispatcherDeliveryReceiptTests {
 
   /// <summary>
   /// Test-specific StreamIdExtractor that uses the test project's generated extractors.
-  /// This is needed because the test project generates its own StreamKeyExtractors
+  /// This is needed because the test project generates its own StreamIdExtractors
   /// in Whizbang.Core.Tests.Generated, separate from Whizbang.Core.Generated.
   /// </summary>
   private sealed class TestStreamIdExtractor : IStreamIdExtractor {
-    private readonly IAggregateIdExtractor? _aggregateIdExtractor;
-
-    public TestStreamIdExtractor(IAggregateIdExtractor? aggregateIdExtractor = null) {
-      _aggregateIdExtractor = aggregateIdExtractor;
-    }
-
     public Guid? ExtractStreamId(object message, Type messageType) {
       if (message is null) {
         return null;
       }
 
-      // For IEvent: Try [StreamKey] first using the test project's generated extractors
+      // For IEvent: Try [StreamId] using the test project's generated extractors
       if (message is IEvent @event) {
-        var streamId = StreamKeyExtractors.TryResolveAsGuid(@event);
+        var streamId = StreamIdExtractors.TryResolveAsGuid(@event);
         if (streamId.HasValue) {
           return streamId.Value;
         }
       }
 
-      // Fall back to [AggregateId]
-      return _aggregateIdExtractor?.ExtractAggregateId(message, messageType);
+      // For ICommand: Try [StreamId] using the test project's generated extractors
+      if (message is ICommand command) {
+        var streamId = StreamIdExtractors.TryResolveAsGuid(command);
+        if (streamId.HasValue) {
+          return streamId.Value;
+        }
+      }
+
+      // Fallback: Try the generic overload for any message type
+      var result = StreamIdExtractors.TryResolveAsGuid(message);
+      return result;
     }
   }
 }

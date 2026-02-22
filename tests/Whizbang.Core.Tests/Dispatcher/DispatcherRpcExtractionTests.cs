@@ -28,10 +28,10 @@ public class DispatcherRpcExtractionTests {
 
   // Side effect events that should cascade (not return to RPC caller)
   [DefaultRouting(DispatchMode.Local)] // Local for test verification
-  public record InventoryReserved([property: StreamKey] Guid OrderId, int Quantity) : IEvent;
+  public record InventoryReserved([property: StreamId] Guid OrderId, int Quantity) : IEvent;
 
   [DefaultRouting(DispatchMode.Local)]
-  public record PaymentInitiated([property: StreamKey] Guid OrderId, decimal Amount) : IEvent;
+  public record PaymentInitiated([property: StreamId] Guid OrderId, decimal Amount) : IEvent;
 
 
   // ========================================

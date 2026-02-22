@@ -554,7 +554,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -589,7 +589,7 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_EventWithStreamKey_ExtractsStreamKeyPropertyAsync() {
+  public async Task PerspectiveDiscoveryGenerator_EventWithStreamId_ExtractsStreamIdPropertyAsync() {
     // Arrange
     var source = @"
 using System;
@@ -598,7 +598,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record ProductCreatedEvent : IEvent {
-    [StreamKey]  // Using Whizbang.Core.StreamKeyAttribute
+    [StreamId]  // Using Whizbang.Core.StreamIdAttribute
     public Guid ProductId { get; init; }
     public string ProductName { get; init; } = """";
   }
@@ -623,14 +623,14 @@ namespace TestNamespace {
     await Assert.That(generatedSource).IsNotNull();
     await Assert.That(generatedSource!).Contains("ProductPerspective");
 
-    // Should not have any errors about missing StreamKey
+    // Should not have any errors about missing StreamId
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
     await Assert.That(errors).IsEmpty();
   }
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_EventMissingStreamKey_ReportsWHIZ030DiagnosticAsync() {
+  public async Task PerspectiveDiscoveryGenerator_EventMissingStreamId_ReportsWHIZ030DiagnosticAsync() {
     // Arrange
     var source = @"
 using System;
@@ -639,7 +639,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    public Guid OrderId { get; init; }  // No [StreamKey] attribute!
+    public Guid OrderId { get; init; }  // No [StreamId] attribute!
     public string CustomerName { get; init; } = """";
   }
 
@@ -663,12 +663,12 @@ namespace TestNamespace {
     await Assert.That(whiz030).IsNotNull();
     await Assert.That(whiz030!.Severity).IsEqualTo(DiagnosticSeverity.Error);
     await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderCreatedEvent");
-    await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("StreamKey");
+    await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("StreamId");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_EventWithMultipleStreamKeys_ReportsWHIZ031DiagnosticAsync() {
+  public async Task PerspectiveDiscoveryGenerator_EventWithMultipleStreamIds_ReportsWHIZ031DiagnosticAsync() {
     // Arrange
     var source = @"
 using System;
@@ -677,11 +677,11 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
-    public Guid OrderId { get; init; }  // First StreamKey
+    [StreamId]
+    public Guid OrderId { get; init; }  // First StreamId
 
-    [StreamKey]
-    public Guid CustomerId { get; init; }  // Second StreamKey - ERROR!
+    [StreamId]
+    public Guid CustomerId { get; init; }  // Second StreamId - ERROR!
 
     public string CustomerName { get; init; } = """";
   }
@@ -711,7 +711,7 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeWithStreamKey_ValidatesElementTypeAsync() {
+  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeWithStreamId_ValidatesElementTypeAsync() {
     // Arrange - Tests that array events validate the element type, not the array itself
     var source = @"
 using System;
@@ -720,8 +720,8 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
-    public Guid OrderId { get; init; }  // StreamKey on element type
+    [StreamId]
+    public Guid OrderId { get; init; }  // StreamId on element type
     public string CustomerName { get; init; } = """";
   }
 
@@ -740,7 +740,7 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
 
-    // Assert - Should not report WHIZ030 error (array element type has StreamKey)
+    // Assert - Should not report WHIZ030 error (array element type has StreamId)
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
     await Assert.That(errors).IsEmpty();
 
@@ -750,8 +750,8 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeMissingStreamKey_ReportsWHIZ030Async() {
-    // Arrange - Tests that array events validate element type for missing StreamKey
+  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeMissingStreamId_ReportsWHIZ030Async() {
+    // Arrange - Tests that array events validate element type for missing StreamId
     var source = @"
 using System;
 using Whizbang.Core;
@@ -759,7 +759,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    public Guid OrderId { get; init; }  // NO StreamKey on element type
+    public Guid OrderId { get; init; }  // NO StreamId on element type
     public string CustomerName { get; init; } = """";
   }
 
@@ -788,21 +788,21 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveDiscoveryGenerator_InheritedStreamKey_FindsAttributeOnBaseClassAsync() {
-    // Arrange - Tests that [StreamKey] is found on inherited properties from base class
+  public async Task PerspectiveDiscoveryGenerator_InheritedStreamId_FindsAttributeOnBaseClassAsync() {
+    // Arrange - Tests that [StreamId] is found on inherited properties from base class
     var source = @"
 using System;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
-  // Base event class with [StreamKey] on inherited property
+  // Base event class with [StreamId] on inherited property
   public abstract record BaseEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public virtual Guid StreamId { get; init; }
   }
 
-  // Derived event that inherits StreamKey from base class
+  // Derived event that inherits StreamId from base class
   public record OrderCreatedEvent : BaseEvent {
     public string OrderName { get; init; } = """";
   }
@@ -822,7 +822,7 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
 
-    // Assert - Should NOT report WHIZ030 error (StreamKey is inherited from base class)
+    // Assert - Should NOT report WHIZ030 error (StreamId is inherited from base class)
     var whiz030 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ030");
     await Assert.That(whiz030).IsNull();
 
@@ -1339,19 +1339,19 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record Event1 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event2 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event3 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event4 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event5 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event6 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event7 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event8 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event9 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event10 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event1 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event2 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event3 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event4 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event5 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event6 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event7 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event8 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event9 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event10 : IEvent { [StreamId] public Guid Id { get; init; } }
 
   public record MultiEventModel {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
     public int Counter { get; init; }
   }
@@ -1389,7 +1389,7 @@ namespace TestNamespace {
     // Arrange - Perspective implementing IPerspectiveFor with 25 event types
     var eventDeclarations = string.Join("\n",
         Enumerable.Range(1, 25).Select(i =>
-            $"  public record Evt{i} : IEvent {{ [StreamKey] public Guid Id {{ get; init; }} }}"));
+            $"  public record Evt{i} : IEvent {{ [StreamId] public Guid Id {{ get; init; }} }}"));
 
     var applyMethods = string.Join("\n",
         Enumerable.Range(1, 25).Select(i =>
@@ -1406,7 +1406,7 @@ namespace TestNamespace {{
 {eventDeclarations}
 
   public record Model {{
-    [StreamKey]
+    [StreamId]
     public Guid Id {{ get; init; }}
     public int Counter {{ get; init; }}
   }}
@@ -1443,7 +1443,7 @@ using System;
 
 namespace TestNamespace {
   public record AccountCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid AccountId { get; init; }
   }
 
@@ -1453,7 +1453,7 @@ namespace TestNamespace {
   /// </summary>
   public static class ActiveAccount {
     public record Model {
-      [StreamKey]
+      [StreamId]
       public Guid AccountId { get; init; }
       public string Name { get; init; } = """";
     }
@@ -1493,12 +1493,12 @@ using System;
 
 namespace TestNamespace.Perspectives {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
   }
@@ -1532,7 +1532,7 @@ using System;
 
 namespace TestNamespace {
   public record SessionEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid SessionId { get; init; }
   }
 
@@ -1543,7 +1543,7 @@ namespace TestNamespace {
   public static class Sessions {
     public static class Active {
       public record Model {
-        [StreamKey]
+        [StreamId]
         public Guid SessionId { get; init; }
       }
 

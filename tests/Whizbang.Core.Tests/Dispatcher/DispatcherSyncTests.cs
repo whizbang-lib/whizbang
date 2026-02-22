@@ -26,7 +26,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   // Event uses [DefaultRouting(Local)] for local cascade test verification.
   // (System default is Outbox for cross-service delivery)
   [DefaultRouting(DispatchMode.Local)]
-  public record DispatcherSyncOrderCreatedEvent([property: StreamKey] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
+  public record DispatcherSyncOrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
   public record DispatcherSyncLogCommand(string Message);
 
   /// <summary>

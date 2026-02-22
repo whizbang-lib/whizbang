@@ -27,11 +27,11 @@ public class DispatcherCascadeTests {
   // Events use [DefaultRouting(Local)] for local cascade test verification.
   // (System default is Outbox for cross-service delivery)
   [DefaultRouting(DispatchMode.Local)]
-  public record OrderCreatedEvent([property: StreamKey] Guid OrderId, Guid CustomerId) : IEvent;
+  public record OrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
   [DefaultRouting(DispatchMode.Local)]
-  public record OrderShippedEvent([property: StreamKey] Guid OrderId) : IEvent;
+  public record OrderShippedEvent([property: StreamId] Guid OrderId) : IEvent;
   [DefaultRouting(DispatchMode.Local)]
-  public record NotificationSentEvent([property: StreamKey] Guid OrderId, string Type) : IEvent;
+  public record NotificationSentEvent([property: StreamId] Guid OrderId, string Type) : IEvent;
 
   // ========================================
   // EVENT TRACKING INFRASTRUCTURE

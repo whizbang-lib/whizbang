@@ -16,11 +16,11 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// These tests exercise the outbox paths that require IWorkCoordinatorStrategy.
 /// </summary>
 public class DispatcherOutboxTests {
-  // Test messages for routing (with StreamKey attributes to satisfy generator)
-  public record ProductCreatedEvent([property: StreamKey] Guid ProductId) : IEvent;
-  public record InventoryUpdatedEvent([property: StreamKey] Guid ProductId, int Quantity) : IEvent;
-  public record OrderPlacedEvent([property: StreamKey] Guid OrderId) : IEvent;
-  public record CustomEvent([property: StreamKey] string Data) : IEvent;
+  // Test messages for routing (with StreamId attributes to satisfy generator)
+  public record ProductCreatedEvent([property: StreamId] Guid ProductId) : IEvent;
+  public record InventoryUpdatedEvent([property: StreamId] Guid ProductId, int Quantity) : IEvent;
+  public record OrderPlacedEvent([property: StreamId] Guid OrderId) : IEvent;
+  public record CustomEvent([property: StreamId] string Data) : IEvent;
 
   // Test commands for routing
   public record CreateProductCommand(string Name);
@@ -348,17 +348,17 @@ public class DispatcherOutboxTests {
   // AGGREGATE ID EXTRACTION TESTS
   // ========================================
 
-  // Test message with AggregateId attribute
-  public record OrderCommandWithAggregateId([property: AggregateId] Guid OrderId, string Description);
+  // Test message with StreamId attribute
+  public record OrderCommandWithStreamId([property: StreamId] Guid OrderId, string Description);
 
   [Test]
-  public async Task SendAsync_WithAggregateId_ExtractsStreamIdAsync() {
+  public async Task SendAsync_WithStreamId_ExtractsStreamIdAsync() {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
-    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var aggregateIdExtractor = new StubStreamIdExtractor();
     var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
     var orderId = Guid.NewGuid();
-    var command = new OrderCommandWithAggregateId(orderId, "Test Order");
+    var command = new OrderCommandWithStreamId(orderId, "Test Order");
 
     // Act
     await dispatcher.SendAsync(command);
@@ -369,10 +369,10 @@ public class DispatcherOutboxTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithAggregateId_ExtractsStreamIdAsync() {
+  public async Task PublishAsync_WithStreamId_ExtractsStreamIdAsync() {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
-    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var aggregateIdExtractor = new StubStreamIdExtractor();
     var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
     var productId = Guid.NewGuid();
     var @event = new ProductCreatedEvent(productId);
@@ -386,7 +386,7 @@ public class DispatcherOutboxTests {
   }
 
   [Test]
-  public async Task SendAsync_WithoutAggregateId_UsesMessageIdAsStreamIdAsync() {
+  public async Task SendAsync_WithoutStreamId_UsesMessageIdAsStreamIdAsync() {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
     // No aggregate ID extractor - should fall back to message ID
@@ -407,10 +407,10 @@ public class DispatcherOutboxTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_WithAggregateIdExtractor_CreatesHopMetadataAsync() {
+  public async Task SendAsync_WithStreamIdExtractor_CreatesHopMetadataAsync() {
     // Arrange
     var strategy = new StubWorkCoordinatorStrategy();
-    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var aggregateIdExtractor = new StubStreamIdExtractor();
     var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
     var productId = Guid.NewGuid();
     var @event = new ProductCreatedEvent(productId);
@@ -418,7 +418,7 @@ public class DispatcherOutboxTests {
     // Act
     await dispatcher.PublishAsync(@event);
 
-    // Assert - Envelope metadata should contain AggregateId
+    // Assert - Envelope metadata should contain StreamId
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
     var metadata = strategy.QueuedOutboxMessages[0].Metadata;
     await Assert.That(metadata).IsNotNull();
@@ -569,14 +569,14 @@ public class DispatcherOutboxTests {
   }
 
   // Stub aggregate ID extractor for testing
-  private sealed class StubAggregateIdExtractor : IAggregateIdExtractor {
-    public Guid? ExtractAggregateId(object message, Type messageType) {
+  private sealed class StubStreamIdExtractor : IStreamIdExtractor {
+    public Guid? ExtractStreamId(object message, Type messageType) {
       // Check for ProductCreatedEvent
       if (message is ProductCreatedEvent pce) {
         return pce.ProductId;
       }
-      // Check for OrderCommandWithAggregateId
-      if (message is OrderCommandWithAggregateId oca) {
+      // Check for OrderCommandWithStreamId
+      if (message is OrderCommandWithStreamId oca) {
         return oca.OrderId;
       }
       return null;
@@ -591,7 +591,7 @@ public class DispatcherOutboxTests {
     IWorkCoordinatorStrategy strategy,
     ITopicRegistry? registry = null,
     ITopicRoutingStrategy? routingStrategy = null,
-    IAggregateIdExtractor? aggregateIdExtractor = null
+    IStreamIdExtractor? aggregateIdExtractor = null
   ) {
     var services = new ServiceCollection();
 

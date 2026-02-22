@@ -18,12 +18,12 @@ namespace Whizbang.Core.Tests.Integration;
 [Category("Integration")]
 public class EventAuditingIntegrationTests {
   // Test domain events (unique names to avoid generator conflicts)
-  public sealed record AuditTestOrderCreated([property: StreamKey] Guid OrderId, string CustomerId, decimal Total) : IEvent;
-  public sealed record AuditTestOrderShipped([property: StreamKey] Guid OrderId, DateTimeOffset ShippedAt) : IEvent;
-  public sealed record AuditTestPaymentProcessed([property: StreamKey] Guid PaymentId, decimal Amount) : IEvent;
+  public sealed record AuditTestOrderCreated([property: StreamId] Guid OrderId, string CustomerId, decimal Total) : IEvent;
+  public sealed record AuditTestOrderShipped([property: StreamId] Guid OrderId, DateTimeOffset ShippedAt) : IEvent;
+  public sealed record AuditTestPaymentProcessed([property: StreamId] Guid PaymentId, decimal Amount) : IEvent;
 
   // Test system event that SHOULD be audited (no Exclude attribute)
-  public sealed record AuditTestSystemEvent([property: StreamKey] Guid Id, string Message) : ISystemEvent;
+  public sealed record AuditTestSystemEvent([property: StreamId] Guid Id, string Message) : ISystemEvent;
 
   [Test]
   public async Task EventAuditing_WhenEnabled_EmitsEventAuditedForDomainEvent_Async() {

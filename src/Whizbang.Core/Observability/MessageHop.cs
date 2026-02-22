@@ -96,7 +96,7 @@ public record MessageHop {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
-  public string StreamKey { get; init; } = string.Empty;
+  public string StreamId { get; init; } = string.Empty;
 
   /// <summary>
   /// The partition index at this hop (if applicable).

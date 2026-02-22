@@ -6,8 +6,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when a product is soft-deleted from catalog
 /// </summary>
 public record ProductDeletedEvent : IEvent {
-  [AggregateId]
-  [StreamKey]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public DateTime DeletedAt { get; init; }
 }

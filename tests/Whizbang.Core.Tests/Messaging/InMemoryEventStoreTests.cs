@@ -27,7 +27,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var eventStore = new InMemoryEventStore();
     var streamId = Guid.NewGuid();
     var message = new TestEvent {
-      AggregateId = streamId,
+      StreamId = streamId,
       Payload = "test-payload"
     };
 
@@ -49,7 +49,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var eventStore = new InMemoryEventStore();
     var streamId = Guid.NewGuid();
     var message = new TestEvent {
-      AggregateId = streamId,
+      StreamId = streamId,
       Payload = "test-payload"
     };
 
@@ -73,7 +73,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var eventStore = new InMemoryEventStore(registry);
     var streamId = Guid.NewGuid();
     var message = new TestEvent {
-      AggregateId = streamId,
+      StreamId = streamId,
       Payload = "test-payload"
     };
 
@@ -128,7 +128,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var eventStore = new InMemoryEventStore(registry);
     var streamId = Guid.NewGuid();
     var message = new TestEvent {
-      AggregateId = streamId,
+      StreamId = streamId,
       Payload = "not-registered"
     };
 
@@ -377,7 +377,7 @@ public class InMemoryEventStoreTests : EventStoreContractTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent {
-        AggregateId = aggregateId,
+        StreamId = aggregateId,
         Payload = payload
       },
       Hops = []

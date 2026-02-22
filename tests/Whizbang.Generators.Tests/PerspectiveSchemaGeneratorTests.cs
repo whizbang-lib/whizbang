@@ -576,7 +576,7 @@ public class PerspectiveSchemaGeneratorTests {
 
               public static class Activity {
                 public class Model {
-                  [StreamKey]
+                  [StreamId]
                   public Guid Id { get; set; }
                   public string Name { get; set; } = "";
                 }
@@ -619,7 +619,7 @@ public class PerspectiveSchemaGeneratorTests {
 
               public static class Activity {
                 public class Model {
-                  [StreamKey]
+                  [StreamId]
                   public Guid Id { get; set; }
                 }
 
@@ -632,7 +632,7 @@ public class PerspectiveSchemaGeneratorTests {
 
               public static class Session {
                 public class Model {
-                  [StreamKey]
+                  [StreamId]
                   public Guid Id { get; set; }
                 }
 
@@ -681,7 +681,7 @@ public class PerspectiveSchemaGeneratorTests {
               public static class Sessions {
                 public static class Active {
                   public class Model {
-                    [StreamKey]
+                    [StreamId]
                     public Guid Id { get; set; }
                   }
 

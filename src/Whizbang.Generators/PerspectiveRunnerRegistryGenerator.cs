@@ -92,21 +92,21 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find property with [StreamKey] attribute on the model
-    var hasStreamKeyAttribute = false;
+    // Find property with [StreamId] attribute on the model
+    var hasStreamIdAttribute = false;
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
-        hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           break;
         }
       }
     }
 
-    if (!hasStreamKeyAttribute) {
-      // Cannot generate runner without StreamKey - skip silently
+    if (!hasStreamIdAttribute) {
+      // Cannot generate runner without StreamId - skip silently
       return null;
     }
 

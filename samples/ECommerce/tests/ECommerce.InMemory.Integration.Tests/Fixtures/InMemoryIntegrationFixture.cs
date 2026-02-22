@@ -283,7 +283,6 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    builder.Services.AddWhizbangAggregateIdExtractor();
 
     // Register lifecycle services for Perspective stage support
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);

@@ -49,7 +49,7 @@ public static class ServiceBusConsumerWorkerTests {
 /// Test event for ServiceBusConsumerWorker tests (Worker-specific to avoid naming conflicts)
 /// </summary>
 public record ServiceBusWorkerTestEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public string Data { get; init; } = string.Empty;
 }
 

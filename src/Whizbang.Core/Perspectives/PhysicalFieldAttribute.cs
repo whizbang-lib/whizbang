@@ -24,7 +24,7 @@ namespace Whizbang.Core.Perspectives;
 /// <code>
 /// [PerspectiveStorage(FieldStorageMode.Extracted)]
 /// public record ProductDto {
-///   [StreamKey]
+///   [StreamId]
 ///   public Guid ProductId { get; init; }
 ///
 ///   [PhysicalField(Indexed = true)]

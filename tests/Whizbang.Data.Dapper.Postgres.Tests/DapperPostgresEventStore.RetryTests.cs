@@ -18,12 +18,11 @@ using Whizbang.Data.Schema;
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
-/// Test event with AggregateId for stream ID inference.
+/// Test event with StreamId for stream ID inference.
 /// </summary>
 public record PostgresRetryTestEvent : IEvent {
-  [StreamKey]
-  [AggregateId]
-  public required Guid AggregateId { get; init; }
+  [StreamId]
+  public required Guid StreamId { get; init; }
   public required string Payload { get; init; }
 }
 
@@ -216,7 +215,7 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
     var envelope = new MessageEnvelope<PostgresRetryTestEvent> {
       MessageId = MessageId.New(),
       Payload = new PostgresRetryTestEvent {
-        AggregateId = aggregateId,
+        StreamId = aggregateId,
         Payload = $"test-payload-{Guid.NewGuid()}"
       },
       Hops = []

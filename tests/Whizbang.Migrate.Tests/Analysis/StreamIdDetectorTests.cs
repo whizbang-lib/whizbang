@@ -27,11 +27,11 @@ public class StreamIdDetectorTests {
   }
 
   [Test]
-  public async Task DetectAsync_FindsAggregateIdProperty_Async() {
+  public async Task DetectAsync_FindsStreamIdPropertyInItemEvents_Async() {
     // Arrange
     var sourceCode = """
-      public record ItemCreated(Guid AggregateId, string Name);
-      public record ItemUpdated(Guid AggregateId, string Name);
+      public record ItemCreated(Guid StreamId, string Name);
+      public record ItemUpdated(Guid StreamId, string Name);
       """;
 
     // Act
@@ -39,7 +39,7 @@ public class StreamIdDetectorTests {
 
     // Assert
     await Assert.That(result.DetectedProperties).Count().IsEqualTo(1);
-    await Assert.That(result.DetectedProperties[0].PropertyName).IsEqualTo("AggregateId");
+    await Assert.That(result.DetectedProperties[0].PropertyName).IsEqualTo("StreamId");
     await Assert.That(result.DetectedProperties[0].OccurrenceCount).IsEqualTo(2);
   }
 
