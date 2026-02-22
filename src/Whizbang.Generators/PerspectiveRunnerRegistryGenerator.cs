@@ -186,6 +186,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("using System.Collections.Generic;");
     source.AppendLine("using System.Runtime.CompilerServices;");
     source.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    source.AppendLine("using Whizbang.Core.Messaging;");
     source.AppendLine("using Whizbang.Core.Perspectives;");
     source.AppendLine();
     source.AppendLine($"namespace {namespaceName};");
@@ -242,6 +243,27 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// Useful for diagnostic messages when runner lookup fails.");
     source.AppendLine("  /// </summary>");
     source.AppendLine("  public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registeredPerspectives;");
+    source.AppendLine();
+
+    // Generate _allEventTypes array (unique event types across all perspectives)
+    var allEventTypes = perspectives
+        .SelectMany(p => p.EventTypes)
+        .Distinct()
+        .OrderBy(e => e, StringComparer.Ordinal)
+        .ToList();
+
+    source.AppendLine("  // All unique event types for IEventTypeProvider (lifecycle receptor polymorphic deserialization)");
+    source.AppendLine("  private static readonly Type[] _allEventTypes = [");
+    foreach (var eventType in allEventTypes) {
+      source.AppendLine($"    typeof({eventType}),");
+    }
+    source.AppendLine("  ];");
+    source.AppendLine();
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Gets all unique event types across all perspectives.");
+    source.AppendLine("  /// Used by PerspectiveWorker for lifecycle receptor invocation (AOT-compatible polymorphic deserialization).");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  public IReadOnlyList<Type> GetEventTypes() => _allEventTypes;");
 
     source.AppendLine("}");
     source.AppendLine();
@@ -253,14 +275,16 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("public static class PerspectiveRunnerRegistryExtensions {");
     source.AppendLine("  /// <summary>");
     source.AppendLine($"  /// Registers all {perspectives.Length} perspective runner(s) as scoped services.");
-    source.AppendLine("  /// Also registers the PerspectiveRunnerRegistry as the IPerspectiveRunnerRegistry singleton.");
+    source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as IPerspectiveRunnerRegistry and IEventTypeProvider singletons.");
     source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
     source.AppendLine("  /// </summary>");
     source.AppendLine("  public static IServiceCollection AddPerspectiveRunners(");
     source.AppendLine("      this IServiceCollection services) {");
     source.AppendLine();
-    source.AppendLine("    // Register the registry as singleton");
-    source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry, PerspectiveRunnerRegistry>();");
+    source.AppendLine("    // Register the registry as singleton (implements both IPerspectiveRunnerRegistry and IEventTypeProvider)");
+    source.AppendLine("    services.AddSingleton<PerspectiveRunnerRegistry>();");
+    source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
+    source.AppendLine("    services.AddSingleton<IEventTypeProvider>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
     source.AppendLine();
 
     // Register each perspective class and its runner
