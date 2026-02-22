@@ -6,7 +6,7 @@ namespace ECommerce.Contracts.Commands;
 /// Command to add inventory (restocking)
 /// </summary>
 public record RestockInventoryCommand : ICommand {
-  [AggregateId]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public int QuantityToAdd { get; init; }
 }

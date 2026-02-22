@@ -19,11 +19,11 @@ public interface IPartitionRouter {
   /// <returns>Partition index from 0 to partitionCount-1</returns>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_WithSinglePartition_ShouldAlwaysReturnZeroAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_ShouldReturnValidPartitionIndexAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_SameStreamKey_ShouldReturnSamePartitionAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_DifferentStreamKeys_ShouldDistributeEvenly</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_SameStreamId_ShouldReturnSamePartitionAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_DifferentStreamIds_ShouldDistributeEvenly</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_WithTwoPartitions_ShouldUseBothPartitionsAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_EmptyStreamKey_ShouldNotThrowAsync</tests>
-  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_NullStreamKey_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_EmptyStreamId_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_NullStreamId_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs:SelectPartition_LargePartitionCount_ShouldHandleCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SameKey_AlwaysProducesSamePartitionAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_DifferentKeys_ProduceDifferentPartitionsAsync</tests>

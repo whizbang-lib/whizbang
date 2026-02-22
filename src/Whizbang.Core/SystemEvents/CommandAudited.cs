@@ -38,7 +38,7 @@ public sealed record CommandAudited : ISystemEvent {
   /// <summary>
   /// Unique identifier for this audit entry.
   /// </summary>
-  [StreamKey]
+  [StreamId]
   public required Guid Id { get; init; }
 
   /// <summary>

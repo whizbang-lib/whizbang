@@ -14,10 +14,10 @@ namespace Whizbang.Core.Tests.Integration;
 [Category("Integration")]
 public class LocalOnlyTransportIntegrationTests {
   // Test domain event (should always be published regardless of LocalOnly) - unique name
-  public sealed record TransportTestOrderCreated([property: StreamKey] Guid OrderId, string CustomerId) : IEvent;
+  public sealed record TransportTestOrderCreated([property: StreamId] Guid OrderId, string CustomerId) : IEvent;
 
   // Test system event without Exclude attribute (should respect LocalOnly)
-  public sealed record TransportTestRebuildStarted([property: StreamKey] Guid PerspectiveId, string PerspectiveName) : ISystemEvent;
+  public sealed record TransportTestRebuildStarted([property: StreamId] Guid PerspectiveId, string PerspectiveName) : ISystemEvent;
 
   [Test]
   public async Task LocalOnly_WhenTrue_SystemEventsNotPublishedToTransport_Async() {

@@ -6,8 +6,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when inventory is manually adjusted (corrections, damages, etc.)
 /// </summary>
 public record InventoryAdjustedEvent : IEvent {
-  [AggregateId]
-  [StreamKey]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public int QuantityChange { get; init; }
   public int NewTotalQuantity { get; init; }

@@ -11,8 +11,8 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_AddHop_MaintainsOrderedListAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_ReturnsNull_WhenNoHopsHaveTopicAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_ReturnsMostRecentNonNullTopicAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsNull_WhenNoHopsAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsMostRecentNonNullStreamKeyAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_ReturnsNull_WhenNoHopsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_ReturnsMostRecentNonNullStreamIdAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_ReturnsNull_WhenNoHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_ReturnsMostRecentNonNullValueAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSequenceNumber_ReturnsNull_WhenNoHopsAsync</tests>
@@ -41,7 +41,7 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCausationHops_ReturnsOnlyCausationHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentHops_ReturnsOnlyCurrentHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_IgnoresCausationHopsAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_IgnoresCausationHopsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_IgnoresCausationHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_IgnoresCausationHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSequenceNumber_IgnoresCausationHopsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_IgnoresCausationHopsAsync</tests>
@@ -102,7 +102,7 @@ public static class MessageTracing {
       ServiceInstance = serviceInstance,
       Timestamp = DateTimeOffset.UtcNow,
       Topic = topic,
-      StreamKey = streamKey,
+      StreamId = streamKey,
       PartitionIndex = partitionIndex,
       SequenceNumber = sequenceNumber,
       ExecutionStrategy = executionStrategy,

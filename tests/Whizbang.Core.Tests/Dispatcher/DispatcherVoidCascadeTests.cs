@@ -35,7 +35,7 @@ public class DispatcherVoidCascadeTests {
   /// (Default system routing is Outbox for cross-service delivery)
   /// </summary>
   [DefaultRouting(DispatchMode.Local)]
-  public record OrderProcessedEvent([property: StreamKey] Guid OrderId, Guid CustomerId) : IEvent;
+  public record OrderProcessedEvent([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
 
   /// <summary>
   /// Result DTO returned alongside the event.

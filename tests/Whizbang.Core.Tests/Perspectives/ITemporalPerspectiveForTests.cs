@@ -137,13 +137,13 @@ internal sealed record ActivityEntryTestModel {
 
 // Test events
 internal sealed record OrderCreatedTestEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public Guid OrderId { get; init; }
   public decimal Amount { get; init; }
 }
 
 internal sealed record OrderUpdatedTestEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public Guid OrderId { get; init; }
   public required string NewStatus { get; init; }
 }

@@ -13,7 +13,7 @@ public record InventoryLevelDto {
   /// <summary>
   /// Product identifier
   /// </summary>
-  [StreamKey]
+  [StreamId]
   public Guid ProductId { get; init; }
 
   /// <summary>

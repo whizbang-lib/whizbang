@@ -87,9 +87,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Get model type and StreamKey property (same across all interfaces for this class)
+    // Get model type and StreamId property (same across all interfaces for this class)
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
-    var streamKeyPropertyName = _findStreamKeyProperty(modelType);
+    var streamKeyPropertyName = _findStreamIdProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
@@ -119,8 +119,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           .Select(t => TypeNameUtilities.FormatTypeNameForRuntime(t))
           .ToArray();
 
-      // Validate event types and extract StreamKey information
-      var (validationErrors, eventStreamKeys) = _validateAndExtractEventInfo(eventTypeSymbols);
+      // Validate event types and extract StreamId information
+      var (validationErrors, eventStreamIds) = _validateAndExtractEventInfo(eventTypeSymbols);
 
       return new PerspectiveInfo(
           ClassName: className,
@@ -129,8 +129,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
-          StreamKeyPropertyName: streamKeyPropertyName,
-          EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
+          StreamIdPropertyName: streamKeyPropertyName,
+          EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
       );
     }).ToArray();
@@ -139,19 +139,19 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Finds the StreamKey property in a model type.
+  /// Finds the StreamId property in a model type.
   /// Returns the property name if found, null otherwise.
-  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static string? _findStreamKeyProperty(ITypeSymbol modelType) {
+  private static string? _findStreamIdProperty(ITypeSymbol modelType) {
     var currentType = modelType as INamedTypeSymbol;
     while (currentType is not null) {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
-          var hasStreamKeyAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-          if (hasStreamKeyAttribute) {
+          if (hasStreamIdAttribute) {
             return property.Name;
           }
         }
@@ -162,41 +162,41 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Validates event types and extracts StreamKey information.
-  /// Returns validation errors and StreamKey info for valid events.
+  /// Validates event types and extracts StreamId information.
+  /// Returns validation errors and StreamId info for valid events.
   /// </summary>
-  private static (List<EventValidationError> ValidationErrors, List<EventStreamKeyInfo> StreamKeys) _validateAndExtractEventInfo(
+  private static (List<EventValidationError> ValidationErrors, List<EventStreamIdInfo> StreamIds) _validateAndExtractEventInfo(
       ITypeSymbol[] eventTypeSymbols) {
 
     var validationErrors = new List<EventValidationError>();
-    var eventStreamKeys = new List<EventStreamKeyInfo>();
+    var eventStreamIds = new List<EventStreamIdInfo>();
 
     foreach (var eventTypeSymbol in eventTypeSymbols) {
-      var error = _validateEventStreamKey(eventTypeSymbol);
+      var error = _validateEventStreamId(eventTypeSymbol);
       if (error != null) {
         validationErrors.Add(error);
       } else {
-        // Extract StreamKey property name (only if valid)
-        var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
+        // Extract StreamId property name (only if valid)
+        var streamKeyProp = _extractStreamIdProperty(eventTypeSymbol);
         if (streamKeyProp != null) {
-          eventStreamKeys.Add(new EventStreamKeyInfo(
+          eventStreamIds.Add(new EventStreamIdInfo(
               EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              StreamKeyPropertyName: streamKeyProp
+              StreamIdPropertyName: streamKeyProp
           ));
         }
       }
     }
 
-    return (validationErrors, eventStreamKeys);
+    return (validationErrors, eventStreamIds);
   }
 
   /// <summary>
-  /// Validates that an event type has exactly one property marked with [StreamKey].
+  /// Validates that an event type has exactly one property marked with [StreamId].
   /// Returns validation error if found, null if valid.
   /// Handles array types by validating the element type.
-  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static EventValidationError? _validateEventStreamKey(ITypeSymbol eventTypeSymbol) {
+  private static EventValidationError? _validateEventStreamId(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, validate the element type instead
     var typeToValidate = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
@@ -205,15 +205,15 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     var streamKeyProperties = new List<string>();
 
-    // Traverse the type hierarchy to find [StreamKey] on inherited properties
+    // Traverse the type hierarchy to find [StreamId] on inherited properties
     var currentType = typeToValidate as INamedTypeSymbol;
     while (currentType is not null) {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
-          var hasStreamKeyAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-          if (hasStreamKeyAttribute) {
+          if (hasStreamIdAttribute) {
             streamKeyProperties.Add(property.Name);
           }
         }
@@ -225,36 +225,36 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
 
     if (streamKeyProperties.Count == 0) {
-      return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
+      return new EventValidationError(simpleEventName, StreamIdErrorType.MissingStreamId);
     } else if (streamKeyProperties.Count > 1) {
-      return new EventValidationError(simpleEventName, StreamKeyErrorType.MultipleStreamKeys);
+      return new EventValidationError(simpleEventName, StreamIdErrorType.MultipleStreamIds);
     }
 
     return null;
   }
 
   /// <summary>
-  /// Extracts the StreamKey property name from an event type.
-  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type.
+  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
   /// Handles array types by extracting from the element type.
-  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, extract from the element type instead
     var typeToExtract = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
       typeToExtract = arrayType.ElementType;
     }
 
-    // Traverse the type hierarchy to find [StreamKey] on inherited properties
+    // Traverse the type hierarchy to find [StreamId] on inherited properties
     var currentType = typeToExtract as INamedTypeSymbol;
     while (currentType is not null) {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
-          var hasStreamKeyAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-          if (hasStreamKeyAttribute) {
+          if (hasStreamIdAttribute) {
             return property.Name;
           }
         }
@@ -295,16 +295,16 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         foreach (var error in perspective.EventValidationErrors) {
           var simplePerspectiveName = TypeNameUtilities.GetSimpleName(perspective.ClassName);
 
-          if (error.ErrorType == StreamKeyErrorType.MissingStreamKey) {
+          if (error.ErrorType == StreamIdErrorType.MissingStreamId) {
             context.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.PerspectiveEventMissingStreamKey,
+                DiagnosticDescriptors.PerspectiveEventMissingStreamId,
                 Location.None,
                 error.EventTypeName,
                 simplePerspectiveName
             ));
-          } else if (error.ErrorType == StreamKeyErrorType.MultipleStreamKeys) {
+          } else if (error.ErrorType == StreamIdErrorType.MultipleStreamIds) {
             context.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.PerspectiveEventMultipleStreamKeys,
+                DiagnosticDescriptors.PerspectiveEventMultipleStreamIds,
                 Location.None,
                 error.EventTypeName
             ));

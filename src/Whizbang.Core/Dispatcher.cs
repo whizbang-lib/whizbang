@@ -69,7 +69,6 @@ public abstract class Dispatcher(
   JsonSerializerOptions? jsonOptions = null,
   ITopicRegistry? topicRegistry = null,
   ITopicRoutingStrategy? topicRoutingStrategy = null,
-  IAggregateIdExtractor? aggregateIdExtractor = null,
   IReceptorInvoker? receptorInvoker = null,
   IEnvelopeSerializer? envelopeSerializer = null,
   IEnvelopeRegistry? envelopeRegistry = null,
@@ -84,7 +83,6 @@ public abstract class Dispatcher(
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;
-  private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
   // NOTE: receptorInvoker parameter retained for API compatibility but not used
   // IReceptorInvoker is now scoped and resolved by workers, not the Dispatcher
   private readonly IReceptorRegistry? _receptorRegistry = receptorRegistry ?? serviceProvider.GetService<IReceptorRegistry>();
@@ -275,7 +273,7 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
-    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     // Return delivery receipt
@@ -357,7 +355,7 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
-    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     var destination = messageType.Name;
@@ -448,7 +446,7 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
-    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     // Return delivery receipt
@@ -523,7 +521,7 @@ public abstract class Dispatcher(
       _envelopeRegistry?.Unregister(envelope);
     }
 
-    // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     var destination = messageType.Name;
@@ -1635,7 +1633,7 @@ public abstract class Dispatcher(
     // process_work_batch will store events to wh_event_store and create perspective events atomically
     await PublishToOutboxAsync(eventData, eventType, messageId);
 
-    // Extract stream ID from [StreamKey] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
 
     // Return delivery receipt with stream ID
@@ -1675,7 +1673,7 @@ public abstract class Dispatcher(
 
     await PublishToOutboxAsync(eventData, eventType, messageId);
 
-    // Extract stream ID from [StreamKey] attribute for delivery receipt
+    // Extract stream ID from [StreamId] attribute for delivery receipt
     var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
 
     // Return delivery receipt with stream ID
@@ -1990,7 +1988,7 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
-      // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+      // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
 
       // Return delivery receipt with Accepted status (message queued)
@@ -2065,7 +2063,7 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
-      // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+      // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
       // Return delivery receipt with Accepted status (message queued)
@@ -2116,7 +2114,7 @@ public abstract class Dispatcher(
 
         strategy.QueueOutboxMessage(newOutboxMessage);
 
-        // Extract stream ID from [StreamKey] or [AggregateId] attribute for delivery receipt
+        // Extract stream ID from [StreamId] attribute for delivery receipt
         var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
         // Create receipt for this message
@@ -2348,16 +2346,16 @@ public abstract class Dispatcher(
 
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// Tries to get stream ID from first hop metadata, falls back to message ID.
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Check first hop for aggregate ID or stream key
+    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility)
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
-        aggregateIdElem.ValueKind == JsonValueKind.String) {
-      var aggregateIdStr = aggregateIdElem.GetString();
-      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+        streamIdElem.ValueKind == JsonValueKind.String) {
+      var streamIdStr = streamIdElem.GetString();
+      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
+        return parsedStreamId;
       }
     }
 
@@ -2366,27 +2364,28 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
-  /// Creates hop metadata with AggregateId extracted from the message.
-  /// Returns null if no aggregate ID extractor is configured or no ID found.
+  /// Creates hop metadata with StreamId extracted from the message using [StreamId] attribute.
+  /// Returns null if no stream ID extractor is configured or no ID found.
   /// </summary>
   private Dictionary<string, JsonElement>? _createHopMetadata(object message, Type messageType) {
-    if (_aggregateIdExtractor == null) {
+    if (_streamIdExtractor == null) {
       return null;
     }
 
-    var aggregateId = _aggregateIdExtractor.ExtractAggregateId(message, messageType);
-    if (aggregateId == null) {
+    var streamId = _streamIdExtractor.ExtractStreamId(message, messageType);
+    if (streamId == null) {
       return null;
     }
 
-    // Create JsonElement for aggregate ID (AOT-safe approach using JsonDocument.Parse)
+    // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
     // Wrap GUID string in quotes for valid JSON string value
-    var jsonString = $"\"{aggregateId.Value}\"";
+    // Note: Key is "AggregateId" for backward compatibility with existing envelopes
+    var jsonString = $"\"{streamId.Value}\"";
     using var doc = JsonDocument.Parse(jsonString);
-    var aggregateIdElement = doc.RootElement.Clone(); // Clone to survive disposal
+    var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
 
     return new Dictionary<string, JsonElement> {
-      ["AggregateId"] = aggregateIdElement
+      ["AggregateId"] = streamIdElement
     };
   }
 

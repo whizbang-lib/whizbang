@@ -1,8 +1,8 @@
 namespace Whizbang.Core;
 
 /// <summary>
-/// Extracts stream IDs from messages for delivery receipts.
-/// Prefers [StreamKey] for events, falls back to [AggregateId] for commands.
+/// Extracts stream IDs from messages for delivery receipts and routing.
+/// Uses [StreamId] attribute on both events and commands.
 /// Uses source-generated extractors - zero reflection, AOT compatible.
 /// </summary>
 /// <docs>core-concepts/delivery-receipts</docs>
@@ -10,8 +10,7 @@ namespace Whizbang.Core;
 public interface IStreamIdExtractor {
   /// <summary>
   /// Extracts the stream ID from a message.
-  /// For IEvent: tries [StreamKey] first, falls back to [AggregateId].
-  /// For ICommand and others: uses [AggregateId].
+  /// Uses the [StreamId] attribute to identify the stream property.
   /// </summary>
   /// <param name="message">The message instance</param>
   /// <param name="messageType">The runtime type of the message</param>

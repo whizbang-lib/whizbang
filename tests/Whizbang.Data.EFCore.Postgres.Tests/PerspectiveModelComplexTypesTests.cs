@@ -70,7 +70,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   /// Use List&lt;AttributeEntry&gt; or List&lt;KeyValuePair&lt;string, string&gt;&gt; instead.
   /// </remarks>
   public class TenantModel {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public string Name { get; set; } = string.Empty;
@@ -91,7 +91,7 @@ public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   /// Test model with multiple complex property types.
   /// </summary>
   public class ComplexModel {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
 

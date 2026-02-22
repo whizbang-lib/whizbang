@@ -21,7 +21,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// Database table name (e.g., "product_dtos" or "Products").
 /// Convention: snake_case from type name, or property name from DbSet.
 /// </param>
-/// <param name="StreamKeyType">
+/// <param name="StreamIdType">
 /// Fully-qualified stream key type for aggregate perspectives (e.g., "global::MyApp.ProductId").
 /// Nullable for non-aggregate perspectives.
 /// </param>
@@ -31,5 +31,5 @@ public sealed record PerspectiveInfo(
   string? EventType,
   string StateType,
   string TableName,
-  string? StreamKeyType = null
+  string? StreamIdType = null
 );

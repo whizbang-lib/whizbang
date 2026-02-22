@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Sample event for testing event store functionality.
 /// </summary>
 public record OrderCreatedEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public required Guid OrderId { get; init; }
   public required string CustomerName { get; init; }
 }
@@ -22,7 +22,7 @@ public record OrderCreatedEvent : IEvent {
 /// Second sample event for testing polymorphic event loading.
 /// </summary>
 public record OrderShippedEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public required Guid OrderId { get; init; }
   public required string TrackingNumber { get; init; }
 }

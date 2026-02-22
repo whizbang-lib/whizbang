@@ -51,42 +51,42 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ004: Info - Aggregate ID property discovered.
+  /// WHIZ004: Info - Stream ID property discovered on command.
   /// </summary>
-  public static readonly DiagnosticDescriptor AggregateIdPropertyDiscovered = new(
+  public static readonly DiagnosticDescriptor CommandStreamIdDiscovered = new(
       id: "WHIZ004",
-      title: "Aggregate ID Property Discovered",
-      messageFormat: "Found [AggregateId] on {0}.{1}",
+      title: "Command Stream ID Discovered",
+      messageFormat: "Found [StreamId] on command {0}.{1}",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "An aggregate ID property was discovered and will be accessible via PolicyContext."
+      description: "A stream ID property was discovered on a command and will be accessible via PolicyContext."
   );
 
   /// <summary>
-  /// WHIZ005: Error - [AggregateId] must be on Guid property or type with .Value property.
+  /// WHIZ005: Error - [StreamId] must be on Guid property or type with .Value property.
   /// </summary>
-  public static readonly DiagnosticDescriptor AggregateIdMustBeGuid = new(
+  public static readonly DiagnosticDescriptor StreamIdMustBeGuid = new(
       id: "WHIZ005",
-      title: "Aggregate ID Must Be Guid",
-      messageFormat: "[AggregateId] on {0}.{1} must be of type Guid, Guid?, or a type with a .Value property returning Guid",
+      title: "Stream ID Must Be Guid",
+      messageFormat: "[StreamId] on {0}.{1} must be of type Guid, Guid?, or a type with a .Value property returning Guid",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "The [AggregateId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
+      description: "The [StreamId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
   );
 
   /// <summary>
-  /// WHIZ006: Warning - Multiple [AggregateId] attributes on same type.
+  /// WHIZ006: Warning - Multiple [StreamId] attributes on same type.
   /// </summary>
-  public static readonly DiagnosticDescriptor MultipleAggregateIdAttributes = new(
+  public static readonly DiagnosticDescriptor MultipleStreamIdAttributes = new(
       id: "WHIZ006",
-      title: "Multiple Aggregate ID Attributes",
-      messageFormat: "Type {0} has multiple [AggregateId] attributes. Only the first property '{1}' will be used.",
+      title: "Multiple Stream ID Attributes",
+      messageFormat: "Type {0} has multiple [StreamId] attributes. Only the first property '{1}' will be used.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A message type should only have one property marked with [AggregateId]. Additional attributes are ignored."
+      description: "A message type should only have one property marked with [StreamId]. Additional attributes are ignored."
   );
 
   /// <summary>
@@ -116,29 +116,29 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ009: Warning - IEvent implementation missing [StreamKey] attribute.
+  /// WHIZ009: Warning - IEvent or ICommand implementation missing [StreamId] attribute.
   /// </summary>
-  public static readonly DiagnosticDescriptor MissingStreamKeyAttribute = new(
+  public static readonly DiagnosticDescriptor MissingStreamIdAttribute = new(
       id: "WHIZ009",
-      title: "Missing StreamKey Attribute",
-      messageFormat: "Event type '{0}' implements IEvent but has no property or parameter marked with [StreamKey]. Stream key resolution will fail at runtime.",
+      title: "Missing StreamId Attribute",
+      messageFormat: "Type '{0}' implements {1} but has no property or parameter marked with [StreamId]. Stream ID resolution will fail at runtime.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "All IEvent implementations should have exactly one property or constructor parameter marked with [StreamKey] to identify the event stream."
+      description: "All IEvent and ICommand implementations should have exactly one property or constructor parameter marked with [StreamId] to identify the stream."
   );
 
   /// <summary>
-  /// WHIZ010: Info - StreamKey property discovered during source generation.
+  /// WHIZ010: Info - StreamId property discovered during source generation.
   /// </summary>
-  public static readonly DiagnosticDescriptor StreamKeyDiscovered = new(
+  public static readonly DiagnosticDescriptor StreamIdDiscovered = new(
       id: "WHIZ010",
-      title: "StreamKey Discovered",
-      messageFormat: "Found [StreamKey] on {0}.{1}",
+      title: "StreamId Discovered",
+      messageFormat: "Found [StreamId] on {0}.{1}",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "A stream key property was discovered and an extractor method will be generated."
+      description: "A stream ID property was discovered and an extractor method will be generated."
   );
 
   /// <summary>
@@ -285,31 +285,31 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ030: Error - Event type used in perspective is missing [StreamKey] attribute.
+  /// WHIZ030: Error - Event type used in perspective is missing [StreamId] attribute.
   /// </summary>
   /// <docs>diagnostics/whiz030</docs>
-  public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamKey = new(
+  public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamId = new(
       id: "WHIZ030",
-      title: "Perspective Event Missing StreamKey",
-      messageFormat: "Event type '{0}' used in perspective '{1}' must have exactly one property marked with [StreamKey] attribute",
+      title: "Perspective Event Missing StreamId",
+      messageFormat: "Event type '{0}' used in perspective '{1}' must have exactly one property marked with [StreamId] attribute",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Events used in perspectives must have a property marked with [StreamKey] to identify the stream/aggregate for ordered processing."
+      description: "Events used in perspectives must have a property marked with [StreamId] to identify the stream/aggregate for ordered processing."
   );
 
   /// <summary>
-  /// WHIZ031: Error - Event type has multiple [StreamKey] attributes.
+  /// WHIZ031: Error - Event type has multiple [StreamId] attributes.
   /// </summary>
   /// <docs>diagnostics/whiz031</docs>
-  public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamKeys = new(
+  public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamIds = new(
       id: "WHIZ031",
-      title: "Multiple StreamKey Attributes",
-      messageFormat: "Event type '{0}' has multiple properties marked with [StreamKey]. Only one property can be the stream key.",
+      title: "Multiple StreamId Attributes",
+      messageFormat: "Event type '{0}' has multiple properties marked with [StreamId]. Only one property can be the stream ID.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "Each event type can only have one property marked with [StreamKey] attribute."
+      description: "Each event type can only have one property marked with [StreamId] attribute."
   );
 
   /// <summary>
@@ -328,18 +328,18 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ033: Warning - Perspective model missing [StreamKey] attribute.
+  /// WHIZ033: Warning - Perspective model missing [StreamId] attribute.
   /// </summary>
   /// <docs>diagnostics/whiz033</docs>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_ModelMissingStreamKey_EmitsWarningAsync</tests>
-  public static readonly DiagnosticDescriptor PerspectiveModelMissingStreamKey = new(
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_ModelMissingStreamId_EmitsWarningAsync</tests>
+  public static readonly DiagnosticDescriptor PerspectiveModelMissingStreamId = new(
       id: "WHIZ033",
-      title: "Perspective Model Missing StreamKey",
-      messageFormat: "Perspective '{0}' will not generate a runner because model '{1}' has no property with [StreamKey] attribute",
+      title: "Perspective Model Missing StreamId",
+      messageFormat: "Perspective '{0}' will not generate a runner because model '{1}' has no property with [StreamId] attribute",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "Perspectives require their model type to have a property marked with [StreamKey] to identify the stream."
+      description: "Perspectives require their model type to have a property marked with [StreamId] to identify the stream."
   );
 
   // ========================================

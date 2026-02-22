@@ -24,12 +24,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -65,12 +65,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -102,22 +102,22 @@ using System;
 
 namespace TestNamespace {
   public record Event1 : IEvent {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Event2 : IEvent {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Model1 {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Model2 {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
@@ -160,22 +160,22 @@ using System;
 
 namespace TestNamespace {
   public record Event1 : IEvent {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Event2 : IEvent {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Model1 {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
   public record Model2 {
-    [StreamKey]
+    [StreamId]
     public string Id { get; init; } = """";
   }
 
@@ -242,19 +242,19 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record Event1 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event2 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event3 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event4 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event5 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event6 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event7 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event8 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event9 : IEvent { [StreamKey] public Guid Id { get; init; } }
-  public record Event10 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event1 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event2 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event3 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event4 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event5 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event6 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event7 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event8 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event9 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event10 : IEvent { [StreamId] public Guid Id { get; init; } }
 
   public record MultiEventModel {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
     public int Counter { get; init; }
   }
@@ -291,7 +291,7 @@ namespace TestNamespace {
     // Arrange - Perspective implementing IPerspectiveFor with 25 event types
     var eventDeclarations = string.Join("\n",
         Enumerable.Range(1, 25).Select(i =>
-            $"  public record Evt{i} : IEvent {{ [StreamKey] public Guid Id {{ get; init; }} }}"));
+            $"  public record Evt{i} : IEvent {{ [StreamId] public Guid Id {{ get; init; }} }}"));
 
     var applyMethods = string.Join("\n",
         Enumerable.Range(1, 25).Select(i =>
@@ -308,7 +308,7 @@ namespace TestNamespace {{
 {eventDeclarations}
 
   public record Model {{
-    [StreamKey]
+    [StreamId]
     public Guid Id {{ get; init; }}
     public int Counter {{ get; init; }}
   }}
@@ -343,12 +343,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
@@ -378,17 +378,17 @@ using System;
 
 namespace TestNamespace {
   public record EventA : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record EventB : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record Model {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
@@ -419,27 +419,27 @@ using System;
 
 namespace TestNamespace {
   public record SharedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record UniqueEvent1 : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record UniqueEvent2 : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record Model1 {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record Model2 {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
@@ -482,12 +482,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
@@ -517,22 +517,22 @@ using System;
 
 namespace TestNamespace {
   public record ZEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record AEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record MEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 
   public record Model {
-    [StreamKey]
+    [StreamId]
     public Guid Id { get; init; }
   }
 

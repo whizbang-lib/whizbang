@@ -61,7 +61,6 @@ _ = builder.Services
 
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
-builder.Services.AddWhizbangAggregateIdExtractor();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();

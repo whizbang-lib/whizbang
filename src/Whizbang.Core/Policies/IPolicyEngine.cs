@@ -39,7 +39,7 @@ public interface IPolicyEngine {
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldRecordDecisionInTrailAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldRecordUnmatchedPoliciesInTrailAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportTopicAsync</tests>
-  /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportStreamKeyAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportStreamIdAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportExecutionStrategyAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportPartitionRouterAsync</tests>
   /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportSequenceProviderAsync</tests>

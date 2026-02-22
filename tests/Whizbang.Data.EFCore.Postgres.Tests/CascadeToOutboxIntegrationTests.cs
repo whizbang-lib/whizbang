@@ -30,19 +30,19 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   /// Test command to be handled by a non-void receptor.
   /// The pattern matches JDNext's CreateTenantCommand usage.
   /// </summary>
-  public record CascadeTestCommand([property: StreamKey] Guid Id);
+  public record CascadeTestCommand([property: StreamId] Guid Id);
 
   /// <summary>
   /// Test event returned by the receptor.
   /// Default routing is Outbox (system default) - should end up in wh_outbox table.
   /// </summary>
-  public record CascadeTestEvent([property: StreamKey] Guid Id) : IEvent;
+  public record CascadeTestEvent([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>
   /// Test event with explicit Local routing for control case.
   /// </summary>
   [DefaultRouting(DispatchMode.Local)]
-  public record LocalOnlyTestEvent([property: StreamKey] Guid Id) : IEvent;
+  public record LocalOnlyTestEvent([property: StreamId] Guid Id) : IEvent;
 
   #endregion
 

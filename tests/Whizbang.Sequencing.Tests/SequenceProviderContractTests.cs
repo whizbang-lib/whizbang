@@ -48,7 +48,7 @@ public abstract class SequenceProviderContractTests {
   }
 
   [Test]
-  public async Task GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync() {
+  public async Task GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync() {
     // Arrange
     var provider = CreateProvider();
     var streamKey1 = "stream-1";

@@ -92,13 +92,13 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The stream key from the most recent current hop, or null if no hops have a stream key</returns>
-  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsNull_WhenNoHopsAsync</tests>
-  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsMostRecentNonNullStreamKeyAsync</tests>
-  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_IgnoresCausationHopsAsync</tests>
-  public string? GetCurrentStreamKey() {
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_ReturnsMostRecentNonNullStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamId_IgnoresCausationHopsAsync</tests>
+  public string? GetCurrentStreamId() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
-      if (Hops[i].Type == HopType.Current && !string.IsNullOrEmpty(Hops[i].StreamKey)) {
-        return Hops[i].StreamKey;
+      if (Hops[i].Type == HopType.Current && !string.IsNullOrEmpty(Hops[i].StreamId)) {
+        return Hops[i].StreamId;
       }
     }
     return null;

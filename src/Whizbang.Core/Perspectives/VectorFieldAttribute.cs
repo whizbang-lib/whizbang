@@ -20,7 +20,7 @@ namespace Whizbang.Core.Perspectives;
 /// <code>
 /// [PerspectiveStorage(FieldStorageMode.Split)]
 /// public record ProductSearchDto {
-///   [StreamKey]
+///   [StreamId]
 ///   public Guid ProductId { get; init; }
 ///
 ///   // OpenAI embeddings (1536 dimensions)

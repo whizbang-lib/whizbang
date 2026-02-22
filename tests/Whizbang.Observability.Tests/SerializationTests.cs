@@ -72,7 +72,7 @@ public class SerializationTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      StreamKey = "order-123",
+      StreamId = "order-123",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(1)
     };
 
@@ -185,7 +185,7 @@ public class SerializationTests {
             ProcessId = 12345
           },
           Topic = "orders",
-          StreamKey = "order-1"
+          StreamId = "order-1"
         }
       ]
     };
@@ -224,7 +224,7 @@ public class SerializationTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "orders",
-          StreamKey = "order-123",
+          StreamId = "order-123",
           PartitionIndex = 5,
           SequenceNumber = 100,
           ExecutionStrategy = "SerialExecutor",

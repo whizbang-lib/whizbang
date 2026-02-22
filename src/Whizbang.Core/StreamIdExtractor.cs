@@ -3,26 +3,18 @@ using Whizbang.Core.Generated;
 namespace Whizbang.Core;
 
 /// <summary>
-/// Extracts stream IDs from IEvent and ICommand messages.
-/// Uses source-generated extractors for zero-reflection, AOT-compatible extraction.
+/// Extracts stream IDs from messages for delivery receipts and routing.
+/// Uses the unified [StreamId] attribute on events, commands, and perspective models.
+/// Delegates to source-generated extractors for zero-reflection, AOT-compatible extraction.
 /// </summary>
-/// <remarks>
-/// Extraction priority:
-/// - IEvent: [StreamKey] → [AggregateId] → null
-/// - ICommand: [AggregateId] → null
-/// - Other messages: [AggregateId] → null
-/// </remarks>
 /// <docs>core-concepts/delivery-receipts</docs>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs</tests>
 public sealed class StreamIdExtractor : IStreamIdExtractor {
-  private readonly IAggregateIdExtractor? _aggregateIdExtractor;
 
   /// <summary>
-  /// Creates a new StreamIdExtractor with optional aggregate ID extractor for fallback.
+  /// Creates a new StreamIdExtractor.
   /// </summary>
-  /// <param name="aggregateIdExtractor">Optional extractor for [AggregateId] attributes</param>
-  public StreamIdExtractor(IAggregateIdExtractor? aggregateIdExtractor = null) {
-    _aggregateIdExtractor = aggregateIdExtractor;
+  public StreamIdExtractor() {
   }
 
   /// <inheritdoc />
@@ -31,15 +23,17 @@ public sealed class StreamIdExtractor : IStreamIdExtractor {
       return null;
     }
 
-    // For IEvent: Try [StreamKey] first (event stream semantics)
+    // Use unified [StreamId] extractors for all message types
+    // The generator discovers [StreamId] on events, commands, and perspective DTOs
     if (message is IEvent @event) {
-      var streamId = StreamKeyExtractors.TryResolveAsGuid(@event);
-      if (streamId.HasValue) {
-        return streamId.Value;
-      }
+      return StreamIdExtractors.TryResolveAsGuid(@event);
     }
 
-    // For ICommand and all messages: Fall back to [AggregateId]
-    return _aggregateIdExtractor?.ExtractAggregateId(message, messageType);
+    if (message is ICommand command) {
+      return StreamIdExtractors.TryResolveAsGuid(command);
+    }
+
+    // For other message types (e.g., perspective DTOs), try generic extraction
+    return StreamIdExtractors.TryResolveAsGuid(message);
   }
 }

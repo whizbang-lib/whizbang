@@ -256,7 +256,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    builder.Services.AddWhizbangAggregateIdExtractor();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {

@@ -436,18 +436,18 @@ public partial class ServiceBusConsumerWorker(
 
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Check first hop for aggregate ID or stream key
+    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
-        aggregateIdElem.ValueKind == JsonValueKind.String) {
-      var aggregateIdStr = aggregateIdElem.GetString();
-      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+        streamIdElem.ValueKind == JsonValueKind.String) {
+      var streamIdStr = streamIdElem.GetString();
+      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
+        return parsedStreamId;
       }
     }
 

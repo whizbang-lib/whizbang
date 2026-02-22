@@ -45,7 +45,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Event to be cascaded with routing.
   /// </summary>
-  public record RoutedTestEvent([property: StreamKey] Guid OrderId) : IEvent;
+  public record RoutedTestEvent([property: StreamId] Guid OrderId) : IEvent;
 
   /// <summary>
   /// Result returned by receptors.

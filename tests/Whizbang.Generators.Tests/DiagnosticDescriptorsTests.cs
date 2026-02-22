@@ -21,13 +21,13 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.InvalidReceptor,
-      DiagnosticDescriptors.AggregateIdPropertyDiscovered,
-      DiagnosticDescriptors.AggregateIdMustBeGuid,
-      DiagnosticDescriptors.MultipleAggregateIdAttributes,
+      DiagnosticDescriptors.CommandStreamIdDiscovered,
+      DiagnosticDescriptors.StreamIdMustBeGuid,
+      DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
-      DiagnosticDescriptors.MissingStreamKeyAttribute,
-      DiagnosticDescriptors.StreamKeyDiscovered,
+      DiagnosticDescriptors.MissingStreamIdAttribute,
+      DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
       DiagnosticDescriptors.WhizbangIdDiscovered,
@@ -59,13 +59,13 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.InvalidReceptor,
-      DiagnosticDescriptors.AggregateIdPropertyDiscovered,
-      DiagnosticDescriptors.AggregateIdMustBeGuid,
-      DiagnosticDescriptors.MultipleAggregateIdAttributes,
+      DiagnosticDescriptors.CommandStreamIdDiscovered,
+      DiagnosticDescriptors.StreamIdMustBeGuid,
+      DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
-      DiagnosticDescriptors.MissingStreamKeyAttribute,
-      DiagnosticDescriptors.StreamKeyDiscovered,
+      DiagnosticDescriptors.MissingStreamIdAttribute,
+      DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
       DiagnosticDescriptors.WhizbangIdDiscovered,
@@ -95,13 +95,13 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.InvalidReceptor,
-      DiagnosticDescriptors.AggregateIdPropertyDiscovered,
-      DiagnosticDescriptors.AggregateIdMustBeGuid,
-      DiagnosticDescriptors.MultipleAggregateIdAttributes,
+      DiagnosticDescriptors.CommandStreamIdDiscovered,
+      DiagnosticDescriptors.StreamIdMustBeGuid,
+      DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
-      DiagnosticDescriptors.MissingStreamKeyAttribute,
-      DiagnosticDescriptors.StreamKeyDiscovered,
+      DiagnosticDescriptors.MissingStreamIdAttribute,
+      DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
       DiagnosticDescriptors.WhizbangIdDiscovered,
@@ -131,13 +131,13 @@ public class DiagnosticDescriptorsTests {
       DiagnosticDescriptors.ReceptorDiscovered,
       DiagnosticDescriptors.NoReceptorsFound,
       DiagnosticDescriptors.InvalidReceptor,
-      DiagnosticDescriptors.AggregateIdPropertyDiscovered,
-      DiagnosticDescriptors.AggregateIdMustBeGuid,
-      DiagnosticDescriptors.MultipleAggregateIdAttributes,
+      DiagnosticDescriptors.CommandStreamIdDiscovered,
+      DiagnosticDescriptors.StreamIdMustBeGuid,
+      DiagnosticDescriptors.MultipleStreamIdAttributes,
       DiagnosticDescriptors.PerspectiveDiscovered,
       DiagnosticDescriptors.PerspectiveSizeWarning,
-      DiagnosticDescriptors.MissingStreamKeyAttribute,
-      DiagnosticDescriptors.StreamKeyDiscovered,
+      DiagnosticDescriptors.MissingStreamIdAttribute,
+      DiagnosticDescriptors.StreamIdDiscovered,
       DiagnosticDescriptors.JsonSerializableTypeDiscovered,
       DiagnosticDescriptors.PerspectiveInvokerGenerated,
       DiagnosticDescriptors.WhizbangIdDiscovered,
@@ -182,9 +182,9 @@ public class DiagnosticDescriptorsTests {
   }
 
   [Test]
-  public async Task AggregateIdMustBeGuid_HasErrorSeverityAsync() {
+  public async Task StreamIdMustBeGuid_HasErrorSeverityAsync() {
     // Arrange & Act
-    var descriptor = DiagnosticDescriptors.AggregateIdMustBeGuid;
+    var descriptor = DiagnosticDescriptors.StreamIdMustBeGuid;
 
     // Assert
     await Assert.That(descriptor.Id).IsEqualTo("WHIZ005");
@@ -192,9 +192,9 @@ public class DiagnosticDescriptorsTests {
   }
 
   [Test]
-  public async Task MultipleAggregateIdAttributes_HasWarningSeverityAsync() {
+  public async Task MultipleStreamIdAttributes_HasWarningSeverityAsync() {
     // Arrange & Act
-    var descriptor = DiagnosticDescriptors.MultipleAggregateIdAttributes;
+    var descriptor = DiagnosticDescriptors.MultipleStreamIdAttributes;
 
     // Assert
     await Assert.That(descriptor.Id).IsEqualTo("WHIZ006");

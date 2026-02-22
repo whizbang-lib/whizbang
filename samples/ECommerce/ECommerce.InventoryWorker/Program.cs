@@ -90,7 +90,6 @@ _ = builder.Services
 
 // Register Whizbang generated services (from ECommerce.Contracts)
 builder.Services.AddReceptors();
-builder.Services.AddWhizbangAggregateIdExtractor();
 
 // Register generated perspective runners (ProductCatalogPerspective, InventoryLevelsPerspective)
 // This registers IPerspectiveRunnerRegistry + all discovered IPerspectiveRunner implementations

@@ -278,18 +278,18 @@ public interface IDispatcher {
 
   /// <summary>
   /// Publishes an event to all interested handlers.
-  /// Returns a delivery receipt with StreamId extracted from [StreamKey] attribute.
+  /// Returns a delivery receipt with StreamId extracted from [StreamId] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
   /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamKey_DeliveryReceiptHasStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
   Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData);
 
   /// <summary>
   /// Publishes an event with dispatch options.
-  /// Returns a delivery receipt with StreamId extracted from [StreamKey] attribute.
+  /// Returns a delivery receipt with StreamId extracted from [StreamId] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
