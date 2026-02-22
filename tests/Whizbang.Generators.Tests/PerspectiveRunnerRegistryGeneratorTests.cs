@@ -329,4 +329,242 @@ namespace TestNamespace {{
     await Assert.That(registrySource!).Contains("BigPerspective");
     await Assert.That(registrySource!).Contains("PerspectiveRunnerRegistry");
   }
+
+  // ==================== IEventTypeProvider Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesGetEventTypesMethodAsync() {
+    // Arrange - Simple perspective with events
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert - Should generate GetEventTypes() method
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource!).Contains("public IReadOnlyList<Type> GetEventTypes()");
+    await Assert.That(registrySource!).Contains("_allEventTypes");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypesContainsTypeofExpressionsAsync() {
+    // Arrange - Perspective with multiple events
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EventA : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record EventB : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public class TestPerspective : IPerspectiveFor<Model, EventA, EventB> {
+    public Model Apply(Model current, EventA @event) => current;
+    public Model Apply(Model current, EventB @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert - Should use typeof() expressions for event types
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.EventA)");
+    await Assert.That(registrySource!).Contains("typeof(global::TestNamespace.EventB)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DeduplicatesEventTypesAsync() {
+    // Arrange - Two perspectives sharing an event type
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record SharedEvent : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record UniqueEvent1 : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record UniqueEvent2 : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record Model1 {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record Model2 {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public class Perspective1 : IPerspectiveFor<Model1, SharedEvent, UniqueEvent1> {
+    public Model1 Apply(Model1 current, SharedEvent @event) => current;
+    public Model1 Apply(Model1 current, UniqueEvent1 @event) => current;
+  }
+
+  public class Perspective2 : IPerspectiveFor<Model2, SharedEvent, UniqueEvent2> {
+    public Model2 Apply(Model2 current, SharedEvent @event) => current;
+    public Model2 Apply(Model2 current, UniqueEvent2 @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert - SharedEvent should appear only once in _allEventTypes
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    // Count occurrences of typeof(global::TestNamespace.SharedEvent) in _allEventTypes
+    var allEventTypesSection = registrySource!.Substring(
+        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal),
+        registrySource.IndexOf("public IReadOnlyList<Type> GetEventTypes()", StringComparison.Ordinal) -
+        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal)
+    );
+    var sharedEventCount = _countOccurrences(allEventTypesSection, "typeof(global::TestNamespace.SharedEvent)");
+    await Assert.That(sharedEventCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_RegistersIEventTypeProviderInDIAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderEvent : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
+    public OrderModel Apply(OrderModel current, OrderEvent @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert - DI registration should include IEventTypeProvider
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource!).Contains("services.AddSingleton<IEventTypeProvider>");
+    await Assert.That(registrySource!).Contains("using Whizbang.Core.Messaging;");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EventTypesSortedAlphabeticallyAsync() {
+    // Arrange - Events should be sorted for deterministic output
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record ZEvent : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record AEvent : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record MEvent : IEvent {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamKey]
+    public Guid Id { get; init; }
+  }
+
+  public class TestPerspective : IPerspectiveFor<Model, ZEvent, AEvent, MEvent> {
+    public Model Apply(Model current, ZEvent @event) => current;
+    public Model Apply(Model current, AEvent @event) => current;
+    public Model Apply(Model current, MEvent @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert - Event types should be sorted: AEvent, MEvent, ZEvent
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    var aIndex = registrySource!.IndexOf("typeof(global::TestNamespace.AEvent)", StringComparison.Ordinal);
+    var mIndex = registrySource.IndexOf("typeof(global::TestNamespace.MEvent)", StringComparison.Ordinal);
+    var zIndex = registrySource.IndexOf("typeof(global::TestNamespace.ZEvent)", StringComparison.Ordinal);
+
+    await Assert.That(aIndex).IsLessThan(mIndex);
+    await Assert.That(mIndex).IsLessThan(zIndex);
+  }
+
+  private static int _countOccurrences(string text, string pattern) {
+    int count = 0;
+    int index = 0;
+    while ((index = text.IndexOf(pattern, index, StringComparison.Ordinal)) != -1) {
+      count++;
+      index += pattern.Length;
+    }
+    return count;
+  }
 }

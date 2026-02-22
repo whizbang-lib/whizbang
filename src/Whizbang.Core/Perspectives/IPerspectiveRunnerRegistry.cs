@@ -1,10 +1,13 @@
+using Whizbang.Core.Messaging;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// Zero-reflection registry for perspective runner lookup (AOT-compatible).
 /// Implemented by source-generated PerspectiveRunnerRegistry in {AssemblyName}.Generated namespace.
+/// Also provides event types for polymorphic event deserialization in lifecycle receptors.
 /// </summary>
-public interface IPerspectiveRunnerRegistry {
+public interface IPerspectiveRunnerRegistry : IEventTypeProvider {
   /// <summary>
   /// Gets a perspective runner by perspective type name (zero reflection).
   /// Returns null if no runner found for the given perspective name.
