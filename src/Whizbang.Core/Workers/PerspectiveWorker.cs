@@ -8,6 +8,8 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
 
@@ -354,6 +356,7 @@ public partial class PerspectiveWorker(
 
                 // PrePerspectiveAsync (non-blocking)
                 foreach (var envelope in upcomingEvents) {
+                  await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
                   await _lifecycleInvoker.InvokeAsync(
                     envelope,
                     LifecycleStage.PrePerspectiveAsync,
@@ -365,6 +368,7 @@ public partial class PerspectiveWorker(
                 // PrePerspectiveInline (blocking)
                 context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
                 foreach (var envelope in upcomingEvents) {
+                  await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
                   await _lifecycleInvoker.InvokeAsync(
                     envelope,
                     LifecycleStage.PrePerspectiveInline,
@@ -431,6 +435,7 @@ public partial class PerspectiveWorker(
             result.PerspectiveType,
             result.LastEventId,
             LifecycleStage.PostPerspectiveInline,
+            scope.ServiceProvider,
             cancellationToken
           );
           LogPostPerspectiveInlineCompleted(_logger);
@@ -567,6 +572,7 @@ public partial class PerspectiveWorker(
       Type? perspectiveType,
       Guid currentEventId,
       LifecycleStage stage,
+      IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
 
     if (_lifecycleInvoker is null) {
@@ -588,6 +594,9 @@ public partial class PerspectiveWorker(
 
       // Invoke receptors for each event
       foreach (var envelope in processedEvents) {
+        // Establish security context BEFORE invoking lifecycle receptors
+        await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
+
         await _lifecycleInvoker.InvokeAsync(
           envelope,
           stage,
@@ -601,6 +610,47 @@ public partial class PerspectiveWorker(
       // Lifecycle receptor failures shouldn't prevent checkpoint progress
       LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
       throw; // Never swallow exceptions
+    }
+  }
+
+  /// <summary>
+  /// Establishes security context from the envelope before lifecycle receptor invocation.
+  /// Sets IScopeContextAccessor.Current and IMessageContextAccessor.Current.
+  /// Same pattern as ReceptorInvoker for consistency.
+  /// </summary>
+  /// <docs>workers/perspective-worker#security-context</docs>
+  /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  private static async ValueTask _establishSecurityContextAsync(
+      MessageEnvelope<IEvent> envelope,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
+
+    // Establish security context from envelope (same pattern as ReceptorInvoker)
+    var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
+    if (securityProvider is not null) {
+      var securityContext = await securityProvider
+        .EstablishContextAsync(envelope, scopedProvider, cancellationToken)
+        .ConfigureAwait(false);
+
+      if (securityContext is not null) {
+        var accessor = scopedProvider.GetService<IScopeContextAccessor>();
+        if (accessor is not null) {
+          accessor.Current = securityContext;
+        }
+      }
+    }
+
+    // Set message context with UserId from security context
+    var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
+    if (messageContextAccessor is not null) {
+      var securityContext = envelope.GetCurrentSecurityContext();
+      messageContextAccessor.Current = new MessageContext {
+        MessageId = envelope.MessageId,
+        CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
+        CausationId = envelope.GetCausationId() ?? MessageId.New(),
+        Timestamp = envelope.GetMessageTimestamp(),
+        UserId = securityContext?.UserId
+      };
     }
   }
 
