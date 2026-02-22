@@ -21,14 +21,17 @@ namespace Whizbang.Core.Generated;
 /// Generated ILifecycleInvoker implementation with zero-reflection routing for {{RECEPTOR_COUNT}} receptor(s).
 /// Routes lifecycle invocations based on message type and lifecycle stage discovered from [FireAt] attributes.
 /// Also checks ILifecycleReceptorRegistry for runtime-registered receptors.
+/// Uses IServiceScopeFactory to create a scope per invocation, enabling resolution of scoped dependencies.
 /// </summary>
+/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <tests>Whizbang.Generators.Tests/LifecycleInvokerGeneratorTests.cs</tests>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.ILifecycleInvoker {
-  private readonly IServiceProvider _serviceProvider;
+  private readonly IServiceScopeFactory _scopeFactory;
 
-  public GeneratedLifecycleInvoker(IServiceProvider serviceProvider) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+  public GeneratedLifecycleInvoker(IServiceScopeFactory scopeFactory) {
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   }
 
   /// <summary>
@@ -57,7 +60,8 @@ public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.
     #endregion
 
     // Check for runtime-registered receptors (AOT-compatible via delegates)
-    var registry = _serviceProvider.GetService<ILifecycleReceptorRegistry>();
+    using var registryScope = _scopeFactory.CreateScope();
+    var registry = registryScope.ServiceProvider.GetService<ILifecycleReceptorRegistry>();
     if (registry is not null) {
       var handlers = registry.GetHandlers(messageType, stage);
       foreach (var handler in handlers) {
