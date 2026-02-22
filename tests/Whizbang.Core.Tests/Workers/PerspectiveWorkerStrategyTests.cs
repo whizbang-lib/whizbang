@@ -485,6 +485,8 @@ public class PerspectiveWorkerStrategyTests {
     public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
       return [new PerspectiveRegistrationInfo("Test.FakePerspective", "global::Test.FakePerspective", "global::Test.FakeModel", ["global::Test.FakeEvent"])];
     }
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
@@ -576,6 +578,8 @@ public class PerspectiveWorkerStrategyTests {
         )
       ];
     }
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
   #endregion
