@@ -2526,4 +2526,442 @@ public record MixedCollectionsCommand(
     // List<List<string>> should NOT have factory (nested collection)
     await Assert.That(code).DoesNotContain("CreateList_System_Collections");
   }
+
+  // ==================== Inherited Property Tests ====================
+
+  /// <summary>
+  /// Tests that properties from a base class are included in generated JSON serialization.
+  /// This is the core bug fix: GetMembers() only returns direct members, not inherited.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInheritedProperties_IncludesBaseClassPropertiesAsync() {
+    // Arrange - Command that extends a base class with properties
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+// Base class with properties
+public class BaseCommand {
+  public Guid StreamId { get; set; }
+  public string? CorrelationId { get; set; }
+}
+
+// Derived command that inherits base properties
+public class DerivedCommand : BaseCommand, ICommand {
+  public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // CRITICAL: All 3 properties should be included - both inherited and direct
+    // StreamId from base
+    await Assert.That(code!).Contains("\"StreamId\"");
+    // CorrelationId from base
+    await Assert.That(code).Contains("\"CorrelationId\"");
+    // Name from derived
+    await Assert.That(code).Contains("\"Name\"");
+  }
+
+  /// <summary>
+  /// Tests that inherited properties appear before derived class properties in generated code.
+  /// Order matters for JSON serialization consistency.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInheritedProperties_BasePropertiesAppearFirstAsync() {
+    // Arrange - Command with clear ordering requirement
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+public class BaseCommand {
+  public Guid BaseId { get; set; }
+}
+
+public class DerivedCommand : BaseCommand, ICommand {
+  public string DerivedProp { get; set; } = string.Empty;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // BaseId should appear before DerivedProp in the generated code
+    var baseIdIndex = code!.IndexOf("\"BaseId\"", StringComparison.Ordinal);
+    var derivedPropIndex = code.IndexOf("\"DerivedProp\"", StringComparison.Ordinal);
+
+    await Assert.That(baseIdIndex).IsGreaterThan(-1);
+    await Assert.That(derivedPropIndex).IsGreaterThan(-1);
+    await Assert.That(baseIdIndex).IsLessThan(derivedPropIndex);
+  }
+
+  /// <summary>
+  /// Tests multi-level inheritance (grandparent -> parent -> child).
+  /// All properties from all levels should be included.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultiLevelInheritance_IncludesAllLevelsAsync() {
+    // Arrange - Three-level inheritance hierarchy
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+// Level 1 - Grandparent
+public class GrandparentCommand {
+  public Guid GrandparentId { get; set; }
+}
+
+// Level 2 - Parent
+public class ParentCommand : GrandparentCommand {
+  public string ParentProp { get; set; } = string.Empty;
+}
+
+// Level 3 - Child (the actual command)
+public class ChildCommand : ParentCommand, ICommand {
+  public int ChildProp { get; set; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All 3 properties from all levels should be present
+    await Assert.That(code!).Contains("\"GrandparentId\"");
+    await Assert.That(code).Contains("\"ParentProp\"");
+    await Assert.That(code).Contains("\"ChildProp\"");
+  }
+
+  /// <summary>
+  /// Tests that virtual properties that are overridden in derived class use the derived property.
+  /// Only one property should appear in the output (no duplicates).
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithVirtualOverride_UsesOnlyDerivedPropertyAsync() {
+    // Arrange - Base with virtual property, derived with override
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class BaseWithVirtual {
+  public virtual string Name { get; set; } = string.Empty;
+}
+
+public class DerivedWithOverride : BaseWithVirtual, ICommand {
+  public override string Name { get; set; } = "overridden";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // "Name" should appear exactly once - count occurrences in property definitions
+    // Looking for pattern in CreateProperty call: CreateProperty<...>(options, "Name", ...)
+    var matches = System.Text.RegularExpressions.Regex.Matches(code!, @"CreateProperty<[^>]+>\(\s*options,\s*""Name""");
+    await Assert.That(matches.Count).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Tests that property hiding with 'new' keyword uses the derived class property.
+  /// Only one property should appear in the output (no duplicates).
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPropertyHidingNew_UsesOnlyDerivedPropertyAsync() {
+    // Arrange - Base with property, derived hides with 'new'
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class BaseWithProp {
+  public string Value { get; set; } = string.Empty;
+}
+
+public class DerivedWithNew : BaseWithProp, ICommand {
+  public new string Value { get; set; } = "new";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // "Value" should appear exactly once in property definitions
+    // Looking for pattern in CreateProperty call: CreateProperty<...>(options, "Value", ...)
+    var matches = System.Text.RegularExpressions.Regex.Matches(code!, @"CreateProperty<[^>]+>\(\s*options,\s*""Value""");
+    await Assert.That(matches.Count).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Tests that static properties from base class are NOT included.
+  /// Only instance properties should be serialized.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInheritedStaticProperty_ExcludesStaticAsync() {
+    // Arrange - Base with static property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class BaseWithStatic {
+  public static string StaticProp { get; set; } = string.Empty;
+  public string InstanceProp { get; set; } = string.Empty;
+}
+
+public class DerivedCommand : BaseWithStatic, ICommand {
+  public int DerivedProp { get; set; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Static property should NOT be included
+    await Assert.That(code!).DoesNotContain("\"StaticProp\"");
+    // Instance properties should be included
+    await Assert.That(code).Contains("\"InstanceProp\"");
+    await Assert.That(code).Contains("\"DerivedProp\"");
+  }
+
+  /// <summary>
+  /// Tests that private/internal properties from base class are NOT included.
+  /// Only public properties should be serialized.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInheritedNonPublicProperties_ExcludesNonPublicAsync() {
+    // Arrange - Base with private and internal properties
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class BaseWithNonPublic {
+  public string PublicProp { get; set; } = string.Empty;
+  internal string InternalProp { get; set; } = string.Empty;
+  protected string ProtectedProp { get; set; } = string.Empty;
+  private string PrivateProp { get; set; } = string.Empty;
+}
+
+public class DerivedCommand : BaseWithNonPublic, ICommand {
+  public int DerivedProp { get; set; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Only public properties should be included
+    await Assert.That(code!).Contains("\"PublicProp\"");
+    await Assert.That(code).Contains("\"DerivedProp\"");
+    // Non-public properties should NOT be included
+    await Assert.That(code).DoesNotContain("\"InternalProp\"");
+    await Assert.That(code).DoesNotContain("\"ProtectedProp\"");
+    await Assert.That(code).DoesNotContain("\"PrivateProp\"");
+  }
+
+  /// <summary>
+  /// Tests that read-only properties (no setter) from base class are included.
+  /// These properties can be deserialized via constructor or init.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInheritedReadOnlyProperty_IncludesReadOnlyAsync() {
+    // Arrange - Base with read-only property
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class BaseWithReadOnly {
+  public string ReadOnlyProp { get; } = "readonly";
+  public string ReadWriteProp { get; set; } = string.Empty;
+}
+
+public class DerivedCommand : BaseWithReadOnly, ICommand {
+  public int DerivedProp { get; set; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both read-only and read-write properties should be included
+    await Assert.That(code!).Contains("\"ReadOnlyProp\"");
+    await Assert.That(code).Contains("\"ReadWriteProp\"");
+    await Assert.That(code).Contains("\"DerivedProp\"");
+  }
+
+  /// <summary>
+  /// Tests that a command without inheritance still works correctly (regression test).
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNoInheritance_WorksUnchangedAsync() {
+    // Arrange - Simple command without inheritance
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+public class SimpleCommand : ICommand {
+  public Guid Id { get; set; }
+  public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both properties should be included
+    await Assert.That(code!).Contains("\"Id\"");
+    await Assert.That(code).Contains("\"Name\"");
+  }
+
+  /// <summary>
+  /// Tests record inheritance works correctly.
+  /// Records are commonly used for commands/events.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRecordInheritance_IncludesBasePropertiesAsync() {
+    // Arrange - Record that inherits from another record
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace TestApp;
+
+public abstract record BaseEvent(Guid EventId, string EventType);
+
+public record DerivedEvent(Guid EventId, string EventType, string Payload) : BaseEvent(EventId, EventType), IEvent;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All properties should be included
+    await Assert.That(code!).Contains("\"EventId\"");
+    await Assert.That(code).Contains("\"EventType\"");
+    await Assert.That(code).Contains("\"Payload\"");
+  }
+
+  /// <summary>
+  /// Tests that properties from object base type are NOT included.
+  /// Object has no serializable properties anyway, but we verify we stop there.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_getAllPropertiesIncludingInherited</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_StopsAtObjectBaseType_NoObjectPropertiesAsync() {
+    // Arrange - Command that directly extends object (implicitly)
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public class SimpleCommand : ICommand {
+  public string Prop { get; set; } = string.Empty;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Only our property, not any object internals
+    await Assert.That(code!).Contains("\"Prop\"");
+    // System.Object doesn't have public serializable properties, but just verify no weird ones
+    await Assert.That(code).DoesNotContain("\"GetType\"");
+    await Assert.That(code).DoesNotContain("\"GetHashCode\"");
+  }
 }

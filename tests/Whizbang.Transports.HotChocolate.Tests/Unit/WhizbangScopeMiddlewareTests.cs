@@ -142,6 +142,105 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
+  public async Task InvokeAsync_WithObjectIdentifierClaim_ShouldExtractUserIdAsync() {
+    // Arrange - Azure AD full claim format
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims((
+      "http://schemas.microsoft.com/identity/claims/objectidentifier",
+      "azure-ad-user-guid"
+    ));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("azure-ad-user-guid");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithObjectIdClaim_ShouldExtractUserIdAsync() {
+    // Arrange - Azure AD short form
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("objectid", "azure-user-123"));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("azure-user-123");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithOidClaim_ShouldExtractUserIdAsync() {
+    // Arrange - Azure AD abbreviated form
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("oid", "azure-oid-456"));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("azure-oid-456");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithSubClaim_ShouldExtractUserIdAsync() {
+    // Arrange - Standard JWT 'sub' claim
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("sub", "jwt-subject-789"));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("jwt-subject-789");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithMultipleUserIdClaims_ShouldUseFirstMatchAsync() {
+    // Arrange - Multiple claims present, should use first in UserIdClaimTypes order
+    // objectidentifier comes before sub in the default list
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(
+      ("sub", "jwt-subject"),
+      ("http://schemas.microsoft.com/identity/claims/objectidentifier", "azure-user")
+    );
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert - Should use objectidentifier since it's first in the list
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("azure-user");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithOnlyLaterClaimType_ShouldFallbackAsync() {
+    // Arrange - Only 'sub' claim present, should fallback to it
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("sub", "fallback-user"));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.UserId).IsEqualTo("fallback-user");
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithFallbackUserIdClaims_ShouldAlsoWorkForPrincipalsAsync() {
+    // Arrange - Verify principals extraction also uses fallback claim types
+    var (middleware, accessor) = _createMiddleware();
+    var context = _createContextWithClaims(("sub", "jwt-user-abc"));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert - User principal should be extracted
+    var expected = SecurityPrincipalId.User("jwt-user-abc");
+    await Assert.That(accessor.Current!.SecurityPrincipals).Contains(expected);
+  }
+
+  [Test]
   public async Task InvokeAsync_WithOrganizationIdClaim_ShouldExtractOrgIdAsync() {
     // Arrange
     var (middleware, accessor) = _createMiddleware();
@@ -827,9 +926,32 @@ public class WhizbangScopeMiddlewareTests {
   }
 
   [Test]
-  public async Task Options_DefaultUserIdClaimType_ShouldBeNameIdentifierAsync() {
+  public async Task Options_DefaultUserIdClaimType_ShouldBeFirstInListAsync() {
+    // UserIdClaimType returns the first item in UserIdClaimTypes
     var options = new WhizbangScopeOptions();
-    await Assert.That(options.UserIdClaimType).IsEqualTo(ClaimTypes.NameIdentifier);
+    await Assert.That(options.UserIdClaimType)
+      .IsEqualTo("http://schemas.microsoft.com/identity/claims/objectidentifier");
+  }
+
+  [Test]
+  public async Task Options_DefaultUserIdClaimTypes_ShouldContainCommonClaimTypesAsync() {
+    var options = new WhizbangScopeOptions();
+    await Assert.That(options.UserIdClaimTypes).Contains(
+      "http://schemas.microsoft.com/identity/claims/objectidentifier");
+    await Assert.That(options.UserIdClaimTypes).Contains("objectid");
+    await Assert.That(options.UserIdClaimTypes).Contains("oid");
+    await Assert.That(options.UserIdClaimTypes).Contains("sub");
+    await Assert.That(options.UserIdClaimTypes).Contains(ClaimTypes.NameIdentifier);
+  }
+
+  [Test]
+  public async Task Options_SettingUserIdClaimType_ShouldReplaceListAsync() {
+    // For backwards compatibility, setting UserIdClaimType replaces the list
+    var options = new WhizbangScopeOptions();
+    options.UserIdClaimType = "my_custom_user_id";
+    await Assert.That(options.UserIdClaimTypes.Count).IsEqualTo(1);
+    await Assert.That(options.UserIdClaimTypes).Contains("my_custom_user_id");
+    await Assert.That(options.UserIdClaimType).IsEqualTo("my_custom_user_id");
   }
 
   [Test]

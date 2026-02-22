@@ -12,11 +12,11 @@ namespace Whizbang.Core.Generated;
 /// <summary>
 /// Generated stream key extractors for zero-reflection AOT compatibility.
 /// </summary>
-public static partial class StreamKeyExtractors {
+public static partial class StreamIdExtractors {
 
   /// <summary>
   /// Resolves the stream key from an event using generated extractors.
-  /// Zero-reflection alternative to StreamKeyResolver.Resolve().
+  /// Zero-reflection alternative to StreamIdResolver.Resolve().
   /// </summary>
   public static string Resolve(global::Whizbang.Core.IEvent @event) {
     global::System.ArgumentNullException.ThrowIfNull(@event);
@@ -27,12 +27,12 @@ public static partial class StreamKeyExtractors {
 
     throw new global::System.InvalidOperationException(
       $"No stream key extractor found for event type '{@event.GetType().Name}'. " +
-      "Ensure the event type has a property or parameter marked with [StreamKey].");
+      "Ensure the event type has a property or parameter marked with [StreamId].");
   }
 
   /// <summary>
   /// Tries to resolve the stream key from an event and parse it as a Guid.
-  /// Returns null if the event has no [StreamKey] or the key is not a valid Guid.
+  /// Returns null if the event has no [StreamId] or the key is not a valid Guid.
   /// Used by IDeliveryReceipt.StreamId extraction.
   /// </summary>
   /// <param name="event">The event to extract the stream key from</param>

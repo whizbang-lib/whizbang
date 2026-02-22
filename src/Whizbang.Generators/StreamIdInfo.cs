@@ -7,12 +7,12 @@ namespace Whizbang.Generators;
 /// This record uses value equality which is critical for incremental generator performance.
 /// </summary>
 /// <param name="EventType">Fully qualified event type name</param>
-/// <param name="PropertyName">Name of the property or parameter marked with [StreamKey]</param>
+/// <param name="PropertyName">Name of the property or parameter marked with [StreamId]</param>
 /// <param name="PropertyType">Fully qualified type of the stream key property</param>
 /// <param name="IsPropertyValueType">True if the property type is a value type (struct)</param>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyInfoTests.cs:StreamKeyInfo_ValueEquality_ComparesFieldsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyInfoTests.cs:StreamKeyInfo_Constructor_SetsPropertiesAsync</tests>
-public sealed record StreamKeyInfo(
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdInfoTests.cs:StreamIdInfo_ValueEquality_ComparesFieldsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdInfoTests.cs:StreamIdInfo_Constructor_SetsPropertiesAsync</tests>
+public sealed record StreamIdInfo(
     string EventType,
     string PropertyName,
     string PropertyType,
@@ -26,7 +26,7 @@ public sealed record StreamKeyInfo(
 /// </summary>
 /// <param name="EventType">Fully qualified event type name</param>
 /// <param name="Location">Source location of the event type declaration for diagnostic reporting</param>
-public sealed record EventWithoutStreamKeyInfo(
+public sealed record EventWithoutStreamIdInfo(
     string EventType,
     Location Location
 );

@@ -10,63 +10,63 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNoEvents_GeneratesEmptyExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithClassProperty_GeneratesExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamKeyAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNonPublicEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithAbstractEvent_ProcessesAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithRecordAndClassProperties_GeneratesForBothAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNonEventType_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithStructEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_NullableValueTypeKey_GeneratesNullableExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_NullableGuidKey_GeneratesNullableExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_TypeNotImplementingIEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_ClassWithStreamKeyProperty_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNoEvents_GeneratesEmptyExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithClassProperty_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamIdAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNonPublicEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithAbstractEvent_ProcessesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithRecordAndClassProperties_GeneratesForBothAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNonEventType_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithStructEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_NullableValueTypeKey_GeneratesNullableExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_NullableGuidKey_GeneratesNullableExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_TypeNotImplementingIEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_ClassWithStreamIdProperty_GeneratesExtractorAsync</tests>
 /// Source generator that creates zero-reflection stream key extractors.
-/// Replaces runtime reflection in StreamKeyResolver with compile-time code generation.
+/// Replaces runtime reflection in StreamIdResolver with compile-time code generation.
 /// </summary>
 [Generator]
-public class StreamKeyGenerator : IIncrementalGenerator {
+public class StreamIdGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "Whizbang.Core.IEvent";
-  private const string STREAMKEY_ATTRIBUTE = "Whizbang.Core.StreamKeyAttribute";
-  private const string STREAMKEY_ATTRIBUTE_NAME = "StreamKeyAttribute";
-  private const string STREAMKEY_SHORT_NAME = "StreamKey";
+  private const string STREAMID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
+  private const string STREAMID_ATTRIBUTE_NAME = "StreamIdAttribute";
+  private const string STREAMID_SHORT_NAME = "StreamId";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover IEvent types with [StreamKey] attribute
-    var eventsWithStreamKey = context.SyntaxProvider.CreateSyntaxProvider(
+    // Discover IEvent types with [StreamId] attribute
+    var eventsWithStreamId = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
                                     || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractStreamKeyInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractStreamIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Discover IEvent types WITHOUT [StreamKey] for diagnostics
-    var eventsWithoutStreamKey = context.SyntaxProvider.CreateSyntaxProvider(
+    // Discover IEvent types WITHOUT [StreamId] for diagnostics
+    var eventsWithoutStreamId = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
                                     || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _findEventWithoutStreamKey(ctx, ct)
+        transform: static (ctx, ct) => _findEventWithoutStreamId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate extractor methods from collected events
     // Combine compilation with discovered events to get assembly name for namespace
     var compilationAndEvents = context.CompilationProvider
-        .Combine(eventsWithStreamKey.Collect())
-        .Combine(eventsWithoutStreamKey.Collect());
+        .Combine(eventsWithStreamId.Collect())
+        .Combine(eventsWithoutStreamId.Collect());
 
     context.RegisterSourceOutput(
         compilationAndEvents,
         static (ctx, data) => {
           var compilation = data.Left.Left;
-          var withStreamKey = data.Left.Right;
-          var withoutStreamKey = data.Right;
-          _generateStreamKeyExtractors(ctx, compilation, withStreamKey!, withoutStreamKey!);
+          var withStreamId = data.Left.Right;
+          var withoutStreamId = data.Right;
+          _generateStreamIdExtractors(ctx, compilation, withStreamId!, withoutStreamId!);
         }
     );
   }
 
-  private static StreamKeyInfo? _extractStreamKeyInfo(
+  private static StreamIdInfo? _extractStreamIdInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -89,19 +89,19 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamKey] on properties (including inherited properties)
+    // Look for [StreamId] on properties (including inherited properties)
     var currentType = typeSymbol;
     while (currentType is not null) {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
-          var hasStreamKeyAttr = property.GetAttributes().Any(a =>
-              a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-              a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-              a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
+          var hasStreamIdAttr = property.GetAttributes().Any(a =>
+              a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
+              a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
+              a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
+              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
 
-          if (hasStreamKeyAttr) {
-            return new StreamKeyInfo(
+          if (hasStreamIdAttr) {
+            return new StreamIdInfo(
                 EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 PropertyName: property.Name,
                 PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -113,23 +113,23 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       currentType = currentType.BaseType;
     }
 
-    // Look for [StreamKey] on constructor parameters (for records)
+    // Look for [StreamId] on constructor parameters (for records)
     var constructors = typeSymbol.Constructors;
     foreach (var ctor in constructors) {
       foreach (var parameter in ctor.Parameters) {
-        var hasStreamKeyAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-            a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
+        var hasStreamIdAttr = parameter.GetAttributes().Any(a =>
+            a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
+            a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
+            a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
+            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
 
-        if (hasStreamKeyAttr) {
+        if (hasStreamIdAttr) {
           // Find corresponding property (records create properties from constructor parameters)
           var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
               .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
 
           if (property is not null) {
-            return new StreamKeyInfo(
+            return new StreamIdInfo(
                 EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 PropertyName: property.Name,
                 PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -143,7 +143,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     return null;
   }
 
-  private static EventWithoutStreamKeyInfo? _findEventWithoutStreamKey(
+  private static EventWithoutStreamIdInfo? _findEventWithoutStreamId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -166,37 +166,37 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if has [StreamKey] anywhere (including inherited properties)
-    var hasStreamKeyOnProperty = false;
+    // Check if has [StreamId] anywhere (including inherited properties)
+    var hasStreamIdOnProperty = false;
     var checkType = typeSymbol;
-    while (checkType is not null && !hasStreamKeyOnProperty) {
-      hasStreamKeyOnProperty = checkType.GetMembers().OfType<IPropertySymbol>().Any(p =>
+    while (checkType is not null && !hasStreamIdOnProperty) {
+      hasStreamIdOnProperty = checkType.GetMembers().OfType<IPropertySymbol>().Any(p =>
           p.GetAttributes().Any(a =>
-              a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-              a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-              a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}"));
+              a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
+              a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
+              a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
+              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}"));
       checkType = checkType.BaseType;
     }
 
-    if (hasStreamKeyOnProperty) {
+    if (hasStreamIdOnProperty) {
       return null;
     }
 
-    var hasStreamKeyOnParameter = typeSymbol.Constructors.Any(ctor =>
+    var hasStreamIdOnParameter = typeSymbol.Constructors.Any(ctor =>
         ctor.Parameters.Any(param =>
             param.GetAttributes().Any(a =>
-                a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-                a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-                a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-                a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}")));
+                a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
+                a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
+                a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
+                a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}")));
 
-    if (hasStreamKeyOnParameter) {
+    if (hasStreamIdOnParameter) {
       return null;
     }
 
-    // IEvent without [StreamKey] - return type name and location
-    return new EventWithoutStreamKeyInfo(
+    // IEvent without [StreamId] - return type name and location
+    return new EventWithoutStreamIdInfo(
         EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         Location: context.Node.GetLocation()
     );
@@ -205,21 +205,21 @@ public class StreamKeyGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates stream key extractors with assembly-specific namespace to avoid conflicts.
   /// </summary>
-  private static void _generateStreamKeyExtractors(
+  private static void _generateStreamIdExtractors(
       SourceProductionContext context,
       Compilation compilation,
-      ImmutableArray<StreamKeyInfo> eventsWithStreamKey,
-      ImmutableArray<EventWithoutStreamKeyInfo> eventsWithoutStreamKey) {
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId) {
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
     // Report diagnostics for events with stream keys
-    foreach (var info in eventsWithStreamKey) {
+    foreach (var info in eventsWithStreamId) {
       var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.StreamKeyDiscovered,
+          DiagnosticDescriptors.StreamIdDiscovered,
           Location.None,
           simpleName,
           info.PropertyName
@@ -227,10 +227,10 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     }
 
     // Report diagnostics for events without stream keys
-    foreach (var info in eventsWithoutStreamKey) {
+    foreach (var info in eventsWithoutStreamId) {
       var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.MissingStreamKeyAttribute,
+          DiagnosticDescriptors.MissingStreamIdAttribute,
           info.Location,  // Use actual location for proper suppression support
           simpleName
       ));
@@ -238,28 +238,28 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
     // Load template
     var template = TemplateUtilities.GetEmbeddedTemplate(
-        typeof(StreamKeyGenerator).Assembly,
-        "StreamKeyExtractorsTemplate.cs"
+        typeof(StreamIdGenerator).Assembly,
+        "StreamIdExtractorsTemplate.cs"
     );
 
     // Replace header with timestamp
-    template = TemplateUtilities.ReplaceHeaderRegion(typeof(StreamKeyGenerator).Assembly, template);
+    template = TemplateUtilities.ReplaceHeaderRegion(typeof(StreamIdGenerator).Assembly, template);
 
     // Replace namespace region with assembly-specific namespace
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
     // Generate dispatch cases
-    if (!eventsWithStreamKey.IsEmpty) {
+    if (!eventsWithStreamId.IsEmpty) {
       var dispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamKeyGenerator).Assembly,
-          "StreamKeySnippets.cs",
+          typeof(StreamIdGenerator).Assembly,
+          "StreamIdSnippets.cs",
           "DISPATCH_CASE"
       );
 
       var dispatchCode = new StringBuilder();
       dispatchCode.AppendLine("// Type-based dispatch to correct extractor");
-      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
-        var info = eventsWithStreamKey[i];
+      for (int i = 0; i < eventsWithStreamId.Length; i++) {
+        var info = eventsWithStreamId[i];
         var caseCode = dispatchSnippet
             .Replace("__EVENT_TYPE__", info.EventType)
             .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
@@ -271,15 +271,15 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
       // Generate TryResolveAsGuid dispatch cases
       var tryDispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamKeyGenerator).Assembly,
-          "StreamKeySnippets.cs",
+          typeof(StreamIdGenerator).Assembly,
+          "StreamIdSnippets.cs",
           "TRY_DISPATCH_CASE"
       );
 
       var tryDispatchCode = new StringBuilder();
       tryDispatchCode.AppendLine("// Type-based dispatch returning Guid?");
-      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
-        var info = eventsWithStreamKey[i];
+      for (int i = 0; i < eventsWithStreamId.Length; i++) {
+        var info = eventsWithStreamId[i];
         var caseCode = tryDispatchSnippet
             .Replace("__EVENT_TYPE__", info.EventType)
             .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
@@ -291,8 +291,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
       // Generate extractor methods
       var extractorsCode = new StringBuilder();
-      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
-        var info = eventsWithStreamKey[i];
+      for (int i = 0; i < eventsWithStreamId.Length; i++) {
+        var info = eventsWithStreamId[i];
         var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
         var propertyTypeName = info.PropertyType;
 
@@ -303,13 +303,13 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
         var extractorSnippet = isNullable
             ? TemplateUtilities.ExtractSnippet(
-                typeof(StreamKeyGenerator).Assembly,
-                "StreamKeySnippets.cs",
+                typeof(StreamIdGenerator).Assembly,
+                "StreamIdSnippets.cs",
                 "EXTRACTOR_NULLABLE"
               )
             : TemplateUtilities.ExtractSnippet(
-                typeof(StreamKeyGenerator).Assembly,
-                "StreamKeySnippets.cs",
+                typeof(StreamIdGenerator).Assembly,
+                "StreamIdSnippets.cs",
                 "EXTRACTOR_NON_NULLABLE"
               );
 
@@ -328,16 +328,16 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
       // Generate TryExtractAsGuid methods
       var tryExtractorsCode = new StringBuilder();
-      for (int i = 0; i < eventsWithStreamKey.Length; i++) {
-        var info = eventsWithStreamKey[i];
+      for (int i = 0; i < eventsWithStreamId.Length; i++) {
+        var info = eventsWithStreamId[i];
         var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
         var propertyTypeName = info.PropertyType;
 
         // Determine which TRY_EXTRACTOR snippet to use based on property type
         var tryExtractorSnippetName = _getTryExtractorSnippetName(propertyTypeName, info.IsPropertyValueType);
         var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
-            typeof(StreamKeyGenerator).Assembly,
-            "StreamKeySnippets.cs",
+            typeof(StreamIdGenerator).Assembly,
+            "StreamIdSnippets.cs",
             tryExtractorSnippetName
         );
 
@@ -361,7 +361,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       template = TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", "");
     }
 
-    context.AddSource("StreamKeyExtractors.g.cs", template);
+    context.AddSource("StreamIdExtractors.g.cs", template);
   }
 
   /// <summary>

@@ -229,11 +229,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var clrTypeName = _getClrTypeName(typeSymbol);
     var simpleName = typeSymbol.Name;
 
-    // Extract property information for JSON serialization
+    // Extract property information for JSON serialization, including inherited properties
     // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
-    var properties = typeSymbol.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+    var properties = _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
@@ -1478,12 +1476,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts property information from a type symbol.
+  /// Extracts property information from a type symbol, including inherited properties.
   /// </summary>
   private static PropertyInfo[] _extractPropertiesFromType(INamedTypeSymbol typeSymbol) {
-    return typeSymbol.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+    return _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
@@ -1492,6 +1488,37 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             CanWrite: p.SetMethod != null
         ))
         .ToArray();
+  }
+
+  /// <summary>
+  /// Gets all public instance properties from a type, including inherited properties.
+  /// Properties are returned in order: base class properties first, then derived class properties.
+  /// Uses property name to dedupe (derived class property overrides base class property).
+  /// </summary>
+  private static List<IPropertySymbol> _getAllPropertiesIncludingInherited(INamedTypeSymbol typeSymbol) {
+    var seenProperties = new HashSet<string>();
+    var allProperties = new List<IPropertySymbol>();
+
+    // Walk inheritance chain from most derived to base
+    var currentType = typeSymbol;
+    while (currentType != null && currentType.SpecialType != SpecialType.System_Object) {
+      var typeProperties = currentType.GetMembers()
+          .OfType<IPropertySymbol>()
+          .Where(p => p.DeclaredAccessibility == Accessibility.Public &&
+                     !p.IsStatic &&
+                     !seenProperties.Contains(p.Name))
+          .ToList();
+
+      foreach (var prop in typeProperties) {
+        seenProperties.Add(prop.Name);
+      }
+
+      // Insert at beginning so base properties come first
+      allProperties.InsertRange(0, typeProperties);
+      currentType = currentType.BaseType;
+    }
+
+    return allProperties;
   }
 
   /// <summary>
