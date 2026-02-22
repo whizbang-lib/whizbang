@@ -292,6 +292,8 @@ public class DispatcherSnippets {
 
   /// <summary>
   /// Example method showing snippet structure for lifecycle routing with void receptors.
+  /// Uses IServiceScopeFactory to create a scope for each invocation, enabling resolution
+  /// of scoped dependencies (e.g., DbContext, IOrchestratorAgent).
   /// </summary>
   protected async ValueTask LifecycleRoutingVoidExample(
       object message,
@@ -299,7 +301,8 @@ public class DispatcherSnippets {
       CancellationToken cancellationToken) {
     #region LIFECYCLE_ROUTING_VOID_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
-      var receptor = _serviceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+      using var scope = _scopeFactory.CreateScope();
+      var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
       await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
     }
     #endregion
@@ -307,6 +310,8 @@ public class DispatcherSnippets {
 
   /// <summary>
   /// Example method showing snippet structure for lifecycle routing with response receptors.
+  /// Uses IServiceScopeFactory to create a scope for each invocation, enabling resolution
+  /// of scoped dependencies (e.g., DbContext, IOrchestratorAgent).
   /// </summary>
   protected async ValueTask LifecycleRoutingResponseExample(
       object message,
@@ -314,14 +319,12 @@ public class DispatcherSnippets {
       CancellationToken cancellationToken) {
     #region LIFECYCLE_ROUTING_RESPONSE_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
-      var receptor = _serviceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+      using var scope = _scopeFactory.CreateScope();
+      var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
       await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
     }
     #endregion
   }
-
-  // Placeholder field to allow snippets to compile (used by lifecycle routing)
-  protected IServiceProvider _serviceProvider => null!;
 
   /// <summary>
   /// Example method showing snippet structure for receptor registry routing.
