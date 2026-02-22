@@ -40,32 +40,52 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
 
-    // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
-    logger?.LogInformation("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
+    // Acquire advisory lock to prevent race conditions when multiple services start simultaneously
+    // Lock ID is based on schema name hash to allow parallel initialization of different schemas
+    // Uses pg_advisory_lock (blocking) - waits until lock is available
+    var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
+    logger?.LogInformation("Acquiring advisory lock {LockId} for schema '__SCHEMA__'...", lockId);
 
-    // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
-    logger?.LogInformation("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
+    await dbContext.Database.ExecuteSqlRawAsync(
+      $"SELECT pg_advisory_lock({lockId})",
+      cancellationToken);
 
-    // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
-    logger?.LogInformation("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
+    try {
+      logger?.LogInformation("Advisory lock acquired, initializing database for {DbContext}...", "__DBCONTEXT_CLASS__");
 
-    // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
-    logger?.LogInformation("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+      // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+      logger?.LogInformation("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
 
-    // Step 5: Register perspective associations (populates wh_message_associations for event routing)
-    logger?.LogInformation("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
-    #region REGISTER_ASSOCIATIONS
-    #endregion
+      // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
+      logger?.LogInformation("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
 
-    // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
-    logger?.LogInformation("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
+      // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
+      logger?.LogInformation("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
 
-    logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
+      // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
+      logger?.LogInformation("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+
+      // Step 5: Register perspective associations (populates wh_message_associations for event routing)
+      logger?.LogInformation("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
+      #region REGISTER_ASSOCIATIONS
+      #endregion
+
+      // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
+      logger?.LogInformation("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
+
+      logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
+    } finally {
+      // Release advisory lock - allows other services waiting on initialization to proceed
+      await dbContext.Database.ExecuteSqlRawAsync(
+        $"SELECT pg_advisory_unlock({lockId})",
+        cancellationToken);
+      logger?.LogInformation("Released advisory lock {LockId} for schema '__SCHEMA__'", lockId);
+    }
   }
 
   /// <summary>
