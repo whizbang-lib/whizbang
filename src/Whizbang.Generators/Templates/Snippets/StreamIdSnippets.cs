@@ -1,4 +1,4 @@
-// Template snippets for StreamKey code generation.
+// Template snippets for StreamId code generation.
 // These are valid C# methods containing #region blocks that get extracted
 // and used as templates during code generation.
 
@@ -11,7 +11,7 @@ namespace Whizbang.Generators.Templates.Snippets;
 /// Contains template snippets for stream key extractor code generation.
 /// Each #region contains a code snippet that gets extracted and has placeholders replaced.
 /// </summary>
-public class StreamKeySnippets {
+public class StreamIdSnippets {
 
   /// <summary>
   /// Example method showing snippet structure for dispatch routing.
