@@ -609,6 +609,124 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
   #endregion
 
+  #region LocalInvokeAsync with Routed<T> Wrapper Tests
+
+  /// <summary>
+  /// Test dispatcher that supports Routed&lt;T&gt; local invoke testing.
+  /// </summary>
+  private sealed class RoutedLocalInvokeTestDispatcher : Core.Dispatcher {
+    private readonly List<object> _invokedMessages = [];
+    private readonly object _lock = new();
+
+    public RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider)
+        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+    }
+
+    public List<object> GetInvokedMessages() {
+      lock (_lock) {
+        return _invokedMessages.ToList();
+      }
+    }
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      if (messageType == typeof(RoutedSendTestEvent)) {
+        return msg => {
+          lock (_lock) {
+            _invokedMessages.Add(msg);
+          }
+          return ValueTask.FromResult((TResult)(object)new RoutedTestResult(true));
+        };
+      }
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      if (messageType == typeof(RoutedSendTestEvent)) {
+        return msg => {
+          lock (_lock) {
+            _invokedMessages.Add(msg);
+          }
+          return ValueTask.CompletedTask;
+        };
+      }
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Verifies that LocalInvokeAsync with Routed&lt;T&gt; unwraps the message and invokes the receptor.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithRoutedWrapper_UnwrapsAndInvokesReceptorAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedLocalInvokeTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    var routed = Route.Local(evt);
+
+    // Act - This should NOT throw InvalidCastException
+    var result = await dispatcher.LocalInvokeAsync<RoutedTestResult>(routed, MessageContext.New());
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    var invoked = dispatcher.GetInvokedMessages();
+    await Assert.That(invoked).Count().IsEqualTo(1);
+    await Assert.That(invoked[0]).IsTypeOf<RoutedSendTestEvent>()
+      .Because("The inner event should be unwrapped before invoking receptor");
+  }
+
+  /// <summary>
+  /// Verifies that void LocalInvokeAsync with Routed&lt;T&gt; unwraps and invokes correctly.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_Void_WithRoutedWrapper_UnwrapsAndInvokesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedLocalInvokeTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    var routed = Route.Local(evt);
+
+    // Act
+    await dispatcher.LocalInvokeAsync(routed, MessageContext.New());
+
+    // Assert
+    var invoked = dispatcher.GetInvokedMessages();
+    await Assert.That(invoked).Count().IsEqualTo(1);
+    await Assert.That(invoked[0]).IsTypeOf<RoutedSendTestEvent>();
+  }
+
+  #endregion
+
   #region Test Infrastructure
 
   /// <summary>

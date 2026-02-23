@@ -629,6 +629,14 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed - users can call LocalInvokeAsync(Route.Local(event))
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
 
     // Try async receptor first (async takes precedence)
@@ -940,10 +948,20 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
-    var messageType = typeof(TMessage);
+    // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
+    // We need to use runtime type to get the actual inner message type
+    object actualMessage = message;
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      actualMessage = routed.Value;
+    }
+
+    var messageType = actualMessage.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
@@ -953,7 +971,7 @@ public abstract class Dispatcher(
 
     // Fast path with cascade support for receptor tuple/array returns
     // Invoke using delegate, then extract and publish any IEvent instances
-    return _localInvokeWithCascadeAsync(invoker, message, messageType);
+    return _localInvokeWithCascadeAsync(invoker, actualMessage, messageType);
   }
 
   /// <summary>
@@ -1072,6 +1090,14 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
 
     // Try async receptor first (async takes precedence)
@@ -1154,10 +1180,20 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
-    var messageType = typeof(TMessage);
+    // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
+    // We need to use runtime type to get the actual inner message type
+    object actualMessage = message;
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      actualMessage = routed.Value;
+    }
+
+    var messageType = actualMessage.GetType();
 
     // Try async receptor first (async takes precedence)
-    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
       // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
       // This achieves zero allocation for high-throughput scenarios
@@ -1168,22 +1204,22 @@ public abstract class Dispatcher(
       // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
       // Invoke using delegate - zero reflection, strongly typed
       // Avoid async/await state machine allocation by returning task directly
-      return asyncInvoker(message);
+      return asyncInvoker(actualMessage);
     }
 
     // Fallback to void sync receptor
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    var syncInvoker = GetVoidSyncReceptorInvoker(actualMessage, messageType);
     if (syncInvoker != null) {
       // Invoke synchronously - returns pre-completed ValueTask
-      syncInvoker(message);
+      syncInvoker(actualMessage);
       return ValueTask.CompletedTask;
     }
 
     // Fallback to any receptor (void or non-void) for cascade support
     // This enables void LocalInvokeAsync to cascade events from non-void receptors
-    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    var anyInvoker = GetReceptorInvokerAny(actualMessage, messageType);
     if (anyInvoker != null) {
-      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, actualMessage, messageType);
     }
 
     throw new ReceptorNotFoundException(messageType);
@@ -1265,6 +1301,14 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
@@ -1298,6 +1342,14 @@ public abstract class Dispatcher(
   ) {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
 
     var messageType = message.GetType();
     var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
