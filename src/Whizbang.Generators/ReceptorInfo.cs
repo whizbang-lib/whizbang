@@ -13,6 +13,7 @@ namespace Whizbang.Generators;
 /// <param name="LifecycleStages">Lifecycle stages at which this receptor should fire (from [FireAt] attributes). Empty if no [FireAt] attributes (defaults to ImmediateAsync).</param>
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
+/// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -20,7 +21,8 @@ public sealed record ReceptorInfo(
     string? ResponseType,
     string[] LifecycleStages,
     bool IsSync = false,
-    string? DefaultRouting = null
+    string? DefaultRouting = null,
+    SyncAttributeInfo[]? SyncAttributes = null
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
@@ -36,4 +38,26 @@ public sealed record ReceptorInfo(
   /// True if receptor has a [DefaultRouting] attribute.
   /// </summary>
   public bool HasDefaultRouting => DefaultRouting is not null;
+
+  /// <summary>
+  /// True if receptor has any [AwaitPerspectiveSync] attributes.
+  /// </summary>
+  public bool HasSyncAttributes => SyncAttributes is { Length: > 0 };
 };
+
+/// <summary>
+/// Value type containing information about a perspective sync attribute.
+/// Uses string representations of types for value equality and serialization.
+/// </summary>
+/// <param name="PerspectiveType">Fully qualified perspective type name.</param>
+/// <param name="EventTypes">Fully qualified event type names, or null for all events.</param>
+/// <param name="LookupMode">The lookup mode value (0=Local, 1=Distributed).</param>
+/// <param name="TimeoutMs">The timeout in milliseconds.</param>
+/// <param name="ThrowOnTimeout">Whether to throw on timeout.</param>
+public sealed record SyncAttributeInfo(
+    string PerspectiveType,
+    string[]? EventTypes,
+    int LookupMode,
+    int TimeoutMs,
+    bool ThrowOnTimeout
+);

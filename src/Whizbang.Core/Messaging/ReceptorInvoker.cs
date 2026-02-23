@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Messaging;
@@ -40,6 +41,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
   private readonly IEventCascader? _eventCascader;
+  private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
 
   /// <summary>
   /// Creates a new ReceptorInvoker.
@@ -47,7 +49,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
   /// <param name="registry">The receptor registry to query for discovered receptors.</param>
   /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
   public ReceptorInvoker(IReceptorRegistry registry, IServiceProvider scopedProvider)
-    : this(registry, scopedProvider, eventCascader: null) {
+    : this(registry, scopedProvider, eventCascader: null, syncAwaiter: null) {
   }
 
   /// <summary>
@@ -77,12 +79,29 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
   public ReceptorInvoker(
     IReceptorRegistry registry,
     IServiceProvider scopedProvider,
-    IEventCascader? eventCascader) {
+    IEventCascader? eventCascader)
+    : this(registry, scopedProvider, eventCascader, syncAwaiter: null) {
+  }
+
+  /// <summary>
+  /// Creates a new ReceptorInvoker with event cascading and perspective sync support.
+  /// </summary>
+  /// <param name="registry">The receptor registry to query for discovered receptors.</param>
+  /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
+  /// <param name="eventCascader">Optional cascader for publishing events returned by receptors.</param>
+  /// <param name="syncAwaiter">Optional sync awaiter for [AwaitPerspectiveSync] attribute handling.</param>
+  /// <docs>core-concepts/perspectives/perspective-sync</docs>
+  public ReceptorInvoker(
+    IReceptorRegistry registry,
+    IServiceProvider scopedProvider,
+    IEventCascader? eventCascader,
+    IPerspectiveSyncAwaiter? syncAwaiter) {
     ArgumentNullException.ThrowIfNull(registry);
     ArgumentNullException.ThrowIfNull(scopedProvider);
     _registry = registry;
     _scopedProvider = scopedProvider;
     _eventCascader = eventCascader;
+    _syncAwaiter = syncAwaiter;
   }
 
   /// <inheritdoc/>
@@ -147,6 +166,22 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     }
 
     foreach (var receptor in receptors) {
+      // Check for [AwaitPerspectiveSync] attributes and await sync if needed
+      if (_syncAwaiter is not null && receptor.SyncAttributes is { Count: > 0 }) {
+        foreach (var syncAttr in receptor.SyncAttributes) {
+          var syncOptions = syncAttr.ToSyncOptions();
+          var syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+
+          // If ThrowOnTimeout is true and we timed out, throw an exception
+          if (syncAttr.ThrowOnTimeout && syncResult.Outcome == SyncOutcome.TimedOut) {
+            throw new PerspectiveSyncTimeoutException(
+                syncAttr.PerspectiveType,
+                syncOptions.Timeout,
+                $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
+          }
+        }
+      }
+
       // InvokeAsync is a pre-compiled delegate (no reflection)
       // Pass the scoped provider so receptor can be resolved with its dependencies
       var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);

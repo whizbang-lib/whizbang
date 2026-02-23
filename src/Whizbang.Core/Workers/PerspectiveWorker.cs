@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -28,6 +29,7 @@ public partial class PerspectiveWorker(
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleInvoker? lifecycleInvoker = null,
   IEventTypeProvider? eventTypeProvider = null,
+  IPerspectiveSyncSignaler? syncSignaler = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -35,6 +37,7 @@ public partial class PerspectiveWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
+  private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -420,6 +423,12 @@ public partial class PerspectiveWorker(
         LogReportingCompletion(_logger, perspectiveName, streamId, result.LastEventId);
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
         LogCompletionReported(_logger);
+
+        // Phase 3c.1: Signal checkpoint updated for perspective sync
+        // This notifies any waiting sync awaiters that the perspective has processed up to this event
+        if (result.PerspectiveType is not null) {
+          _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
+        }
 
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
