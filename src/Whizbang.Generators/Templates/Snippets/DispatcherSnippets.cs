@@ -344,7 +344,8 @@ public class DispatcherSnippets {
           InvokeAsync: async (sp, msg, ct) => {
             var receptor = sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
             return await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
-          }
+          },
+          SyncAttributes: __SYNC_ATTRIBUTES__
         )
       };
     }
@@ -372,7 +373,8 @@ public class DispatcherSnippets {
             var receptor = sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
             await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             return null;
-          }
+          },
+          SyncAttributes: __SYNC_ATTRIBUTES__
         )
       };
     }

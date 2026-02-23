@@ -52,6 +52,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
   private const string PLACEHOLDER_MESSAGE_NAME = "__MESSAGE_NAME__";
   private const string PLACEHOLDER_RESPONSE_NAME = "__RESPONSE_NAME__";
+  private const string PLACEHOLDER_SYNC_ATTRIBUTES = "__SYNC_ATTRIBUTES__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -94,6 +95,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Supports async receptors: IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void).
   /// Supports sync receptors: ISyncReceptor&lt;TMessage, TResponse&gt; and ISyncReceptor&lt;TMessage&gt; (void).
   /// Enhanced in Phase 2 to extract [FireAt] attributes for lifecycle stage discovery.
+  /// Enhanced in Phase 3 to extract [AwaitPerspectiveSync] attributes for perspective sync.
   /// </summary>
   private static ReceptorInfo? _extractReceptorInfo(
       GeneratorSyntaxContext context,
@@ -118,6 +120,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Extract default routing from [DefaultRouting] attribute
     var defaultRouting = _extractDefaultRouting(classSymbol);
 
+    // Extract perspective sync attributes from [AwaitPerspectiveSync] attributes
+    var syncAttributes = _extractSyncAttributes(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
@@ -132,7 +137,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           LifecycleStages: lifecycleStages,
           IsSync: false,
-          DefaultRouting: defaultRouting
+          DefaultRouting: defaultRouting,
+          SyncAttributes: syncAttributes
       );
     }
 
@@ -148,7 +154,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: false,
-          DefaultRouting: defaultRouting
+          DefaultRouting: defaultRouting,
+          SyncAttributes: syncAttributes
       );
     }
 
@@ -166,7 +173,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           LifecycleStages: lifecycleStages,
           IsSync: true,
-          DefaultRouting: defaultRouting
+          DefaultRouting: defaultRouting,
+          SyncAttributes: syncAttributes
       );
     }
 
@@ -182,7 +190,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: true,
-          DefaultRouting: defaultRouting
+          DefaultRouting: defaultRouting,
+          SyncAttributes: syncAttributes
       );
     }
 
@@ -232,6 +241,130 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return stages.ToArray();
+  }
+
+  /// <summary>
+  /// Extracts [AwaitPerspectiveSync] attributes from a receptor class.
+  /// Returns an array of SyncAttributeInfo containing the extracted data.
+  /// Returns null if no [AwaitPerspectiveSync] attributes are found.
+  /// </summary>
+  private static SyncAttributeInfo[]? _extractSyncAttributes(INamedTypeSymbol classSymbol) {
+    const string AWAIT_SYNC_ATTRIBUTE = "Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSyncAttribute";
+
+    var syncAttributes = new System.Collections.Generic.List<SyncAttributeInfo>();
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
+        continue;
+      }
+
+      // Extract PerspectiveType from constructor argument
+      if (attribute.ConstructorArguments.Length == 0) {
+        continue;
+      }
+
+      var perspectiveTypeArg = attribute.ConstructorArguments[0];
+      if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
+        continue;
+      }
+
+      var perspectiveType = perspectiveTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+      // Extract EventTypes from named argument (Type[]?)
+      string[]? eventTypes = null;
+      var eventTypesArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "EventTypes");
+      if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
+        var eventTypesList = new System.Collections.Generic.List<string>();
+        foreach (var typeConstant in eventTypesArg.Value.Values) {
+          if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
+            eventTypesList.Add(eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          }
+        }
+        if (eventTypesList.Count > 0) {
+          eventTypes = eventTypesList.ToArray();
+        }
+      }
+
+      // Extract LookupMode (enum, defaults to 0 = Local)
+      var lookupMode = 0;
+      var lookupModeArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "LookupMode");
+      if (lookupModeArg.Value.Value is int lookupModeValue) {
+        lookupMode = lookupModeValue;
+      }
+
+      // Extract TimeoutMs (int, defaults to 5000)
+      var timeoutMs = 5000;
+      var timeoutArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "TimeoutMs");
+      if (timeoutArg.Value.Value is int timeoutValue) {
+        timeoutMs = timeoutValue;
+      }
+
+      // Extract ThrowOnTimeout (bool, defaults to false)
+      var throwOnTimeout = false;
+      var throwArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "ThrowOnTimeout");
+      if (throwArg.Value.Value is bool throwValue) {
+        throwOnTimeout = throwValue;
+      }
+
+      syncAttributes.Add(new SyncAttributeInfo(
+          PerspectiveType: perspectiveType,
+          EventTypes: eventTypes,
+          LookupMode: lookupMode,
+          TimeoutMs: timeoutMs,
+          ThrowOnTimeout: throwOnTimeout
+      ));
+    }
+
+    return syncAttributes.Count > 0 ? syncAttributes.ToArray() : null;
+  }
+
+  /// <summary>
+  /// Generates C# code for sync attributes array.
+  /// Returns "null" if no sync attributes, otherwise returns the array initializer.
+  /// </summary>
+  private static string _generateSyncAttributesCode(SyncAttributeInfo[]? syncAttributes) {
+    if (syncAttributes is null || syncAttributes.Length == 0) {
+      return "null";
+    }
+
+    var sb = new StringBuilder();
+    sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo[] { ");
+
+    for (int i = 0; i < syncAttributes.Length; i++) {
+      var attr = syncAttributes[i];
+
+      sb.Append("new global::Whizbang.Core.Messaging.ReceptorSyncAttributeInfo(");
+      sb.Append($"PerspectiveType: typeof({attr.PerspectiveType}), ");
+
+      // EventTypes
+      if (attr.EventTypes is { Length: > 0 }) {
+        sb.Append("EventTypes: new global::System.Type[] { ");
+        for (int j = 0; j < attr.EventTypes.Length; j++) {
+          if (j > 0) {
+            sb.Append(", ");
+          }
+          sb.Append($"typeof({attr.EventTypes[j]})");
+        }
+        sb.Append(" }, ");
+      } else {
+        sb.Append("EventTypes: null, ");
+      }
+
+      // LookupMode (0=Local, 1=Distributed)
+      var lookupModeValue = attr.LookupMode == 0
+          ? "global::Whizbang.Core.Perspectives.Sync.SyncLookupMode.Local"
+          : "global::Whizbang.Core.Perspectives.Sync.SyncLookupMode.Distributed";
+      sb.Append($"LookupMode: {lookupModeValue}, ");
+      sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
+      sb.Append($"ThrowOnTimeout: {(attr.ThrowOnTimeout ? "true" : "false")})");
+
+      if (i < syncAttributes.Length - 1) {
+        sb.Append(", ");
+      }
+    }
+
+    sb.Append(" }");
+    return sb.ToString();
   }
 
   /// <summary>
@@ -1014,13 +1147,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     foreach (var (receptor, stage) in routingPairs) {
       string generatedCode;
 
+      // Generate the sync attributes code for this receptor
+      var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
+
       if (receptor.IsVoid) {
         // Void receptor: IReceptor<TMessage>
         generatedCode = voidSnippet
             .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
             .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
+            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
       } else {
         // Regular receptor: IReceptor<TMessage, TResponse>
         generatedCode = responseSnippet
@@ -1028,7 +1165,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
             .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
             .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
+            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
       }
 
       routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));

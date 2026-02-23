@@ -12,6 +12,7 @@ using Whizbang.Core.Internal;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -527,6 +528,32 @@ public class ReceptorInvokerTests {
             return ValueTask.FromResult<object?>(null);
           }));
     }
+
+    /// <summary>
+    /// Registers a receptor with sync attributes.
+    /// Used to test [AwaitPerspectiveSync] attribute behavior.
+    /// </summary>
+    public void RegisterReceptorWithSyncAttributes<TMessage>(
+        string receptorId,
+        LifecycleStage stage,
+        IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
+        Action<List<string>>? callOrderCallback = null) {
+      var key = (typeof(TMessage), stage);
+      if (!_receptors.TryGetValue(key, out var list)) {
+        list = [];
+        _receptors[key] = list;
+      }
+
+      list.Add(new ReceptorInfo(
+          typeof(TMessage),
+          receptorId,
+          (sp, msg, ct) => {
+            callOrderCallback?.Invoke([$"ReceptorInvoked:{receptorId}"]);
+            _tracker.RecordInvocation(receptorId, stage);
+            return ValueTask.FromResult<object?>(null);
+          },
+          SyncAttributes: syncAttributes));
+    }
   }
 
   // ========================================
@@ -794,6 +821,276 @@ public class ReceptorInvokerTests {
     public bool HasAnyRole(params string[] roleNames) => false;
     public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
+  }
+
+  #endregion
+
+  // ========================================
+  // PERSPECTIVE SYNC ATTRIBUTE TESTS
+  // ========================================
+
+  #region Perspective Sync Attribute Tests
+
+  /// <summary>
+  /// Dummy perspective type for sync attribute tests.
+  /// </summary>
+  private sealed class TestPerspective { }
+
+  /// <summary>
+  /// Another perspective type for multi-attribute tests.
+  /// </summary>
+  private sealed class TestPerspective2 { }
+
+  /// <summary>
+  /// Verifies that a receptor with [AwaitPerspectiveSync] attribute calls the sync awaiter.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorWithSyncAttribute_AwaitsBeforeInvokingAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter();
+    var registry = new TestReceptorRegistry(tracker);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        LookupMode: SyncLookupMode.Local,
+        TimeoutMs: 5000,
+        ThrowOnTimeout: false
+    );
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessage>(
+        "SyncReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr],
+        callOrderCallback: items => syncAwaiter.CallOrder.AddRange(items)
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - Sync awaiter was called before receptor
+    await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
+    await Assert.That(syncAwaiter.WaitCalls[0].PerspectiveType).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+    await Assert.That(syncAwaiter.CallOrder[0]).IsEqualTo("Wait:TestPerspective");
+    await Assert.That(syncAwaiter.CallOrder[1]).IsEqualTo("ReceptorInvoked:SyncReceptor");
+  }
+
+  /// <summary>
+  /// Verifies that a receptor with ThrowOnTimeout=true throws PerspectiveSyncTimeoutException when timed out.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttributeThrowOnTimeoutAndTimedOut_ThrowsExceptionAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter {
+      SimulateTimeout = true
+    };
+    var registry = new TestReceptorRegistry(tracker);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        LookupMode: SyncLookupMode.Local,
+        TimeoutMs: 5000,
+        ThrowOnTimeout: true  // Should throw when timed out
+    );
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessage>(
+        "SyncReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act & Assert
+    var exception = await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () =>
+        await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline));
+
+    await Assert.That(exception!.PerspectiveType!).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(exception.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(5000));
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0); // Receptor not invoked
+  }
+
+  /// <summary>
+  /// Verifies that a receptor with ThrowOnTimeout=false does NOT throw when timed out.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttributeNoThrowOnTimeoutAndTimedOut_InvokesReceptorAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter {
+      SimulateTimeout = true
+    };
+    var registry = new TestReceptorRegistry(tracker);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        LookupMode: SyncLookupMode.Local,
+        TimeoutMs: 5000,
+        ThrowOnTimeout: false  // Should not throw
+    );
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessage>(
+        "SyncReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act - should not throw
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - receptor was invoked despite timeout
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that multiple sync attributes are all awaited in order.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_MultipleSyncAttributes_AwaitsAllInOrderAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter();
+    var registry = new TestReceptorRegistry(tracker);
+
+    var syncAttr1 = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        LookupMode: SyncLookupMode.Local,
+        TimeoutMs: 5000,
+        ThrowOnTimeout: false
+    );
+    var syncAttr2 = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective2),
+        EventTypes: [typeof(TestEvent)],
+        LookupMode: SyncLookupMode.Distributed,
+        TimeoutMs: 3000,
+        ThrowOnTimeout: false
+    );
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessage>(
+        "SyncReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr1, syncAttr2]
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - Both sync attributes awaited
+    await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(2);
+    await Assert.That(syncAwaiter.WaitCalls[0].PerspectiveType).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(syncAwaiter.WaitCalls[1].PerspectiveType).IsEqualTo(typeof(TestPerspective2));
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that receptor without sync attributes invokes directly (no sync awaiter call).
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorWithoutSyncAttribute_DoesNotCallSyncAwaiterAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register receptor without sync attributes
+    registry.RegisterReceptor<TestMessage>("NormalReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - Sync awaiter was NOT called
+    await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(0);
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that sync options are correctly built from attribute info.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_PassesCorrectOptionsToAwaiterAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var syncAwaiter = new TestSyncAwaiter();
+    var registry = new TestReceptorRegistry(tracker);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: [typeof(TestEvent), typeof(TestMessage)],
+        LookupMode: SyncLookupMode.Distributed,
+        TimeoutMs: 7500,
+        ThrowOnTimeout: false
+    );
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessage>(
+        "SyncReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]
+    );
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider(), null, syncAwaiter);
+    var message = new TestMessage("test");
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - Options are correct
+    await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
+    var call = syncAwaiter.WaitCalls[0];
+    await Assert.That(call.Options.LookupMode).IsEqualTo(SyncLookupMode.Distributed);
+    await Assert.That(call.Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
+    await Assert.That(call.Options.Filter).IsTypeOf<EventTypeFilter>();
+  }
+
+  /// <summary>
+  /// Test sync awaiter that tracks wait calls.
+  /// </summary>
+  private sealed class TestSyncAwaiter : IPerspectiveSyncAwaiter {
+    public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitCalls { get; } = [];
+    public List<string> CallOrder { get; } = [];
+    public bool SimulateTimeout { get; set; }
+
+    public Task<SyncResult> WaitAsync(
+        Type perspectiveType,
+        PerspectiveSyncOptions options,
+        CancellationToken ct = default) {
+      WaitCalls.Add((perspectiveType, options));
+      CallOrder.Add($"Wait:{perspectiveType.Name}");
+
+      var outcome = SimulateTimeout
+          ? SyncOutcome.TimedOut
+          : SyncOutcome.Synced;
+
+      return Task.FromResult(new SyncResult(
+          Outcome: outcome,
+          EventsAwaited: 1,
+          ElapsedTime: TimeSpan.FromMilliseconds(100)));
+    }
+
+    public Task<bool> IsCaughtUpAsync(
+        Type perspectiveType,
+        PerspectiveSyncOptions options,
+        CancellationToken ct = default) {
+      return Task.FromResult(!SimulateTimeout);
+    }
   }
 
   #endregion
