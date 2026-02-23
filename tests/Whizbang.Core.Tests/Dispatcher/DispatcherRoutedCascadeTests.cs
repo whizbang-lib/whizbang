@@ -429,6 +429,186 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
   #endregion
 
+  #region SendAsync with Routed<T> Wrapper Tests
+
+  /// <summary>
+  /// Event that will be dispatched via SendAsync.
+  /// </summary>
+  public record RoutedSendTestEvent([property: StreamId] Guid OrderId) : IEvent;
+
+  /// <summary>
+  /// Test dispatcher that supports Routed<T> send path testing.
+  /// </summary>
+  private sealed class RoutedSendTestDispatcher : Core.Dispatcher {
+    private readonly List<object> _sentMessages = [];
+    private readonly object _lock = new();
+
+    public RoutedSendTestDispatcher(IServiceProvider serviceProvider)
+        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+    }
+
+    public List<object> GetSentMessages() {
+      lock (_lock) {
+        return _sentMessages.ToList();
+      }
+    }
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      // Handle RoutedSendTestEvent - track the actual message type received
+      if (messageType == typeof(RoutedSendTestEvent)) {
+        return msg => {
+          lock (_lock) {
+            _sentMessages.Add(msg);
+          }
+          return ValueTask.FromResult((TResult)(object)new RoutedTestResult(true));
+        };
+      }
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Verifies that SendAsync with Routed&lt;T&gt; unwraps the message and dispatches the inner event.
+  /// This ensures the user can call dispatcher.SendAsync(Route.Local(event)) without InvalidCastException.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithRoutedWrapper_UnwrapsAndDispatchesInnerMessageAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedSendTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    var routed = Route.Local(evt);
+
+    // Act - This should NOT throw InvalidCastException
+    var receipt = await dispatcher.SendAsync(routed, MessageContext.New());
+
+    // Assert - Message should be delivered
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    var sent = dispatcher.GetSentMessages();
+    await Assert.That(sent).Count().IsEqualTo(1);
+    await Assert.That(sent[0]).IsTypeOf<RoutedSendTestEvent>()
+      .Because("The inner event should be unwrapped before dispatch");
+  }
+
+  /// <summary>
+  /// Verifies that SendAsync with Route.Outbox&lt;T&gt; unwraps and dispatches correctly.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithRouteOutbox_UnwrapsAndDispatchesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedSendTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    var routed = Route.Outbox(evt);
+
+    // Act
+    var receipt = await dispatcher.SendAsync(routed, MessageContext.New());
+
+    // Assert
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(dispatcher.GetSentMessages()[0]).IsTypeOf<RoutedSendTestEvent>();
+  }
+
+  /// <summary>
+  /// Verifies that SendAsync with Route.Both&lt;T&gt; unwraps and dispatches correctly.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithRouteBoth_UnwrapsAndDispatchesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedSendTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    var routed = Route.Both(evt);
+
+    // Act
+    var receipt = await dispatcher.SendAsync(routed, MessageContext.New());
+
+    // Assert
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(dispatcher.GetSentMessages()[0]).IsTypeOf<RoutedSendTestEvent>();
+  }
+
+  /// <summary>
+  /// Verifies that SendAsync with an unwrapped event still works normally.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithUnwrappedEvent_DispatchesDirectlyAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedSendTestDispatcher(provider);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+
+    // Act - Send unwrapped event
+    var receipt = await dispatcher.SendAsync(evt, MessageContext.New());
+
+    // Assert
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(dispatcher.GetSentMessages()[0]).IsTypeOf<RoutedSendTestEvent>();
+  }
+
+  /// <summary>
+  /// Verifies that Route.None() is handled gracefully (no dispatch).
+  /// RoutedNone should be skipped entirely.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithRouteNone_ThrowsOrSkipsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RoutedSendTestDispatcher(provider);
+    var none = Route.None();
+
+    // Act & Assert - Sending RoutedNone should throw because there's no receptor for null/empty message
+    // Or it should be handled gracefully (depends on implementation decision)
+    await Assert.That(async () => await dispatcher.SendAsync(none, MessageContext.New()))
+      .Throws<ArgumentException>()
+      .Because("RoutedNone has no inner message to dispatch");
+  }
+
+  #endregion
+
   #region Test Infrastructure
 
   /// <summary>

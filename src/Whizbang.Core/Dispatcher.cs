@@ -209,6 +209,16 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
+    // We extract the inner message and use that for receptor dispatch
+    if (message is IRouted routed) {
+      // RoutedNone (Route.None()) has no inner value to dispatch
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
@@ -331,6 +341,14 @@ public abstract class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+
+    // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
 
     var messageType = message.GetType();
     var invoker = GetReceptorInvoker<object>(message, messageType);
