@@ -8,6 +8,7 @@ using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -16,6 +17,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -277,6 +279,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
+
     // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
     var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
     Console.WriteLine($"[InMemoryFixture] InventoryWorker IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
@@ -418,6 +424,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Configure security to allow anonymous messages for testing
+    builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
 
     // Register TopicRegistry to provide base topic names for events
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
