@@ -53,6 +53,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_NAME = "__MESSAGE_NAME__";
   private const string PLACEHOLDER_RESPONSE_NAME = "__RESPONSE_NAME__";
   private const string PLACEHOLDER_SYNC_ATTRIBUTES = "__SYNC_ATTRIBUTES__";
+  private const string PLACEHOLDER_SYNC_AWAIT_CODE = "__SYNC_AWAIT_CODE__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -285,33 +286,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         }
       }
 
-      // Extract LookupMode (enum, defaults to 0 = Local)
-      var lookupMode = 0;
-      var lookupModeArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "LookupMode");
-      if (lookupModeArg.Value.Value is int lookupModeValue) {
-        lookupMode = lookupModeValue;
-      }
-
-      // Extract TimeoutMs (int, defaults to 5000)
-      var timeoutMs = 5000;
+      // Extract TimeoutMs (int, defaults to -1 which means use DefaultTimeoutMs)
+      var timeoutMs = -1;
       var timeoutArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "TimeoutMs");
       if (timeoutArg.Value.Value is int timeoutValue) {
         timeoutMs = timeoutValue;
       }
 
-      // Extract ThrowOnTimeout (bool, defaults to false)
-      var throwOnTimeout = false;
-      var throwArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "ThrowOnTimeout");
-      if (throwArg.Value.Value is bool throwValue) {
-        throwOnTimeout = throwValue;
+      // Extract FireBehavior (enum, defaults to 0 = FireOnSuccess)
+      var fireBehavior = 0;
+      var fireBehaviorArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "FireBehavior");
+      if (fireBehaviorArg.Value.Value is int fireBehaviorValue) {
+        fireBehavior = fireBehaviorValue;
       }
 
       syncAttributes.Add(new SyncAttributeInfo(
           PerspectiveType: perspectiveType,
           EventTypes: eventTypes,
-          LookupMode: lookupMode,
           TimeoutMs: timeoutMs,
-          ThrowOnTimeout: throwOnTimeout
+          FireBehavior: fireBehavior
       ));
     }
 
@@ -350,13 +343,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         sb.Append("EventTypes: null, ");
       }
 
-      // LookupMode (0=Local, 1=Distributed)
-      var lookupModeValue = attr.LookupMode == 0
-          ? "global::Whizbang.Core.Perspectives.Sync.SyncLookupMode.Local"
-          : "global::Whizbang.Core.Perspectives.Sync.SyncLookupMode.Distributed";
-      sb.Append($"LookupMode: {lookupModeValue}, ");
       sb.Append($"TimeoutMs: {attr.TimeoutMs}, ");
-      sb.Append($"ThrowOnTimeout: {(attr.ThrowOnTimeout ? "true" : "false")})");
+      var fireBehaviorValue = attr.FireBehavior switch {
+        0 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess",
+        1 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireAlways",
+        2 => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnEachEvent",
+        _ => "global::Whizbang.Core.Perspectives.Sync.SyncFireBehavior.FireOnSuccess"
+      };
+      sb.Append($"FireBehavior: {fireBehaviorValue})");
 
       if (i < syncAttributes.Length - 1) {
         sb.Append(", ");
@@ -364,6 +358,67 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     sb.Append(" }");
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates C# code for sync await operations to be inserted into invoker delegates.
+  /// Called by SendAsync-generated invokers BEFORE calling the receptor.
+  /// Returns empty string if no sync attributes, otherwise returns the await code block.
+  /// </summary>
+  /// <param name="syncAttributes">The sync attributes from the receptor.</param>
+  /// <param name="messageType">The fully qualified message type.</param>
+  /// <returns>Generated sync await code, or empty string.</returns>
+  private static string _generateSyncAwaitCode(SyncAttributeInfo[]? syncAttributes, string messageType) {
+    if (syncAttributes is null || syncAttributes.Length == 0) {
+      return "// No [AwaitPerspectiveSync] attributes - skip sync checking";
+    }
+
+    var sb = new StringBuilder();
+    sb.AppendLine("var syncAwaiter = scope.ServiceProvider.GetService<global::Whizbang.Core.Perspectives.Sync.IPerspectiveSyncAwaiter>();");
+    sb.AppendLine("          var streamIdExtractor = scope.ServiceProvider.GetService<global::Whizbang.Core.IStreamIdExtractor>();");
+    sb.AppendLine("          if (syncAwaiter != null && streamIdExtractor != null) {");
+    sb.AppendLine($"            var streamId = streamIdExtractor.ExtractStreamId(msg, typeof({messageType}));");
+    sb.AppendLine("            if (streamId.HasValue) {");
+
+    // Generate await call for each sync attribute
+    foreach (var attr in syncAttributes) {
+      // Determine timeout - use default if -1
+      var timeoutMs = attr.TimeoutMs == -1 ? 5000 : attr.TimeoutMs;
+
+      // Generate event types array
+      string eventTypesCode;
+      if (attr.EventTypes is { Length: > 0 }) {
+        var eventTypesList = string.Join(", ", attr.EventTypes.Select(et => $"typeof({et})"));
+        eventTypesCode = $"new global::System.Type[] {{ {eventTypesList} }}";
+      } else {
+        eventTypesCode = "null";
+      }
+
+      // Capture the sync result
+      sb.AppendLine($"              var syncResult = await syncAwaiter.WaitForStreamAsync(");
+      sb.AppendLine($"                typeof({attr.PerspectiveType}),");
+      sb.AppendLine($"                streamId.Value,");
+      sb.AppendLine($"                {eventTypesCode},");
+      sb.AppendLine($"                global::System.TimeSpan.FromMilliseconds({timeoutMs}));");
+
+      // Check the result based on FireBehavior
+      // 0 = FireOnSuccess (throw on timeout - default)
+      // 1 = FireAlways (don't throw, let handler check SyncContext)
+      // 2 = FireOnEachEvent (future streaming mode)
+      if (attr.FireBehavior == 0) {
+        sb.AppendLine($"              if (syncResult.Outcome == global::Whizbang.Core.Perspectives.Sync.SyncOutcome.TimedOut) {{");
+        sb.AppendLine($"                throw new global::Whizbang.Core.Perspectives.Sync.PerspectiveSyncTimeoutException(");
+        sb.AppendLine($"                  typeof({attr.PerspectiveType}),");
+        sb.AppendLine($"                  global::System.TimeSpan.FromMilliseconds({timeoutMs}),");
+        sb.AppendLine($"                  $\"Perspective sync timed out waiting for {{typeof({attr.PerspectiveType}).Name}} to process stream {{streamId.Value}} within {timeoutMs}ms.\");");
+        sb.AppendLine($"              }}");
+      }
+    }
+
+    sb.AppendLine("            }");
+    sb.AppendLine("          }");
+
     return sb.ToString();
   }
 
@@ -807,11 +862,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var receptorList = regularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
+      // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -826,10 +885,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate void Send routing code for void receptors using snippet template
     var voidSendRouting = new StringBuilder();
     foreach (var messageType in voidReceptorsByMessage.Keys) {
+      var receptorList = voidReceptorsByMessage[messageType];
+      var firstReceptor = receptorList[0];
+
+      // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -931,11 +997,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var receptorList = regularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
+      // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+
       // Replace placeholders with actual types
       var generatedCode = anySendNonVoidSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -966,8 +1036,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var eventType in eventTypes) {
       outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // Pass sourceEnvelope for security context inheritance
-      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), sourceEnvelope);");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
+      outboxCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope);");
       outboxCascade.AppendLine($"      }}");
       outboxCascade.AppendLine();
     }
@@ -978,8 +1050,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var eventType in eventTypes) {
       eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
-      // Pass sourceEnvelope for security context inheritance
-      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, global::Whizbang.Core.ValueObjects.MessageId.New(), sourceEnvelope, eventStoreOnly: true);");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
+      eventStoreOnlyCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
       eventStoreOnlyCascade.AppendLine($"      }}");
       eventStoreOnlyCascade.AppendLine();
     }
