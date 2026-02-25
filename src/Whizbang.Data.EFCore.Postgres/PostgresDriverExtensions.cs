@@ -50,6 +50,12 @@ public static class PostgresDriverExtensions {
               "Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
         }
 
+        // TURNKEY: Register DbContext and NpgsqlDataSource via generated callback
+        // This is registered by source-generated module initializer in consumer assembly
+        // Handles connection string resolution, JSON config, EnableDynamicJson(), and UseVector() if needed
+        // The connection string name can be overridden via WithEFCore<T>("connection-string-name")
+        DbContextRegistrationRegistry.InvokeRegistration(selector.Services, selector.DbContextType, selector.ConnectionStringName);
+
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
         // The generated code contains AOT-safe registration using concrete types

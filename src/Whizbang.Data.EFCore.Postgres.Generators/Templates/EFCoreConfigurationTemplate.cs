@@ -35,6 +35,10 @@ public static class WhizbangModelBuilderExtensions {
       modelBuilder.HasDefaultSchema("__SCHEMA__");
     }
 
+    #region VECTOR_EXTENSION_CONFIG
+    // Vector extension configuration injected here by source generator if perspectives use [VectorField]
+    #endregion
+
     // Configure infrastructure entities (static configuration from library)
     // Pass null for schema since HasDefaultSchema() handles schema qualification
     modelBuilder.ConfigureWhizbangInfrastructure(null);

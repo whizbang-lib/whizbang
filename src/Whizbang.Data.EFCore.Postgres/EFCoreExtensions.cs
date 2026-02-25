@@ -46,6 +46,33 @@ public static class EFCoreExtensions {
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
     }
+
+    /// <summary>
+    /// Configures EF Core as the storage provider for all Whizbang infrastructure using the specified DbContext
+    /// and connection string name.
+    /// Returns an EFCoreDriverSelector that provides .WithDriver property for driver selection.
+    /// </summary>
+    /// <typeparam name="TDbContext">The EF Core DbContext type that contains perspective configurations.</typeparam>
+    /// <param name="connectionStringName">
+    /// The connection string name to use from IConfiguration.
+    /// Overrides the ConnectionStringName from the [WhizbangDbContext] attribute.
+    /// </param>
+    /// <returns>An EFCoreDriverSelector for selecting the database driver (Postgres, InMemory, etc.).</returns>
+    /// <example>
+    /// Unified API usage with explicit connection string name:
+    /// <code>
+    /// services
+    ///     .AddWhizbang()
+    ///     .WithEFCore&lt;MyDbContext&gt;("my-database")
+    ///     .WithDriver.Postgres;
+    /// </code>
+    /// </example>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
+    public EFCoreDriverSelector WithEFCore<TDbContext>(string connectionStringName)
+        where TDbContext : DbContext {
+      ArgumentException.ThrowIfNullOrWhiteSpace(connectionStringName);
+      return new EFCoreDriverSelector(builder.Services, typeof(TDbContext), connectionStringName);
+    }
   }
 
   /// <summary>
@@ -76,6 +103,32 @@ public static class EFCoreExtensions {
     public EFCoreDriverSelector WithEFCore<TDbContext>()
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
+    }
+
+    /// <summary>
+    /// Configures EF Core as the storage provider for perspectives using the specified DbContext
+    /// and connection string name.
+    /// Returns an EFCoreDriverSelector that provides .WithDriver property for driver selection.
+    /// </summary>
+    /// <typeparam name="TDbContext">The EF Core DbContext type that contains perspective configurations.</typeparam>
+    /// <param name="connectionStringName">
+    /// The connection string name to use from IConfiguration.
+    /// Overrides the ConnectionStringName from the [WhizbangDbContext] attribute.
+    /// </param>
+    /// <returns>An EFCoreDriverSelector for selecting the database driver (Postgres, InMemory, etc.).</returns>
+    /// <example>
+    /// <code>
+    /// services
+    ///     .AddWhizbangPerspectives()
+    ///     .WithEFCore&lt;MyDbContext&gt;("my-database")
+    ///     .WithDriver.Postgres;
+    /// </code>
+    /// </example>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
+    public EFCoreDriverSelector WithEFCore<TDbContext>(string connectionStringName)
+        where TDbContext : DbContext {
+      ArgumentException.ThrowIfNullOrWhiteSpace(connectionStringName);
+      return new EFCoreDriverSelector(builder.Services, typeof(TDbContext), connectionStringName);
     }
   }
 }

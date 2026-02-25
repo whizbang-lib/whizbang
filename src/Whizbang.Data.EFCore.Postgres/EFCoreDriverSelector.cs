@@ -14,6 +14,12 @@ namespace Whizbang.Data.EFCore.Postgres;
 ///     .AddWhizbangPerspectives()
 ///     .WithEFCore&lt;MyDbContext&gt;()
 ///     .WithDriver.Postgres  // Extension property from driver package
+///
+/// // Or with explicit connection string name:
+/// services
+///     .AddWhizbang()
+///     .WithEFCore&lt;MyDbContext&gt;("my-db")
+///     .WithDriver.Postgres
 /// </code>
 /// </example>
 public sealed class EFCoreDriverSelector : IDriverOptions {
@@ -30,15 +36,35 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   internal Type DbContextType { get; }
 
   /// <summary>
+  /// Gets the optional connection string name override.
+  /// When specified, overrides the ConnectionStringName from [WhizbangDbContext] attribute.
+  /// </summary>
+  internal string? ConnectionStringName { get; }
+
+  /// <summary>
   /// Initializes a new instance of EFCoreDriverSelector.
   /// </summary>
   /// <param name="services">The service collection to configure.</param>
   /// <param name="dbContextType">The DbContext type to use for storage.</param>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:Constructor_WithNullServices_ThrowsArgumentNullExceptionAsync</tests>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:Constructor_WithNullDbContextType_ThrowsArgumentNullExceptionAsync</tests>
-  internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType) {
+  internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType)
+      : this(services, dbContextType, connectionStringName: null) {
+  }
+
+  /// <summary>
+  /// Initializes a new instance of EFCoreDriverSelector with a connection string name override.
+  /// </summary>
+  /// <param name="services">The service collection to configure.</param>
+  /// <param name="dbContextType">The DbContext type to use for storage.</param>
+  /// <param name="connectionStringName">
+  /// Optional connection string name to use. When specified, overrides the ConnectionStringName
+  /// from the [WhizbangDbContext] attribute on the DbContext class.
+  /// </param>
+  internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType, string? connectionStringName) {
     Services = services ?? throw new ArgumentNullException(nameof(services));
     DbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
+    ConnectionStringName = connectionStringName;
   }
 
   /// <summary>

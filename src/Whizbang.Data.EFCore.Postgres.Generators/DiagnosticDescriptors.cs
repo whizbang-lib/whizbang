@@ -22,4 +22,36 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "EF Core 10's ComplexProperty().ToJson() throws NullReferenceException for Dictionary properties. Use List<T> with Key/Value properties (like ScopeExtension or AttributeEntry pattern) instead."
   );
+
+  /// <summary>
+  /// WHIZ070: Error - Vector field requires Pgvector.EntityFrameworkCore package.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ070</docs>
+  /// <tests>VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_MissingPgvectorEFCore_ReportsWHIZ070Async</tests>
+  public static readonly DiagnosticDescriptor VectorFieldMissingPgvectorEFCorePackage = new(
+      id: "WHIZ070",
+      title: "Vector field requires Pgvector.EntityFrameworkCore package",
+      messageFormat: "Perspective model uses [VectorField] but Pgvector.EntityFrameworkCore package is not referenced. Add <PackageReference Include=\"Pgvector.EntityFrameworkCore\" /> to your project.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Add <PackageReference Include=\"Pgvector.EntityFrameworkCore\" /> to use vector columns with EF Core. This package provides the UseVector() extension for DbContextOptionsBuilder.",
+      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+  );
+
+  /// <summary>
+  /// WHIZ071: Error - Vector field requires Pgvector package.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ071</docs>
+  /// <tests>VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_MissingPgvector_ReportsWHIZ071Async</tests>
+  public static readonly DiagnosticDescriptor VectorFieldMissingPgvectorPackage = new(
+      id: "WHIZ071",
+      title: "Vector field requires Pgvector package",
+      messageFormat: "Perspective model uses [VectorField] but Pgvector package is not referenced. Add <PackageReference Include=\"Pgvector\" /> to your project.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Add <PackageReference Include=\"Pgvector\" /> for NpgsqlDataSourceBuilder.UseVector() support. This is the base package for pgvector types.",
+      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+  );
 }
