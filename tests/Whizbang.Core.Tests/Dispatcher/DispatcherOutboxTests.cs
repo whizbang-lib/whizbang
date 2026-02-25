@@ -615,14 +615,15 @@ public class DispatcherOutboxTests {
       services.AddSingleton(routingStrategy);
     }
 
-    // Register aggregate ID extractor if provided
-    if (aggregateIdExtractor != null) {
-      services.AddSingleton(aggregateIdExtractor);
-    }
-
     // Register receptors and dispatcher
     services.AddReceptors();
     services.AddWhizbangDispatcher();
+
+    // Register custom stream ID extractor AFTER AddWhizbangDispatcher()
+    // This overrides the generated extractor when a custom one is provided for testing
+    if (aggregateIdExtractor != null) {
+      services.AddSingleton(aggregateIdExtractor);
+    }
 
     var serviceProvider = services.BuildServiceProvider();
     return serviceProvider.GetRequiredService<IDispatcher>();

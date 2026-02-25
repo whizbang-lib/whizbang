@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
@@ -72,7 +73,11 @@ public static class ServiceCollectionExtensions {
     var logger = tempProvider.GetService<ILogger<PostgresConnectionRetry>>();
 
     // Wait for database connection with retry
-    logger?.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", options.InitialRetryAttempts, options.RetryIndefinitely);
+    if (logger?.IsEnabled(LogLevel.Information) == true) {
+      var initialRetryAttempts = options.InitialRetryAttempts;
+      var retryIndefinitely = options.RetryIndefinitely;
+      logger.LogInformation("Waiting for PostgreSQL connection (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialRetryAttempts, retryIndefinitely);
+    }
     var connectionRetry = new PostgresConnectionRetry(options, logger);
     connectionRetry.WaitForConnectionAsync(connectionString).GetAwaiter().GetResult();
 
@@ -121,6 +126,11 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // TURNKEY: Wrap IEventStore with sync tracking decorator
+    // This enables perspective synchronization by tracking emitted events
+    // before they reach the database (cross-scope sync support)
+    services.DecorateEventStoreWithSyncTracking();
 
     return services;
   }

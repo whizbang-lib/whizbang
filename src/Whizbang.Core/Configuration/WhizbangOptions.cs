@@ -16,6 +16,15 @@ public class WhizbangOptions {
   /// Default: Warning
   /// </summary>
   public GuidOrderingSeverity GuidOrderingViolationSeverity { get; set; } = GuidOrderingSeverity.Warning;
+
+  /// <summary>
+  /// When true, Whizbang will automatically generate a StreamId for events that implement
+  /// IHasStreamId when their StreamId is Guid.Empty. This prevents events from being stored
+  /// with empty StreamIds, which can cause perspective worker issues.
+  /// Default: true
+  /// </summary>
+  /// <docs>core-concepts/stream-id#auto-generation</docs>
+  public bool AutoGenerateStreamIds { get; set; } = true;
 }
 
 /// <summary>

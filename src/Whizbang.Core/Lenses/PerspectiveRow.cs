@@ -34,6 +34,10 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// Stored as JSONB in PostgreSQL, JSON in SQL Server.
   /// Contains all queryable business data.
   /// </summary>
+  /// <remarks>
+  /// Uses <c>set</c> accessor (not <c>init</c>) to allow in-place updates during perspective upserts.
+  /// This avoids EF Core tracking issues with complex type collections when doing remove+add patterns.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_WithOrderCreatedEvent_SavesOrderModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_MultipleEvents_IncrementsVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelExists_ReturnsModelAsync</tests>
@@ -42,7 +46,7 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsComplexLinqOperations_WithOrderByAndSkipTakeAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
-  public required TModel Data { get; init; }
+  public required TModel Data { get; set; }
 
   /// <summary>
   /// Event metadata (event type, correlation, causation, timestamp).
@@ -83,16 +87,22 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// <summary>
   /// When this row was last updated.
   /// </summary>
+  /// <remarks>
+  /// Uses <c>set</c> accessor to allow in-place updates during perspective upserts.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_SetsTimestampsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
-  public required DateTime UpdatedAt { get; init; }
+  public required DateTime UpdatedAt { get; set; }
 
   /// <summary>
   /// Optimistic concurrency version number.
   /// Increments on each update.
   /// </summary>
+  /// <remarks>
+  /// Uses <c>set</c> accessor to allow in-place updates during perspective upserts.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_WithOrderCreatedEvent_SavesOrderModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_MultipleEvents_IncrementsVersionAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PerspectiveTable_ShouldHaveCorrectSchemaAsync</tests>
-  public required int Version { get; init; }
+  public required int Version { get; set; }
 }

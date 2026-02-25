@@ -50,7 +50,10 @@ public class DapperPostgresMessageQueue(
       );
 
       if (alreadyProcessed) {
-        _logger.LogDebug("Message {MessageId} already processed, skipping", message.MessageId);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var messageId = message.MessageId;
+          _logger.LogDebug("Message {MessageId} already processed, skipping", messageId);
+        }
         txn.Commit();
         return false;  // Already processed
       }
@@ -88,12 +91,15 @@ public class DapperPostgresMessageQueue(
 
       txn.Commit();
 
-      _logger.LogDebug(
-        "Enqueued and leased message {MessageId} for instance {InstanceId} until {LeaseExpiration}",
-        message.MessageId,
-        instanceId,
-        leaseExpiration
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = message.MessageId;
+        _logger.LogDebug(
+          "Enqueued and leased message {MessageId} for instance {InstanceId} until {LeaseExpiration}",
+          messageId,
+          instanceId,
+          leaseExpiration
+        );
+      }
 
       return true;  // Newly enqueued and leased
     } catch {
@@ -151,7 +157,9 @@ public class DapperPostgresMessageQueue(
 
       txn.Commit();
 
-      _logger.LogDebug("Completed processing of message {MessageId}", messageId);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Completed processing of message {MessageId}", messageId);
+      }
     } catch {
       txn.Rollback();
       throw;

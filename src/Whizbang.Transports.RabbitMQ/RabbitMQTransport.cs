@@ -123,12 +123,15 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var exchangeName = destination.Address;
     var routingKey = destination.RoutingKey ?? "#";
 
-    _logger?.LogDebug(
-      "Publishing message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
-      envelope.MessageId,
-      exchangeName,
-      routingKey
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var messageId = envelope.MessageId;
+      _logger.LogDebug(
+        "Publishing message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
+        messageId,
+        exchangeName,
+        routingKey
+      );
+    }
 
     try {
       // Rent channel from pool (RAII pattern - automatically returned on dispose)
@@ -201,11 +204,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         cancellationToken: cancellationToken
       );
 
-      _logger?.LogDebug(
-        "Successfully published message {MessageId} to exchange {ExchangeName}",
-        envelope.MessageId,
-        exchangeName
-      );
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug(
+          "Successfully published message {MessageId} to exchange {ExchangeName}",
+          messageId,
+          exchangeName
+        );
+      }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(
         ex,
@@ -254,12 +260,15 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // Get routing patterns - may be multiple for topic exchange filtering
     var routingPatterns = _getRoutingPatterns(destination);
 
-    _logger?.LogDebug(
-      "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing patterns [{RoutingPatterns}]",
-      exchangeName,
-      queueName,
-      string.Join(", ", routingPatterns)
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var routingPatternsStr = string.Join(", ", routingPatterns);
+      _logger.LogDebug(
+        "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing patterns [{RoutingPatterns}]",
+        exchangeName,
+        queueName,
+        routingPatternsStr
+      );
+    }
 
     try {
       // Create dedicated channel for this consumer (long-lived, one per subscription)
@@ -310,12 +319,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Bind queue to exchange with routing patterns
       // Create one binding per pattern for proper topic exchange filtering
       foreach (var pattern in routingPatterns) {
-        _logger?.LogDebug(
-          "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
-          queueName,
-          exchangeName,
-          pattern
-        );
+        if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+          _logger.LogDebug(
+            "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
+            queueName,
+            exchangeName,
+            pattern
+          );
+        }
 
         await channel.QueueBindAsync(
           queue: queueName,
@@ -350,11 +361,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           await handler(envelope, envelopeTypeName, cancellationToken);
           await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
 
-          _logger?.LogDebug(
-            "Processed message {MessageId} from queue {QueueName}",
-            args.BasicProperties.MessageId,
-            queueName
-          );
+          if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+            var messageId = args.BasicProperties.MessageId;
+            _logger.LogDebug(
+              "Processed message {MessageId} from queue {QueueName}",
+              messageId,
+              queueName
+            );
+          }
         } catch (Exception ex) {
           await _handleMessageFailureAsync(channel, args, queueName, ex);
         }
@@ -375,12 +389,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Create subscription wrapper with consumer tag (so Dispose can cancel consumer explicitly)
       subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
 
-      _logger?.LogInformation(
-        "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
-        exchangeName,
-        queueName,
-        consumerTag
-      );
+      if (_logger?.IsEnabled(LogLevel.Information) == true) {
+        _logger.LogInformation(
+          "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
+          exchangeName,
+          queueName,
+          consumerTag
+        );
+      }
 
       return subscription;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -535,11 +551,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return null;
     }
 
-    _logger?.LogDebug(
-      "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
-      envelopeTypeName,
-      typeInfo.Type.FullName
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var typeInfoTypeName = typeInfo.Type.FullName;
+      _logger.LogDebug(
+        "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
+        envelopeTypeName,
+        typeInfoTypeName
+      );
+    }
 
     if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
       _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
@@ -547,12 +566,17 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       return null;
     }
 
-    _logger?.LogDebug(
-      "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
-      envelope.GetType().FullName,
-      envelope.Payload?.GetType().FullName ?? "null",
-      envelope.MessageId.Value
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var envelopeType = envelope.GetType().FullName;
+      var payloadType = envelope.Payload?.GetType().FullName ?? "null";
+      var messageId = envelope.MessageId.Value;
+      _logger.LogDebug(
+        "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
+        envelopeType,
+        payloadType,
+        messageId
+      );
+    }
 
     return envelope;
   }

@@ -569,6 +569,18 @@ public class StreamIdGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
     template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
 
+    // Generate [ModuleInitializer] registration code
+    // Only register if this assembly has extractors (events or commands with [StreamId])
+    var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty;
+    if (hasExtractors) {
+      // Register with priority 100 (contracts/types that define messages are tried first)
+      var registrationCode = "global::Whizbang.Core.Registry.StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);";
+      template = TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", registrationCode);
+    } else {
+      // No extractors - don't register anything (leave the region empty)
+      template = TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", "// No extractors in this assembly - skipping registration");
+    }
+
     context.AddSource("StreamIdExtractors.g.cs", template);
   }
 

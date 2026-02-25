@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Internal;
 using Whizbang.Core.Lenses;
@@ -854,9 +855,8 @@ public class ReceptorInvokerTests {
     var syncAttr = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective),
         EventTypes: null,
-        LookupMode: SyncLookupMode.Local,
         TimeoutMs: 5000,
-        ThrowOnTimeout: false
+        FireBehavior: SyncFireBehavior.FireAlways
     );
 
     registry.RegisterReceptorWithSyncAttributes<TestMessage>(
@@ -895,9 +895,8 @@ public class ReceptorInvokerTests {
     var syncAttr = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective),
         EventTypes: null,
-        LookupMode: SyncLookupMode.Local,
         TimeoutMs: 5000,
-        ThrowOnTimeout: true  // Should throw when timed out
+        FireBehavior: SyncFireBehavior.FireOnSuccess  // Should throw when timed out
     );
 
     registry.RegisterReceptorWithSyncAttributes<TestMessage>(
@@ -933,9 +932,8 @@ public class ReceptorInvokerTests {
     var syncAttr = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective),
         EventTypes: null,
-        LookupMode: SyncLookupMode.Local,
         TimeoutMs: 5000,
-        ThrowOnTimeout: false  // Should not throw
+        FireBehavior: SyncFireBehavior.FireAlways  // Should not throw
     );
 
     registry.RegisterReceptorWithSyncAttributes<TestMessage>(
@@ -967,16 +965,14 @@ public class ReceptorInvokerTests {
     var syncAttr1 = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective),
         EventTypes: null,
-        LookupMode: SyncLookupMode.Local,
         TimeoutMs: 5000,
-        ThrowOnTimeout: false
+        FireBehavior: SyncFireBehavior.FireAlways
     );
     var syncAttr2 = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective2),
         EventTypes: [typeof(TestEvent)],
-        LookupMode: SyncLookupMode.Distributed,
         TimeoutMs: 3000,
-        ThrowOnTimeout: false
+        FireBehavior: SyncFireBehavior.FireAlways
     );
 
     registry.RegisterReceptorWithSyncAttributes<TestMessage>(
@@ -1035,9 +1031,8 @@ public class ReceptorInvokerTests {
     var syncAttr = new ReceptorSyncAttributeInfo(
         PerspectiveType: typeof(TestPerspective),
         EventTypes: [typeof(TestEvent), typeof(TestMessage)],
-        LookupMode: SyncLookupMode.Distributed,
         TimeoutMs: 7500,
-        ThrowOnTimeout: false
+        FireBehavior: SyncFireBehavior.FireAlways
     );
 
     registry.RegisterReceptorWithSyncAttributes<TestMessage>(
@@ -1055,7 +1050,6 @@ public class ReceptorInvokerTests {
     // Assert - Options are correct
     await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
     var call = syncAwaiter.WaitCalls[0];
-    await Assert.That(call.Options.LookupMode).IsEqualTo(SyncLookupMode.Distributed);
     await Assert.That(call.Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
     await Assert.That(call.Options.Filter).IsTypeOf<EventTypeFilter>();
   }
@@ -1090,6 +1084,510 @@ public class ReceptorInvokerTests {
         PerspectiveSyncOptions options,
         CancellationToken ct = default) {
       return Task.FromResult(!SimulateTimeout);
+    }
+
+    public Task<SyncResult> WaitForStreamAsync(
+        Type perspectiveType,
+        Guid streamId,
+        Type[]? eventTypes,
+        TimeSpan timeout,
+        Guid? eventIdToAwait = null,
+        CancellationToken ct = default) {
+      CallOrder.Add($"WaitForStream:{perspectiveType.Name}:{streamId}");
+
+      var outcome = SimulateTimeout
+          ? SyncOutcome.TimedOut
+          : SyncOutcome.Synced;
+
+      return Task.FromResult(new SyncResult(
+          Outcome: outcome,
+          EventsAwaited: 1,
+          ElapsedTime: TimeSpan.FromMilliseconds(100)));
+    }
+  }
+
+  #endregion
+
+  // ========================================
+  // ROUTED<T> UNWRAPPING TESTS
+  // ========================================
+
+  #region Routed<T> Unwrapping Tests
+
+  /// <summary>
+  /// Verifies that when the envelope payload contains Routed&lt;T&gt;, the inner message is extracted
+  /// and used to find receptors.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EnvelopeWithRoutedPayload_UnwrapsAndInvokesReceptorAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Register receptor for TestMessage (not for Routed<TestMessage>)
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    // Create envelope with Routed<TestMessage> as payload
+    var innerMessage = new TestMessage("unwrap-test");
+    var routedPayload = Route.Local(innerMessage);
+    var envelope = new MessageEnvelope<Routed<TestMessage>> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = routedPayload,
+      Hops = []
+    };
+
+    // Act - This should unwrap Routed<T> and find receptor for TestMessage
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - Receptor for TestMessage should be invoked
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+    await Assert.That(tracker.Invocations[0].ReceptorId).IsEqualTo("TestReceptor");
+  }
+
+  /// <summary>
+  /// Verifies that when the envelope payload contains Route.Outbox&lt;T&gt;, the inner message is extracted.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EnvelopeWithRouteOutboxPayload_UnwrapsAndInvokesReceptorAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    var innerMessage = new TestMessage("outbox-test");
+    var routedPayload = Route.Outbox(innerMessage);
+    var envelope = new MessageEnvelope<Routed<TestMessage>> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = routedPayload,
+      Hops = []
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that when the envelope payload contains Route.Both&lt;T&gt;, the inner message is extracted.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EnvelopeWithRouteBothPayload_UnwrapsAndInvokesReceptorAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    var innerMessage = new TestMessage("both-test");
+    var routedPayload = Route.Both(innerMessage);
+    var envelope = new MessageEnvelope<Routed<TestMessage>> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = routedPayload,
+      Hops = []
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that when the envelope payload contains Route.None(), the invoker returns early.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EnvelopeWithRouteNonePayload_ReturnsEarlyWithoutInvokingAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    // Create envelope with RoutedNone as payload
+    var routedNone = Route.None();
+    var envelope = new MessageEnvelope<RoutedNone> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = routedNone,
+      Hops = []
+    };
+
+    // Act - This should return early without error
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - No receptor should be invoked
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Verifies that the unwrapped message is passed to the receptor delegate, not the Routed wrapper.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_RoutedPayload_PassesUnwrappedMessageToReceptorDelegateAsync() {
+    // Arrange
+    var customRegistry = new MessageCapturingRegistry();
+
+    var invoker = new ReceptorInvoker(customRegistry, _createServiceProvider());
+
+    var innerMessage = new TestMessage("capture-test");
+    var routedPayload = Route.Local(innerMessage);
+    var envelope = new MessageEnvelope<Routed<TestMessage>> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = routedPayload,
+      Hops = []
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - The captured message should be TestMessage, not Routed<TestMessage>
+    await Assert.That(customRegistry.ReceivedMessage).IsNotNull();
+    await Assert.That(customRegistry.ReceivedMessage).IsTypeOf<TestMessage>();
+    await Assert.That(((TestMessage)customRegistry.ReceivedMessage!).Value).IsEqualTo("capture-test");
+  }
+
+  /// <summary>
+  /// Custom registry that captures the message passed to the receptor delegate.
+  /// </summary>
+  private sealed class MessageCapturingRegistry : IReceptorRegistry {
+    public object? ReceivedMessage { get; private set; }
+
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      // Only respond to TestMessage type
+      if (messageType == typeof(TestMessage) && stage == LifecycleStage.PostInboxInline) {
+        return [new ReceptorInfo(
+            typeof(TestMessage),
+            "CaptureReceptor",
+            (sp, msg, ct) => {
+              ReceivedMessage = msg;
+              return ValueTask.FromResult<object?>(null);
+            })];
+      }
+      return [];
+    }
+  }
+
+  #endregion
+
+  // ========================================
+  // STREAM-BASED SYNC TESTS (with IStreamIdExtractor)
+  // ========================================
+
+  #region Stream-Based Sync Tests
+
+  /// <summary>
+  /// Verifies that when a receptor has sync attributes and an IStreamIdExtractor is available,
+  /// the invoker uses WaitForStreamAsync instead of WaitAsync.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_UsesWaitForStreamAsyncWhenExtractorAvailableAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "TestReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert - Should use WaitForStreamAsync, not WaitAsync
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    await Assert.That(syncAwaiter.WaitAsyncCalls).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Verifies that the extracted StreamId is passed correctly to WaitForStreamAsync.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_PassesExtractedStreamIdToAwaiterAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    registry.RegisterReceptorWithSyncAttributes<TestMessageWithStreamId>(
+        "TestReceptor",
+        LifecycleStage.PostInboxInline,
+        [syncAttr]);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(syncAwaiter.WaitForStreamCalls).Count().IsGreaterThan(0);
+    var call = syncAwaiter.WaitForStreamCalls[0];
+    await Assert.That(call.StreamId).IsEqualTo(streamId);
+    await Assert.That(call.PerspectiveType).IsEqualTo(typeof(TestPerspective));
+  }
+
+  /// <summary>
+  /// Verifies that SyncContext is registered in scope after sync completes.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_RegistersSyncContextInScopeAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scope = provider.CreateScope();
+    var scopedProvider = scope.ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId);
+
+    SyncContext? capturedContext = null;
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    // Create custom registry that captures SyncContext
+    var registry = new ContextCapturingRegistry(
+        "ContextCapturingReceptor",
+        [syncAttr],
+        ctx => capturedContext = ctx);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(capturedContext).IsNotNull();
+    await Assert.That(capturedContext!.StreamId).IsEqualTo(streamId);
+    await Assert.That(capturedContext.PerspectiveType).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(capturedContext.Outcome).IsEqualTo(SyncOutcome.Synced);
+  }
+
+  /// <summary>
+  /// Verifies that SyncContext contains correct values including elapsed time.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_SyncContextHasCorrectElapsedTimeAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var streamId = Guid.NewGuid();
+    var expectedElapsed = TimeSpan.FromMilliseconds(150);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scope = provider.CreateScope();
+    var scopedProvider = scope.ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId, elapsedTime: expectedElapsed);
+
+    SyncContext? capturedContext = null;
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireOnSuccess);
+
+    var registry = new ContextCapturingRegistry(
+        "ContextCapturingReceptor",
+        [syncAttr],
+        ctx => capturedContext = ctx);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(capturedContext).IsNotNull();
+    await Assert.That(capturedContext!.ElapsedTime).IsEqualTo(expectedElapsed);
+  }
+
+  /// <summary>
+  /// Verifies that SyncContext has failure reason set when sync times out.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_SyncAttribute_SyncContextHasFailureReasonOnTimeoutAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IStreamIdExtractor>(new TestStreamIdExtractor(streamId));
+    var provider = services.BuildServiceProvider();
+    var scope = provider.CreateScope();
+    var scopedProvider = scope.ServiceProvider;
+
+    var syncAwaiter = new StreamIdTrackingSyncAwaiter(streamId, simulateTimeout: true);
+
+    SyncContext? capturedContext = null;
+    var syncAttr = new ReceptorSyncAttributeInfo(
+        PerspectiveType: typeof(TestPerspective),
+        EventTypes: null,
+        TimeoutMs: 5000,
+        FireBehavior: SyncFireBehavior.FireAlways);  // FireAlways so handler runs
+
+    var registry = new ContextCapturingRegistry(
+        "ContextCapturingReceptor",
+        [syncAttr],
+        ctx => capturedContext = ctx);
+
+    var invoker = new ReceptorInvoker(registry, scopedProvider, null, syncAwaiter);
+    var message = new TestMessageWithStreamId { Value = "test", StreamId = streamId };
+
+    // Act
+    await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(capturedContext).IsNotNull();
+    await Assert.That(capturedContext!.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+    await Assert.That(capturedContext.FailureReason).IsNotNull();
+  }
+
+  /// <summary>
+  /// Test message with StreamId property for stream-based sync tests.
+  /// </summary>
+  private sealed record TestMessageWithStreamId : IMessage {
+    [StreamId]
+    public Guid StreamId { get; init; }
+    public string Value { get; init; } = string.Empty;
+  }
+
+  /// <summary>
+  /// Test implementation of IStreamIdExtractor that returns a configured StreamId.
+  /// </summary>
+  private sealed class TestStreamIdExtractor : IStreamIdExtractor {
+    private readonly Guid _streamId;
+
+    public TestStreamIdExtractor(Guid streamId) => _streamId = streamId;
+
+    public Guid? ExtractStreamId(object message, Type messageType) => _streamId;
+  }
+
+  /// <summary>
+  /// Custom registry that captures SyncContext when receptor is invoked.
+  /// </summary>
+  private sealed class ContextCapturingRegistry : IReceptorRegistry {
+    private readonly string _receptorId;
+    private readonly IReadOnlyList<ReceptorSyncAttributeInfo> _syncAttributes;
+    private readonly Action<SyncContext?> _contextCallback;
+
+    public ContextCapturingRegistry(
+        string receptorId,
+        IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
+        Action<SyncContext?> contextCallback) {
+      _receptorId = receptorId;
+      _syncAttributes = syncAttributes;
+      _contextCallback = contextCallback;
+    }
+
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (messageType == typeof(TestMessageWithStreamId) && stage == LifecycleStage.PostInboxInline) {
+        return [new ReceptorInfo(
+            typeof(TestMessageWithStreamId),
+            _receptorId,
+            (sp, msg, ct) => {
+              // Try to get SyncContext from accessor (AsyncLocal pattern)
+              _contextCallback(SyncContextAccessor.CurrentContext);
+              return ValueTask.FromResult<object?>(null);
+            },
+            SyncAttributes: _syncAttributes)];
+      }
+      return [];
+    }
+  }
+
+  /// <summary>
+  /// Sync awaiter that tracks calls to WaitAsync and WaitForStreamAsync separately.
+  /// </summary>
+  private sealed class StreamIdTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
+    private readonly Guid _expectedStreamId;
+    private readonly bool _simulateTimeout;
+    private readonly TimeSpan _elapsedTime;
+
+    public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitAsyncCalls { get; } = [];
+    public List<(Type PerspectiveType, Guid StreamId, Type[]? EventTypes, TimeSpan Timeout)> WaitForStreamCalls { get; } = [];
+
+    public StreamIdTrackingSyncAwaiter(
+        Guid streamId,
+        bool simulateTimeout = false,
+        TimeSpan? elapsedTime = null) {
+      _expectedStreamId = streamId;
+      _simulateTimeout = simulateTimeout;
+      _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
+    }
+
+    public Task<SyncResult> WaitAsync(
+        Type perspectiveType,
+        PerspectiveSyncOptions options,
+        CancellationToken ct = default) {
+      WaitAsyncCalls.Add((perspectiveType, options));
+      var outcome = _simulateTimeout ? SyncOutcome.TimedOut : SyncOutcome.Synced;
+      return Task.FromResult(new SyncResult(outcome, 1, _elapsedTime));
+    }
+
+    public Task<bool> IsCaughtUpAsync(
+        Type perspectiveType,
+        PerspectiveSyncOptions options,
+        CancellationToken ct = default) {
+      return Task.FromResult(!_simulateTimeout);
+    }
+
+    public Task<SyncResult> WaitForStreamAsync(
+        Type perspectiveType,
+        Guid streamId,
+        Type[]? eventTypes,
+        TimeSpan timeout,
+        Guid? eventIdToAwait = null,
+        CancellationToken ct = default) {
+      WaitForStreamCalls.Add((perspectiveType, streamId, eventTypes, timeout));
+      var outcome = _simulateTimeout ? SyncOutcome.TimedOut : SyncOutcome.Synced;
+      return Task.FromResult(new SyncResult(outcome, 1, _elapsedTime));
     }
   }
 

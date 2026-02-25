@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Messaging;
 
@@ -123,6 +124,14 @@ public sealed record ProcessWorkBatchRequest {
   /// Empty array if no renewals needed.
   /// </summary>
   public required Guid[] RenewInboxLeaseIds { get; init; }
+
+  /// <summary>
+  /// Array of sync inquiries to check perspective event processing status.
+  /// Results are returned in WorkBatch.SyncInquiryResults.
+  /// Null if no sync inquiries.
+  /// </summary>
+  /// <docs>perspectives/sync</docs>
+  public SyncInquiry[]? PerspectiveSyncInquiries { get; init; }
 
   /// <summary>
   /// Work batch flags for controlling behavior.
@@ -348,6 +357,14 @@ public record WorkBatch {
   /// Each item represents a stream that needs perspective updates.
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
+
+  /// <summary>
+  /// Results of sync inquiries from this batch call.
+  /// Contains pending counts for each perspective/stream combination queried.
+  /// Null if no sync inquiries were passed in the request.
+  /// </summary>
+  /// <docs>perspectives/sync</docs>
+  public List<SyncInquiryResult>? SyncInquiryResults { get; init; }
 }
 
 /// <summary>

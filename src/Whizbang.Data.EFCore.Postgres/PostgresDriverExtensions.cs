@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Postgres;
@@ -57,6 +58,11 @@ public static class PostgresDriverExtensions {
             selector.DbContextType,
             new PostgresUpsertStrategy()
         );
+
+        // TURNKEY: Wrap IEventStore with sync tracking decorator
+        // This enables perspective synchronization by tracking emitted events
+        // before they reach the database (cross-scope sync support)
+        selector.Services.DecorateEventStoreWithSyncTracking();
 
         // TURNKEY: Invoke perspective runner registration callbacks
         // This is registered by source-generated module initializer in consumer assembly

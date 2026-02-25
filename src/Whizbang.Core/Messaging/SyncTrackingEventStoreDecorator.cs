@@ -14,6 +14,10 @@ namespace Whizbang.Core.Messaging;
 /// perspective synchronization to know which events need to be awaited.
 /// </para>
 /// <para>
+/// Additionally, when an <see cref="ISyncEventTracker"/> and <see cref="ITrackedEventTypeRegistry"/>
+/// are provided, events of tracked types are recorded for cross-scope synchronization.
+/// </para>
+/// <para>
 /// Register this decorator in DI to enable perspective sync tracking:
 /// <code>
 /// services.Decorate&lt;IEventStore, SyncTrackingEventStoreDecorator&gt;();
@@ -25,6 +29,8 @@ namespace Whizbang.Core.Messaging;
 public sealed class SyncTrackingEventStoreDecorator : IEventStore {
   private readonly IEventStore _inner;
   private readonly IScopedEventTracker? _tracker;
+  private readonly ISyncEventTracker? _syncEventTracker;
+  private readonly ITrackedEventTypeRegistry? _typeRegistry;
   private readonly IEnvelopeRegistry? _envelopeRegistry;
 
   /// <summary>
@@ -33,21 +39,33 @@ public sealed class SyncTrackingEventStoreDecorator : IEventStore {
   /// <param name="inner">The underlying event store implementation.</param>
   /// <param name="tracker">The scoped event tracker (optional - tracking is skipped if null).</param>
   /// <param name="envelopeRegistry">The envelope registry for looking up message IDs (optional).</param>
+  /// <param name="syncEventTracker">The singleton event tracker for cross-scope sync (optional).</param>
+  /// <param name="typeRegistry">The registry of event types to track (optional).</param>
   public SyncTrackingEventStoreDecorator(
       IEventStore inner,
       IScopedEventTracker? tracker = null,
-      IEnvelopeRegistry? envelopeRegistry = null) {
+      IEnvelopeRegistry? envelopeRegistry = null,
+      ISyncEventTracker? syncEventTracker = null,
+      ITrackedEventTypeRegistry? typeRegistry = null) {
     _inner = inner ?? throw new ArgumentNullException(nameof(inner));
     _tracker = tracker;
     _envelopeRegistry = envelopeRegistry;
+    _syncEventTracker = syncEventTracker;
+    _typeRegistry = typeRegistry;
   }
 
   /// <inheritdoc />
   public async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     await _inner.AppendAsync(streamId, envelope, cancellationToken);
 
-    // Track the emitted event for sync awaiting
-    _tracker?.TrackEmittedEvent(streamId, typeof(TMessage), envelope.MessageId);
+    var eventType = typeof(TMessage);
+    var messageId = envelope.MessageId;
+
+    // Track the emitted event in scoped tracker (same request scope)
+    _tracker?.TrackEmittedEvent(streamId, eventType, messageId);
+
+    // Track in singleton tracker for cross-scope sync (if event type is registered)
+    _trackInSingletonTracker(eventType, messageId, streamId);
   }
 
   /// <inheritdoc />
@@ -58,8 +76,28 @@ public sealed class SyncTrackingEventStoreDecorator : IEventStore {
 
     await _inner.AppendAsync(streamId, message, cancellationToken);
 
-    // Track the emitted event for sync awaiting
-    _tracker?.TrackEmittedEvent(streamId, typeof(TMessage), messageId);
+    var eventType = typeof(TMessage);
+
+    // Track the emitted event in scoped tracker (same request scope)
+    _tracker?.TrackEmittedEvent(streamId, eventType, messageId);
+
+    // Track in singleton tracker for cross-scope sync (if event type is registered)
+    _trackInSingletonTracker(eventType, messageId, streamId);
+  }
+
+  /// <summary>
+  /// Tracks the event in the singleton tracker if the event type is registered.
+  /// </summary>
+  private void _trackInSingletonTracker(Type eventType, Guid messageId, Guid streamId) {
+    if (_syncEventTracker is null || _typeRegistry is null) {
+      return;
+    }
+
+    // Check if this event type should be tracked
+    var perspectiveNames = _typeRegistry.GetPerspectiveNames(eventType);
+    foreach (var perspectiveName in perspectiveNames) {
+      _syncEventTracker.TrackEvent(eventType, messageId, streamId, perspectiveName);
+    }
   }
 
   /// <inheritdoc />

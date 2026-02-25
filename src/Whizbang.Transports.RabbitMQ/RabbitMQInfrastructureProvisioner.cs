@@ -48,9 +48,12 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    _logger.LogInformation(
-      "Provisioning {Count} RabbitMQ exchanges for owned domains",
-      ownedDomains.Count);
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var count = ownedDomains.Count;
+      _logger.LogInformation(
+        "Provisioning {Count} RabbitMQ exchanges for owned domains",
+        count);
+    }
 
     // Rent channel from pool (RAII pattern - automatically returned on dispose)
     using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
@@ -61,10 +64,13 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
 
       var exchangeName = domain.ToLowerInvariant();
 
-      _logger.LogDebug(
-        "Declaring exchange '{Exchange}' for owned domain '{Domain}'",
-        exchangeName,
-        domain);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var domainName = domain;
+        _logger.LogDebug(
+          "Declaring exchange '{Exchange}' for owned domain '{Domain}'",
+          exchangeName,
+          domainName);
+      }
 
       // Declare exchange (idempotent - safe to call multiple times)
       await channel.ExchangeDeclareAsync(
@@ -77,9 +83,11 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         noWait: false,
         cancellationToken: cancellationToken);
 
-      _logger.LogInformation(
-        "Provisioned exchange '{Exchange}' for owned domain",
-        exchangeName);
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation(
+          "Provisioned exchange '{Exchange}' for owned domain",
+          exchangeName);
+      }
     }
   }
 }

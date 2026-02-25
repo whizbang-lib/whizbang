@@ -48,12 +48,18 @@ public sealed class RabbitMQSubscription : ISubscription {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     if (!_isActive) {
-      _logger?.LogDebug("Subscription for queue {QueueName} already paused, skipping", _queueName);
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        var queueName = _queueName;
+        _logger.LogDebug("Subscription for queue {QueueName} already paused, skipping", queueName);
+      }
       return Task.CompletedTask;
     }
 
     _isActive = false;
-    _logger?.LogInformation("Paused subscription for queue {QueueName}", _queueName);
+    if (_logger?.IsEnabled(LogLevel.Information) == true) {
+      var queueName = _queueName;
+      _logger.LogInformation("Paused subscription for queue {QueueName}", queueName);
+    }
 
     return Task.CompletedTask;
   }
@@ -63,12 +69,18 @@ public sealed class RabbitMQSubscription : ISubscription {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     if (_isActive) {
-      _logger?.LogDebug("Subscription for queue {QueueName} already active, skipping", _queueName);
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        var queueName = _queueName;
+        _logger.LogDebug("Subscription for queue {QueueName} already active, skipping", queueName);
+      }
       return Task.CompletedTask;
     }
 
     _isActive = true;
-    _logger?.LogInformation("Resumed subscription for queue {QueueName}", _queueName);
+    if (_logger?.IsEnabled(LogLevel.Information) == true) {
+      var queueName = _queueName;
+      _logger.LogInformation("Resumed subscription for queue {QueueName}", queueName);
+    }
 
     return Task.CompletedTask;
   }
@@ -89,12 +101,19 @@ public sealed class RabbitMQSubscription : ISubscription {
         // Use noWait: true to avoid waiting for server confirmation
         if (_consumerTag != null) {
           await _channel.BasicCancelAsync(_consumerTag, noWait: true);
-          _logger?.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", _consumerTag, _queueName);
+          if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+            var consumerTag = _consumerTag;
+            var queueName = _queueName;
+            _logger.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", consumerTag, queueName);
+          }
         }
 
         // Dispose channel - disposing automatically closes the channel
         _channel.Dispose();
-        _logger?.LogDebug("Disposed channel for queue {QueueName}", _queueName);
+        if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+          var queueName = _queueName;
+          _logger.LogDebug("Disposed channel for queue {QueueName}", queueName);
+        }
       } catch (Exception ex) {
         _logger?.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
         // Ignore errors during async disposal

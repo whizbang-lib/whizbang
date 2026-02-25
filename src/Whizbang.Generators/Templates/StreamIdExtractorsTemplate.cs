@@ -4,10 +4,38 @@
 #endregion
 
 using global::System;
+using global::System.Diagnostics;
+using global::System.Diagnostics.CodeAnalysis;
+using global::System.Runtime.CompilerServices;
+using global::Microsoft.Extensions.DependencyInjection;
+using global::Microsoft.Extensions.DependencyInjection.Extensions;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
 #endregion
+
+/// <summary>
+/// Module initializer that registers this assembly's StreamIdExtractor with the global registry.
+/// Runs automatically when assembly loads - before Main().
+/// </summary>
+/// <remarks>
+/// Uses <see cref="global::Whizbang.Core.Registry.StreamIdExtractorRegistry"/> for multi-assembly support.
+/// Priority 100 is used for contracts assemblies (tried first), 1000 for services.
+/// </remarks>
+[ExcludeFromCodeCoverage]
+[DebuggerNonUserCode]
+internal static class StreamIdExtractorInitializer {
+#pragma warning disable CA2255 // ModuleInitializer in library is intentional for multi-assembly discovery
+  [ModuleInitializer]
+#pragma warning restore CA2255
+  internal static void Initialize() {
+    global::System.Console.WriteLine($"[StreamIdExtractorInitializer] ModuleInitializer running for assembly: {typeof(StreamIdExtractorInitializer).Assembly.GetName().Name}");
+    #region MODULE_INITIALIZER_REGISTRATION
+    // Conditional registration - only if this assembly has extractors
+    // Generated code: StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);
+    #endregion
+  }
+}
 
 /// <summary>
 /// Generated stream ID extractors for zero-reflection AOT compatibility.
@@ -122,4 +150,68 @@ public static partial class StreamIdExtractors {
   #region TRY_EXTRACT_METHODS
   // Individual TryExtractAsGuid methods for all types
   #endregion
+}
+
+/// <summary>
+/// Generated IStreamIdExtractor implementation that delegates to the generated StreamIdExtractors class.
+/// </summary>
+[ExcludeFromCodeCoverage]
+[DebuggerNonUserCode]
+internal sealed class GeneratedStreamIdExtractor : global::Whizbang.Core.IStreamIdExtractor {
+  /// <inheritdoc />
+  public global::System.Guid? ExtractStreamId(object message, global::System.Type messageType) {
+    if (message is null) {
+      return null;
+    }
+
+    // Use generated extractors for all message types
+    if (message is global::Whizbang.Core.IEvent @event) {
+      return StreamIdExtractors.TryResolveAsGuid(@event);
+    }
+
+    if (message is global::Whizbang.Core.ICommand command) {
+      return StreamIdExtractors.TryResolveAsGuid(command);
+    }
+
+    // For other message types (e.g., perspective DTOs)
+    return StreamIdExtractors.TryResolveAsGuid(message);
+  }
+}
+
+/// <summary>
+/// Extension methods for registering the generated IStreamIdExtractor.
+/// </summary>
+[ExcludeFromCodeCoverage]
+[DebuggerNonUserCode]
+public static class StreamIdExtractorRegistrations {
+  /// <summary>
+  /// Registers the composite IStreamIdExtractor with DI.
+  /// The composite automatically uses all extractors registered via [ModuleInitializer].
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Multi-assembly projects</strong>: When message types (events/commands) are defined
+  /// in a shared contracts assembly, the [ModuleInitializer] pattern ensures the contracts'
+  /// extractors are automatically registered with higher priority (100) than service extractors (1000).
+  /// </para>
+  /// <para>
+  /// <strong>How it works</strong>:
+  /// <list type="number">
+  /// <item>Contracts assembly loads → [ModuleInitializer] registers extractors (priority 100)</item>
+  /// <item>Service assembly loads → [ModuleInitializer] registers extractors (priority 1000) or skips if empty</item>
+  /// <item>AddWhizbangDispatcher() → AddWhizbangStreamIdExtractor() → registers composite</item>
+  /// <item>Composite tries all registered extractors in priority order</item>
+  /// </list>
+  /// </para>
+  /// </remarks>
+  /// <param name="services">The service collection.</param>
+  /// <returns>The service collection for chaining.</returns>
+  public static global::Microsoft.Extensions.DependencyInjection.IServiceCollection AddWhizbangStreamIdExtractor(
+      this global::Microsoft.Extensions.DependencyInjection.IServiceCollection services) {
+    // Use the composite that delegates to the static registry
+    // All extractors were already registered via [ModuleInitializer] when assemblies loaded
+    services.TryAddSingleton<global::Whizbang.Core.IStreamIdExtractor>(
+        global::Whizbang.Core.Registry.StreamIdExtractorRegistry.GetComposite());
+    return services;
+  }
 }

@@ -40,35 +40,24 @@ public sealed record ReceptorInfo(
 /// </summary>
 /// <remarks>
 /// This record stores the attribute data in a form suitable for runtime use.
-/// The <see cref="ToSyncOptions"/> method creates the actual sync options.
 /// </remarks>
 /// <param name="PerspectiveType">The type of perspective to wait for.</param>
 /// <param name="EventTypes">Optional event types to filter. Null means all events.</param>
-/// <param name="LookupMode">The sync lookup mode (Local or Distributed).</param>
-/// <param name="TimeoutMs">The timeout in milliseconds.</param>
-/// <param name="ThrowOnTimeout">Whether to throw on timeout.</param>
+/// <param name="TimeoutMs">The raw timeout in milliseconds. Use -1 for default.</param>
+/// <param name="FireBehavior">The behavior when sync completes or times out.</param>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public sealed record ReceptorSyncAttributeInfo(
     Type PerspectiveType,
     IReadOnlyList<Type>? EventTypes,
-    SyncLookupMode LookupMode,
     int TimeoutMs,
-    bool ThrowOnTimeout
+    SyncFireBehavior FireBehavior
 ) {
   /// <summary>
-  /// Converts this attribute info to <see cref="PerspectiveSyncOptions"/>.
+  /// Gets the effective timeout in milliseconds that will be used for sync.
   /// </summary>
-  /// <returns>The sync options configured from this attribute data.</returns>
-  public PerspectiveSyncOptions ToSyncOptions() {
-    SyncFilterNode filter = EventTypes is { Count: > 0 }
-        ? new EventTypeFilter(EventTypes)
-        : new AllPendingFilter();
-
-    return new PerspectiveSyncOptions {
-      Filter = filter,
-      LookupMode = LookupMode,
-      Timeout = TimeSpan.FromMilliseconds(TimeoutMs),
-      DebuggerAwareTimeout = true
-    };
-  }
+  /// <remarks>
+  /// Returns <see cref="TimeoutMs"/> if explicitly set (not -1),
+  /// otherwise returns <see cref="AwaitPerspectiveSyncAttribute.DefaultTimeoutMs"/>.
+  /// </remarks>
+  public int EffectiveTimeoutMs => TimeoutMs == -1 ? AwaitPerspectiveSyncAttribute.DefaultTimeoutMs : TimeoutMs;
 }

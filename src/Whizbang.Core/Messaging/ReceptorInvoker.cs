@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,13 +113,21 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    // Note: context is available for receptors that need metadata about the invocation
-    // (stream ID, message source, etc.) but is not used by the invoker itself.
-    // Receptors can access it if needed for logging, tracing, or conditional logic.
-    _ = context; // Currently unused by invoker, but passed to receptors if needed
+    // Context provides metadata about the invocation (stream ID, event ID, message source, etc.)
+    // Used for perspective sync to pass the incoming event's ID for cross-scope sync
 
     // Extract payload from envelope - this is what receptors receive
     var message = envelope.Payload;
+
+    // Unwrap Routed<T> if the payload contains a routing wrapper
+    // This ensures receptors receive the actual message type, not the dispatch wrapper
+    if (message is Dispatch.IRouted routed) {
+      if (routed.Mode == Dispatch.DispatchMode.None || routed.Value == null) {
+        // RoutedNone should not be in an envelope - skip silently
+        return;
+      }
+      message = routed.Value;
+    }
 
     // GetType() is AOT-safe - returns the runtime type
     var messageType = message.GetType();
@@ -165,20 +174,59 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       };
     }
 
+    // Try to get stream ID extractor for stream-based sync
+    var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
+    Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
+
     foreach (var receptor in receptors) {
       // Check for [AwaitPerspectiveSync] attributes and await sync if needed
       if (_syncAwaiter is not null && receptor.SyncAttributes is { Count: > 0 }) {
         foreach (var syncAttr in receptor.SyncAttributes) {
-          var syncOptions = syncAttr.ToSyncOptions();
-          var syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+          var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
+          SyncResult syncResult;
 
-          // If ThrowOnTimeout is true and we timed out, throw an exception
-          if (syncAttr.ThrowOnTimeout && syncResult.Outcome == SyncOutcome.TimedOut) {
+          // Use stream-based sync when stream ID extractor is available
+          if (extractedStreamId.HasValue) {
+            var eventTypes = syncAttr.EventTypes?.ToArray();
+            // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
+            // Without this, WaitForStreamAsync has no way to know what event to wait for
+            // when the event was emitted in a different scope (e.g., command handler)
+            syncResult = await _syncAwaiter.WaitForStreamAsync(
+                syncAttr.PerspectiveType,
+                extractedStreamId.Value,
+                eventTypes,
+                timeout,
+                eventIdToAwait: context?.EventId,
+                cancellationToken).ConfigureAwait(false);
+
+            // Create and set SyncContext for receptor access via AsyncLocal
+            var syncContext = new SyncContext {
+              StreamId = extractedStreamId.Value,
+              PerspectiveType = syncAttr.PerspectiveType,
+              Outcome = syncResult.Outcome,
+              EventsAwaited = syncResult.EventsAwaited,
+              ElapsedTime = syncResult.ElapsedTime,
+              FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
+            };
+            SyncContextAccessor.CurrentContext = syncContext;
+          } else {
+            // Fall back to scope-based sync when no stream ID extractor
+            var syncOptions = syncAttr.EventTypes is { Count: > 0 }
+                ? SyncFilter.ForEventTypes(syncAttr.EventTypes.ToArray()).WithTimeout(timeout).Build()
+                : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
+
+            syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+          }
+
+          // If FireBehavior is FireOnSuccess and we timed out, throw an exception
+          if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
             throw new PerspectiveSyncTimeoutException(
                 syncAttr.PerspectiveType,
-                syncOptions.Timeout,
+                timeout,
                 $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
           }
+          // FireBehavior.FireAlways continues regardless of timeout
+          // FireBehavior.FireOnEachEvent is future functionality
         }
       }
 

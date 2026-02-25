@@ -9,21 +9,24 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// <code>
 /// // Simple filter
-/// var options = SyncFilter.ForStream(orderId).Local().Build();
+/// var options = SyncFilter.ForStream(orderId).Build();
 ///
 /// // Complex AND/OR combination
 /// var options = SyncFilter.ForStream(orderId)
 ///     .AndEventTypes&lt;OrderCreatedEvent&gt;()
 ///     .Or(SyncFilter.ForEventTypes&lt;OrderCancelledEvent&gt;())
-///     .Distributed()
+///     .WithTimeout(TimeSpan.FromSeconds(10))
 ///     .Build();
 /// </code>
+/// <para>
+/// All synchronization uses database-based lookup. The database is the only
+/// authority for determining when perspectives have processed events.
+/// </para>
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed class SyncFilterBuilder {
   private SyncFilterNode _filter;
-  private SyncLookupMode _lookupMode = SyncLookupMode.Local;
   private TimeSpan _timeout = TimeSpan.FromSeconds(5);
   private bool _debuggerAwareTimeout = true;
 
@@ -155,28 +158,6 @@ public sealed class SyncFilterBuilder {
   }
 
   // ==========================================================================
-  // Lookup mode configuration
-  // ==========================================================================
-
-  /// <summary>
-  /// Sets the lookup mode to local (in-memory only).
-  /// </summary>
-  /// <returns>This builder for chaining.</returns>
-  public SyncFilterBuilder Local() {
-    _lookupMode = SyncLookupMode.Local;
-    return this;
-  }
-
-  /// <summary>
-  /// Sets the lookup mode to distributed (database lookup).
-  /// </summary>
-  /// <returns>This builder for chaining.</returns>
-  public SyncFilterBuilder Distributed() {
-    _lookupMode = SyncLookupMode.Distributed;
-    return this;
-  }
-
-  // ==========================================================================
   // Timeout configuration
   // ==========================================================================
 
@@ -201,7 +182,6 @@ public sealed class SyncFilterBuilder {
   public PerspectiveSyncOptions Build() {
     return new PerspectiveSyncOptions {
       Filter = _filter,
-      LookupMode = _lookupMode,
       Timeout = _timeout,
       DebuggerAwareTimeout = _debuggerAwareTimeout
     };

@@ -39,9 +39,16 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          __SYNC_AWAIT_CODE__
           var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           var result = await receptor.HandleAsync(typedMsg);
+          // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
+          // Cast to object first to avoid C# compile-time type checking (CS8121)
+          if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && routedResult.Value is TResult unwrappedValue) {
+            return unwrappedValue;
+          }
           return (TResult)(object)result!;
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
@@ -167,6 +174,8 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          __SYNC_AWAIT_CODE__
           var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           await receptor.HandleAsync(typedMsg);
@@ -208,7 +217,13 @@ public class DispatcherSnippets {
         using var scope = _scopeFactory.CreateScope();
         var receptor = scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
         var typedMsg = (__MESSAGE_TYPE__)msg;
-        return (TResult)(object)receptor.Handle(typedMsg)!;
+        var result = receptor.Handle(typedMsg);
+        // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
+        // Cast to object first to avoid C# compile-time type checking (CS8121)
+        if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult && routedResult.Value is TResult unwrappedValue) {
+          return unwrappedValue;
+        }
+        return (TResult)(object)result!;
       }
 
       return InvokeReceptor;
@@ -343,7 +358,12 @@ public class DispatcherSnippets {
           ReceptorId: "__RECEPTOR_CLASS__",
           InvokeAsync: async (sp, msg, ct) => {
             var receptor = sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-            return await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
+            var result = await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
+            // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
+            if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {
+              return routedResult.Value;
+            }
+            return result;
           },
           SyncAttributes: __SYNC_ATTRIBUTES__
         )
@@ -405,9 +425,15 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          __SYNC_AWAIT_CODE__
           var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           var result = await receptor.HandleAsync(typedMsg);
+          // Unwrap Routed<T> if receptor returned a wrapped value for cascade control
+          if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {
+            return routedResult.Value;
+          }
           return result;
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
@@ -447,6 +473,8 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          __SYNC_AWAIT_CODE__
           var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedMsg = (__MESSAGE_TYPE__)msg;
           await receptor.HandleAsync(typedMsg);

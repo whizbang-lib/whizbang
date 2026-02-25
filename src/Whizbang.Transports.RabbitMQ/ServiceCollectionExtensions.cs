@@ -45,7 +45,11 @@ public static class ServiceCollectionExtensions {
     if (!existingConn) {
       services.AddSingleton<IConnection>(sp => {
         var logger = sp.GetService<ILogger<RabbitMQConnectionRetry>>();
-        logger?.LogInformation("Creating RabbitMQ connection with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", options.InitialRetryAttempts, options.RetryIndefinitely);
+        if (logger?.IsEnabled(LogLevel.Information) == true) {
+          var initialAttempts = options.InitialRetryAttempts;
+          var retryIndefinitely = options.RetryIndefinitely;
+          logger.LogInformation("Creating RabbitMQ connection with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialAttempts, retryIndefinitely);
+        }
 
         var connectionRetry = new RabbitMQConnectionRetry(options, logger);
         var factory = new ConnectionFactory {

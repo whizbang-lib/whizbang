@@ -51,7 +51,11 @@ public static class ServiceCollectionExtensions {
     if (!existingRegistration) {
       services.AddSingleton(sp => {
         var logger = sp.GetService<ILogger<AzureServiceBusConnectionRetry>>();
-        logger?.LogInformation("Creating Azure Service Bus client with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", options.InitialRetryAttempts, options.RetryIndefinitely);
+        if (logger?.IsEnabled(LogLevel.Information) == true) {
+          var initialAttempts = options.InitialRetryAttempts;
+          var retryIndefinitely = options.RetryIndefinitely;
+          logger.LogInformation("Creating Azure Service Bus client with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialAttempts, retryIndefinitely);
+        }
 
         var connectionRetry = new AzureServiceBusConnectionRetry(options, logger);
         return connectionRetry.CreateClientWithRetryAsync(connectionString).GetAwaiter().GetResult();
