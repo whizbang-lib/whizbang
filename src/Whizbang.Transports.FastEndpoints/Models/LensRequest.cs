@@ -4,7 +4,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// Standard request model for lens endpoints with filtering, sorting, and paging.
 /// Used as a base for generated lens endpoint requests.
 /// </summary>
-/// <docs>v0.1.0/rest/filtering</docs>
+/// <docs>rest/filtering</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/LensRequestTests.cs</tests>
 /// <example>
 /// // Query string: ?page=2&amp;pageSize=25&amp;sort=-createdAt&amp;filter[status]=active

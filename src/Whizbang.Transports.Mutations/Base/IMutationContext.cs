@@ -4,7 +4,7 @@ namespace Whizbang.Transports.Mutations;
 /// Provides context information during mutation execution.
 /// Passed to pre/post hooks and error handlers in <see cref="MutationEndpointBase{TCommand, TResult}"/>.
 /// </summary>
-/// <docs>v0.1.0/mutations/hooks#context</docs>
+/// <docs>mutations/hooks#context</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs</tests>
 public interface IMutationContext {
   /// <summary>
@@ -22,7 +22,7 @@ public interface IMutationContext {
 /// <summary>
 /// Default implementation of <see cref="IMutationContext"/>.
 /// </summary>
-/// <docs>v0.1.0/mutations/hooks#context</docs>
+/// <docs>mutations/hooks#context</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs</tests>
 public sealed class MutationContext : IMutationContext {
   /// <summary>

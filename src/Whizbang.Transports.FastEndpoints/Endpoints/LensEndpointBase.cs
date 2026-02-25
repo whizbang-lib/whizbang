@@ -5,7 +5,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// Generated endpoints inherit from this class and can override hooks for customization.
 /// </summary>
 /// <typeparam name="TModel">The read model type</typeparam>
-/// <docs>v0.1.0/rest/lens-integration</docs>
+/// <docs>rest/lens-integration</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/LensEndpointBaseTests.cs</tests>
 /// <example>
 /// // Generated endpoint (partial, extensible):
