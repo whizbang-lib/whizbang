@@ -1337,4 +1337,280 @@ namespace TestNamespace {
     // Runner SHOULD be generated
     await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
   }
+
+  // ========================================
+  // Physical Field Tests
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_VectorField_GeneratesUpsertWithPhysicalFieldsAsync() {
+    // Arrange - model with [VectorField] should generate UpsertWithPhysicalFieldsAsync call
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EmbeddingUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+    public float[]? Embeddings { get; init; }
+  }
+
+  public record EmbeddingModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(1536)]
+    public float[]? Embeddings { get; init; }
+  }
+
+  public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, EmbeddingUpdatedEvent> {
+    public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingUpdatedEvent @event) {
+      return currentData with { Embeddings = @event.Embeddings };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
+    await Assert.That(runnerSource!).Contains("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).Contains("physicalFieldValues");
+    await Assert.That(runnerSource!).Contains(@"""embeddings""");  // snake_case column name
+    await Assert.That(runnerSource!).Contains("model.Embeddings");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PhysicalField_GeneratesUpsertWithPhysicalFieldsAsync() {
+    // Arrange - model with [PhysicalField] should generate UpsertWithPhysicalFieldsAsync call
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField(Indexed = true)]
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderUpdatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderUpdatedEvent @event) {
+      return currentData with { Status = @event.Status };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
+    await Assert.That(runnerSource!).Contains("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).Contains("physicalFieldValues");
+    await Assert.That(runnerSource!).Contains(@"""status""");  // snake_case column name
+    await Assert.That(runnerSource!).Contains("model.Status");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NoPhysicalFields_UsesSimpleUpsertAsync() {
+    // Arrange - model without physical fields should use simple UpsertAsync
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record SimpleEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record SimpleModel {
+    [StreamId]
+    public Guid Id { get; init; }
+    public string Name { get; init; } = """";
+  }
+
+  public class SimplePerspective : IPerspectiveFor<SimpleModel, SimpleEvent> {
+    public SimpleModel Apply(SimpleModel currentData, SimpleEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with simple UpsertAsync (no physical fields)
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SimplePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertAsync, NOT UpsertWithPhysicalFieldsAsync
+    await Assert.That(runnerSource!).Contains("UpsertAsync(");
+    await Assert.That(runnerSource!).DoesNotContain("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).DoesNotContain("physicalFieldValues");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_MultiplePhysicalFields_GeneratesAllFieldsAsync() {
+    // Arrange - model with multiple physical fields
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record ProductUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record ProductModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField(Indexed = true)]
+    public string Sku { get; init; } = """";
+
+    [VectorField(768)]
+    public float[]? DescriptionEmbedding { get; init; }
+
+    [PhysicalField]
+    public decimal Price { get; init; }
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate all physical fields in dictionary
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should have all three physical fields
+    await Assert.That(runnerSource!).Contains(@"""sku""");
+    await Assert.That(runnerSource!).Contains(@"""description_embedding""");
+    await Assert.That(runnerSource!).Contains(@"""price""");
+    await Assert.That(runnerSource!).Contains("model.Sku");
+    await Assert.That(runnerSource!).Contains("model.DescriptionEmbedding");
+    await Assert.That(runnerSource!).Contains("model.Price");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_VectorFieldWithCustomColumnName_UsesCustomNameAsync() {
+    // Arrange - VectorField with custom ColumnName
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EmbeddingEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record EmbeddingModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(1536, ColumnName = ""custom_embedding_col"")]
+    public float[]? Vector { get; init; }
+  }
+
+  public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, EmbeddingEvent> {
+    public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should use custom column name
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use custom column name instead of snake_case default
+    await Assert.That(runnerSource!).Contains(@"""custom_embedding_col""");
+    await Assert.That(runnerSource!).Contains("model.Vector");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_StaticProperty_NotIncludedInPhysicalFieldsAsync() {
+    // Arrange - Static properties with VectorField should be ignored
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record TestEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public class TestModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(512)]
+    public static float[]? StaticVector { get; set; }  // Static - should be ignored
+
+    public string Name { get; init; } = """";
+  }
+
+  public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+    public TestModel Apply(TestModel currentData, TestEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Static vector field should NOT be in physical fields
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TestPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use simple UpsertAsync (no physical fields after excluding static)
+    await Assert.That(runnerSource!).DoesNotContain("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).DoesNotContain("StaticVector");
+    await Assert.That(runnerSource!).Contains("UpsertAsync(");
+  }
 }

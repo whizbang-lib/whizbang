@@ -385,6 +385,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid checkpointEventId,
       CancellationToken cancellationToken) {
 
+    #region UPSERT_CALL
     // Upsert model (insert or update)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     await _perspectiveStore.UpsertAsync(
@@ -392,5 +393,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         model,
         cancellationToken
     );
+    #endregion
   }
 }

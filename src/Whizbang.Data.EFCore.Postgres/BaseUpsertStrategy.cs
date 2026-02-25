@@ -73,6 +73,8 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     if (physicalFieldValues != null) {
       var entry = context.Entry(row);
       foreach (var (columnName, value) in physicalFieldValues) {
+        // Values should already be the correct type (Vector, not float[])
+        // The source generator converts float[] to Vector at compile time
         entry.Property(columnName).CurrentValue = value;
       }
     }

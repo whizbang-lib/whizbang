@@ -78,6 +78,59 @@ __PHYSICAL_FIELD_CONFIGS__
 
 
   /// <summary>
+  /// Configuration for a PerspectiveRow&lt;TModel&gt; entity with polymorphic types.
+  /// Uses Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson() to allow
+  /// System.Text.Json polymorphic serialization to handle abstract types.
+  /// Placeholders: __MODEL_TYPE__, __TABLE_NAME__, __SCHEMA__
+  /// </summary>
+  public void PerspectiveEntityConfigurationPolymorphic(ModelBuilder modelBuilder) {
+    #region PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET
+    // PerspectiveRow<__MODEL_TYPE__> - POLYMORPHIC MODEL
+    // Uses Property().HasColumnType("jsonb") for System.Text.Json polymorphic serialization
+    // This allows abstract types with [JsonPolymorphic] to work correctly
+    modelBuilder.Entity<PerspectiveRow<__MODEL_TYPE__>>(entity => {
+      entity.ToTable("__TABLE_NAME__");
+      entity.HasKey(e => e.Id);
+
+      // Primary key
+      entity.Property(e => e.Id).HasColumnName("id");
+
+      // JSONB columns - Using Property().HasColumnType("jsonb") for polymorphic support
+      //
+      // Unlike ComplexProperty().ToJson(), this approach:
+      //   - Allows System.Text.Json polymorphic serialization ([JsonPolymorphic], [JsonDerivedType])
+      //   - Supports abstract types in the model hierarchy
+      //   - Uses JsonContextRegistry for serialization options
+      //
+      // IMPORTANT: Queries on nested JSON properties require explicit JSON path operators
+      // or use of the polymorphic query extensions (WherePolymorphic, As<TDerived>).
+      //
+      // For type-based queries, use physical discriminator columns marked with
+      // [PolymorphicDiscriminator] for efficient indexed queries.
+      //
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+
+      // System fields
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+      entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+
+      // Indexes
+      entity.HasIndex(e => e.CreatedAt);
+
+      // GIN indexes for JSONB columns
+      entity.HasIndex(e => e.Data).HasMethod("gin");
+      entity.HasIndex(e => e.Scope).HasMethod("gin");
+
+      // Physical fields (shadow properties for database columns)
+__PHYSICAL_FIELD_CONFIGS__
+    });
+    #endregion
+  }
+
+  /// <summary>
   /// AOT-compatible registration for core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator).
   /// Placeholders: __DBCONTEXT_FQN__
   /// </summary>

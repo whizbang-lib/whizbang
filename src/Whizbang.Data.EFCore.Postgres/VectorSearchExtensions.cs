@@ -66,6 +66,12 @@ public static class VectorSearchExtensions {
       ((MethodCallExpression)((Expression<Func<object, Vector>>)
           (obj => EF.Property<Vector>(obj, ""))).Body).Method;
 
+  // AOT-Safe: Capture EF.Property<object?> MethodInfo for null checks
+  // Using object? avoids triggering Pgvector type handlers during IS NOT NULL checks
+  private static readonly System.Reflection.MethodInfo _efPropertyObjectMethod =
+      ((MethodCallExpression)((Expression<Func<object, object?>>)
+          (obj => EF.Property<object?>(obj, ""))).Body).Method;
+
   // ========================================
   // OrderByCosineDistance - Constant Vector
   // ========================================
@@ -419,6 +425,40 @@ public static class VectorSearchExtensions {
   }
 
   // ========================================
+  // WhereHasVector - Filter NULL vectors
+  // ========================================
+
+  /// <summary>
+  /// Filters out rows where the vector column is NULL.
+  /// PostgreSQL: <c>WHERE column IS NOT NULL</c>
+  /// </summary>
+  /// <remarks>
+  /// Use this before vector distance operations to avoid "Nullable object must have a value" errors.
+  /// Rows with NULL vectors cannot participate in distance calculations.
+  /// </remarks>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <returns>A filtered queryable containing only rows with non-null vectors.</returns>
+  public static IQueryable<PerspectiveRow<TModel>> WhereHasVector<TModel>(
+      this IQueryable<PerspectiveRow<TModel>> query,
+      Expression<Func<TModel, float[]?>> vectorSelector)
+      where TModel : class {
+    ArgumentNullException.ThrowIfNull(vectorSelector);
+
+    var propertyName = _getPropertyNameFromSelector(vectorSelector);
+
+    var param = Expression.Parameter(typeof(PerspectiveRow<TModel>), "r");
+    // Use EF.Property<object?> for null check to avoid triggering Pgvector type handlers
+    // EF Core translates this to: WHERE shadow_column IS NOT NULL
+    var vectorProperty = _buildEfPropertyAccessForNullCheck(param, propertyName);
+    var nullCheck = Expression.NotEqual(vectorProperty, Expression.Constant(null, typeof(object)));
+    var lambda = Expression.Lambda<Func<PerspectiveRow<TModel>, bool>>(nullCheck, param);
+
+    return query.Where(lambda);
+  }
+
+  // ========================================
   // WithCosineDistance - Project with Distance/Similarity
   // ========================================
 
@@ -575,6 +615,17 @@ public static class VectorSearchExtensions {
     // Build: EF.Property<Vector>(instance, shadowPropertyName)
     // Using cached _efPropertyVectorMethod instead of string-based Expression.Call
     return Expression.Call(_efPropertyVectorMethod, instance, Expression.Constant(shadowPropertyName));
+  }
+
+  /// <summary>
+  /// Builds EF.Property&lt;object?&gt; access expression for null checking shadow properties.
+  /// Uses object? type to avoid triggering Pgvector type handlers during null checks.
+  /// </summary>
+  private static MethodCallExpression _buildEfPropertyAccessForNullCheck(Expression instance, string propertyName) {
+    var shadowPropertyName = _toSnakeCase(propertyName);
+    // Build: EF.Property<object?>(instance, shadowPropertyName)
+    // Using object? avoids Pgvector type resolution issues when checking IS NOT NULL
+    return Expression.Call(_efPropertyObjectMethod, instance, Expression.Constant(shadowPropertyName));
   }
 
   /// <summary>

@@ -2964,4 +2964,245 @@ public class SimpleCommand : ICommand {
     await Assert.That(code).DoesNotContain("\"GetType\"");
     await Assert.That(code).DoesNotContain("\"GetHashCode\"");
   }
+
+  // ==================== Polymorphic Type Discovery Tests ====================
+
+  /// <summary>
+  /// Tests that when a message property has an abstract type with [JsonPolymorphic],
+  /// the generator discovers concrete derived types and generates JsonTypeInfo for them.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync() {
+    // Arrange - Message with polymorphic abstract property
+    var source = """
+using Whizbang.Core;
+using System.Text.Json.Serialization;
+
+namespace TestApp;
+
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
+[JsonDerivedType(typeof(TextFieldSettings), "text")]
+[JsonDerivedType(typeof(NumberFieldSettings), "number")]
+public abstract record AbstractFieldSettings {
+  public string Name { get; init; } = "";
+}
+
+public record TextFieldSettings : AbstractFieldSettings {
+  public int MaxLength { get; init; }
+}
+
+public record NumberFieldSettings : AbstractFieldSettings {
+  public decimal MinValue { get; init; }
+  public decimal MaxValue { get; init; }
+}
+
+public record FormField : ICommand {
+  public string FieldId { get; init; } = "";
+  public AbstractFieldSettings Settings { get; init; } = null!;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate factory methods for concrete derived types
+    await Assert.That(code!).Contains("Create_TestApp_TextFieldSettings");
+    await Assert.That(code).Contains("Create_TestApp_NumberFieldSettings");
+
+    // Should NOT try to create factory for abstract base type
+    await Assert.That(code).DoesNotContain("new global::TestApp.AbstractFieldSettings()");
+  }
+
+  /// <summary>
+  /// Tests that derived types are discovered even from [JsonDerivedType] attributes
+  /// without being directly referenced in message properties.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverDerivedTypesFromAttributes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync() {
+    // Arrange - Derived types only listed in attributes, not used directly
+    var source = """
+using Whizbang.Core;
+using System.Text.Json.Serialization;
+
+namespace TestApp;
+
+[JsonPolymorphic]
+[JsonDerivedType(typeof(ConcreteSetting1))]
+[JsonDerivedType(typeof(ConcreteSetting2))]
+public abstract class BaseSetting {
+  public string Id { get; init; } = "";
+}
+
+public class ConcreteSetting1 : BaseSetting {
+  public string Value1 { get; init; } = "";
+}
+
+public class ConcreteSetting2 : BaseSetting {
+  public int Value2 { get; init; }
+}
+
+public record ConfigCommand : ICommand {
+  public BaseSetting Setting { get; init; } = null!;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should discover and generate for derived types from attributes
+    await Assert.That(code!).Contains("Create_TestApp_ConcreteSetting1");
+    await Assert.That(code).Contains("Create_TestApp_ConcreteSetting2");
+  }
+
+  /// <summary>
+  /// Tests that derived types in different namespace are correctly discovered
+  /// when listed in [JsonDerivedType] attributes.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverDerivedTypesFromAttributes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync() {
+    // Arrange - Derived type in different namespace
+    var source = """
+using Whizbang.Core;
+using System.Text.Json.Serialization;
+using TestApp.Settings;
+
+namespace TestApp;
+
+[JsonPolymorphic]
+[JsonDerivedType(typeof(TestApp.Settings.AdvancedSetting))]
+public abstract class BaseConfig {
+  public string Name { get; init; } = "";
+}
+
+namespace TestApp.Settings;
+
+public class AdvancedSetting : BaseConfig {
+  public bool Enabled { get; init; }
+}
+
+namespace TestApp;
+
+public record SetupCommand : ICommand {
+  public BaseConfig Config { get; init; } = null!;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should discover derived type from different namespace
+    await Assert.That(code!).Contains("TestApp_Settings_AdvancedSetting");
+  }
+
+  /// <summary>
+  /// Tests that polymorphic types used in collections are correctly handled.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithJsonPolymorphicInCollection_DiscoversDerivedTypesAsync() {
+    // Arrange - Polymorphic type used in a List
+    var source = """
+using Whizbang.Core;
+using System.Text.Json.Serialization;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+[JsonPolymorphic]
+[JsonDerivedType(typeof(TextField))]
+[JsonDerivedType(typeof(CheckboxField))]
+public abstract record FormFieldBase {
+  public string Label { get; init; } = "";
+}
+
+public record TextField : FormFieldBase {
+  public string Placeholder { get; init; } = "";
+}
+
+public record CheckboxField : FormFieldBase {
+  public bool DefaultChecked { get; init; }
+}
+
+public record CreateFormCommand : ICommand {
+  public string FormName { get; init; } = "";
+  public List<FormFieldBase> Fields { get; init; } = new();
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should discover derived types from polymorphic base in collection
+    await Assert.That(code!).Contains("Create_TestApp_TextField");
+    await Assert.That(code).Contains("Create_TestApp_CheckboxField");
+  }
+
+  /// <summary>
+  /// Tests diagnostic reporting when [JsonPolymorphic] types are discovered.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_generateWhizbangJsonContext</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithJsonPolymorphicType_ReportsDiagnosticForDerivedTypesAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Text.Json.Serialization;
+
+namespace TestApp;
+
+[JsonPolymorphic]
+[JsonDerivedType(typeof(DerivedA))]
+public abstract class PolymorphicBase { }
+
+public class DerivedA : PolymorphicBase { }
+
+public record TestCommand : ICommand {
+  public PolymorphicBase Item { get; init; } = null!;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should report discovery of derived types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Should report diagnostic for discovered derived type (WHIZ011 is JsonSerializableTypeDiscovered)
+    var discoveryDiagnostics = result.Diagnostics
+        .Where(d => d.Id == "WHIZ011" && d.GetMessage(CultureInfo.InvariantCulture).Contains("DerivedA"))
+        .ToList();
+    await Assert.That(discoveryDiagnostics.Count).IsGreaterThanOrEqualTo(1);
+  }
 }
