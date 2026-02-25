@@ -226,10 +226,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
 
+    // Detect polymorphic properties in model type
+    var hasPolymorphicProperties = _hasPolymorphicProperties(modelType as INamedTypeSymbol);
+
     return new PerspectiveCandidate(
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         TableBaseName: tableBaseName,
-        PhysicalFields: physicalFields
+        PhysicalFields: physicalFields,
+        HasPolymorphicProperties: hasPolymorphicProperties
     );
   }
 
@@ -246,12 +250,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     return new PerspectiveInfo(
         ModelTypeName: candidate.ModelTypeName,
         TableName: tableName,
-        PhysicalFields: candidate.PhysicalFields
+        PhysicalFields: candidate.PhysicalFields,
+        HasPolymorphicProperties: candidate.HasPolymorphicProperties
     );
   }
 
   private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+  private const string POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE = "Whizbang.Core.Perspectives.PolymorphicDiscriminatorAttribute";
+  private const string JSON_POLYMORPHIC_ATTRIBUTE = "System.Text.Json.Serialization.JsonPolymorphicAttribute";
 
   /// <summary>
   /// Extracts physical field information from a model type.
@@ -273,6 +280,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       var vectorFieldAttr = property.GetAttributes()
           .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE);
 
+      var polymorphicDiscriminatorAttr = property.GetAttributes()
+          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE);
+
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
         if (info is not null) {
@@ -280,6 +290,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         }
       } else if (vectorFieldAttr is not null) {
         var info = _extractVectorFieldInfo(property, vectorFieldAttr);
+        if (info is not null) {
+          physicalFields.Add(info);
+        }
+      } else if (polymorphicDiscriminatorAttr is not null) {
+        var info = _extractPolymorphicDiscriminatorInfo(property, polymorphicDiscriminatorAttr);
         if (info is not null) {
           physicalFields.Add(info);
         }
@@ -410,6 +425,191 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     );
   }
 
+  /// <summary>
+  /// Extracts PhysicalFieldInfo from a [PolymorphicDiscriminator] attribute.
+  /// Polymorphic discriminators are always string columns with an index for efficient queries.
+  /// </summary>
+  private static PhysicalFieldInfo? _extractPolymorphicDiscriminatorInfo(
+      IPropertySymbol property,
+      AttributeData attribute) {
+    var propertyName = property.Name;
+
+    // Polymorphic discriminators are always strings (type name discriminator)
+    var typeName = "global::System.String";
+
+    // Extract named arguments
+    string? columnName = null;
+
+    foreach (var namedArg in attribute.NamedArguments) {
+      if (namedArg.Key == "ColumnName") {
+        columnName = namedArg.Value.Value as string;
+      }
+    }
+
+    // Default column name is snake_case of property name
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
+
+    return new PhysicalFieldInfo(
+        PropertyName: propertyName,
+        ColumnName: finalColumnName,
+        TypeName: typeName,
+        IsIndexed: true, // Discriminators are always indexed for efficient queries
+        IsUnique: false, // Discriminators are not unique (many rows can have same type)
+        MaxLength: null, // No max length - TEXT type for full type names
+        IsVector: false,
+        VectorDimensions: null,
+        VectorDistanceMetric: null,
+        VectorIndexType: null,
+        VectorIndexLists: null
+    );
+  }
+
+  /// <summary>
+  /// Checks if a model type contains any polymorphic properties (abstract types or [JsonPolymorphic] types).
+  /// </summary>
+  private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return false;
+    }
+
+    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+    return _checkForPolymorphicTypes(modelType, visited);
+  }
+
+  /// <summary>
+  /// Recursively checks if a type or its nested types contain polymorphic properties.
+  /// </summary>
+  private static bool _checkForPolymorphicTypes(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
+    // Cycle detection
+    if (!visited.Add(type)) {
+      return false;
+    }
+
+    // Skip system types (except System.Collections)
+    var ns = type.ContainingNamespace?.ToDisplayString();
+    if (ns != null && ns.StartsWith("System", StringComparison.Ordinal) &&
+        !ns.StartsWith("System.Collections", StringComparison.Ordinal)) {
+      return false;
+    }
+
+    var properties = type.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly);
+
+    foreach (var property in properties) {
+      // Skip ignored properties
+      if (_isPropertyIgnored(property)) {
+        continue;
+      }
+
+      var propType = property.Type as INamedTypeSymbol;
+      if (propType == null) {
+        continue;
+      }
+
+      // Get the element type if this is a collection
+      var elementType = _getCollectionElementType(propType);
+      var typeToCheck = elementType ?? propType;
+
+      // Check if this type is polymorphic
+      if (_isPolymorphicType(typeToCheck)) {
+        return true;
+      }
+
+      // Recursively check nested types
+      if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
+          !_isSystemPrimitiveType(typeToCheck)) {
+        if (_checkForPolymorphicTypes(typeToCheck, visited)) {
+          return true;
+        }
+      }
+
+      // Check generic type arguments
+      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+        if (_isPolymorphicType(typeArg)) {
+          return true;
+        }
+        if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a type is polymorphic (abstract class or has [JsonPolymorphic] attribute).
+  /// </summary>
+  private static bool _isPolymorphicType(INamedTypeSymbol type) {
+    // Check if type is an abstract class
+    if (type.IsAbstract && type.TypeKind == TypeKind.Class) {
+      return true;
+    }
+
+    // Check for [JsonPolymorphic] attribute
+    foreach (var attr in type.GetAttributes()) {
+      if (attr.AttributeClass?.ToDisplayString() == JSON_POLYMORPHIC_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
+  /// </summary>
+  private static bool _isPropertyIgnored(IPropertySymbol property) {
+    foreach (var attr in property.GetAttributes()) {
+      var attrName = attr.AttributeClass?.ToDisplayString();
+      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute" ||
+          attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute" ||
+          attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Gets the element type if the type is a collection (List, IEnumerable, array, etc.).
+  /// </summary>
+  private static INamedTypeSymbol? _getCollectionElementType(INamedTypeSymbol type) {
+    // Check for generic collection types
+    if (!type.IsGenericType || type.TypeArguments.Length == 0) {
+      return null;
+    }
+
+    var originalDef = type.ConstructedFrom.ToDisplayString();
+
+    // Common collection interfaces and types
+    if (originalDef.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Generic.IList<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Immutable.ImmutableList<", StringComparison.Ordinal) ||
+        originalDef.StartsWith("System.Collections.Immutable.ImmutableArray<", StringComparison.Ordinal)) {
+      return type.TypeArguments[0] as INamedTypeSymbol;
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Checks if a type is a system primitive type that won't contain polymorphic properties.
+  /// </summary>
+  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
+    var ns = type.ContainingNamespace?.ToDisplayString();
+    if (ns == "System") {
+      var name = type.Name;
+      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
+             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
+    }
+    return false;
+  }
 
   /// <summary>
   /// Generates EF Core shadow property configurations for physical fields.
@@ -613,11 +813,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       perspectiveConfigs.AppendLine();
 
       foreach (var perspective in uniquePerspectives) {
-        // Extract perspective entity config snippet
+        // Extract perspective entity config snippet - use polymorphic version if model has polymorphic types
+        var snippetName = perspective.HasPolymorphicProperties
+            ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
+            : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
         var snippet = TemplateUtilities.ExtractSnippet(
             assembly,
             "EFCoreSnippets.cs",
-            "PERSPECTIVE_ENTITY_CONFIG_SNIPPET",
+            snippetName,
             "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
         );
 

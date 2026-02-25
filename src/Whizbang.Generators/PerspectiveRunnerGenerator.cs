@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
@@ -141,6 +142,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Compute CLR format name for database storage (uses + for nested types)
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
+    // Discover physical fields (including vector fields) on model properties
+    var physicalFields = _discoverPhysicalFields(modelType);
+
     return new PerspectiveOrWarning(
         Info: new PerspectiveInfo(
             ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -152,7 +156,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             StreamIdPropertyName: streamKeyPropertyName,
             EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
-            EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
+            EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
+            PhysicalFields: physicalFields.Length > 0 ? physicalFields : null
         ),
         Warning: null
     );
@@ -309,6 +314,9 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
+    // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
+    var upsertCode = _generateUpsertCode(perspective);
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
@@ -316,6 +324,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
 
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
@@ -324,6 +333,57 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates the upsert code for the SaveModelAndCheckpointAsync method.
+  /// Uses UpsertWithPhysicalFieldsAsync when physical fields exist, UpsertAsync otherwise.
+  /// </summary>
+  private static string _generateUpsertCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+
+    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
+      // No physical fields - use simple UpsertAsync
+      sb.AppendLine("    // Upsert model (insert or update)");
+      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+      sb.AppendLine("    await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("        streamId,");
+      sb.AppendLine("        model,");
+      sb.AppendLine("        cancellationToken");
+      sb.AppendLine("    );");
+    } else {
+      // Has physical fields - extract values and use UpsertWithPhysicalFieldsAsync
+      sb.AppendLine("    // Extract physical field values from model (including vector fields)");
+      sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
+      sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
+      sb.AppendLine("    {");
+
+      for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
+        var field = perspective.PhysicalFields[i];
+        var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
+
+        // Vector fields need conversion from float[] to Pgvector.Vector
+        // This is done at compile time to maintain AOT compatibility (no reflection)
+        if (field.IsVectorField) {
+          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
+        } else {
+          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
+        }
+      }
+
+      sb.AppendLine("    };");
+      sb.AppendLine();
+      sb.AppendLine("    // Upsert model with physical field values (insert or update)");
+      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+      sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
+      sb.AppendLine("        streamId,");
+      sb.AppendLine("        model,");
+      sb.AppendLine("        physicalFieldValues,");
+      sb.AppendLine("        cancellationToken");
+      sb.AppendLine("    );");
+    }
+
+    return sb.ToString().TrimEnd('\r', '\n');
   }
 
   // ========================================
@@ -555,6 +615,54 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private static string _getRunnerName(string simpleName) {
     // Remove dots from nested type names to create valid C# identifier
     return $"{simpleName.Replace(".", "")}Runner";
+  }
+
+  /// <summary>
+  /// Discovers physical fields (marked with [PhysicalField] or [VectorField]) on model properties.
+  /// These fields need to be extracted and passed to UpsertWithPhysicalFieldsAsync.
+  /// </summary>
+  private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
+    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+
+    var physicalFields = new List<PhysicalFieldInfoCompact>();
+
+    foreach (var member in modelType.GetMembers()) {
+      if (member is not IPropertySymbol property || property.IsStatic) {
+        continue;
+      }
+
+      string? columnName = null;
+      bool isVectorField = false;
+
+      foreach (var attribute in property.GetAttributes()) {
+        var attrClassName = attribute.AttributeClass?.ToDisplayString();
+
+        if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE || attrClassName == VECTOR_FIELD_ATTRIBUTE) {
+          isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
+
+          // Extract ColumnName from named argument if provided
+          foreach (var namedArg in attribute.NamedArguments) {
+            if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
+              columnName = cn;
+              break;
+            }
+          }
+
+          // Default column name is snake_case of property name
+          columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
+
+          physicalFields.Add(new PhysicalFieldInfoCompact(
+              PropertyName: property.Name,
+              ColumnName: columnName,
+              IsVectorField: isVectorField
+          ));
+          break;  // Only one attribute per property
+        }
+      }
+    }
+
+    return physicalFields.ToArray();
   }
 
 }

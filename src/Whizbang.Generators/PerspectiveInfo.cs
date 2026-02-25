@@ -29,7 +29,21 @@ internal sealed record PerspectiveInfo(
     EventStreamIdInfo[]? EventStreamIds = null,
     EventValidationError[]? EventValidationErrors = null,
     string[]? MustExistEventTypes = null,
-    EventReturnTypeInfo[]? EventReturnTypes = null
+    EventReturnTypeInfo[]? EventReturnTypes = null,
+    PhysicalFieldInfoCompact[]? PhysicalFields = null
+);
+
+/// <summary>
+/// Compact physical field info for perspective runner generation.
+/// Contains only the data needed for runtime extraction of values.
+/// </summary>
+/// <param name="PropertyName">Name of the property on the model</param>
+/// <param name="ColumnName">Database column name (snake_case)</param>
+/// <param name="IsVectorField">True if this is a [VectorField] requiring Pgvector.Vector conversion</param>
+internal sealed record PhysicalFieldInfoCompact(
+    string PropertyName,
+    string ColumnName,
+    bool IsVectorField = false
 );
 
 /// <summary>

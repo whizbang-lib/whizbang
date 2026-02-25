@@ -54,4 +54,19 @@ internal static class DiagnosticDescriptors {
       description: "Add <PackageReference Include=\"Pgvector\" /> for NpgsqlDataSourceBuilder.UseVector() support. This is the base package for pgvector types.",
       customTags: [WellKnownDiagnosticTags.CompilationEnd]
   );
+
+  /// <summary>
+  /// WHIZ811: Info - Perspective model contains polymorphic type property.
+  /// The model uses JSONB storage with System.Text.Json polymorphic serialization.
+  /// </summary>
+  /// <docs>perspectives/polymorphic-types</docs>
+  public static readonly DiagnosticDescriptor PerspectiveModelPolymorphicProperty = new(
+      id: "WHIZ811",
+      title: "Perspective model contains polymorphic type",
+      messageFormat: "Property '{0}' on perspective model '{1}' is abstract type '{2}'. Consider using [PolymorphicDiscriminator] on a discriminator property for efficient type-based queries.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Abstract types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
+  );
 }

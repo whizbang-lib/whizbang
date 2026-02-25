@@ -10,7 +10,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 
 /// <summary>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/SchemaHashUtilitiesTests.cs</tests>
-/// <docs>v1.0.0/data/schema-migration</docs>
+/// <docs>data/schema-migration</docs>
 /// Utilities for canonical JSON serialization and SHA-256 hashing of perspective schemas.
 /// Ensures consistent hash generation across platforms for schema drift detection.
 ///

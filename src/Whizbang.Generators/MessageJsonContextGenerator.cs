@@ -36,7 +36,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithGetOnlyProperty_UsesNullSetterAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithRecordStructNestedType_DiscoversStructAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync</tests>
-/// <docs>v1.0.0/source-generators/json-contexts</docs>
+/// <docs>source-generators/json-contexts</docs>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
 /// This context handles message types discovered in the current assembly.
@@ -954,9 +954,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           continue;
         }
 
-        // Skip abstract types - they cannot be instantiated directly
-        // STJ handles these via polymorphic deserialization or user-provided converters
+        // Handle abstract types with [JsonPolymorphic] - discover their derived types
+        // For polymorphic types, we don't generate JsonTypeInfo for the abstract base,
+        // but we DO discover and generate for concrete derived types
         if (typeSymbol.IsAbstract) {
+          // Check if this abstract type has [JsonPolymorphic] attribute
+          if (_hasJsonPolymorphicAttribute(typeSymbol)) {
+            // Discover derived types from [JsonDerivedType] attributes
+            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol, compilation);
+            foreach (var derivedType in derivedTypes) {
+              var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+              // Skip if already processed
+              if (processedTypes.Contains(derivedTypeName)) {
+                continue;
+              }
+
+              // Extract properties and create type info for derived type
+              var derivedProperties = _extractPropertiesFromType(derivedType);
+              var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
+              var derivedClrTypeName = _getClrTypeName(derivedType);
+
+              var derivedTypeInfo = new JsonMessageTypeInfo(
+                  FullyQualifiedName: derivedTypeName,
+                  ClrTypeName: derivedClrTypeName,
+                  SimpleName: derivedType.Name,
+                  IsCommand: false,
+                  IsEvent: false,
+                  IsSerializable: false,
+                  Properties: derivedProperties,
+                  HasParameterizedConstructor: hasDerivedCtor
+              );
+
+              nestedTypes[derivedTypeName] = derivedTypeInfo;
+              processedTypes.Add(derivedTypeName);
+              typesToProcess.Enqueue(derivedTypeInfo);
+            }
+          }
+          // Mark abstract type as processed to avoid re-checking
+          processedTypes.Add(typeNameToProcess);
           continue;
         }
 
@@ -1455,6 +1491,62 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
         a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+  }
+
+  /// <summary>
+  /// Checks if a type has the [JsonPolymorphic] attribute.
+  /// Types with this attribute indicate they have derived types that should be discovered.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
+  private static bool _hasJsonPolymorphicAttribute(INamedTypeSymbol typeSymbol) {
+    return typeSymbol.GetAttributes().Any(a =>
+        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ==
+        "global::System.Text.Json.Serialization.JsonPolymorphicAttribute");
+  }
+
+  /// <summary>
+  /// Discovers derived types from [JsonDerivedType] attributes on a polymorphic base type.
+  /// Returns public, non-abstract derived types that can be instantiated.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync</tests>
+  private static List<INamedTypeSymbol> _discoverDerivedTypesFromAttributes(
+      INamedTypeSymbol polymorphicBaseType,
+      Compilation compilation) {
+
+    var discoveredTypes = new List<INamedTypeSymbol>();
+
+    foreach (var attr in polymorphicBaseType.GetAttributes()) {
+      // Check for [JsonDerivedType(typeof(DerivedType), ...)]
+      if (attr.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) !=
+          "global::System.Text.Json.Serialization.JsonDerivedTypeAttribute") {
+        continue;
+      }
+
+      // First constructor argument is the derived type
+      if (attr.ConstructorArguments.Length == 0) {
+        continue;
+      }
+
+      var typeArg = attr.ConstructorArguments[0];
+      if (typeArg.Value is not INamedTypeSymbol derivedType) {
+        continue;
+      }
+
+      // Skip abstract types (they need their own discovery)
+      if (derivedType.IsAbstract) {
+        continue;
+      }
+
+      // Skip non-public types
+      if (derivedType.DeclaredAccessibility != Accessibility.Public) {
+        continue;
+      }
+
+      discoveredTypes.Add(derivedType);
+    }
+
+    return discoveredTypes;
   }
 
   /// <summary>

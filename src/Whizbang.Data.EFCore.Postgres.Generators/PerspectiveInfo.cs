@@ -20,10 +20,12 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <param name="ModelTypeName">Fully qualified model type name (e.g., "global::MyApp.Orders.OrderSummary")</param>
 /// <param name="TableName">PostgreSQL table name for this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 internal sealed record PerspectiveInfo(
     string ModelTypeName,
     string TableName,
-    ImmutableArray<PhysicalFieldInfo> PhysicalFields
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    bool HasPolymorphicProperties
 );
 
 /// <summary>
@@ -33,8 +35,10 @@ internal sealed record PerspectiveInfo(
 /// <param name="ModelTypeName">Fully qualified model type name (e.g., "global::MyApp.Orders.OrderSummary")</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="HasPolymorphicProperties">Whether the model contains abstract/polymorphic type properties</param>
 internal sealed record PerspectiveCandidate(
     string ModelTypeName,
     string TableBaseName,
-    ImmutableArray<PhysicalFieldInfo> PhysicalFields
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    bool HasPolymorphicProperties
 );

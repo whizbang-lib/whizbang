@@ -870,6 +870,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.EntityFrameworkCore;");
     sb.AppendLine("using Microsoft.Extensions.Configuration;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
     sb.AppendLine("using Microsoft.Extensions.Logging;");
     sb.AppendLine("using Whizbang.Core.Lenses;");
     sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
@@ -1084,6 +1085,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine($"      // Use override if provided, otherwise fall back to attribute/derived default");
     sb.AppendLine($"      var connectionStringKey = connectionStringNameOverride ?? \"{defaultConnectionStringKey}\";");
+    sb.AppendLine();
+    sb.AppendLine("      // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
+    sb.AppendLine("      // to ensure Whizbang's version with UseVector() and JSON options is used");
+    sb.AppendLine("      services.RemoveAll<Npgsql.NpgsqlDataSource>();");
     sb.AppendLine();
     sb.AppendLine("      // Register NpgsqlDataSource as singleton using factory pattern");
     sb.AppendLine("      // Connection string resolved from IConfiguration at runtime");
