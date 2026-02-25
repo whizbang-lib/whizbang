@@ -9,7 +9,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// ASP.NET Core middleware that extracts scope from HTTP context and sets it in the scope context accessor.
 /// Supports extraction from JWT claims and custom headers.
 /// </summary>
-/// <docs>v0.1.0/graphql/scoping#middleware</docs>
+/// <docs>graphql/scoping#middleware</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/ScopedQueryTests.cs</tests>
 /// <example>
 /// // In Program.cs or Startup.cs
@@ -204,7 +204,7 @@ public class WhizbangScopeMiddleware {
 /// Configuration options for scope extraction middleware.
 /// Supports fallback claim types for common identity provider variations.
 /// </summary>
-/// <docs>v0.1.0/graphql/scoping#options</docs>
+/// <docs>graphql/scoping#options</docs>
 /// <example>
 /// services.Configure&lt;WhizbangScopeOptions&gt;(options => {
 ///     options.TenantIdClaimType = "tenant_id";
