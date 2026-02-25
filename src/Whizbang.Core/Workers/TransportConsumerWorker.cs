@@ -114,15 +114,22 @@ public class TransportConsumerWorker : BackgroundService {
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation("TransportConsumerWorker starting with {DestinationCount} destinations", _options.Destinations.Count);
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var destinationCount = _options.Destinations.Count;
+      _logger.LogInformation("TransportConsumerWorker starting with {DestinationCount} destinations", destinationCount);
+    }
 
     // Log all destinations we're going to subscribe to
     foreach (var destination in _options.Destinations) {
-      _logger.LogInformation(
-        "  → Destination: {Address} (routing key: {RoutingKey})",
-        destination.Address,
-        destination.RoutingKey ?? "#"
-      );
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        var address = destination.Address;
+        var routingKey = destination.RoutingKey ?? "#";
+        _logger.LogInformation(
+          "  → Destination: {Address} (routing key: {RoutingKey})",
+          address,
+          routingKey
+        );
+      }
     }
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -144,9 +151,12 @@ public class TransportConsumerWorker : BackgroundService {
       var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
       var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
       if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
-        _logger.LogInformation(
-          "Provisioning infrastructure for {Count} owned domains",
-          routingOptions.OwnedDomains.Count);
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          var ownedDomainsCount = routingOptions.OwnedDomains.Count;
+          _logger.LogInformation(
+            "Provisioning infrastructure for {Count} owned domains",
+            ownedDomainsCount);
+        }
 
         await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
 
@@ -157,14 +167,16 @@ public class TransportConsumerWorker : BackgroundService {
     // Subscribe to all destinations with retry
     await _subscribeToAllDestinationsAsync(stoppingToken);
 
-    var healthyCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Healthy);
-    var failedCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Failed);
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var healthyCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Healthy);
+      var failedCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Failed);
 
-    _logger.LogInformation(
-      "TransportConsumerWorker started with {HealthyCount} healthy, {FailedCount} failed subscriptions",
-      healthyCount,
-      failedCount
-    );
+      _logger.LogInformation(
+        "TransportConsumerWorker started with {HealthyCount} healthy, {FailedCount} failed subscriptions",
+        healthyCount,
+        failedCount
+      );
+    }
 
     // Start health monitor in background
     _ = _monitorSubscriptionHealthAsync(_linkedCts.Token);
@@ -206,11 +218,15 @@ public class TransportConsumerWorker : BackgroundService {
   /// Subscribes to a single destination with retry logic.
   /// </summary>
   private async Task _subscribeWithRetryAsync(SubscriptionState state, CancellationToken cancellationToken) {
-    _logger.LogInformation(
-      "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
-      state.Destination.Address,
-      state.Destination.RoutingKey
-    );
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var address = state.Destination.Address;
+      var routingKey = state.Destination.RoutingKey;
+      _logger.LogInformation(
+        "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
+        address,
+        routingKey
+      );
+    }
 
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
@@ -256,10 +272,13 @@ public class TransportConsumerWorker : BackgroundService {
           .ToList();
 
         if (failedStates.Count > 0) {
-          _logger.LogInformation(
-            "Health monitor: attempting to recover {Count} failed subscriptions",
-            failedStates.Count
-          );
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            var count = failedStates.Count;
+            _logger.LogInformation(
+              "Health monitor: attempting to recover {Count} failed subscriptions",
+              count
+            );
+          }
 
           foreach (var state in failedStates) {
             // Reset and retry in background
@@ -294,10 +313,13 @@ public class TransportConsumerWorker : BackgroundService {
       // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
-      _logger.LogDebug(
-        "Processing message {MessageId} from transport",
-        envelope.MessageId
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug(
+          "Processing message {MessageId} from transport",
+          messageId
+        );
+      }
 
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
@@ -312,18 +334,25 @@ public class TransportConsumerWorker : BackgroundService {
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
       if (myWork.Count == 0) {
-        _logger.LogInformation(
-          "Message {MessageId} already processed (duplicate), skipping",
-          envelope.MessageId
-        );
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          var messageId = envelope.MessageId;
+          _logger.LogInformation(
+            "Message {MessageId} already processed (duplicate), skipping",
+            messageId
+          );
+        }
         return;
       }
 
-      _logger.LogDebug(
-        "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
-        envelope.MessageId,
-        myWork.Count
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        var workCount = myWork.Count;
+        _logger.LogDebug(
+          "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
+          messageId,
+          workCount
+        );
+      }
 
       // 5. Invoke PreInbox lifecycle stages (ALL receptors registered at PreInbox stages)
       foreach (var work in myWork) {
@@ -388,7 +417,9 @@ public class TransportConsumerWorker : BackgroundService {
         },
         completionHandler: (msgId, status) => {
           strategy.QueueInboxCompletion(msgId, status);
-          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+          }
         },
         failureHandler: (msgId, status, error) => {
           strategy.QueueInboxFailure(msgId, status, error);
@@ -446,7 +477,10 @@ public class TransportConsumerWorker : BackgroundService {
       // 8. Report completions/failures back to database
       await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
-      _logger.LogDebug("Successfully processed message {MessageId}", envelope.MessageId);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug("Successfully processed message {MessageId}", messageId);
+      }
     } catch (Exception ex) {
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter

@@ -154,18 +154,18 @@ public abstract class DapperEventStoreBase : IEventStore {
       var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
-      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      // Deserialize metadata using dictionary approach (stored with PascalCase keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
 
-      // Extract message_id from metadata
-      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+      // Extract MessageId from metadata
+      var messageId = metadataDict.TryGetValue("MessageId", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("message_id not found in metadata");
+        : throw new InvalidOperationException("MessageId not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata
       List<MessageHop> hops;
-      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+      if (metadataDict.TryGetValue("Hops", out var hopsElem)) {
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
       } else {
         hops = [];
@@ -224,28 +224,26 @@ public abstract class DapperEventStoreBase : IEventStore {
       var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
+      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
       if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
-        throw new InvalidOperationException(
-          $"Unknown event type '{row.EventType}' (normalized: '{normalizedTypeName}'). " +
-          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
-        );
+        continue;
       }
 
       var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
-      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      // Deserialize metadata using dictionary approach (stored with PascalCase keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
 
-      // Extract message_id from metadata
-      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+      // Extract MessageId from metadata
+      var messageId = metadataDict.TryGetValue("MessageId", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("message_id not found in metadata");
+        : throw new InvalidOperationException("MessageId not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata
       List<MessageHop> hops;
-      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+      if (metadataDict.TryGetValue("Hops", out var hopsElem)) {
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
       } else {
         hops = [];

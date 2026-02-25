@@ -9,16 +9,6 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public class SyncFilterBuilderTests {
   // ==========================================================================
-  // SyncLookupMode enum tests
-  // ==========================================================================
-
-  [Test]
-  public async Task SyncLookupMode_HasExpectedValuesAsync() {
-    await Assert.That(Enum.IsDefined(SyncLookupMode.Local)).IsTrue();
-    await Assert.That(Enum.IsDefined(SyncLookupMode.Distributed)).IsTrue();
-  }
-
-  // ==========================================================================
   // SyncFilterNode record tests
   // ==========================================================================
 
@@ -242,34 +232,6 @@ public class SyncFilterBuilderTests {
   }
 
   // ==========================================================================
-  // SyncFilterBuilder lookup mode tests
-  // ==========================================================================
-
-  [Test]
-  public async Task SyncFilterBuilder_Local_SetsLookupModeAsync() {
-    var builder = SyncFilter.CurrentScope().Local();
-    var options = builder.Build();
-
-    await Assert.That(options.LookupMode).IsEqualTo(SyncLookupMode.Local);
-  }
-
-  [Test]
-  public async Task SyncFilterBuilder_Distributed_SetsLookupModeAsync() {
-    var builder = SyncFilter.CurrentScope().Distributed();
-    var options = builder.Build();
-
-    await Assert.That(options.LookupMode).IsEqualTo(SyncLookupMode.Distributed);
-  }
-
-  [Test]
-  public async Task SyncFilterBuilder_DefaultLookupMode_IsLocalAsync() {
-    var builder = SyncFilter.CurrentScope();
-    var options = builder.Build();
-
-    await Assert.That(options.LookupMode).IsEqualTo(SyncLookupMode.Local);
-  }
-
-  // ==========================================================================
   // PerspectiveSyncOptions tests
   // ==========================================================================
 
@@ -291,15 +253,6 @@ public class SyncFilterBuilderTests {
     await Assert.That(options.DebuggerAwareTimeout).IsTrue();
   }
 
-  [Test]
-  public async Task PerspectiveSyncOptions_DefaultLookupMode_IsLocalAsync() {
-    var options = new PerspectiveSyncOptions {
-      Filter = new CurrentScopeFilter()
-    };
-
-    await Assert.That(options.LookupMode).IsEqualTo(SyncLookupMode.Local);
-  }
-
   // ==========================================================================
   // Timeout configuration tests
   // ==========================================================================
@@ -319,7 +272,7 @@ public class SyncFilterBuilderTests {
 
   [Test]
   public async Task SyncFilterBuilder_ImplicitConversion_ToPerspectiveSyncOptionsAsync() {
-    var builder = SyncFilter.CurrentScope().Local();
+    var builder = SyncFilter.CurrentScope();
     PerspectiveSyncOptions options = builder;
 
     await Assert.That(options).IsNotNull();

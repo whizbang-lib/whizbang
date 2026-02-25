@@ -297,7 +297,7 @@ public class DapperPostgresEventStore(
       }
 
       // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
-      // Stored metadata uses snake_case keys: message_id, correlation_id, causation_id, hops
+      // Stored metadata uses PascalCase keys: MessageId, Hops
       var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
       if (metadataDictTypeInfo == null) {
         throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
@@ -306,14 +306,14 @@ public class DapperPostgresEventStore(
       var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-      // Extract message_id from metadata
-      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+      // Extract MessageId from metadata
+      var messageId = metadataDict.TryGetValue("MessageId", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("message_id not found in metadata");
+        : throw new InvalidOperationException("MessageId not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata
       List<MessageHop> hops;
-      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+      if (metadataDict.TryGetValue("Hops", out var hopsElem)) {
         var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
                            ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];

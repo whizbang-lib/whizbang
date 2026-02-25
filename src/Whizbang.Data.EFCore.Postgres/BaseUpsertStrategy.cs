@@ -49,19 +49,26 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CancellationToken cancellationToken)
       where TModel : class {
     var existingRow = await context.Set<PerspectiveRow<TModel>>()
+        .AsTracking()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;
 
-    var row = existingRow == null
-        ? _createNewRow(id, model, metadata, scope, now)
-        : _createUpdatedRow(existingRow, model, metadata, scope, now);
-
+    PerspectiveRow<TModel> row;
     if (existingRow != null) {
-      context.Set<PerspectiveRow<TModel>>().Remove(existingRow);
+      // Update existing row in place to avoid EF Core tracking issues with complex type collections.
+      // The previous remove+add pattern caused ArgumentOutOfRangeException when EF Core tried to
+      // track nested collection changes during shared identity handling.
+      existingRow.Data = model;
+      existingRow.Metadata = CloneMetadata(metadata);
+      existingRow.Scope = CloneScope(scope);
+      existingRow.UpdatedAt = now;
+      existingRow.Version++;
+      row = existingRow;
+    } else {
+      row = _createNewRow(id, model, metadata, scope, now);
+      context.Set<PerspectiveRow<TModel>>().Add(row);
     }
-
-    context.Set<PerspectiveRow<TModel>>().Add(row);
 
     if (physicalFieldValues != null) {
       var entry = context.Entry(row);
@@ -88,19 +95,6 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       CreatedAt = now,
       UpdatedAt = now,
       Version = 1
-    };
-
-  private static PerspectiveRow<TModel> _createUpdatedRow<TModel>(
-      PerspectiveRow<TModel> existing, TModel model, PerspectiveMetadata metadata, PerspectiveScope scope, DateTime now)
-      where TModel : class =>
-    new() {
-      Id = existing.Id,
-      Data = model,
-      Metadata = CloneMetadata(metadata),
-      Scope = CloneScope(scope),
-      CreatedAt = existing.CreatedAt,
-      UpdatedAt = now,
-      Version = existing.Version + 1
     };
 
   /// <summary>

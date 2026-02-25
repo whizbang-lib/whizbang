@@ -198,11 +198,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       var json = JsonSerializer.Serialize(envelope, typeInfo);
 
       // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there
-      _logger.LogDebug(
-        "DIAGNOSTIC [Publish]: Serialized envelope. MessageId={MessageId}, JSON preview: {JsonPreview}",
-        envelope.MessageId.Value,
-        json.Length > 500 ? json[..500] + "..." : json
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId.Value;
+        var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
+        _logger.LogDebug(
+          "DIAGNOSTIC [Publish]: Serialized envelope. MessageId={MessageId}, JSON preview: {JsonPreview}",
+          messageId,
+          jsonPreview
+        );
+      }
 
       var message = new ServiceBusMessage(json) {
         MessageId = envelope.MessageId.Value.ToString(),
@@ -211,10 +215,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       };
 
       // DIAGNOSTIC: Log the Service Bus message ID to compare
-      _logger.LogDebug(
-        "DIAGNOSTIC [Publish]: Created ServiceBusMessage with MessageId={ServiceBusMessageId}",
-        message.MessageId
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var serviceBusMessageId = message.MessageId;
+        _logger.LogDebug(
+          "DIAGNOSTIC [Publish]: Created ServiceBusMessage with MessageId={ServiceBusMessageId}",
+          serviceBusMessageId
+        );
+      }
 
       // Add envelope type information for deserialization
       message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
@@ -256,12 +263,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       await sendTask; // Re-await to propagate exceptions
       _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Message sent successfully {MessageId}", envelope.MessageId);
 
-      _logger.LogDebug(
-        "Published message {MessageId} to topic {TopicName} with subject {Subject}",
-        envelope.MessageId,
-        destination.Address,
-        message.Subject
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        var topicName = destination.Address;
+        var subject = message.Subject;
+        _logger.LogDebug(
+          "Published message {MessageId} to topic {TopicName} with subject {Subject}",
+          messageId,
+          topicName,
+          subject
+        );
+      }
     } catch (Exception ex) {
       _logger.LogError(
         ex,
@@ -368,11 +380,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           var json = args.Message.Body.ToString();
 
           // DIAGNOSTIC: Log the JSON and Service Bus MessageId before deserializing
-          _logger.LogDebug(
-            "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
-            args.Message.MessageId,
-            json.Length > 500 ? json[..500] + "..." : json
-          );
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var serviceBusMessageId = args.Message.MessageId;
+            var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
+            _logger.LogDebug(
+              "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
+              serviceBusMessageId,
+              jsonPreview
+            );
+          }
 
           // Resolve JsonTypeInfo for the envelope type using JsonContextRegistry
           // This supports fuzzy matching and cross-assembly type resolution
@@ -401,10 +417,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
 
           // DIAGNOSTIC: Log the deserialized MessageId to see if it survived
-          _logger.LogDebug(
-            "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
-            envelope.MessageId.Value
-          );
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var messageId = envelope.MessageId.Value;
+            _logger.LogDebug(
+              "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+              messageId
+            );
+          }
 
           // Invoke handler with envelope type metadata
           Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Invoking handler for MessageId={envelope.MessageId.Value}");
@@ -415,12 +434,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
           Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Message completed MessageId={envelope.MessageId.Value}");
 
-          _logger.LogDebug(
-            "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
-            args.Message.MessageId,
-            destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName
-          );
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var messageId = args.Message.MessageId;
+            var topicName = destination.Address;
+            var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+            _logger.LogDebug(
+              "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
+              messageId,
+              topicName,
+              subscriptionName
+            );
+          }
         } catch (Exception ex) {
           _logger.LogError(
             ex,
@@ -475,11 +499,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Start processing
       await processor.StartProcessingAsync(cancellationToken);
 
-      _logger.LogInformation(
-        "Started subscription to {TopicName}/{SubscriptionName}",
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName
-      );
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        var topic = destination.Address;
+        var sub = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+        _logger.LogInformation(
+          "Started subscription to {TopicName}/{SubscriptionName}",
+          topic,
+          sub
+        );
+      }
 
       return subscription;
     } catch (Exception ex) {
@@ -555,12 +583,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
           deletedRules++;
-          _logger.LogDebug(
-            "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
-            rule.Name,
-            topicName,
-            subscriptionName
-          );
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var ruleName = rule.Name;
+            var topic = topicName;
+            var subscription = subscriptionName;
+            _logger.LogDebug(
+              "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
+              ruleName,
+              topic,
+              subscription
+            );
+          }
         }
       }
       activity?.SetTag("servicebus.rules_deleted", deletedRules);
@@ -576,12 +609,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
       activity?.SetTag("servicebus.rule_created", true);
 
-      _logger.LogInformation(
-        "Applied CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
-        destination,
-        topicName,
-        subscriptionName
-      );
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        var dest = destination;
+        var topic = topicName;
+        var subscription = subscriptionName;
+        _logger.LogInformation(
+          "Applied CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
+          dest,
+          topic,
+          subscription
+        );
+      }
     } catch (Exception ex) {
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       _logger.LogError(
@@ -635,7 +673,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Sender created, adding to dictionary for {TopicName}", topicName);
       _senders[topicName] = sender;
 
-      _logger.LogDebug("Created sender for topic {TopicName}", topicName);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var topic = topicName;
+        _logger.LogDebug("Created sender for topic {TopicName}", topic);
+      }
 
       return sender;
     } finally {

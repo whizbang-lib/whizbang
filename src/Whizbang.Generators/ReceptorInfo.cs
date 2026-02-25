@@ -51,13 +51,11 @@ public sealed record ReceptorInfo(
 /// </summary>
 /// <param name="PerspectiveType">Fully qualified perspective type name.</param>
 /// <param name="EventTypes">Fully qualified event type names, or null for all events.</param>
-/// <param name="LookupMode">The lookup mode value (0=Local, 1=Distributed).</param>
 /// <param name="TimeoutMs">The timeout in milliseconds.</param>
-/// <param name="ThrowOnTimeout">Whether to throw on timeout.</param>
+/// <param name="FireBehavior">The fire behavior value (0=FireOnSuccess, 1=FireAlways, 2=FireOnEachEvent).</param>
 public sealed record SyncAttributeInfo(
     string PerspectiveType,
     string[]? EventTypes,
-    int LookupMode,
     int TimeoutMs,
-    bool ThrowOnTimeout
+    int FireBehavior
 );

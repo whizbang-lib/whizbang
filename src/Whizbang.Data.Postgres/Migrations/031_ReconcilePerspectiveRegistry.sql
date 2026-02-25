@@ -109,8 +109,8 @@ BEGIN
         schema_json = v_perspective.schema_json,
         schema_hash = v_perspective.schema_hash,
         updated_at = NOW()
-      WHERE clr_type_name = v_perspective.clr_type_name
-        AND service_name = v_perspective.service_name;
+      WHERE wh_perspective_registry.clr_type_name = v_perspective.clr_type_name
+        AND wh_perspective_registry.service_name = v_perspective.service_name;
 
     ELSE
       -- New CLR type - insert into registry

@@ -113,16 +113,19 @@ public class DispatcherDeliveryReceiptTests {
   }
 
   [Test]
-  public async Task SendAsync_WithNoExtractor_StreamIdIsNullAsync() {
-    // Arrange
-    var command = new CreateOrderCommand(Guid.NewGuid(), "Test");
+  public async Task SendAsync_WithGeneratedExtractor_StreamIdIsExtractedAsync() {
+    // Arrange - Generated extractor is automatically registered by AddWhizbangDispatcher
+    var orderId = Guid.NewGuid();
+    var command = new CreateOrderCommand(orderId, "Test");
     var dispatcher = _createDispatcherWithoutExtractor();
 
     // Act
     var receipt = await dispatcher.SendAsync(command);
 
-    // Assert - StreamId should be null when no extractor is registered
-    await Assert.That(receipt.StreamId).IsNull();
+    // Assert - StreamId should be extracted by the generated extractor
+    // Note: AddWhizbangDispatcher() automatically registers the generated IStreamIdExtractor
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(orderId);
   }
 
   // ========================================

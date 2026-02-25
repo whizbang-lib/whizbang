@@ -1,9 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Tests;
@@ -119,6 +121,9 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_RegistersPerspectiveSyncAwaiter_AsScopedAsync() {
     // Arrange
     var services = new ServiceCollection();
+    // PerspectiveSyncAwaiter requires IWorkCoordinator (provided by data layer)
+    services.AddSingleton<IWorkCoordinator, StubWorkCoordinator>();
+    services.AddLogging();
 
     // Act
     _ = services.AddWhizbang();
@@ -159,5 +164,117 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(clockRegistrations.Count).IsEqualTo(1);
     await Assert.That(signalerRegistrations.Count).IsEqualTo(1);
     await Assert.That(trackerRegistrations.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AddWhizbang_RegistersSyncEventTracker_AsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Singleton for cross-scope event tracking
+    var tracker1 = provider.GetService<ISyncEventTracker>();
+    var tracker2 = provider.GetService<ISyncEventTracker>();
+
+    await Assert.That(tracker1).IsNotNull();
+    await Assert.That(tracker1).IsTypeOf<SyncEventTracker>();
+    await Assert.That(tracker1).IsSameReferenceAs(tracker2); // Same instance (Singleton)
+  }
+
+  [Test]
+  public async Task AddWhizbang_RegistersTrackedEventTypeRegistry_AsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Singleton with empty default (source generators provide actual mappings)
+    var registry1 = provider.GetService<ITrackedEventTypeRegistry>();
+    var registry2 = provider.GetService<ITrackedEventTypeRegistry>();
+
+    await Assert.That(registry1).IsNotNull();
+    await Assert.That(registry1).IsTypeOf<TrackedEventTypeRegistry>();
+    await Assert.That(registry1).IsSameReferenceAs(registry2); // Same instance (Singleton)
+
+    // Empty by default - no event types tracked
+    await Assert.That(registry1!.ShouldTrack(typeof(string))).IsFalse();
+  }
+
+  [Test]
+  public async Task AddWhizbang_SyncEventTracker_AllowsOverrideAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var customTracker = new SyncEventTracker();
+
+    // Pre-register custom implementation before AddWhizbang()
+    services.AddSingleton<ISyncEventTracker>(customTracker);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - TryAdd should not override pre-registered singleton
+    var resolvedTracker = provider.GetService<ISyncEventTracker>();
+    await Assert.That(resolvedTracker).IsSameReferenceAs(customTracker);
+  }
+
+  [Test]
+  public async Task AddWhizbang_TrackedEventTypeRegistry_AllowsOverrideAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var customRegistry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
+      { typeof(string), ["TestPerspective"] }
+    });
+
+    // Pre-register custom implementation before AddWhizbang()
+    services.AddSingleton<ITrackedEventTypeRegistry>(customRegistry);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - TryAdd should not override pre-registered singleton
+    var resolvedRegistry = provider.GetService<ITrackedEventTypeRegistry>();
+    await Assert.That(resolvedRegistry).IsSameReferenceAs(customRegistry);
+    await Assert.That(resolvedRegistry!.ShouldTrack(typeof(string))).IsTrue();
+  }
+
+  /// <summary>
+  /// Stub IWorkCoordinator for DI resolution tests.
+  /// </summary>
+  private sealed class StubWorkCoordinator : IWorkCoordinator {
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+        ProcessWorkBatchRequest request,
+        CancellationToken cancellationToken = default) {
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+        PerspectiveCheckpointCompletion completion,
+        CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+        PerspectiveCheckpointFailure failure,
+        CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+        Guid streamId,
+        string perspectiveName,
+        CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    }
   }
 }

@@ -4,6 +4,31 @@ using Whizbang.Core.Perspectives.Sync;
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
+/// Tests for <see cref="SyncFireBehavior"/> enum.
+/// </summary>
+public class SyncFireBehaviorTests {
+  [Test]
+  public async Task SyncFireBehavior_HasExpectedValuesAsync() {
+    await Assert.That(Enum.IsDefined(SyncFireBehavior.FireOnSuccess)).IsTrue();
+    await Assert.That(Enum.IsDefined(SyncFireBehavior.FireAlways)).IsTrue();
+    await Assert.That(Enum.IsDefined(SyncFireBehavior.FireOnEachEvent)).IsTrue();
+  }
+
+  [Test]
+  public async Task SyncFireBehavior_FireOnSuccess_IsZeroAsync() {
+    // Ensures FireOnSuccess is the default value
+    var value = (int)SyncFireBehavior.FireOnSuccess;
+    await Assert.That(value).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SyncFireBehavior_HasThreeValuesAsync() {
+    var values = Enum.GetValues<SyncFireBehavior>();
+    await Assert.That(values.Length).IsEqualTo(3);
+  }
+}
+
+/// <summary>
 /// Tests for <see cref="AwaitPerspectiveSyncAttribute"/>.
 /// </summary>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
@@ -24,31 +49,122 @@ public class AwaitPerspectiveSyncAttributeTests {
   }
 
   [Test]
+  public async Task AwaitPerspectiveSyncAttribute_Constructor_ThrowsOnNullPerspectiveTypeAsync() {
+    await Assert.ThrowsAsync<ArgumentNullException>(async () =>
+        await Task.FromResult(new AwaitPerspectiveSyncAttribute(null!)));
+  }
+
+  [Test]
   public async Task AwaitPerspectiveSyncAttribute_EventTypes_DefaultsToNullAsync() {
     var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
 
     await Assert.That(attr.EventTypes).IsNull();
   }
 
-  [Test]
-  public async Task AwaitPerspectiveSyncAttribute_LookupMode_DefaultsToLocalAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
+  // ==========================================================================
+  // DefaultTimeoutMs static property tests
+  // ==========================================================================
 
-    await Assert.That(attr.LookupMode).IsEqualTo(SyncLookupMode.Local);
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_DefaultTimeoutMs_Is5000Async() {
+    // Reset to default before test
+    AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = 5000;
+
+    await Assert.That(AwaitPerspectiveSyncAttribute.DefaultTimeoutMs).IsEqualTo(5000);
   }
 
   [Test]
-  public async Task AwaitPerspectiveSyncAttribute_TimeoutMs_DefaultsTo5000Async() {
+  public async Task AwaitPerspectiveSyncAttribute_DefaultTimeoutMs_CanBeChangedGloballyAsync() {
+    var originalDefault = AwaitPerspectiveSyncAttribute.DefaultTimeoutMs;
+    try {
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = 10000;
+
+      await Assert.That(AwaitPerspectiveSyncAttribute.DefaultTimeoutMs).IsEqualTo(10000);
+    } finally {
+      // Restore original default
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = originalDefault;
+    }
+  }
+
+  // ==========================================================================
+  // TimeoutMs and EffectiveTimeoutMs tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_TimeoutMs_DefaultsToNegativeOneAsync() {
     var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
 
-    await Assert.That(attr.TimeoutMs).IsEqualTo(5000);
+    await Assert.That(attr.TimeoutMs).IsEqualTo(-1);
   }
 
   [Test]
-  public async Task AwaitPerspectiveSyncAttribute_ThrowOnTimeout_DefaultsToFalseAsync() {
+  [NotInParallel] // Modifies static DefaultTimeoutMs
+  public async Task AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesDefaultWhenMinusOneAsync() {
+    var originalDefault = AwaitPerspectiveSyncAttribute.DefaultTimeoutMs;
+    try {
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = 7500;
+      var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
+
+      await Assert.That(attr.TimeoutMs).IsEqualTo(-1);
+      await Assert.That(attr.EffectiveTimeoutMs).IsEqualTo(7500);
+    } finally {
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = originalDefault;
+    }
+  }
+
+  [Test]
+  [NotInParallel] // Modifies static DefaultTimeoutMs
+  public async Task AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesExplicitValueWhenSetAsync() {
+    var originalDefault = AwaitPerspectiveSyncAttribute.DefaultTimeoutMs;
+    try {
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = 5000;
+      var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
+        TimeoutMs = 15000
+      };
+
+      await Assert.That(attr.TimeoutMs).IsEqualTo(15000);
+      await Assert.That(attr.EffectiveTimeoutMs).IsEqualTo(15000);
+    } finally {
+      AwaitPerspectiveSyncAttribute.DefaultTimeoutMs = originalDefault;
+    }
+  }
+
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesZeroWhenExplicitlySetToZeroAsync() {
+    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
+      TimeoutMs = 0
+    };
+
+    await Assert.That(attr.EffectiveTimeoutMs).IsEqualTo(0);
+  }
+
+  // ==========================================================================
+  // FireBehavior tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_FireBehavior_DefaultsToFireOnSuccessAsync() {
     var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
 
-    await Assert.That(attr.ThrowOnTimeout).IsFalse();
+    await Assert.That(attr.FireBehavior).IsEqualTo(SyncFireBehavior.FireOnSuccess);
+  }
+
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_FireBehavior_CanBeSetToFireAlwaysAsync() {
+    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
+      FireBehavior = SyncFireBehavior.FireAlways
+    };
+
+    await Assert.That(attr.FireBehavior).IsEqualTo(SyncFireBehavior.FireAlways);
+  }
+
+  [Test]
+  public async Task AwaitPerspectiveSyncAttribute_FireBehavior_CanBeSetToFireOnEachEventAsync() {
+    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
+      FireBehavior = SyncFireBehavior.FireOnEachEvent
+    };
+
+    await Assert.That(attr.FireBehavior).IsEqualTo(SyncFireBehavior.FireOnEachEvent);
   }
 
   // ==========================================================================
@@ -67,30 +183,12 @@ public class AwaitPerspectiveSyncAttributeTests {
   }
 
   [Test]
-  public async Task AwaitPerspectiveSyncAttribute_CanSetLookupModeAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
-      LookupMode = SyncLookupMode.Distributed
-    };
-
-    await Assert.That(attr.LookupMode).IsEqualTo(SyncLookupMode.Distributed);
-  }
-
-  [Test]
   public async Task AwaitPerspectiveSyncAttribute_CanSetTimeoutMsAsync() {
     var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
       TimeoutMs = 10000
     };
 
     await Assert.That(attr.TimeoutMs).IsEqualTo(10000);
-  }
-
-  [Test]
-  public async Task AwaitPerspectiveSyncAttribute_CanSetThrowOnTimeoutAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
-      ThrowOnTimeout = true
-    };
-
-    await Assert.That(attr.ThrowOnTimeout).IsTrue();
   }
 
   // ==========================================================================
@@ -120,45 +218,19 @@ public class AwaitPerspectiveSyncAttributeTests {
   }
 
   // ==========================================================================
-  // ToSyncOptions tests
+  // Multiple attributes on class tests
   // ==========================================================================
 
   [Test]
-  public async Task AwaitPerspectiveSyncAttribute_ToSyncOptions_ReturnsValidOptionsAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
-      EventTypes = [typeof(TestEvent)],
-      LookupMode = SyncLookupMode.Distributed,
-      TimeoutMs = 10000
-    };
+  public async Task AwaitPerspectiveSyncAttribute_CanHaveMultipleOnSameClassAsync() {
+    // This test verifies the AllowMultiple=true works correctly
+    var attributes = typeof(MultiSyncTestClass).GetCustomAttributes(typeof(AwaitPerspectiveSyncAttribute), false);
 
-    var options = attr.ToSyncOptions();
-
-    await Assert.That(options).IsNotNull();
-    await Assert.That(options.LookupMode).IsEqualTo(SyncLookupMode.Distributed);
-    await Assert.That(options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(10000));
+    await Assert.That(attributes.Length).IsEqualTo(2);
   }
 
-  [Test]
-  public async Task AwaitPerspectiveSyncAttribute_ToSyncOptions_WithEventTypes_CreatesEventTypeFilterAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective)) {
-      EventTypes = [typeof(TestEvent), typeof(string)]
-    };
-
-    var options = attr.ToSyncOptions();
-
-    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
-    var filter = (EventTypeFilter)options.Filter;
-    await Assert.That(filter.EventTypes).Contains(typeof(TestEvent));
-    await Assert.That(filter.EventTypes).Contains(typeof(string));
-  }
-
-  [Test]
-  public async Task AwaitPerspectiveSyncAttribute_ToSyncOptions_WithoutEventTypes_CreatesAllPendingFilterAsync() {
-    var attr = new AwaitPerspectiveSyncAttribute(typeof(TestPerspective));
-
-    var options = attr.ToSyncOptions();
-
-    // Without event types specified, should wait for all pending events
-    await Assert.That(options.Filter).IsTypeOf<AllPendingFilter>();
-  }
+  // Test class with multiple sync attributes
+  [AwaitPerspectiveSync(typeof(TestPerspective))]
+  [AwaitPerspectiveSync(typeof(TestPerspective), TimeoutMs = 10000)]
+  private sealed class MultiSyncTestClass { }
 }

@@ -727,6 +727,141 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
   #endregion
 
+  #region LocalInvokeAsync with Tracing and Routed<T> Tests
+
+  /// <summary>
+  /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
+  /// Registers a trace store or receptor registry to trigger the tracing code path.
+  /// </summary>
+  private sealed class RoutedTracingTestDispatcher : Core.Dispatcher {
+    private readonly List<object> _invokedMessages = [];
+    private readonly object _lock = new();
+
+    public RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null)
+        : base(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
+    }
+
+    public List<object> GetInvokedMessages() {
+      lock (_lock) {
+        return _invokedMessages.ToList();
+      }
+    }
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      if (messageType == typeof(RoutedSendTestEvent)) {
+        return msg => {
+          lock (_lock) {
+            _invokedMessages.Add(msg);
+          }
+          return ValueTask.FromResult((TResult)(object)new RoutedTestResult(true));
+        };
+      }
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      if (messageType == typeof(RoutedSendTestEvent)) {
+        return msg => {
+          lock (_lock) {
+            _invokedMessages.Add(msg);
+          }
+          return ValueTask.CompletedTask;
+        };
+      }
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Minimal receptor registry for triggering the tracing code path.
+  /// </summary>
+  private sealed class TestReceptorRegistry : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      return [];
+    }
+  }
+
+  /// <summary>
+  /// Verifies that object-based LocalInvokeAsync with Routed&lt;T&gt; works when tracing is enabled.
+  /// This specifically tests the _localInvokeWithTracingAndOptionsAsync path.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_ObjectBased_WithTracing_AndRoutedWrapper_UnwrapsCorrectlyAsync() {
+    // Arrange - Create dispatcher with receptor registry to trigger tracing path
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var registry = new TestReceptorRegistry();
+    var dispatcher = new RoutedTracingTestDispatcher(provider, receptorRegistry: registry);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    object routed = Route.Local(evt);
+
+    // Act - This goes through the tracing path due to receptor registry being non-null
+    // Using the object-based overload with DispatchOptions to trigger _localInvokeWithOptionsAsync
+    var result = await dispatcher.LocalInvokeAsync<RoutedTestResult>(routed, new DispatchOptions());
+
+    // Assert - Should not throw InvalidCastException
+    await Assert.That(result.Success).IsTrue();
+    var invoked = dispatcher.GetInvokedMessages();
+    await Assert.That(invoked).Count().IsEqualTo(1);
+    await Assert.That(invoked[0]).IsTypeOf<RoutedSendTestEvent>()
+      .Because("The inner event should be unwrapped before invoking receptor in tracing path");
+  }
+
+  /// <summary>
+  /// Verifies that void object-based LocalInvokeAsync with Routed&lt;T&gt; works when tracing is enabled.
+  /// This specifically tests the _localInvokeVoidWithTracingAndOptionsAsync path.
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_VoidObjectBased_WithTracing_AndRoutedWrapper_UnwrapsCorrectlyAsync() {
+    // Arrange - Create dispatcher with receptor registry to trigger tracing path
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var registry = new TestReceptorRegistry();
+    var dispatcher = new RoutedTracingTestDispatcher(provider, receptorRegistry: registry);
+    var evt = new RoutedSendTestEvent(Guid.NewGuid());
+    object routed = Route.Local(evt);
+
+    // Act - This goes through the void tracing path due to receptor registry being non-null
+    // Using the object-based overload with DispatchOptions to trigger _localInvokeVoidWithOptionsAsync
+    await dispatcher.LocalInvokeAsync(routed, new DispatchOptions());
+
+    // Assert - Should not throw InvalidCastException
+    var invoked = dispatcher.GetInvokedMessages();
+    await Assert.That(invoked).Count().IsEqualTo(1);
+    await Assert.That(invoked[0]).IsTypeOf<RoutedSendTestEvent>()
+      .Because("The inner event should be unwrapped before invoking receptor in void tracing path");
+  }
+
+  #endregion
+
   #region Test Infrastructure
 
   /// <summary>

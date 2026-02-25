@@ -417,11 +417,9 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
+      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
       if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
-        throw new InvalidOperationException(
-          $"Unknown event type '{record.EventType}' (normalized: '{normalizedTypeName}'). " +
-          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
-        );
+        continue;
       }
 
       // Deserialize to concrete type using JSON source generation

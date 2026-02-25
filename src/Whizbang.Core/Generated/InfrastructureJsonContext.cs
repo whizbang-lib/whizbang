@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
 
@@ -67,6 +68,11 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PerspectiveCheckpointFailure))]
 [JsonSerializable(typeof(PerspectiveCheckpointFailure[]))]
 [JsonSerializable(typeof(Guid[]))]
+// Sync inquiry types (for perspective sync awaiter)
+[JsonSerializable(typeof(SyncInquiry))]
+[JsonSerializable(typeof(SyncInquiry[]))]
+[JsonSerializable(typeof(SyncInquiryResult))]
+[JsonSerializable(typeof(SyncInquiryResult[]))]
 // Perspective types
 [JsonSerializable(typeof(PerspectiveMetadata))]
 [JsonSerializable(typeof(PerspectiveScope))]

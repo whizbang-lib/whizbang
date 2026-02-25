@@ -521,6 +521,9 @@ try {
         if ($Tag) {
             Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
         }
+
+        # Flush output immediately so background processes show header right away
+        [Console]::Out.Flush()
     }
 
     # Build the dotnet test command
@@ -981,6 +984,8 @@ try {
     } else {
         Write-Host "Starting test execution..." -ForegroundColor Gray
         Write-Host ""
+        # Flush output immediately so background processes show status right away
+        [Console]::Out.Flush()
     }
 
     # Process output based on mode

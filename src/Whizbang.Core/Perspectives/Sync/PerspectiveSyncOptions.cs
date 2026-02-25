@@ -10,10 +10,13 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <code>
 /// var options = SyncFilter.ForStream(orderId)
 ///     .AndEventTypes&lt;OrderCreatedEvent&gt;()
-///     .Local()
 ///     .WithTimeout(TimeSpan.FromSeconds(10))
 ///     .Build();
 /// </code>
+/// <para>
+/// All synchronization uses database-based lookup. The database is the only
+/// authority for determining when perspectives have processed events.
+/// </para>
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
@@ -22,12 +25,6 @@ public sealed class PerspectiveSyncOptions {
   /// Gets or sets the filter tree (supports AND/OR combinations).
   /// </summary>
   public required SyncFilterNode Filter { get; init; }
-
-  /// <summary>
-  /// Gets or sets the lookup mode for finding pending events.
-  /// </summary>
-  /// <value>Default: <see cref="SyncLookupMode.Local"/>.</value>
-  public SyncLookupMode LookupMode { get; init; } = SyncLookupMode.Local;
 
   /// <summary>
   /// Gets or sets the timeout duration for synchronization.

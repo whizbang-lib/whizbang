@@ -72,6 +72,9 @@ namespace Whizbang.Core.Generated {
       // Register receptor registry first (dispatcher depends on IReceptorInvoker)
       services.AddWhizbangReceptorRegistry();
 
+      // Register generated stream ID extractor to override default with assembly-specific extractors
+      services.AddWhizbangStreamIdExtractor();
+
       // Register IScopeContextAccessor for automatic security context propagation
       // Uses TryAdd to allow user override if needed
       services.TryAddSingleton<IScopeContextAccessor, ScopeContextAccessor>();
@@ -90,9 +93,14 @@ namespace Whizbang.Core.Generated {
         // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
         var receptorRegistry = sp.GetService<IReceptorRegistry>();
 
+        // Perspective sync tracking services (singleton tracker + scoped tracker resolved per-call)
+        // Note: IScopedEventTracker is scoped, but we pass null here and Dispatcher resolves it per-call
+        var syncEventTracker = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ISyncEventTracker>();
+        var trackedEventTypeRegistry = sp.GetService<global::Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry>();
+
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, receptorRegistry);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

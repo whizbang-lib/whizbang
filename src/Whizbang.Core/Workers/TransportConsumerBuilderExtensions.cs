@@ -6,6 +6,7 @@ using Whizbang.Core.HealthChecks;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
@@ -186,7 +187,8 @@ public static class TransportConsumerBuilderExtensions {
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
         var eventCascader = sp.GetService<IEventCascader>();
-        return new ReceptorInvoker(registry, sp, eventCascader);
+        var syncAwaiter = sp.GetService<IPerspectiveSyncAwaiter>();
+        return new ReceptorInvoker(registry, sp, eventCascader, syncAwaiter);
       }
 
       // Fallback: return a no-op invoker if no registry is available
@@ -305,7 +307,8 @@ public static class TransportConsumerBuilderExtensions {
       var registry = sp.GetService<IReceptorRegistry>();
       if (registry is not null) {
         var eventCascader = sp.GetService<IEventCascader>();
-        return new ReceptorInvoker(registry, sp, eventCascader);
+        var syncAwaiter = sp.GetService<IPerspectiveSyncAwaiter>();
+        return new ReceptorInvoker(registry, sp, eventCascader, syncAwaiter);
       }
 
       // Fallback: return a no-op invoker if no registry is available

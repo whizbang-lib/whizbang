@@ -2,8 +2,6 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
-#pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for retry logging)
-
 namespace Whizbang.Core.Resilience;
 
 /// <summary>
@@ -17,7 +15,7 @@ namespace Whizbang.Core.Resilience;
 /// </remarks>
 /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
-public static class SubscriptionRetryHelper {
+public static partial class SubscriptionRetryHelper {
   /// <summary>
   /// Calculates the next delay using exponential backoff, capped at MaxRetryDelay.
   /// </summary>
@@ -54,7 +52,7 @@ public static class SubscriptionRetryHelper {
     while (true) {
       // Check if we've exhausted initial attempts and not retrying indefinitely
       if (attempt >= options.InitialRetryAttempts && !options.RetryIndefinitely) {
-        _logSubscriptionGivingUp(logger, destination.Address, options.InitialRetryAttempts, state.LastError);
+        LogSubscriptionGivingUp(logger, destination.Address, options.InitialRetryAttempts, state.LastError);
         state.Status = SubscriptionStatus.Failed;
         return;
       }
@@ -68,9 +66,9 @@ public static class SubscriptionRetryHelper {
         state.Status = SubscriptionStatus.Healthy;
 
         if (attempt == 1) {
-          _logSubscriptionSuccess(logger, destination.Address, destination.RoutingKey);
+          LogSubscriptionSuccess(logger, destination.Address, destination.RoutingKey ?? "#");
         } else {
-          _logSubscriptionEstablished(logger, destination.Address, destination.RoutingKey, attempt);
+          LogSubscriptionEstablished(logger, destination.Address, destination.RoutingKey ?? "#", attempt);
         }
 
         return; // Success!
@@ -85,10 +83,10 @@ public static class SubscriptionRetryHelper {
         // Log based on attempt phase
         if (attempt <= options.InitialRetryAttempts) {
           // Initial retry phase - log each failure as warning
-          _logSubscriptionFailed(logger, destination.Address, attempt, currentDelay.TotalMilliseconds, ex);
+          LogSubscriptionFailed(logger, destination.Address, attempt, currentDelay.TotalMilliseconds, ex);
         } else if (attempt % 10 == 0) {
           // Indefinite retry phase - log less frequently
-          _logSubscriptionStillFailing(logger, destination.Address, attempt, currentDelay.TotalMilliseconds);
+          LogSubscriptionStillFailing(logger, destination.Address, attempt, currentDelay.TotalMilliseconds);
         }
 
         await Task.Delay(currentDelay, cancellationToken);
@@ -97,52 +95,42 @@ public static class SubscriptionRetryHelper {
     }
   }
 
-  #region Logging
+  // ==========================================================================
+  // LoggerMessage definitions - source generated for performance
+  // ==========================================================================
 
-  private static void _logSubscriptionSuccess(ILogger logger, string destination, string? routingKey) {
-    logger.LogInformation(
-      "✓ Subscribed to {Destination} (routing key: {RoutingKey})",
-      destination,
-      routingKey ?? "#"
-    );
-  }
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Information,
+    Message = "✓ Subscribed to {Destination} (routing key: {RoutingKey})"
+  )]
+  private static partial void LogSubscriptionSuccess(ILogger logger, string destination, string routingKey);
 
-  private static void _logSubscriptionEstablished(ILogger logger, string destination, string? routingKey, int attempt) {
-    logger.LogInformation(
-      "✓ Subscribed to {Destination} (routing key: {RoutingKey}) after {Attempt} attempts",
-      destination,
-      routingKey ?? "#",
-      attempt
-    );
-  }
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Information,
+    Message = "✓ Subscribed to {Destination} (routing key: {RoutingKey}) after {Attempt} attempts"
+  )]
+  private static partial void LogSubscriptionEstablished(ILogger logger, string destination, string routingKey, int attempt);
 
-  private static void _logSubscriptionFailed(ILogger logger, string destination, int attempt, double delayMs, Exception ex) {
-    logger.LogWarning(
-      ex,
-      "Subscription to {Destination} failed (attempt {Attempt}). Retrying in {DelayMs}ms...",
-      destination,
-      attempt,
-      delayMs
-    );
-  }
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Warning,
+    Message = "Subscription to {Destination} failed (attempt {Attempt}). Retrying in {DelayMs}ms..."
+  )]
+  private static partial void LogSubscriptionFailed(ILogger logger, string destination, int attempt, double delayMs, Exception ex);
 
-  private static void _logSubscriptionGivingUp(ILogger logger, string destination, int maxAttempts, Exception? ex) {
-    logger.LogError(
-      ex,
-      "Subscription to {Destination} failed after {MaxAttempts} initial attempts. Giving up.",
-      destination,
-      maxAttempts
-    );
-  }
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Error,
+    Message = "Subscription to {Destination} failed after {MaxAttempts} initial attempts. Giving up."
+  )]
+  private static partial void LogSubscriptionGivingUp(ILogger logger, string destination, int maxAttempts, Exception? ex);
 
-  private static void _logSubscriptionStillFailing(ILogger logger, string destination, int attempt, double delayMs) {
-    logger.LogWarning(
-      "Subscription to {Destination} still failing after {Attempt} attempts. Continuing to retry every {DelayMs}ms...",
-      destination,
-      attempt,
-      delayMs
-    );
-  }
-
-  #endregion
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Warning,
+    Message = "Subscription to {Destination} still failing after {Attempt} attempts. Continuing to retry every {DelayMs}ms..."
+  )]
+  private static partial void LogSubscriptionStillFailing(ILogger logger, string destination, int attempt, double delayMs);
 }

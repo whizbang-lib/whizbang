@@ -49,9 +49,12 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    _logger.LogInformation(
-      "Provisioning {Count} Azure Service Bus topics for owned domains",
-      ownedDomains.Count);
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var count = ownedDomains.Count;
+      _logger.LogInformation(
+        "Provisioning {Count} Azure Service Bus topics for owned domains",
+        count);
+    }
 
     foreach (var domain in ownedDomains) {
       cancellationToken.ThrowIfCancellationRequested();
@@ -61,27 +64,40 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
       try {
         // Check if topic already exists
         if (await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-          _logger.LogDebug(
-            "Topic '{Topic}' already exists, skipping",
-            topicName);
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            var topic = topicName;
+            _logger.LogDebug(
+              "Topic '{Topic}' already exists, skipping",
+              topic);
+          }
           continue;
         }
 
-        _logger.LogDebug(
-          "Creating topic '{Topic}' for owned domain '{Domain}'",
-          topicName,
-          domain);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var topic = topicName;
+          var dom = domain;
+          _logger.LogDebug(
+            "Creating topic '{Topic}' for owned domain '{Domain}'",
+            topic,
+            dom);
+        }
 
         await _adminClient.CreateTopicAsync(topicName, cancellationToken);
 
-        _logger.LogInformation(
-          "Provisioned topic '{Topic}' for owned domain",
-          topicName);
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          var topic = topicName;
+          _logger.LogInformation(
+            "Provisioned topic '{Topic}' for owned domain",
+            topic);
+        }
       } catch (RequestFailedException ex) when (ex.Status == 409) {
         // Race condition - topic created by another instance between exists check and create
-        _logger.LogDebug(
-          "Topic '{Topic}' already exists (race condition), skipping",
-          topicName);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var topic = topicName;
+          _logger.LogDebug(
+            "Topic '{Topic}' already exists (race condition), skipping",
+            topic);
+        }
       }
     }
   }

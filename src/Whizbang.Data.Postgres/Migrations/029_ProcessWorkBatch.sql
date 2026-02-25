@@ -51,7 +51,10 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   p_flags INTEGER DEFAULT 0,
 
   -- Thresholds
-  p_stale_threshold_seconds INTEGER DEFAULT 600
+  p_stale_threshold_seconds INTEGER DEFAULT 600,
+
+  -- Sync inquiries (for perspective sync awaiter)
+  p_sync_inquiries JSONB DEFAULT '[]'::JSONB
 ) RETURNS TABLE(
   -- Heartbeat results
   instance_rank INTEGER,
@@ -146,6 +149,15 @@ BEGIN
     event_work_id UUID PRIMARY KEY,
     stream_id UUID,
     perspective_name VARCHAR(200)
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_sync_results (
+    inquiry_id UUID PRIMARY KEY,
+    stream_id UUID,
+    pending_count INTEGER,
+    processed_count INTEGER,
+    pending_event_ids UUID[],
+    processed_event_ids UUID[]
   ) ON COMMIT DROP;
 
   -- ========================================
@@ -310,6 +322,83 @@ BEGIN
   );
 
   -- ========================================
+  -- Phase 2.6: Sync Inquiries
+  -- ========================================
+  -- Process sync inquiries to check if perspectives have processed specific events.
+  -- Used by PerspectiveSyncAwaiter to implement read-your-writes consistency.
+  --
+  -- Two modes:
+  -- 1. Explicit EventIds mode: Check if specific events have been processed
+  -- 2. Discovery mode (DiscoverPendingFromOutbox=true): Find events of specified types
+  --    from wh_event_store that haven't been processed by the perspective yet
+
+  IF jsonb_array_length(COALESCE(p_sync_inquiries, '[]'::JSONB)) > 0 THEN
+    INSERT INTO temp_sync_results (inquiry_id, stream_id, pending_count, processed_count, pending_event_ids, processed_event_ids)
+    SELECT
+      inquiry_id,
+      stream_id,
+      pending_count,
+      processed_count,
+      pending_event_ids,
+      processed_event_ids
+    FROM (
+      SELECT
+        (inquiry->>'InquiryId')::UUID as inquiry_id,
+        (inquiry->>'StreamId')::UUID as stream_id,
+        -- Count events that exist in event store but not processed by perspective
+        COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NULL)::INTEGER as pending_count,
+        COUNT(es.event_id) FILTER (WHERE pe.processed_at IS NOT NULL)::INTEGER as processed_count,
+        CASE
+          WHEN (inquiry->>'IncludePendingEventIds')::BOOLEAN = true
+          THEN ARRAY_AGG(es.event_id) FILTER (WHERE pe.processed_at IS NULL)
+          ELSE NULL
+        END as pending_event_ids,
+        -- Return processed event IDs when IncludeProcessedEventIds is true
+        -- Also returns discovered event IDs when DiscoverPendingFromOutbox is true
+        CASE
+          WHEN (inquiry->>'IncludeProcessedEventIds')::BOOLEAN = true
+          THEN ARRAY_AGG(es.event_id) FILTER (WHERE pe.processed_at IS NOT NULL)
+          ELSE NULL
+        END as processed_event_ids
+      FROM jsonb_array_elements(p_sync_inquiries) as inquiry
+      -- Start from event store to discover ALL events (processed or not)
+      -- This is the key change: we query wh_event_store first, then LEFT JOIN to perspective_events
+      LEFT JOIN wh_event_store es
+        ON es.stream_id = (inquiry->>'StreamId')::UUID
+        AND (
+          -- If EventIds is provided, filter to only those events
+          (inquiry->'EventIds') IS NULL
+          OR jsonb_array_length(inquiry->'EventIds') = 0
+          OR es.event_id = ANY(
+            ARRAY(SELECT (jsonb_array_elements_text(inquiry->'EventIds'))::UUID)
+          )
+        )
+        AND (
+          -- If EventTypeFilter is provided, filter by event type
+          (inquiry->'EventTypeFilter') IS NULL
+          OR jsonb_array_length(inquiry->'EventTypeFilter') = 0
+          OR es.event_type = ANY(
+            ARRAY(SELECT jsonb_array_elements_text(inquiry->'EventTypeFilter'))
+          )
+        )
+      -- LEFT JOIN to perspective_events to check which events have been processed
+      LEFT JOIN wh_perspective_events pe
+        ON pe.event_id = es.event_id
+        AND pe.perspective_name = inquiry->>'PerspectiveName'
+      WHERE
+        -- When DiscoverPendingFromOutbox is true, we require events to exist in event store
+        -- When false (explicit EventIds mode), we allow the old behavior
+        CASE
+          WHEN (inquiry->>'DiscoverPendingFromOutbox')::BOOLEAN = true THEN
+            es.event_id IS NOT NULL  -- Require events to exist
+          ELSE
+            true  -- Allow empty results for backwards compatibility
+        END
+      GROUP BY inquiry->>'InquiryId', inquiry->>'StreamId', inquiry->>'IncludePendingEventIds', inquiry->>'IncludeProcessedEventIds'
+    ) subq;
+  END IF;
+
+  -- ========================================
   -- Phase 4: Storage (New Work)
   -- ========================================
 
@@ -430,7 +519,7 @@ BEGIN
       __SCHEMA__.normalize_event_type(bv.message_type),
       -- Extract just the Payload from the envelope for event_data
       (bv.event_data::jsonb -> 'Payload') as event_data,
-      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
       jsonb_build_object(
         'MessageId', bv.event_data::jsonb -> 'MessageId',
         'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
@@ -543,7 +632,7 @@ BEGIN
       __SCHEMA__.normalize_event_type(bv.message_type),
       -- Extract just the Payload from the envelope for event_data
       (bv.event_data::jsonb -> 'Payload') as event_data,
-      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
       jsonb_build_object(
         'MessageId', bv.event_data::jsonb -> 'MessageId',
         'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
@@ -996,6 +1085,39 @@ BEGIN
     pe.perspective_name
   FROM ordered_perspective pe
   ORDER BY pe.stream_id, pe.perspective_name, pe.event_id;
+
+  -- Return sync inquiry results
+  RETURN QUERY
+  SELECT
+    NULL::INTEGER as instance_rank,
+    NULL::INTEGER as active_instance_count,
+    'sync_result'::VARCHAR(20) as source,
+    sr.inquiry_id as work_id,
+    sr.stream_id as work_stream_id,  -- Include StreamId from inquiry
+    sr.pending_count as partition_number,  -- Reuse partition_number column for pending_count
+    NULL::VARCHAR(200) as destination,
+    NULL::VARCHAR(500) as message_type,
+    NULL::VARCHAR(500) as envelope_type,
+    -- Encode pending_event_ids as JSON array in message_data
+    CASE
+      WHEN sr.pending_event_ids IS NOT NULL
+      THEN (SELECT jsonb_agg(id)::TEXT FROM UNNEST(sr.pending_event_ids) as id)
+      ELSE NULL
+    END as message_data,
+    -- Encode processed_event_ids as JSON array in metadata (for explicit event tracking)
+    CASE
+      WHEN sr.processed_event_ids IS NOT NULL
+      THEN jsonb_build_object('processed_event_ids', (SELECT jsonb_agg(id) FROM UNNEST(sr.processed_event_ids) as id))
+      ELSE NULL
+    END as metadata,
+    sr.processed_count as status,  -- Reuse status column for processed_count
+    NULL::INTEGER as attempts,
+    false as is_newly_stored,
+    false as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
+    NULL::VARCHAR(200) as perspective_name
+  FROM temp_sync_results sr;
 END;
 $$ LANGUAGE plpgsql;
 
