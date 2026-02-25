@@ -565,10 +565,45 @@ public static class VectorSearchExtensions {
   /// Builds EF.Property&lt;Vector&gt; access expression for shadow property.
   /// AOT-safe: Uses cached MethodInfo from compile-time expression parsing.
   /// </summary>
+  /// <remarks>
+  /// IMPORTANT: Shadow properties are named using snake_case to match the EF Core generator convention.
+  /// E.g., property "Embeddings" → shadow property "embeddings", "ContentEmbedding" → "content_embedding".
+  /// </remarks>
   private static MethodCallExpression _buildEfPropertyAccess(Expression instance, string propertyName) {
-    // Build: EF.Property<Vector>(instance, propertyName)
+    // Convert PascalCase property name to snake_case to match EF Core shadow property naming
+    var shadowPropertyName = _toSnakeCase(propertyName);
+    // Build: EF.Property<Vector>(instance, shadowPropertyName)
     // Using cached _efPropertyVectorMethod instead of string-based Expression.Call
-    return Expression.Call(_efPropertyVectorMethod, instance, Expression.Constant(propertyName));
+    return Expression.Call(_efPropertyVectorMethod, instance, Expression.Constant(shadowPropertyName));
+  }
+
+  /// <summary>
+  /// Converts PascalCase to snake_case.
+  /// E.g., "Embeddings" → "embeddings", "ContentEmbedding" → "content_embedding".
+  /// </summary>
+  /// <remarks>
+  /// This matches the naming convention used by EFCorePerspectiveConfigurationGenerator
+  /// for shadow properties. Must stay in sync with NamingConventionUtilities.ToSnakeCase().
+  /// </remarks>
+  private static string _toSnakeCase(string input) {
+    if (string.IsNullOrEmpty(input)) {
+      return input;
+    }
+
+    var sb = new System.Text.StringBuilder();
+    sb.Append(char.ToLowerInvariant(input[0]));
+
+    for (int i = 1; i < input.Length; i++) {
+      char c = input[i];
+      if (char.IsUpper(c)) {
+        sb.Append('_');
+        sb.Append(char.ToLowerInvariant(c));
+      } else {
+        sb.Append(c);
+      }
+    }
+
+    return sb.ToString();
   }
 
   /// <summary>

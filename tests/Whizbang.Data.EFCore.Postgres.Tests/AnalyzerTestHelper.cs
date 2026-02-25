@@ -20,6 +20,24 @@ public static class AnalyzerTestHelper {
   [RequiresAssemblyFiles()]
   public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(string source)
       where TAnalyzer : DiagnosticAnalyzer, new() {
+    return await GetDiagnosticsAsync<TAnalyzer>(source, includePgvector: true, includePgvectorEfCore: true);
+  }
+
+  /// <summary>
+  /// Runs an analyzer against the provided source code with configurable package references.
+  /// Used for testing package reference analyzers.
+  /// </summary>
+  /// <typeparam name="TAnalyzer">The type of analyzer to run</typeparam>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="includePgvector">Whether to include Pgvector assembly reference</param>
+  /// <param name="includePgvectorEfCore">Whether to include Pgvector.EntityFrameworkCore assembly reference</param>
+  /// <returns>The diagnostics reported by the analyzer</returns>
+  [RequiresAssemblyFiles()]
+  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
+      string source,
+      bool includePgvector,
+      bool includePgvectorEfCore)
+      where TAnalyzer : DiagnosticAnalyzer, new() {
 
     // Parse the source code
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
@@ -42,19 +60,17 @@ public static class AnalyzerTestHelper {
     // Add reference to System.Text.Json (for [JsonIgnore] attribute)
     references.Add(MetadataReference.CreateFromFile(typeof(System.Text.Json.Serialization.JsonIgnoreAttribute).Assembly.Location));
 
-    // Add reference to Whizbang.Core (for IPerspectiveFor, etc.)
-    try {
-      var coreAssembly = System.Reflection.Assembly.Load("Whizbang.Core");
-      references.Add(MetadataReference.CreateFromFile(coreAssembly.Location));
-    } catch {
-      // If assembly can't be loaded, try to find it in current directory
-      var coreAssemblyPath = Path.Combine(
-          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
-          "Whizbang.Core.dll"
-      );
-      if (File.Exists(coreAssemblyPath)) {
-        references.Add(MetadataReference.CreateFromFile(coreAssemblyPath));
-      }
+    // Add reference to Whizbang.Core (for IPerspectiveFor, VectorFieldAttribute, etc.)
+    _tryAddAssemblyReference(references, "Whizbang.Core");
+
+    // Conditionally add Pgvector package reference
+    if (includePgvector) {
+      _tryAddAssemblyReference(references, "Pgvector");
+    }
+
+    // Conditionally add Pgvector.EntityFrameworkCore package reference
+    if (includePgvectorEfCore) {
+      _tryAddAssemblyReference(references, "Pgvector.EntityFrameworkCore");
     }
 
     // Create compilation
@@ -76,5 +92,26 @@ public static class AnalyzerTestHelper {
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();
 
     return diagnostics;
+  }
+
+  /// <summary>
+  /// Attempts to add an assembly reference by name.
+  /// Tries loading from AppDomain first, then from executing assembly directory.
+  /// </summary>
+  private static void _tryAddAssemblyReference(List<MetadataReference> references, string assemblyName) {
+    try {
+      var assembly = System.Reflection.Assembly.Load(assemblyName);
+      references.Add(MetadataReference.CreateFromFile(assembly.Location));
+    } catch {
+      // If assembly can't be loaded, try to find it in current directory
+      var assemblyFileName = assemblyName + ".dll";
+      var assemblyFilePath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          assemblyFileName
+      );
+      if (File.Exists(assemblyFilePath)) {
+        references.Add(MetadataReference.CreateFromFile(assemblyFilePath));
+      }
+    }
   }
 }

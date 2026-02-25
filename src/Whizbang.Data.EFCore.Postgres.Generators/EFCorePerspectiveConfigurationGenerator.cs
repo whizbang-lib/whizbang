@@ -641,6 +641,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
 
+    // Check if any perspective has vector fields - if so, generate HasPostgresExtension("vector")
+    // This ensures the pgvector extension is automatically created in the database
+    var hasVectorFields = uniquePerspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
+    var vectorExtensionConfig = hasVectorFields
+        ? "    // Auto-configured: pgvector extension required for [VectorField] columns\n    modelBuilder.HasPostgresExtension(\"vector\");\n"
+        : "// No vector fields detected - pgvector extension not required\n";
+    template = TemplateUtilities.ReplaceRegion(template, "VECTOR_EXTENSION_CONFIG", vectorExtensionConfig);
+
     // Infrastructure configuration is now handled by static WhizbangModelBuilderExtensions.ConfigureWhizbangInfrastructure()
     // No need to extract and inject infrastructure snippets here
 

@@ -85,11 +85,13 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
         // Shadow properties for vector columns
-        entity.Property<Vector?>("Embedding")
+        // IMPORTANT: Shadow property names use snake_case to match the generator convention
+        // This is what VectorSearchExtensions expects when converting property selectors
+        entity.Property<Vector?>("embedding")
             .HasColumnName("embedding")
             .HasColumnType("vector(3)");
 
-        entity.Property<Vector?>("ReferenceEmbedding")
+        entity.Property<Vector?>("reference_embedding")
             .HasColumnName("reference_embedding")
             .HasColumnType("vector(3)");
       });
@@ -107,7 +109,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
         // Shadow property for vector column
-        entity.Property<Vector?>("TargetEmbedding")
+        // IMPORTANT: Shadow property names use snake_case to match the generator convention
+        entity.Property<Vector?>("target_embedding")
             .HasColumnName("target_embedding")
             .HasColumnType("vector(3)");
       });
