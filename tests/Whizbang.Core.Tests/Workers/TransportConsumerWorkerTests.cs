@@ -478,37 +478,6 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
-  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public Task<IDeliveryReceipt> SendAsync(
-    object message,
-    IMessageContext context,
-    Whizbang.Core.Dispatch.DispatchOptions options,
-    string callerMemberName = "",
-    string callerFilePath = "",
-    int callerLineNumber = 0
-  ) {
-    DispatchCallCount++;
-    return Task.FromResult<IDeliveryReceipt>(new FakeDeliveryReceipt());
-  }
-
-  public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
-    throw new NotImplementedException();
-
-  public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
-    throw new NotImplementedException();
-
-  public Task PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
-    throw new NotImplementedException();
-
   public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
     throw new NotImplementedException();
 
