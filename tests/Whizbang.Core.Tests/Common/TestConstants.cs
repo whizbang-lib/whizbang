@@ -30,8 +30,9 @@ public static class TestConstants {
   /// - 1 receptor from SecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
   /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
   ///     DispatcherSecurityBuilderVoidReceptor)
+  /// - 2 receptors from DispatcherTagProcessingTests.cs (TestCommandReceptor, ThrowingReceptor)
   ///
-  /// Total: 58 receptors (updated after merge from main)
+  /// Total: 60 receptors (updated for tag processing tests)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 58;
+  public const int EXPECTED_RECEPTOR_COUNT = 60;
 }

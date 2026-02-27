@@ -16,6 +16,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -114,6 +115,10 @@ public abstract class Dispatcher(
   private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+  // Core options for tag processing configuration
+  private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
+  // Message tag processor - invoked after successful receptor completion
+  private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
@@ -350,6 +355,9 @@ public abstract class Dispatcher(
       // Pass messageType so we can look up receptor's [DefaultRouting] attribute
       await _cascadeEventsFromResultAsync(result, messageType);
 
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
       // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
@@ -473,6 +481,9 @@ public abstract class Dispatcher(
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result, messageType);
 
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
       _envelopeRegistry?.Unregister(envelope);
@@ -541,6 +552,9 @@ public abstract class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
       await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
@@ -627,6 +641,9 @@ public abstract class Dispatcher(
 
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
@@ -853,7 +870,13 @@ public abstract class Dispatcher(
     }
 
     if (!cascadeTask.IsCompletedSuccessfully) {
-      return _awaitCascadeAndReturnResultAsync(cascadeTask, finalResult);
+      return _awaitCascadeAndReturnResultAsync(cascadeTask, finalResult, message, messageType);
+    }
+
+    // Process tags after successful receptor completion (sync path)
+    var tagTask = _processTagsIfEnabledAsync(message, messageType);
+    if (!tagTask.IsCompletedSuccessfully) {
+      return _awaitTagProcessingAndReturnResultAsync(tagTask, finalResult);
     }
 
     // Return pre-completed ValueTask (zero allocation)
@@ -861,11 +884,21 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
-  /// Helper method to await cascade task and return result.
+  /// Helper method to await cascade task, process tags, and return result.
   /// This is a separate method to avoid state machine overhead in the fast path.
   /// </summary>
-  private static async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result) {
+  private async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result, object message, Type messageType) {
     await cascadeTask;
+    await _processTagsIfEnabledAsync(message, messageType);
+    return result;
+  }
+
+  /// <summary>
+  /// Helper method to await tag processing task and return result.
+  /// This is a separate method to avoid state machine overhead in the fast path.
+  /// </summary>
+  private static async ValueTask<TResult> _awaitTagProcessingAndReturnResultAsync<TResult>(ValueTask tagTask, TResult result) {
+    await tagTask;
     return result;
   }
 
@@ -881,6 +914,9 @@ public abstract class Dispatcher(
   ) {
     var result = await invoker(message);
     await _cascadeEventsFromResultAsync(result, messageType);
+
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(message, messageType);
 
     // Unwrap Routed<T> from result if receptor returned a wrapped value
     // This enables receptors to return Route.Local(event) for cascade control
@@ -1056,6 +1092,9 @@ public abstract class Dispatcher(
     } else {
       CascadeLogger.LogWarning("[CASCADE] VoidWithAnyInvoker: Receptor returned null, no cascade will occur");
     }
+
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(message, messageType);
 #pragma warning restore CA1848
   }
 
@@ -1088,6 +1127,9 @@ public abstract class Dispatcher(
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
       await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
@@ -1193,6 +1235,9 @@ public abstract class Dispatcher(
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
       await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(actualMessage, messageType);
 
       // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
@@ -1688,6 +1733,9 @@ public abstract class Dispatcher(
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result, messageType);
 
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
       // Unwrap Routed<T> from result if receptor returned a wrapped value
@@ -1986,6 +2034,45 @@ public abstract class Dispatcher(
       }
     }
 #pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Processes tags for a successfully handled message if tag processing is enabled.
+  /// Called after cascade to invoke registered tag hooks.
+  /// </summary>
+  /// <param name="message">The message that was processed.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// Tag processing is skipped if:
+  /// - EnableTagProcessing is false in WhizbangCoreOptions
+  /// - TagProcessingMode is set to AsLifecycleStage (processed during lifecycle instead)
+  /// - No IMessageTagProcessor is registered
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/message-tags#processing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
+  private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
+    // Skip if tag processing is disabled
+    if (!_coreOptions.EnableTagProcessing) {
+      return;
+    }
+
+    // Skip immediate processing if using lifecycle stage mode
+    if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
+      return;
+    }
+
+    // Skip if no processor is registered
+    if (_messageTagProcessor is null) {
+      return;
+    }
+
+    // Pass scope as null for now - scope extraction can be enhanced in future phases
+    // The processor can access ambient scope via ScopeContextAccessor if needed
+    await _messageTagProcessor.ProcessTagsAsync(message, messageType, scope: null, ct);
   }
 
   /// <summary>

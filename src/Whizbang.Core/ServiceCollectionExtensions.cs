@@ -1,9 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core;
 
@@ -47,7 +49,53 @@ public static class ServiceCollectionExtensions {
   /// </remarks>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_WithValidServices_ReturnsWhizbangBuilderAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersCoreServices_SuccessfullyAsync</tests>
-  public static WhizbangBuilder AddWhizbang(this IServiceCollection services) {
+  public static WhizbangBuilder AddWhizbang(this IServiceCollection services)
+      => AddWhizbang(services, configure: null);
+
+  /// <summary>
+  /// Registers Whizbang core infrastructure services with configuration options.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="configure">Optional configuration action for Whizbang options.</param>
+  /// <returns>A WhizbangBuilder for configuring storage providers.</returns>
+  /// <remarks>
+  /// <para>
+  /// Use this method to configure Whizbang behavior including tag processing.
+  /// </para>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///     options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
+  ///     options.TagProcessingMode = TagProcessingMode.AfterReceptorCompletion;
+  /// });
+  /// </code>
+  /// </example>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs</tests>
+  public static WhizbangBuilder AddWhizbang(
+      this IServiceCollection services,
+      Action<WhizbangCoreOptions>? configure) {
+    // Create and configure options
+    var coreOptions = new WhizbangCoreOptions();
+    configure?.Invoke(coreOptions);
+
+    // Register WhizbangCoreOptions as singleton
+    services.AddSingleton(coreOptions);
+
+    // Register TagOptions as singleton
+    services.AddSingleton(coreOptions.Tags);
+
+    // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
+    foreach (var registration in coreOptions.Tags.HookRegistrations) {
+      services.TryAddScoped(registration.HookType);
+    }
+
+    // Register MessageTagProcessor with hook resolver
+    services.AddScoped<IMessageTagProcessor>(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      return new MessageTagProcessor(tagOptions, type => sp.GetService(type));
+    });
+
     // Register core infrastructure services
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();

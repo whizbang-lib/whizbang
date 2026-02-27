@@ -1,12 +1,16 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests;
 
@@ -242,6 +246,220 @@ public class ServiceCollectionExtensionsTests {
     var resolvedRegistry = provider.GetService<ITrackedEventTypeRegistry>();
     await Assert.That(resolvedRegistry).IsSameReferenceAs(customRegistry);
     await Assert.That(resolvedRegistry!.ShouldTrack(typeof(string))).IsTrue();
+  }
+
+  // ==========================================================================
+  // AddWhizbang with Options Lambda Tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AddWhizbang_WithOptionsLambda_ReturnsWhizbangBuilderAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    var builder = services.AddWhizbang(options => { });
+
+    // Assert
+    await Assert.That(builder).IsNotNull();
+    await Assert.That(builder).IsTypeOf<WhizbangBuilder>();
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithOptionsLambda_RegistersTagOptions_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var tagOptions = provider.GetService<TagOptions>();
+    await Assert.That(tagOptions).IsNotNull();
+    await Assert.That(tagOptions!.HookRegistrations.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithOptionsLambda_RegistersWhizbangCoreOptions_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.EnableTagProcessing = false;
+      options.TagProcessingMode = TagProcessingMode.AsLifecycleStage;
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var coreOptions = provider.GetService<WhizbangCoreOptions>();
+    await Assert.That(coreOptions).IsNotNull();
+    await Assert.That(coreOptions!.EnableTagProcessing).IsFalse();
+    await Assert.That(coreOptions.TagProcessingMode).IsEqualTo(TagProcessingMode.AsLifecycleStage);
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithHooks_RegistersHookTypesAsScoped_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert - hooks should be registered as scoped
+    using var scope1 = provider.CreateScope();
+    using var scope2 = provider.CreateScope();
+
+    var hook1a = scope1.ServiceProvider.GetService<TestNotificationHook>();
+    var hook1b = scope1.ServiceProvider.GetService<TestNotificationHook>();
+    var hook2 = scope2.ServiceProvider.GetService<TestNotificationHook>();
+
+    await Assert.That(hook1a).IsNotNull();
+    await Assert.That(hook1a).IsSameReferenceAs(hook1b); // Same within scope
+    await Assert.That(hook1a).IsNotSameReferenceAs(hook2); // Different across scopes
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithHooks_RegistersMessageTagProcessor_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    using var scope = provider.CreateScope();
+    var processor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+
+    await Assert.That(processor).IsNotNull();
+    await Assert.That(processor).IsTypeOf<MessageTagProcessor>();
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithNullConfigure_UsesDefaults_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(configure: null);
+    var provider = services.BuildServiceProvider();
+
+    // Assert - defaults should be used
+    var coreOptions = provider.GetService<WhizbangCoreOptions>();
+    await Assert.That(coreOptions).IsNotNull();
+    await Assert.That(coreOptions!.EnableTagProcessing).IsTrue();
+    await Assert.That(coreOptions.TagProcessingMode).IsEqualTo(TagProcessingMode.AfterReceptorCompletion);
+  }
+
+  [Test]
+  public async Task AddWhizbang_ParameterlessOverload_StillWorks_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act - use parameterless overload
+    var builder = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - should still work and register defaults
+    await Assert.That(builder).IsNotNull();
+
+    // WhizbangCoreOptions should be registered with defaults
+    var coreOptions = provider.GetService<WhizbangCoreOptions>();
+    await Assert.That(coreOptions).IsNotNull();
+    await Assert.That(coreOptions!.EnableTagProcessing).IsTrue();
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithMultipleHooks_RegistersAllHookTypes_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
+      options.Tags.UseHook<MetricTagAttribute, TestMetricHook>();
+      options.Tags.UseUniversalHook<TestUniversalHook>();
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert - all hooks should be resolvable
+    using var scope = provider.CreateScope();
+
+    var notificationHook = scope.ServiceProvider.GetService<TestNotificationHook>();
+    var telemetryHook = scope.ServiceProvider.GetService<TestTelemetryHook>();
+    var metricHook = scope.ServiceProvider.GetService<TestMetricHook>();
+    var universalHook = scope.ServiceProvider.GetService<TestUniversalHook>();
+
+    await Assert.That(notificationHook).IsNotNull();
+    await Assert.That(telemetryHook).IsNotNull();
+    await Assert.That(metricHook).IsNotNull();
+    await Assert.That(universalHook).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithHooksTryAddScoped_DoesNotOverrideExisting_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+    var existingHook = new TestNotificationHook();
+    services.AddScoped(_ => existingHook); // Pre-register
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert - TryAddScoped should not override existing registration
+    using var scope = provider.CreateScope();
+    var resolvedHook = scope.ServiceProvider.GetService<TestNotificationHook>();
+    await Assert.That(resolvedHook).IsSameReferenceAs(existingHook);
+  }
+
+  // ==========================================================================
+  // Test Hook Implementations for Options Lambda Tests
+  // ==========================================================================
+
+  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<NotificationTagAttribute> _,
+        CancellationToken __) {
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class TestTelemetryHook : IMessageTagHook<TelemetryTagAttribute> {
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<TelemetryTagAttribute> _,
+        CancellationToken __) {
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class TestMetricHook : IMessageTagHook<MetricTagAttribute> {
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MetricTagAttribute> _,
+        CancellationToken __) {
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class TestUniversalHook : IMessageTagHook<MessageTagAttribute> {
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MessageTagAttribute> _,
+        CancellationToken __) {
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
   }
 
   /// <summary>

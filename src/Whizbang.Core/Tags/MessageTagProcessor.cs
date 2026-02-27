@@ -19,7 +19,7 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>core-concepts/message-tags#processing</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
-public sealed class MessageTagProcessor {
+public sealed class MessageTagProcessor : IMessageTagProcessor {
   private readonly TagOptions _options;
   private readonly Func<Type, object?>? _hookResolver;
 
@@ -31,6 +31,111 @@ public sealed class MessageTagProcessor {
   public MessageTagProcessor(TagOptions options, Func<Type, object?>? hookResolver = null) {
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _hookResolver = hookResolver;
+  }
+
+  /// <inheritdoc />
+  public async ValueTask ProcessTagsAsync(
+      object message,
+      Type messageType,
+      IReadOnlyDictionary<string, object?>? scope = null,
+      CancellationToken ct = default) {
+    // Early return if no hook resolver configured
+    if (_hookResolver is null) {
+      return;
+    }
+
+    // Get tag registrations for this message type from the registry
+    foreach (var registration in MessageTagRegistry.GetTagsFor(messageType)) {
+      // Build payload using the pre-compiled builder
+      var payload = registration.PayloadBuilder(message);
+
+      // Get the attribute instance
+      var attribute = registration.AttributeFactory();
+
+      // Create context and invoke hooks for this attribute type
+      await _processTagRegistrationAsync(message, messageType, attribute, payload, scope, ct);
+    }
+  }
+
+  /// <summary>
+  /// Processes a single tag registration by creating context and invoking matching hooks.
+  /// </summary>
+  private async ValueTask _processTagRegistrationAsync(
+      object message,
+      Type messageType,
+      MessageTagAttribute attribute,
+      JsonElement payload,
+      IReadOnlyDictionary<string, object?>? scope,
+      CancellationToken ct) {
+    // Get hooks that match this attribute type
+    var attributeType = attribute.GetType();
+    var hooks = _options.GetHooksFor(attributeType);
+    var currentPayload = payload;
+
+    foreach (var registration in hooks) {
+      var hookInstance = _hookResolver!(registration.HookType);
+      if (hookInstance is null) {
+        continue;
+      }
+
+      // Create context based on attribute type
+      var hookContext = _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope);
+
+      // Invoke the hook
+      var result = await _invokeHookAsync(hookInstance, hookContext, registration.AttributeType, ct);
+
+      // Update payload if hook returned a modified one
+      if (result.HasValue) {
+        currentPayload = result.Value;
+      }
+    }
+  }
+
+  private static object _createHookContextForAttribute(
+      MessageTagAttribute attribute,
+      object message,
+      Type messageType,
+      JsonElement payload,
+      IReadOnlyDictionary<string, object?>? scope) {
+    // Create the appropriate typed context based on attribute type
+    if (attribute is NotificationTagAttribute notificationAttr) {
+      return new TagContext<NotificationTagAttribute> {
+        Attribute = notificationAttr,
+        Message = message,
+        MessageType = messageType,
+        Payload = payload,
+        Scope = scope
+      };
+    }
+
+    if (attribute is TelemetryTagAttribute telemetryAttr) {
+      return new TagContext<TelemetryTagAttribute> {
+        Attribute = telemetryAttr,
+        Message = message,
+        MessageType = messageType,
+        Payload = payload,
+        Scope = scope
+      };
+    }
+
+    if (attribute is MetricTagAttribute metricAttr) {
+      return new TagContext<MetricTagAttribute> {
+        Attribute = metricAttr,
+        Message = message,
+        MessageType = messageType,
+        Payload = payload,
+        Scope = scope
+      };
+    }
+
+    // Fallback to base MessageTagAttribute context
+    return new TagContext<MessageTagAttribute> {
+      Attribute = attribute,
+      Message = message,
+      MessageType = messageType,
+      Payload = payload,
+      Scope = scope
+    };
   }
 
   /// <summary>
