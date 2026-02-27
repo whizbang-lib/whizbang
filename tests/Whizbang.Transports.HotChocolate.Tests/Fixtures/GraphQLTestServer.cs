@@ -4,6 +4,7 @@ using HotChocolate.Execution;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
+using Whizbang.Transports.HotChocolate.Middleware;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Fixtures;
 
@@ -47,6 +48,21 @@ public class Query {
       [Service] IFilterOnlyLens lens) {
     return lens.Query;
   }
+
+  /// <summary>
+  /// Query pre-ordered products - used to test GraphQL sort precedence.
+  /// The underlying lens returns data already sorted by Id.
+  /// UseOrderByStripping ensures GraphQL sort replaces pre-existing ordering.
+  /// </summary>
+  [UsePaging(DefaultPageSize = 10, MaxPageSize = 50, IncludeTotalCount = true)]
+  [UseProjection]
+  [UseFiltering]
+  [UseSorting]
+  [UseOrderByStripping]
+  public IQueryable<PerspectiveRow<ProductReadModel>> GetPreOrderedProducts(
+      [Service] IPreOrderedProductLens lens) {
+    return lens.Query;
+  }
 }
 
 /// <summary>
@@ -60,18 +76,21 @@ public sealed class GraphQLTestServer : IAsyncDisposable {
   public TestOrderLens OrderLens { get; }
   public TestProductLens ProductLens { get; }
   public TestFilterOnlyLens FilterOnlyLens { get; }
+  public TestPreOrderedProductLens PreOrderedProductLens { get; }
 
   private GraphQLTestServer(
       IRequestExecutor executor,
       ServiceProvider serviceProvider,
       TestOrderLens orderLens,
       TestProductLens productLens,
-      TestFilterOnlyLens filterOnlyLens) {
+      TestFilterOnlyLens filterOnlyLens,
+      TestPreOrderedProductLens preOrderedProductLens) {
     _executor = executor;
     _serviceProvider = serviceProvider;
     OrderLens = orderLens;
     ProductLens = productLens;
     FilterOnlyLens = filterOnlyLens;
+    PreOrderedProductLens = preOrderedProductLens;
   }
 
   /// <summary>
@@ -81,6 +100,7 @@ public sealed class GraphQLTestServer : IAsyncDisposable {
     var orderLens = new TestOrderLens();
     var productLens = new TestProductLens();
     var filterOnlyLens = new TestFilterOnlyLens();
+    var preOrderedProductLens = new TestPreOrderedProductLens();
 
     var services = new ServiceCollection();
 
@@ -88,6 +108,7 @@ public sealed class GraphQLTestServer : IAsyncDisposable {
     services.AddSingleton<IOrderLens>(orderLens);
     services.AddSingleton<IProductLens>(productLens);
     services.AddSingleton<IFilterOnlyLens>(filterOnlyLens);
+    services.AddSingleton<IPreOrderedProductLens>(preOrderedProductLens);
 
     // Configure HotChocolate
     services
@@ -103,7 +124,8 @@ public sealed class GraphQLTestServer : IAsyncDisposable {
         serviceProvider,
         orderLens,
         productLens,
-        filterOnlyLens);
+        filterOnlyLens,
+        preOrderedProductLens);
   }
 
   /// <summary>

@@ -345,4 +345,141 @@ public class QueryExecutionTests {
     await Assert.That(bIndex).IsLessThan(cIndex);
     await Assert.That(cIndex).IsLessThan(aIndex);
   }
+
+  #region Pre-Ordered Query Tests
+
+  [Test]
+  public async Task Query_WithPreExistingOrderBy_GraphQLSortDescendingReplacesItAsync() {
+    // Arrange - Pre-ordered lens returns data sorted by Id ascending
+    await using var server = await GraphQLTestServer.CreateAsync();
+
+    // Add data with specific IDs so we can verify ordering
+    // IDs are GUIDs but we'll create them in a known order
+    var id1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    var id2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
+    var id3 = Guid.Parse("00000000-0000-0000-0000-000000000003");
+
+    server.PreOrderedProductLens.AddData([
+        TestDataFactory.CreateProductRow(id: id1, name: "A-Product", price: 100m),
+        TestDataFactory.CreateProductRow(id: id2, name: "B-Product", price: 200m),
+        TestDataFactory.CreateProductRow(id: id3, name: "C-Product", price: 150m)
+    ]);
+
+    // Act - Sort by price descending (should replace pre-existing OrderBy on Id)
+    var result = await server.ExecuteAsync("""
+            {
+              preOrderedProducts(order: { data: { price: DESC } }) {
+                nodes {
+                  data {
+                    name
+                    price
+                  }
+                }
+              }
+            }
+            """);
+
+    // Assert - Should be sorted by price DESC, not by Id ASC
+    var json = result.ToJson();
+    await Assert.That(json).DoesNotContain("errors");
+
+    var bIndex = json.IndexOf("B-Product", StringComparison.Ordinal);
+    var cIndex = json.IndexOf("C-Product", StringComparison.Ordinal);
+    var aIndex = json.IndexOf("A-Product", StringComparison.Ordinal);
+
+    // B-Product (200) > C-Product (150) > A-Product (100)
+    await Assert.That(bIndex).IsGreaterThanOrEqualTo(0);
+    await Assert.That(bIndex).IsLessThan(cIndex);
+    await Assert.That(cIndex).IsLessThan(aIndex);
+  }
+
+  [Test]
+  public async Task Query_WithPreExistingOrderBy_GraphQLSortAscendingReplacesItAsync() {
+    // Arrange - Pre-ordered lens returns data sorted by Id ascending
+    await using var server = await GraphQLTestServer.CreateAsync();
+
+    var id1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    var id2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
+    var id3 = Guid.Parse("00000000-0000-0000-0000-000000000003");
+
+    // Add in reverse ID order - pre-ordering should sort by Id
+    server.PreOrderedProductLens.AddData([
+        TestDataFactory.CreateProductRow(id: id3, name: "C-Product", price: 150m),
+        TestDataFactory.CreateProductRow(id: id1, name: "A-Product", price: 100m),
+        TestDataFactory.CreateProductRow(id: id2, name: "B-Product", price: 200m)
+    ]);
+
+    // Act - Sort by price ascending (should replace pre-existing OrderBy on Id)
+    var result = await server.ExecuteAsync("""
+            {
+              preOrderedProducts(order: { data: { price: ASC } }) {
+                nodes {
+                  data {
+                    name
+                    price
+                  }
+                }
+              }
+            }
+            """);
+
+    // Assert - Should be sorted by price ASC, not by Id ASC
+    var json = result.ToJson();
+    await Assert.That(json).DoesNotContain("errors");
+
+    var aIndex = json.IndexOf("A-Product", StringComparison.Ordinal);
+    var cIndex = json.IndexOf("C-Product", StringComparison.Ordinal);
+    var bIndex = json.IndexOf("B-Product", StringComparison.Ordinal);
+
+    // A-Product (100) < C-Product (150) < B-Product (200)
+    await Assert.That(aIndex).IsGreaterThanOrEqualTo(0);
+    await Assert.That(aIndex).IsLessThan(cIndex);
+    await Assert.That(cIndex).IsLessThan(bIndex);
+  }
+
+  [Test]
+  public async Task Query_WithPreExistingOrderBy_NoGraphQLSort_PreservesOriginalOrderAsync() {
+    // Arrange - Pre-ordered lens returns data sorted by Id ascending
+    await using var server = await GraphQLTestServer.CreateAsync();
+
+    var id1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    var id2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
+    var id3 = Guid.Parse("00000000-0000-0000-0000-000000000003");
+
+    // Add in reverse ID order - pre-ordering should sort by Id ASC
+    server.PreOrderedProductLens.AddData([
+        TestDataFactory.CreateProductRow(id: id3, name: "C-Product", price: 150m),
+        TestDataFactory.CreateProductRow(id: id1, name: "A-Product", price: 100m),
+        TestDataFactory.CreateProductRow(id: id2, name: "B-Product", price: 200m)
+    ]);
+
+    // Act - No sorting specified - should preserve pre-existing order
+    var result = await server.ExecuteAsync("""
+            {
+              preOrderedProducts {
+                nodes {
+                  data {
+                    name
+                    price
+                  }
+                }
+              }
+            }
+            """);
+
+    // Assert - Should preserve original OrderBy(Id) - A (id1) < B (id2) < C (id3)
+    var json = result.ToJson();
+    await Assert.That(json).DoesNotContain("errors");
+
+    var aIndex = json.IndexOf("A-Product", StringComparison.Ordinal);
+    var bIndex = json.IndexOf("B-Product", StringComparison.Ordinal);
+    var cIndex = json.IndexOf("C-Product", StringComparison.Ordinal);
+
+    // Should be in Id order: A (id1) < B (id2) < C (id3)
+    await Assert.That(aIndex).IsGreaterThanOrEqualTo(0);
+    await Assert.That(aIndex).IsLessThan(bIndex);
+    await Assert.That(bIndex).IsLessThan(cIndex);
+  }
+
+  #endregion
 }
