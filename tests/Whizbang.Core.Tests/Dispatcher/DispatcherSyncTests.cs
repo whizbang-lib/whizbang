@@ -16,6 +16,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
 [Category("Dispatcher")]
+[NotInParallel]
 public class DispatcherSyncTests : DiagnosticTestBase {
   protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
