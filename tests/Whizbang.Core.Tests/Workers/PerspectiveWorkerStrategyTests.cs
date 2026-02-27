@@ -177,6 +177,14 @@ public class PerspectiveWorkerStrategyTests {
     // Act - Run worker for one poll cycle
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
+
+    // Wait for the worker to process (which will fail) OR timeout
+    // Use ContinueWith to observe any exception immediately to prevent unobserved task exception
+    var observerTask = workerTask.ContinueWith(t => {
+      // This observes any exception on the task, preventing unobserved task exception
+      _ = t.Exception;
+    }, TaskContinuationOptions.OnlyOnFaulted);
+
     await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
     cts.Cancel();
 
