@@ -680,7 +680,7 @@ public partial class PerspectiveWorker(
       }
     }
 
-    // Set message context with UserId from security context
+    // Set message context with UserId and TenantId from security context
     var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
       var securityContext = envelope.GetCurrentSecurityContext();
@@ -689,7 +689,8 @@ public partial class PerspectiveWorker(
         CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
         CausationId = envelope.GetCausationId() ?? MessageId.New(),
         Timestamp = envelope.GetMessageTimestamp(),
-        UserId = securityContext?.UserId
+        UserId = securityContext?.UserId,
+        TenantId = securityContext?.TenantId
       };
     }
   }

@@ -298,6 +298,22 @@ public class SecurityContextHelperTests {
   }
 
   [Test]
+  public async Task SetMessageContextFromEnvelope_WithSecurityContext_SetsTenantIdAsync() {
+    // Arrange
+    var expectedTenantId = "tenant-from-hop";
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-1", expectedTenantId);
+    var messageContextAccessor = new MessageContextAccessor();
+    var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
+
+    // Act
+    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, services);
+
+    // Assert
+    await Assert.That(messageContextAccessor.Current).IsNotNull();
+    await Assert.That(messageContextAccessor.Current!.TenantId).IsEqualTo(expectedTenantId);
+  }
+
+  [Test]
   public async Task SetMessageContextFromEnvelope_NoSecurityContext_SetsNullUserIdAsync() {
     // Arrange
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
@@ -432,6 +448,35 @@ public class SecurityContextHelperTests {
       // Assert
       await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
       await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo(expectedUserId);
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentContext = null;
+      MessageContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithScopeContext_PropagatesTenantIdAsync() {
+    // Arrange
+    var expectedTenantId = "tenant-cascade";
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = "user-cascade", TenantId = expectedTenantId },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "TestSource"
+    };
+    var scopeContext = new ImmutableScopeContext(extraction, shouldPropagate: true);
+    ScopeContextAccessor.CurrentContext = scopeContext;
+
+    try {
+      // Act
+      SecurityContextHelper.EstablishMessageContextForCascade();
+
+      // Assert
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.TenantId).IsEqualTo(expectedTenantId);
     } finally {
       // Cleanup
       ScopeContextAccessor.CurrentContext = null;
@@ -639,6 +684,29 @@ public class SecurityContextHelperTests {
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
           SecurityContext = new SecurityContext { UserId = userId, TenantId = "test-tenant" }
+        }
+      ]
+    };
+  }
+
+  private static MessageEnvelope<TMessage> _createEnvelopeWithSecurityContextAndTenant<TMessage>(
+      TMessage payload,
+      string userId,
+      string tenantId) where TMessage : notnull {
+    return new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = payload,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 1234
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "test-topic",
+          SecurityContext = new SecurityContext { UserId = userId, TenantId = tenantId }
         }
       ]
     };

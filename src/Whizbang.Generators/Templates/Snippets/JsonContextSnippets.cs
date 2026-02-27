@@ -63,7 +63,12 @@ if (type == typeof(global::System.Collections.Generic.List<__ELEMENT_TYPE__>)) {
 
 #region LIST_TYPE_FACTORY
 private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> CreateList___ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
-  var elementInfo = GetOrCreateTypeInfo<__ELEMENT_TYPE__>(options);
+  // Get element type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
+  // (e.g., List<MyEvent> where MyEvent contains a List<MyEvent> property)
+  var elementInfo = TryGetOrCreateTypeInfo<__ELEMENT_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the element type is properly registered.");
   var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> {
     ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
     ElementInfo = elementInfo
@@ -93,6 +98,90 @@ private JsonTypeInfo<__FULLY_QUALIFIED_NAME__> CreateEnum___UNIQUE_IDENTIFIER__(
 }
 #endregion
 
+#region LAZY_FIELD_NULLABLE_ENUM
+private JsonTypeInfo<__FULLY_QUALIFIED_NAME__?>? _NullableEnum___UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_NULLABLE_ENUM
+if (type == typeof(__FULLY_QUALIFIED_NAME__?)) {
+  return CreateNullableEnum___UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region NULLABLE_ENUM_TYPE_FACTORY
+private JsonTypeInfo<__FULLY_QUALIFIED_NAME__?> CreateNullableEnum___UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  var nullableConverter = JsonMetadataServices.GetNullableConverter<__FULLY_QUALIFIED_NAME__>(options);
+  var jsonTypeInfo = JsonMetadataServices.CreateValueInfo<__FULLY_QUALIFIED_NAME__?>(options, nullableConverter);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
+#region LAZY_FIELD_ARRAY
+private JsonTypeInfo<__ELEMENT_TYPE__[]>? _Array___ELEMENT_UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_ARRAY
+if (type == typeof(__ELEMENT_TYPE__[])) {
+  return CreateArray___ELEMENT_UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region ARRAY_TYPE_FACTORY
+private JsonTypeInfo<__ELEMENT_TYPE__[]> CreateArray___ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  // Get element type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
+  var elementInfo = TryGetOrCreateTypeInfo<__ELEMENT_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the element type is properly registered.");
+  var arrayInfo = new JsonCollectionInfoValues<__ELEMENT_TYPE__[]> {
+    ObjectCreator = null,  // Arrays use default array creation
+    ElementInfo = elementInfo
+  };
+  var jsonTypeInfo = JsonMetadataServices.CreateArrayInfo<__ELEMENT_TYPE__>(options, arrayInfo);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
+#region LAZY_FIELD_POLYMORPHIC
+private JsonTypeInfo<__BASE_TYPE__>? _Polymorphic___UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_POLYMORPHIC
+if (type == typeof(__BASE_TYPE__)) {
+  return CreatePolymorphic___UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region POLYMORPHIC_TYPE_FACTORY
+private JsonTypeInfo<__BASE_TYPE__> CreatePolymorphic___UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  var polyOptions = new JsonPolymorphismOptions {
+    TypeDiscriminatorPropertyName = "$type",
+    UnknownDerivedTypeHandling = JsonUnknownDerivedTypeHandling.FallBackToNearestAncestor
+  };
+
+__DERIVED_TYPE_REGISTRATIONS__
+
+  var objectInfo = new JsonObjectInfoValues<__BASE_TYPE__> {
+    ObjectCreator = null,  // Base type may be abstract or interface
+    ObjectWithParameterizedConstructorCreator = null,
+    PropertyMetadataInitializer = _ => Array.Empty<JsonPropertyInfo>(),
+    ConstructorParameterMetadataInitializer = null,
+    SerializeHandler = null
+  };
+
+  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo<__BASE_TYPE__>(options, objectInfo);
+  jsonTypeInfo.PolymorphismOptions = polyOptions;
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
+#region POLYMORPHIC_DERIVED_REGISTRATION
+  polyOptions.DerivedTypes.Add(new JsonDerivedType(typeof(__DERIVED_TYPE__), "__DERIVED_TYPE_DISCRIMINATOR__"));
+#endregion
+
 #region HELPER_CREATE_PROPERTY
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,
@@ -116,100 +205,187 @@ private JsonPropertyInfo CreateProperty<TProperty>(
 }
 #endregion
 
+#region TYPES_BEING_CREATED_FIELD
+// Thread-local tracking of types currently being created to prevent infinite recursion
+// When type A has a property of type B, and type B has a property of type A,
+// we detect this circular reference and fall back to the resolver chain.
+[global::System.ThreadStaticAttribute]
+private static global::System.Collections.Generic.HashSet<global::System.Type>? _typesBeingCreated;
+private static global::System.Collections.Generic.HashSet<global::System.Type> TypesBeingCreated => _typesBeingCreated ??= new();
+
+// Thread-local cache for type infos that are being created or have been created
+// This enables circular references to work: when creating type A which needs type B,
+// and type B needs type A, type A's (incomplete) info can be found in this cache.
+[global::System.ThreadStaticAttribute]
+private static global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo>? _typeInfoCache;
+private static global::System.Collections.Generic.Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo> TypeInfoCache => _typeInfoCache ??= new();
+#endregion
+
+#region HELPER_TRY_GET_OR_CREATE_TYPE_INFO
+/// <summary>
+/// Gets JsonTypeInfo for a type, handling circular references gracefully.
+/// Returns a cached type info if available during circular reference.
+/// Used by collection factories where circular references are common (e.g., List&lt;T&gt; where T contains List&lt;T&gt;).
+/// With deferred property initialization, the type info is cached before properties are created,
+/// so self-referencing types can find themselves in the cache.
+/// </summary>
+private JsonTypeInfo<T>? TryGetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
+  var type = typeof(T);
+
+  // Check cache first - with deferred initialization, the type info is cached
+  // before properties are created, so self-referencing types will find themselves here
+  if (TypeInfoCache.TryGetValue(type, out var cached)) {
+    return cached as JsonTypeInfo<T>;
+  }
+
+  // If we're already creating this type but it's not in cache, we have a genuine
+  // circular reference that can't be resolved. Return null to let the caller handle it.
+  if (TypesBeingCreated.Contains(type)) {
+    // This shouldn't happen with deferred initialization, but handle gracefully
+    return null;
+  }
+
+  // Not a circular reference - delegate to the full GetOrCreateTypeInfo
+  return GetOrCreateTypeInfo<T>(options);
+}
+#endregion
+
 #region HELPER_GET_OR_CREATE_TYPE_INFO
 /// <summary>
 /// Gets JsonTypeInfo for a type, handling primitives in AOT-compatible way.
 /// For complex types, queries the full resolver chain.
+/// Includes circular reference detection and caching for self-referencing types.
 /// </summary>
 private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
   var type = typeof(T);
 
-  // Try our own resolver first (MessageId, CorrelationId, discovered types, etc.)
-  var typeInfo = GetTypeInfoInternal(type, options);
-  if (typeInfo != null) {
-    return (JsonTypeInfo<T>)typeInfo;
+  // Check cache first - handles cases where we've already created this type
+  if (TypeInfoCache.TryGetValue(type, out var cached)) {
+    return (JsonTypeInfo<T>)cached;
   }
 
-  // Handle common primitive types using JsonMetadataServices (AOT-compatible)
-  // Note: Nullable primitives (decimal?, int?, etc.) are handled by the resolver chain below
-  if (type == typeof(string)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);
+  // Check for circular reference - if we're already creating this type,
+  // we have a circular type dependency (e.g., type A has property of type B,
+  // and type B has property of type A). This requires special handling.
+  // Throw a clear error - use TryGetOrCreateTypeInfo for graceful handling.
+  if (TypesBeingCreated.Contains(type)) {
+    throw new InvalidOperationException(
+        $"Circular type reference detected while creating JsonTypeInfo for {type.FullName}. " +
+        "Your type graph has a cycle (e.g., type A references type B, and type B references type A). " +
+        "To resolve this, use [JsonIgnore] on one of the properties to break the cycle, " +
+        "or use a custom JsonConverter for one of the types.");
   }
 
-  if (type == typeof(int)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);
-  }
+  // Mark this type as being created to detect circular references
+  TypesBeingCreated.Add(type);
+  try {
+    // Try our own resolver first (MessageId, CorrelationId, discovered types, etc.)
+    var typeInfo = GetTypeInfoInternal(type, options);
+    if (typeInfo != null) {
+      // Cache the result for circular reference support
+      TypeInfoCache[type] = typeInfo;
+      return (JsonTypeInfo<T>)typeInfo;
+    }
 
-  if (type == typeof(long)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);
-  }
+    // Handle common primitive types using JsonMetadataServices (AOT-compatible)
+    // Note: Nullable primitives (decimal?, int?, etc.) are handled by the resolver chain below
+    if (type == typeof(string)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);
+    }
 
-  if (type == typeof(bool)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);
-  }
+    if (type == typeof(int)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);
+    }
 
-  if (type == typeof(DateTime)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);
-  }
+    if (type == typeof(long)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);
+    }
 
-  if (type == typeof(DateTimeOffset)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter);
-  }
+    if (type == typeof(bool)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);
+    }
 
-  if (type == typeof(Guid)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);
-  }
+    if (type == typeof(DateTime)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);
+    }
 
-  if (type == typeof(decimal)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);
-  }
+    if (type == typeof(DateTimeOffset)) {
+      // Use lenient converter to handle dates with or without timezone offsets
+      // This is necessary because some serializers (like PostgreSQL JSONB) may store timestamps without explicit timezone offsets
+      var converter = new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter();
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, converter);
+    }
 
-  if (type == typeof(double)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);
-  }
+    if (type == typeof(TimeSpan)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);
+    }
 
-  if (type == typeof(float)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);
-  }
+    if (type == typeof(DateOnly)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);
+    }
 
-  if (type == typeof(byte)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);
-  }
+    if (type == typeof(TimeOnly)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);
+    }
 
-  if (type == typeof(sbyte)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);
-  }
+    if (type == typeof(Guid)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);
+    }
 
-  if (type == typeof(short)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);
-  }
+    if (type == typeof(decimal)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);
+    }
 
-  if (type == typeof(ushort)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);
-  }
+    if (type == typeof(double)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);
+    }
 
-  if (type == typeof(uint)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);
-  }
+    if (type == typeof(float)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);
+    }
 
-  if (type == typeof(ulong)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);
-  }
+    if (type == typeof(byte)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);
+    }
 
-  if (type == typeof(char)) {
-    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
-  }
+    if (type == typeof(sbyte)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);
+    }
 
-  // For complex types (List, Dictionary, etc.), query the full resolver chain
-  // This will check InfrastructureJsonContext and user-provided resolvers
-  var chainTypeInfo = options.GetTypeInfo(type);
-  if (chainTypeInfo != null) {
-    return (JsonTypeInfo<T>)chainTypeInfo;
-  }
+    if (type == typeof(short)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);
+    }
 
-  // If still null, type is not registered anywhere - throw helpful error
-  throw new InvalidOperationException($"No JsonTypeInfo found for type {type.FullName}. " +
-    "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializable attribute.");
+    if (type == typeof(ushort)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);
+    }
+
+    if (type == typeof(uint)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);
+    }
+
+    if (type == typeof(ulong)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);
+    }
+
+    if (type == typeof(char)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
+    }
+
+    // For complex types (List, Dictionary, etc.), query the full resolver chain
+    // This will check InfrastructureJsonContext and user-provided resolvers
+    var chainTypeInfo = options.GetTypeInfo(type);
+    if (chainTypeInfo != null) {
+      return (JsonTypeInfo<T>)chainTypeInfo;
+    }
+
+    // If still null, type is not registered anywhere - throw helpful error
+    throw new InvalidOperationException($"No JsonTypeInfo found for type {type.FullName}. " +
+      "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializable attribute.");
+  } finally {
+    // Always clean up the tracking set, even if an exception was thrown
+    TypesBeingCreated.Remove(type);
+  }
 }
 #endregion
 
@@ -296,6 +472,12 @@ internal class __MESSAGE_TYPE__ {
 }
 
 internal class __PROPERTY_TYPE__ {
+}
+
+internal class __BASE_TYPE__ {
+}
+
+internal class __DERIVED_TYPE__ {
 }
 
 #pragma warning restore IDE1006 // Naming Styles

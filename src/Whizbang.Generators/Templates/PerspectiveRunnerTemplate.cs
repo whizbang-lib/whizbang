@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -231,6 +233,40 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         foreach (var envelope in processedEvents) {
+          // CRITICAL: Establish FULL security context BEFORE invoking lifecycle receptors
+          // This ensures IMessageContext.TenantId and UserId are available in handlers
+          // Pattern matches PerspectiveWorker._establishSecurityContextAsync - must do both steps:
+          // 1. Call IMessageSecurityContextProvider.EstablishContextAsync to set IScopeContextAccessor
+          // 2. Set IMessageContextAccessor.Current with envelope security context
+
+          // Step 1: Establish security context via provider (sets IScopeContextAccessor.Current)
+          var securityProvider = _serviceProvider.GetService<IMessageSecurityContextProvider>();
+          if (securityProvider is not null) {
+            var establishedContext = await securityProvider
+              .EstablishContextAsync(envelope, _serviceProvider, cancellationToken)
+              .ConfigureAwait(false);
+            if (establishedContext is not null) {
+              var scopeContextAccessor = _serviceProvider.GetService<IScopeContextAccessor>();
+              if (scopeContextAccessor is not null) {
+                scopeContextAccessor.Current = establishedContext;
+              }
+            }
+          }
+
+          // Step 2: Set message context with security info from envelope
+          var messageContextAccessor = _serviceProvider.GetService<IMessageContextAccessor>();
+          if (messageContextAccessor is not null) {
+            var securityContext = envelope.GetCurrentSecurityContext();
+            messageContextAccessor.Current = new MessageContext {
+              MessageId = envelope.MessageId,
+              CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
+              CausationId = envelope.GetCausationId() ?? MessageId.New(),
+              Timestamp = envelope.GetMessageTimestamp(),
+              UserId = securityContext?.UserId,
+              TenantId = securityContext?.TenantId
+            };
+          }
+
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,

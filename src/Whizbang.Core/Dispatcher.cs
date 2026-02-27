@@ -2336,13 +2336,17 @@ public abstract class Dispatcher(
       // Add hop indicating message is being stored to outbox
       // When destination is null (event-store-only), use "(event-store)" as topic indicator
       // SecurityContext: First try ambient context, then inherit from source envelope
+      var propagatedSecurityContext = _getSecurityContextForPropagation();
+      var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
+      var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
+
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext()
+        SecurityContext = finalSecurityContext
       };
       envelope.AddHop(hop);
 
@@ -2392,6 +2396,118 @@ public abstract class Dispatcher(
         scope.Dispose();
       }
     }
+  }
+
+  /// <summary>
+  /// Publishes an event to the outbox using its runtime type for serialization.
+  /// This non-generic overload is used when the compile-time type is an interface (IEvent, ICommand)
+  /// but the runtime type is a concrete class. Using the runtime type ensures proper JSON serialization.
+  /// </summary>
+  /// <param name="eventData">The event to publish (runtime type used for serialization)</param>
+  /// <param name="eventType">The runtime type of the event</param>
+  /// <param name="messageId">The message ID for tracking</param>
+  /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
+  /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+    // Create scope to resolve scoped IWorkCoordinatorStrategy
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+
+      // If no strategy is registered, skip outbox routing (local-only event)
+      if (strategy == null) {
+        return;
+      }
+
+      // Resolve destination topic using registry and routing strategy
+      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+
+      // Serialize the message directly using the runtime type via JsonContextRegistry
+      // This avoids creating MessageEnvelope<IEvent> which can't be serialized
+      var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
+      var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
+      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions);
+      if (jsonTypeInfo == null) {
+        throw new InvalidOperationException(
+          $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
+      }
+
+      var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
+
+      // Create the JsonElement envelope directly
+      var jsonEnvelope = new MessageEnvelope<JsonElement> {
+        MessageId = messageId,
+        Payload = payloadJson,
+        Hops = []
+      };
+
+      // Extract aggregate ID and add to hop metadata
+      var hopMetadata = _createHopMetadata(eventData, eventType);
+
+      // Add hop indicating message is being stored to outbox
+      var hop = new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = _instanceProvider.ToInfo(),
+        Topic = destination ?? "(event-store)",
+        Timestamp = DateTimeOffset.UtcNow,
+        Metadata = hopMetadata,
+        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext()
+      };
+      jsonEnvelope.AddHop(hop);
+
+      // Extract stream ID
+      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
+        ?? _extractStreamIdFromMetadata(hopMetadata)
+        ?? messageId.Value;
+
+      // Create OutboxMessage with all required fields
+      var newOutboxMessage = new OutboxMessage {
+        MessageId = jsonEnvelope.MessageId.Value,
+        Destination = destination,
+        Envelope = jsonEnvelope,
+        Metadata = new EnvelopeMetadata {
+          MessageId = jsonEnvelope.MessageId,
+          Hops = jsonEnvelope.Hops.ToList()
+        },
+        EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+        StreamId = streamId,
+        IsEvent = eventData is IEvent,
+        MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+      };
+
+      // Queue event for batched processing
+      strategy.QueueOutboxMessage(newOutboxMessage);
+
+      // Flush strategy to execute the batch
+      await strategy.FlushAsync(WorkBatchFlags.None);
+    } finally {
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
+  /// </summary>
+  private static Guid? _extractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
+    if (metadata == null) {
+      return null;
+    }
+
+    // Try both AggregateId (generated key) and aggregateId (legacy key)
+    if (metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement)) {
+      if (aggIdElement.ValueKind == JsonValueKind.String) {
+        if (Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
+          return guidValue;
+        }
+      }
+    }
+
+    return null;
   }
 
   /// <summary>

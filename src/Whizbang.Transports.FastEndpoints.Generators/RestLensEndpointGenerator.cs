@@ -214,11 +214,11 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     sb.AppendLine($"    pageSize = Math.Max(1, pageSize);");
     sb.AppendLine($"    var skip = (page - 1) * pageSize;");
     sb.AppendLine();
-    sb.AppendLine($"    // Build query");
-    sb.AppendLine($"    var query = _lens.Query.Select(r => r.Data);");
+    sb.AppendLine($"    // Build query with default ordering by Id for consistent pagination");
+    sb.AppendLine($"    var query = _lens.Query.Select(r => r.Data).OrderBy(x => x.Id);");
     sb.AppendLine();
     sb.AppendLine($"    // TODO: Apply filtering based on req.Filter");
-    sb.AppendLine($"    // TODO: Apply sorting based on req.Sort");
+    sb.AppendLine($"    // TODO: Apply sorting based on req.Sort (should override default OrderBy)");
     sb.AppendLine();
     sb.AppendLine($"    // Get total count before paging");
     sb.AppendLine($"    var totalCount = await query.CountAsync(ct);");

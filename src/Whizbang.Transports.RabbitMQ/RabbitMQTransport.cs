@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
@@ -212,6 +213,18 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           exchangeName
         );
       }
+    } catch (AlreadyClosedException ex) {
+      // Channel/connection was closed - likely during shutdown or connection failure
+      // The message is already persisted to the database (outbox pattern) and will be retried
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ connection closed while publishing message {MessageId} - message will be retried from outbox",
+        envelope.MessageId
+      );
+      throw new InvalidOperationException(
+        $"RabbitMQ connection closed while publishing message {envelope.MessageId}. The message has been persisted and will be retried.",
+        ex
+      );
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(
         ex,
@@ -346,31 +359,52 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
       // Set up message received handler
       consumer.ReceivedAsync += async (_, args) => {
-        if (subscription is { IsActive: false }) {
-          await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
-          return;
-        }
-
         try {
-          var envelope = _deserializeMessage(args, out var envelopeTypeName);
-          if (envelope == null) {
-            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+          if (subscription is { IsActive: false }) {
+            _logger?.LogWarning(
+              "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
+              args.BasicProperties.MessageId ?? "unknown",
+              queueName
+            );
+            await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
             return;
           }
 
-          await handler(envelope, envelopeTypeName, cancellationToken);
-          await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
+          try {
+            var envelope = _deserializeMessage(args, out var envelopeTypeName);
+            if (envelope == null) {
+              _logger?.LogWarning(
+                "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
+                args.BasicProperties.MessageId ?? "unknown",
+                queueName
+              );
+              await channel.BasicNackAsync(args.DeliveryTag, false, false);
+              return;
+            }
 
-          if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-            var messageId = args.BasicProperties.MessageId;
-            _logger.LogDebug(
-              "Processed message {MessageId} from queue {QueueName}",
-              messageId,
-              queueName
-            );
+            await handler(envelope, envelopeTypeName, cancellationToken);
+            await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
+
+            if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+              var messageId = args.BasicProperties.MessageId;
+              _logger.LogDebug(
+                "Processed message {MessageId} from queue {QueueName}",
+                messageId,
+                queueName
+              );
+            }
+          } catch (Exception ex) when (ex is not AlreadyClosedException) {
+            // Handle message processing failures (but not channel closure - that propagates to outer catch)
+            await _handleMessageFailureAsync(channel, args, queueName, ex);
           }
-        } catch (Exception ex) {
-          await _handleMessageFailureAsync(channel, args, queueName, ex);
+        } catch (AlreadyClosedException) {
+          // Channel/connection closed during message handling - this is expected during shutdown
+          // Message will be redelivered when consumer reconnects
+          _logger?.LogWarning(
+            "RabbitMQ channel closed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
+            args.BasicProperties.MessageId ?? "unknown",
+            queueName
+          );
         }
       };
 
@@ -603,16 +637,37 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       deliveryCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
     }
 
-    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+    try {
+      if (deliveryCount >= _options.MaxDeliveryAttempts) {
+        _logger?.LogWarning(
+          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue. Exception: {ExceptionType}: {ExceptionMessage}",
+          deliveryCount,
+          _options.MaxDeliveryAttempts,
+          args.BasicProperties.MessageId ?? "unknown",
+          queueName,
+          ex.GetType().Name,
+          ex.Message
+        );
+        await channel.BasicNackAsync(args.DeliveryTag, false, false);
+      } else {
+        _logger?.LogWarning(
+          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+          deliveryCount,
+          _options.MaxDeliveryAttempts,
+          args.BasicProperties.MessageId ?? "unknown",
+          queueName,
+          ex.GetType().Name,
+          ex.Message
+        );
+        await channel.BasicNackAsync(args.DeliveryTag, false, true);
+      }
+    } catch (AlreadyClosedException) {
+      // Channel/connection was closed during shutdown - this is expected
+      // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(
-        "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), nacking without requeue",
-        args.BasicProperties.MessageId,
-        _options.MaxDeliveryAttempts
+        "RabbitMQ channel closed during failure handling for message {MessageId} - message will be redelivered on reconnection",
+        args.BasicProperties.MessageId ?? "unknown"
       );
-      await channel.BasicNackAsync(args.DeliveryTag, false, false);
-    } else {
-      // Nack with requeue for retry
-      await channel.BasicNackAsync(args.DeliveryTag, false, true);
     }
   }
 

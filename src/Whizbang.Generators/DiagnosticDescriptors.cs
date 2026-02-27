@@ -695,4 +695,25 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "The [VectorField] attribute requires the Pgvector.EntityFrameworkCore package for vector similarity queries."
   );
+
+  // ========================================
+  // Polymorphic Serialization Diagnostics (WHIZ071-079)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ071: Info - Polymorphic base type discovered with derived types.
+  /// Reports when a base class or interface is discovered with derived types
+  /// that will be registered for polymorphic JSON serialization.
+  /// </summary>
+  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithPolymorphicBase_ReportsWHIZ071DiagnosticAsync</tests>
+  public static readonly DiagnosticDescriptor PolymorphicBaseTypeDiscovered = new(
+      id: "WHIZ071",
+      title: "Polymorphic Base Type Discovered",
+      messageFormat: "Discovered polymorphic base type '{0}' with {1} derived type(s) for automatic JSON serialization",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A polymorphic base type was discovered through inheritance tracking. All derived types will be registered for JSON serialization."
+  );
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
@@ -241,8 +242,17 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
         LogWritingReturnedWork(_logger, workBatch.OutboxWork.Count);
       }
 
-      foreach (var work in workBatch.OutboxWork) {
-        await _workChannelWriter.WriteAsync(work, ct);
+      try {
+        foreach (var work in workBatch.OutboxWork) {
+          await _workChannelWriter.WriteAsync(work, ct);
+        }
+      } catch (ChannelClosedException) {
+        // Channel was closed during shutdown - this is expected
+        // The work has already been persisted to the database via ProcessWorkBatchAsync,
+        // it will be picked up on the next service restart
+        if (_logger != null) {
+          LogChannelClosedDuringFlush(_logger, workBatch.OutboxWork.Count);
+        }
       }
     }
 
@@ -389,4 +399,11 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     Message = "CRITICAL BUG: Queued {QueuedCount} outbox messages but ProcessWorkBatchAsync returned 0! InstanceId={InstanceId}"
   )]
   static partial void LogNoWorkReturned(ILogger logger, int queuedCount, Guid instanceId);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Warning,
+    Message = "Work channel closed during flush - {Count} messages already persisted to database and will be processed on next startup or by another instance"
+  )]
+  static partial void LogChannelClosedDuringFlush(ILogger logger, int count);
 }

@@ -45,6 +45,16 @@ internal sealed class ScopedMessageContext : IMessageContext {
     ?? _messageContextAccessor.Current?.UserId;
 
   /// <inheritdoc />
+  /// <remarks>
+  /// TenantId is read from the security scope context (populated from envelope hop SecurityContext).
+  /// Falls back to the message context's TenantId if scope context is not available.
+  /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveAsync.
+  /// </remarks>
+  public string? TenantId =>
+    _scopeContextAccessor.Current?.Scope.TenantId
+    ?? _messageContextAccessor.Current?.TenantId;
+
+  /// <inheritdoc />
   public IReadOnlyDictionary<string, object> Metadata =>
     _messageContextAccessor.Current?.Metadata
     ?? new Dictionary<string, object>();

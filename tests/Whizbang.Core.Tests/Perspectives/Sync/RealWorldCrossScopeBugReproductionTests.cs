@@ -128,19 +128,25 @@ public class RealWorldCrossScopeBugReproductionTests {
   /// - EventTypeFilter doesn't match stored format (the bug I fixed earlier)
   /// - No events exist for the stream
   ///
-  /// The question: Does WaitForStreamAsync interpret "no results" as "synced"?
+  /// EXPECTED BEHAVIOR (after BUG FIX):
+  /// When in "discovery mode" (no explicit event IDs tracked) and SQL returns no results,
+  /// this means there are NO events matching the criteria in the database.
+  /// Therefore, there's nothing to wait for = Synced.
+  ///
+  /// The alternative (keep polling until timeout) would cause handlers to always timeout
+  /// when no events exist, which is bad UX.
   /// </summary>
   [Test]
-  public async Task BUGREPRO_CrossScope_NoSQLResults_ShouldNotReturnSyncedAsync() {
+  public async Task BUGREPRO_CrossScope_NoSQLResults_ReturnsSyncedWhenNothingToWaitForAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
     var queryCount = 0;
 
-    // Mock coordinator that returns EMPTY results (simulating EventTypeFilter mismatch)
+    // Mock coordinator that returns EMPTY results (simulating no events in database)
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
       queryCount++;
 
-      // Return NO sync results - this simulates what happens when EventTypeFilter doesn't match
+      // Return NO sync results - this means no events exist in database for this criteria
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -162,15 +168,17 @@ public class RealWorldCrossScopeBugReproductionTests {
     );
 
     // Assert - What happens with no results?
-    // If we get Synced, that's potentially wrong behavior when events SHOULD exist
-    // This test documents the current behavior
     Console.WriteLine($"Result when SQL returns no rows: {result.Outcome}");
     Console.WriteLine($"Query count: {queryCount}");
 
-    // The current behavior: no results = keep polling = timeout
-    // This is CORRECT because we don't know if events exist or not
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut)
-      .Because("No SQL results should NOT be interpreted as 'synced' - we should keep polling");
+    // BUG FIX behavior: no results in discovery mode = nothing to wait for = Synced
+    // This is correct because if no events exist in the database, there's nothing to sync.
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
+      .Because("No SQL results in discovery mode means no events exist - nothing to wait for");
+
+    // Should only query once (no need to poll when nothing exists)
+    await Assert.That(queryCount).IsEqualTo(1)
+      .Because("With no events to wait for, we should return immediately without polling");
   }
 
   /// <summary>

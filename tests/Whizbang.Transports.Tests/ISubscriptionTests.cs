@@ -98,6 +98,10 @@ public class ISubscriptionTests {
   private sealed class TestSubscription : ISubscription {
     public bool IsActive { get; private set; } = true;
 
+#pragma warning disable CS0067 // Event never used - required by ISubscription interface
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+
     public Task PauseAsync() {
       IsActive = false;
       return Task.CompletedTask;

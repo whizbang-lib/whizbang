@@ -739,6 +739,8 @@ public class SystemEventEmitterTests {
     public string? UserId { get; set; }
     public Dictionary<string, object> Metadata { get; } = new();
 
+    public string? TenantId => throw new NotImplementedException();
+
     IReadOnlyDictionary<string, object> IMessageContext.Metadata => Metadata;
   }
 

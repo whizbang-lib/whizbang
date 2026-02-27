@@ -48,7 +48,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?>? physicalFieldValues,
       CancellationToken cancellationToken)
       where TModel : class {
-    var existingRow = await context.Set<PerspectiveRow<TModel>>()
+    // First check local change tracker to avoid tracking conflicts.
+    // This handles cases where the same entity is processed multiple times
+    // in a batch before SaveChanges clears the tracker.
+    var existingRow = context.Set<PerspectiveRow<TModel>>().Local
+        .FirstOrDefault(r => r.Id == id);
+
+    // If not found locally, query the database
+    existingRow ??= await context.Set<PerspectiveRow<TModel>>()
         .AsTracking()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 

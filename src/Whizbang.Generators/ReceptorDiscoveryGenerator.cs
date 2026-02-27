@@ -58,6 +58,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
 
+  /// <summary>
+  /// Custom SymbolDisplayFormat that includes nullable reference type modifiers.
+  /// This preserves the '?' on nullable tuple elements like (List&lt;IEvent&gt;, FailedEvent?).
+  /// </summary>
+  private static readonly SymbolDisplayFormat _fullyQualifiedFormatWithNullability =
+      SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(
+          SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(
@@ -132,10 +140,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Found IReceptor<TMessage, TResponse> - regular async receptor with response
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
+      // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
@@ -168,10 +177,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
+      // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: syncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
@@ -497,8 +507,77 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Strips the trailing '?' nullable annotation from a type name.
+  /// This is necessary because typeof() cannot be used with nullable reference types (CS8639).
+  /// </summary>
+  /// <param name="typeName">The type name that may have a trailing '?'.</param>
+  /// <returns>The type name without the trailing '?'.</returns>
+  private static string _stripNullableAnnotation(string typeName) {
+    return typeName.EndsWith("?", StringComparison.Ordinal)
+      ? typeName.Substring(0, typeName.Length - 1)
+      : typeName;
+  }
+
+  /// <summary>
+  /// Determines if a type name is a Whizbang interface type (IEvent, ICommand, IMessage).
+  /// These interfaces require pattern matching (message is IEvent) instead of exact type matching
+  /// (messageType == typeof(IEvent)) because concrete types implement these interfaces.
+  /// </summary>
+  /// <param name="typeName">The fully qualified type name.</param>
+  /// <returns>True if the type is a Whizbang interface, false otherwise.</returns>
+  private static bool _isWhizbangInterface(string typeName) {
+    return typeName == "global::Whizbang.Core.IEvent" ||
+           typeName == "global::Whizbang.Core.ICommand" ||
+           typeName == "global::Whizbang.Core.IMessage" ||
+           typeName == "global::Whizbang.Core.Messaging.IEvent" ||
+           typeName == "global::Whizbang.Core.Messaging.ICommand" ||
+           typeName == "global::Whizbang.Core.Messaging.IMessage";
+  }
+
+  /// <summary>
+  /// Extracts the element type from a generic collection type string.
+  /// Handles List&lt;T&gt;, IList&lt;T&gt;, IEnumerable&lt;T&gt;, ICollection&lt;T&gt;, IReadOnlyList&lt;T&gt;, etc.
+  /// </summary>
+  /// <param name="typeName">The type name that may be a generic collection.</param>
+  /// <returns>The element type if it's a recognized collection, or null if not a collection.</returns>
+  private static string? _extractCollectionElementType(string typeName) {
+    // Collection type prefixes to check (fully qualified and simple names)
+    string[] collectionPrefixes = {
+      "global::System.Collections.Generic.List<",
+      "global::System.Collections.Generic.IList<",
+      "global::System.Collections.Generic.IEnumerable<",
+      "global::System.Collections.Generic.ICollection<",
+      "global::System.Collections.Generic.IReadOnlyList<",
+      "global::System.Collections.Generic.IReadOnlyCollection<",
+      "System.Collections.Generic.List<",
+      "System.Collections.Generic.IList<",
+      "System.Collections.Generic.IEnumerable<",
+      "System.Collections.Generic.ICollection<",
+      "System.Collections.Generic.IReadOnlyList<",
+      "System.Collections.Generic.IReadOnlyCollection<",
+      "List<",
+      "IList<",
+      "IEnumerable<",
+      "ICollection<",
+      "IReadOnlyList<",
+      "IReadOnlyCollection<"
+    };
+
+    foreach (var prefix in collectionPrefixes) {
+      if (typeName.StartsWith(prefix, StringComparison.Ordinal) && typeName.EndsWith(">", StringComparison.Ordinal)) {
+        // Extract inner type: remove prefix and trailing >
+        var inner = typeName.Substring(prefix.Length, typeName.Length - prefix.Length - 1);
+        return inner;
+      }
+    }
+
+    return null;  // Not a recognized collection type
+  }
+
+  /// <summary>
   /// Extracts unique event types from receptor response types for outbox cascade generation.
-  /// Handles simple event types, tuples (extracts all event elements), and arrays (extracts element type).
+  /// Handles simple event types, tuples (extracts all event elements), arrays (extracts element type),
+  /// and generic collections like List&lt;T&gt; (extracts element type).
   /// Also unwraps Routed&lt;T&gt; wrappers to extract inner types.
   /// Returns fully qualified type names for AOT-compatible type-switch generation.
   /// </summary>
@@ -527,12 +606,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
             continue;  // Skip RoutedNone
           }
 
-          // Elements may also be arrays - extract element type
+          // Elements may be arrays, collections, or simple types - extract element type appropriately
           if (unwrappedElement.EndsWith("[]", StringComparison.Ordinal)) {
+            // Array type: Type[] - extract element type
             var elementType = unwrappedElement.Substring(0, unwrappedElement.Length - 2);
-            eventTypes.Add(elementType);
+            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+            eventTypes.Add(_stripNullableAnnotation(elementType));
           } else {
-            eventTypes.Add(unwrappedElement);
+            // Check if it's a generic collection like List<T>
+            var collectionElementType = _extractCollectionElementType(unwrappedElement);
+            if (collectionElementType is not null) {
+              // Collection type: List<T>, IEnumerable<T>, etc. - extract element type
+              // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+              eventTypes.Add(_stripNullableAnnotation(collectionElementType));
+            } else {
+              // Simple type - add as-is
+              // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+              eventTypes.Add(_stripNullableAnnotation(unwrappedElement));
+            }
           }
         }
       }
@@ -542,14 +633,28 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         // Unwrap Routed<T> if present
         var unwrappedElementType = _unwrapRoutedTypeString(elementType);
         if (unwrappedElementType is not null) {
-          eventTypes.Add(unwrappedElementType);
+          // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+          eventTypes.Add(_stripNullableAnnotation(unwrappedElementType));
         }
       }
-      // Simple type - unwrap Routed<T> if present
+      // Check if it's a generic collection like List<T> (not in a tuple)
       else {
-        var unwrappedType = _unwrapRoutedTypeString(responseType);
-        if (unwrappedType is not null) {
-          eventTypes.Add(unwrappedType);
+        var collectionElementType = _extractCollectionElementType(responseType);
+        if (collectionElementType is not null) {
+          // Collection type: List<T>, IEnumerable<T>, etc. - extract element type
+          // Unwrap Routed<T> if present in the element type
+          var unwrappedCollectionElement = _unwrapRoutedTypeString(collectionElementType);
+          if (unwrappedCollectionElement is not null) {
+            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+            eventTypes.Add(_stripNullableAnnotation(unwrappedCollectionElement));
+          }
+        } else {
+          // Simple type - unwrap Routed<T> if present
+          var unwrappedType = _unwrapRoutedTypeString(responseType);
+          if (unwrappedType is not null) {
+            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
+            eventTypes.Add(_stripNullableAnnotation(unwrappedType));
+          }
         }
       }
     }
@@ -1034,7 +1139,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var outboxCascade = new StringBuilder();
     var eventTypes = _extractUniqueEventTypes(receptors);
 
-    foreach (var eventType in eventTypes) {
+    // Separate concrete types from interface types
+    // Concrete types use exact typeof() matching; interface types use 'is' pattern matching
+    var concreteTypes = eventTypes.Where(t => !_isWhizbangInterface(t)).ToList();
+    var interfaceTypes = eventTypes.Where(t => _isWhizbangInterface(t)).ToList();
+
+    // Generate concrete type cascades first (exact type matching)
+    foreach (var eventType in concreteTypes) {
       outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
@@ -1044,16 +1155,44 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine();
     }
 
+    // Generate interface type cascades (pattern matching for any implementing type)
+    // This handles List<IEvent>, IEvent[], etc. where concrete types implement the interface
+    // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
+    foreach (var eventType in interfaceTypes) {
+      outboxCascade.AppendLine($"      if (message is {eventType}) {{");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
+      outboxCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
+      outboxCascade.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
+      outboxCascade.AppendLine($"      }}");
+      outboxCascade.AppendLine();
+    }
+
     // Generate event store only cascade type-switch (for storing events without transport)
     // Uses eventStoreOnly: true to set destination=null, bypassing transport publishing
     var eventStoreOnlyCascade = new StringBuilder();
 
-    foreach (var eventType in eventTypes) {
+    // Generate concrete type cascades first (exact type matching)
+    foreach (var eventType in concreteTypes) {
       eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
       eventStoreOnlyCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
       eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
+      eventStoreOnlyCascade.AppendLine($"      }}");
+      eventStoreOnlyCascade.AppendLine();
+    }
+
+    // Generate interface type cascades (pattern matching for any implementing type)
+    // Uses PublishToOutboxDynamicAsync which serializes using the runtime type, not the interface type
+    foreach (var eventType in interfaceTypes) {
+      eventStoreOnlyCascade.AppendLine($"      if (message is {eventType}) {{");
+      // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
+      // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
+      eventStoreOnlyCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
+      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
       eventStoreOnlyCascade.AppendLine($"      }}");
       eventStoreOnlyCascade.AppendLine();
     }

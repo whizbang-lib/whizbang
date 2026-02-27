@@ -353,6 +353,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
         if (!subscription.IsActive) {
           Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
+          _logger.LogWarning(
+            "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
+            args.Message.MessageId,
+            destination.Address,
+            destination.RoutingKey ?? _options.DefaultSubscriptionName
+          );
           // If paused, abandon the message so it can be reprocessed
           await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
           return;
@@ -363,7 +369,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
               envelopeTypeObj is not string envelopeTypeName) {
             Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Missing EnvelopeType metadata! MessageId={args.Message.MessageId}");
-            _logger.LogError("Message {MessageId} missing EnvelopeType metadata", args.Message.MessageId);
+            _logger.LogWarning(
+              "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
             await args.DeadLetterMessageAsync(
               args.Message,
               "MissingEnvelopeType",
@@ -394,7 +405,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           // This supports fuzzy matching and cross-assembly type resolution
           var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
           if (typeInfo == null) {
-            _logger.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+            _logger.LogWarning(
+              "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
+              envelopeTypeName,
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
             await args.DeadLetterMessageAsync(
               args.Message,
               "MissingJsonTypeInfo",
@@ -405,8 +422,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
 
           if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-            _logger.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
-              args.Message.MessageId, envelopeTypeName);
+            _logger.LogWarning(
+              "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
+              args.Message.MessageId,
+              envelopeTypeName,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName
+            );
             await args.DeadLetterMessageAsync(
               args.Message,
               "DeserializationFailed",
@@ -458,9 +480,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           var deliveryCount = args.Message.DeliveryCount;
           if (deliveryCount >= _options.MaxDeliveryAttempts) {
             _logger.LogWarning(
-              "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), dead-lettering",
+              "DEAD-LETTER reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName}. Exception: {ExceptionType}: {ExceptionMessage}",
+              deliveryCount,
+              _options.MaxDeliveryAttempts,
               args.Message.MessageId,
-              _options.MaxDeliveryAttempts
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName,
+              ex.GetType().Name,
+              ex.Message
             );
             await args.DeadLetterMessageAsync(
               args.Message,
@@ -469,6 +496,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
               cancellationToken: args.CancellationToken
             );
           } else {
+            _logger.LogWarning(
+              "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+              deliveryCount,
+              _options.MaxDeliveryAttempts,
+              args.Message.MessageId,
+              destination.Address,
+              destination.RoutingKey ?? _options.DefaultSubscriptionName,
+              ex.GetType().Name,
+              ex.Message
+            );
             // Abandon to retry
             await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
           }

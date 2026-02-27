@@ -96,7 +96,8 @@ public static class SecurityContextHelper {
       CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
       CausationId = envelope.GetCausationId() ?? MessageId.New(),
       Timestamp = envelope.GetMessageTimestamp(),
-      UserId = securityContext?.UserId
+      UserId = securityContext?.UserId,
+      TenantId = securityContext?.TenantId
     };
   }
 
@@ -148,8 +149,10 @@ public static class SecurityContextHelper {
   /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync</tests>
   public static void EstablishMessageContextForCascade() {
     string? userId = null;
+    string? tenantId = null;
     if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
       userId = ctx.Scope.UserId;
+      tenantId = ctx.Scope.TenantId;
     }
 
     MessageContextAccessor.CurrentContext = new MessageContext {
@@ -157,7 +160,8 @@ public static class SecurityContextHelper {
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New(),
       Timestamp = DateTimeOffset.UtcNow,
-      UserId = userId
+      UserId = userId,
+      TenantId = tenantId
     };
   }
 }
