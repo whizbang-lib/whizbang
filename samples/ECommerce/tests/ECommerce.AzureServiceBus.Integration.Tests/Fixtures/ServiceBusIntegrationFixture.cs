@@ -9,6 +9,7 @@ using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -358,6 +359,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   ) {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = postgresConnectionString
+    });
+
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "InventoryWorker"));
 
@@ -548,6 +555,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     string topicB
   ) {
     var builder = Host.CreateApplicationBuilder();
+
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = postgresConnectionString
+    });
 
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "BFF.API"));
