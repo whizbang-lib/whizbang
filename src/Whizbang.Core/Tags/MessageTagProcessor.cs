@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core.Tags;
@@ -22,6 +23,7 @@ namespace Whizbang.Core.Tags;
 public sealed class MessageTagProcessor : IMessageTagProcessor {
   private readonly TagOptions _options;
   private readonly Func<Type, object?>? _hookResolver;
+  private readonly IServiceScopeFactory? _scopeFactory;
 
   /// <summary>
   /// Creates a new message tag processor.
@@ -33,17 +35,51 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     _hookResolver = hookResolver;
   }
 
+  /// <summary>
+  /// Creates a new message tag processor with scope factory for resolving scoped hooks.
+  /// </summary>
+  /// <param name="options">Tag options containing hook registrations.</param>
+  /// <param name="scopeFactory">Service scope factory for creating scopes to resolve hooks.</param>
+  /// <remarks>
+  /// Use this constructor when the processor is registered as Singleton but hooks need to be Scoped
+  /// (e.g., for accessing DbContext). A new scope is created for each ProcessTagsAsync call.
+  /// </remarks>
+  public MessageTagProcessor(TagOptions options, IServiceScopeFactory scopeFactory) {
+    _options = options ?? throw new ArgumentNullException(nameof(options));
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  }
+
   /// <inheritdoc />
   public async ValueTask ProcessTagsAsync(
       object message,
       Type messageType,
       IReadOnlyDictionary<string, object?>? scope = null,
       CancellationToken ct = default) {
-    // Early return if no hook resolver configured
-    if (_hookResolver is null) {
+    // Early return if no hook resolver or scope factory configured
+    if (_hookResolver is null && _scopeFactory is null) {
       return;
     }
 
+    // If using scope factory, create a scope for this entire ProcessTagsAsync call
+    // All hooks resolved during this call will share the same scope
+    if (_scopeFactory is not null) {
+      await using var serviceScope = _scopeFactory.CreateAsyncScope();
+      Func<Type, object?> scopedResolver = type => serviceScope.ServiceProvider.GetService(type);
+      await _processAllTagsAsync(message, messageType, scope, scopedResolver, ct);
+    } else {
+      await _processAllTagsAsync(message, messageType, scope, _hookResolver!, ct);
+    }
+  }
+
+  /// <summary>
+  /// Processes all tags for a message using the provided hook resolver.
+  /// </summary>
+  private async ValueTask _processAllTagsAsync(
+      object message,
+      Type messageType,
+      IReadOnlyDictionary<string, object?>? scope,
+      Func<Type, object?> hookResolver,
+      CancellationToken ct) {
     // Get tag registrations for this message type from the registry
     foreach (var registration in MessageTagRegistry.GetTagsFor(messageType)) {
       // Build payload using the pre-compiled builder
@@ -53,7 +89,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       var attribute = registration.AttributeFactory();
 
       // Create context and invoke hooks for this attribute type
-      await _processTagRegistrationAsync(message, messageType, attribute, payload, scope, ct);
+      await _processTagRegistrationAsync(message, messageType, attribute, payload, scope, hookResolver, ct);
     }
   }
 
@@ -66,6 +102,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       MessageTagAttribute attribute,
       JsonElement payload,
       IReadOnlyDictionary<string, object?>? scope,
+      Func<Type, object?> hookResolver,
       CancellationToken ct) {
     // Get hooks that match this attribute type
     var attributeType = attribute.GetType();
@@ -73,7 +110,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     var currentPayload = payload;
 
     foreach (var registration in hooks) {
-      var hookInstance = _hookResolver!(registration.HookType);
+      var hookInstance = hookResolver(registration.HookType);
       if (hookInstance is null) {
         continue;
       }

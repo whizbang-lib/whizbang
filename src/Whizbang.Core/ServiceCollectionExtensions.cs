@@ -90,10 +90,13 @@ public static class ServiceCollectionExtensions {
       services.TryAddScoped(registration.HookType);
     }
 
-    // Register MessageTagProcessor with hook resolver
-    services.AddScoped<IMessageTagProcessor>(sp => {
+    // Register MessageTagProcessor as Singleton (Dispatcher is Singleton and needs it)
+    // Use IServiceScopeFactory to resolve scoped hooks at invocation time
+    // A new scope is created for each ProcessTagsAsync call, allowing hooks to be Scoped
+    services.AddSingleton<IMessageTagProcessor>(sp => {
       var tagOptions = sp.GetRequiredService<TagOptions>();
-      return new MessageTagProcessor(tagOptions, type => sp.GetService(type));
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      return new MessageTagProcessor(tagOptions, scopeFactory);
     });
 
     // Register core infrastructure services
