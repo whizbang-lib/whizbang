@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Whizbang.Core.Tags;
 
 /// <summary>
@@ -27,6 +29,7 @@ namespace Whizbang.Core.Tags;
 /// <param name="Priority">Execution priority. Lower values execute first. Default is -100.</param>
 public sealed record TagHookRegistration(
   Type AttributeType,
+  [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
   Type HookType,
   int Priority = -100
 ) {

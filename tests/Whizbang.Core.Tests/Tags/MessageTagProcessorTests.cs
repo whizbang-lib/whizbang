@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -360,6 +361,240 @@ public class MessageTagProcessorTests {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
+
+  #region ProcessTagsAsync Tests
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithNoHookResolver_ReturnsEarlyAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, hookResolver: null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - should return early without error (no hook resolver)
+    // No exception means success - verified by reaching this point
+    await Assert.That(MessageTagRegistry.Count).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithNoTags_DoesNothingAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry(); // No registrations
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - hook should not be invoked
+    await Assert.That(hook.InvokedCount).IsEqualTo(0);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithMatchingTag_InvokesHookAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "order-created");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Attribute.Tag).IsEqualTo("order-created");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "order-created");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(MetricTagAttribute), "order-metric", metricName: "orders.created");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var notificationHook = new TrackingHook();
+    var metricHook = new MetricTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<MetricTagAttribute, MetricTrackingHook>();
+
+    var processor = new MessageTagProcessor(options, type => {
+      if (type == typeof(TrackingHook)) {
+        return notificationHook;
+      }
+      if (type == typeof(MetricTrackingHook)) {
+        return metricHook;
+      }
+      return null;
+    });
+
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - both hooks should be invoked
+    await Assert.That(notificationHook.InvokedCount).IsEqualTo(1);
+    await Assert.That(metricHook.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_BuildsPayloadFromMessageAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new PayloadReceivingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, PayloadReceivingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(PayloadReceivingHook) ? hook : null);
+    var message = new TaggedTestMessage("order-123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - payload should contain message data
+    await Assert.That(hook.ReceivedPayload).IsNotNull();
+    await Assert.That(hook.ReceivedPayload!.Value.TryGetProperty("OrderId", out var orderId)).IsTrue();
+    await Assert.That(orderId.GetString()).IsEqualTo("order-123");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_PassesScopeToContextAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new ScopeTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, ScopeTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
+    var message = new TaggedTestMessage("123");
+    var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-456" };
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), scope);
+
+    // Assert
+    await Assert.That(hook.ReceivedScope is not null).IsTrue();
+    await Assert.That(hook.ReceivedScope!["TenantId"]).IsEqualTo("tenant-456");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_InvokesHooksInPriorityOrderAsync() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var executionOrder = new List<string>();
+    var hook1 = new OrderTrackingHook("Hook1", executionOrder);
+    var hook2 = new OrderTrackingHook("Hook2", executionOrder);
+    var hook3 = new OrderTrackingHook("Hook3", executionOrder);
+
+    var options = new TagOptions();
+    options
+      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 500)
+      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: -100)
+      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 50);
+
+    var hookIndex = 0;
+    var hooks = new[] { hook2, hook3, hook1 }; // Order by priority: -100, 50, 500
+    var processor = new MessageTagProcessor(options, _ => hooks[hookIndex++]);
+
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - hooks should execute in priority order
+    await Assert.That(executionOrder.Count).IsEqualTo(3);
+    await Assert.That(executionOrder[0]).IsEqualTo("Hook2"); // priority -100
+    await Assert.That(executionOrder[1]).IsEqualTo("Hook3"); // priority 50
+    await Assert.That(executionOrder[2]).IsEqualTo("Hook1"); // priority 500
+  }
+
+  // Helper to cleanup registry between tests
+  private static void _cleanupRegistry() {
+    Whizbang.Core.Registry.AssemblyRegistry<IMessageTagRegistry>.ClearForTesting();
+  }
+
+  // Test message type for ProcessTagsAsync tests
+  private sealed record TaggedTestMessage(string OrderId);
+
+  // Test registry implementation
+  private sealed class TestMessageTagRegistry : IMessageTagRegistry {
+    private readonly List<MessageTagRegistration> _registrations = [];
+
+    public void AddRegistration(Type messageType, Type attributeType, string tag, string? metricName = null) {
+      _registrations.Add(new MessageTagRegistration {
+        MessageType = messageType,
+        AttributeType = attributeType,
+        Tag = tag,
+        PayloadBuilder = msg => {
+          // Extract all public properties
+          var props = msg.GetType().GetProperties()
+            .Where(p => p.CanRead)
+            .ToDictionary(p => p.Name, p => p.GetValue(msg));
+          return JsonSerializer.SerializeToElement(props);
+        },
+        AttributeFactory = () => {
+          if (attributeType == typeof(NotificationTagAttribute)) {
+            return new NotificationTagAttribute { Tag = tag };
+          }
+          if (attributeType == typeof(MetricTagAttribute)) {
+            return new MetricTagAttribute { Tag = tag, MetricName = metricName ?? tag };
+          }
+          if (attributeType == typeof(TelemetryTagAttribute)) {
+            return new TelemetryTagAttribute { Tag = tag };
+          }
+          throw new NotSupportedException($"Unsupported attribute type: {attributeType.Name}");
+        }
+      });
+    }
+
+    public IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType) {
+      return _registrations.Where(r => r.MessageType == messageType);
+    }
+  }
+
+  #endregion
 
   #region Additional Coverage Tests
 

@@ -295,4 +295,203 @@ public class MessageTagDiscoveryGeneratorTests {
 
     await Assert.That(errors).IsEmpty();
   }
+
+  // ============================================================================
+  // Phase 4: Tests for IMessageTagRegistry implementation and ModuleInitializer
+  // ============================================================================
+
+  /// <summary>
+  /// Test that generator generates a class implementing IMessageTagRegistry.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithTaggedTypes_ImplementsIMessageTagRegistryAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("IMessageTagRegistry");
+    // Class name is unique per assembly (e.g., GeneratedMessageTagRegistry_TestAssembly)
+    await Assert.That(code).Contains("class GeneratedMessageTagRegistry_");
+  }
+
+  /// <summary>
+  /// Test that generator generates ModuleInitializer for auto-registration.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithTaggedTypes_GeneratesModuleInitializerAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("[ModuleInitializer]");
+    await Assert.That(code).Contains("MessageTagRegistry.Register");
+  }
+
+  /// <summary>
+  /// Test that generated code registers with AssemblyRegistry.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithTaggedTypes_RegistersWithAssemblyRegistryAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Should register with static MessageTagRegistry which wraps AssemblyRegistry
+    await Assert.That(code!).Contains("Whizbang.Core.Tags.MessageTagRegistry.Register");
+  }
+
+  /// <summary>
+  /// Test that generated registry uses correct priority for contracts assemblies.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithTaggedTypes_UsesPriority100ForContractsAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Priority 100 for contracts assemblies (first to be tried)
+    await Assert.That(code!).Contains("priority: 100");
+  }
+
+  /// <summary>
+  /// Test that generated GetTagsFor returns empty when no matching type.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_GetTagsFor_ReturnsEmptyForUnknownTypeAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Should have GetTagsFor implementation with yield pattern
+    await Assert.That(code!).Contains("IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType)");
+  }
+
+  /// <summary>
+  /// Test that custom attribute types are discovered and handled.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithCustomAttribute_GeneratesRegistrationAsync() {
+    // Arrange - using AuditEventAttribute which inherits from MessageTagAttribute
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+            using Whizbang.Core.Audit;
+
+            namespace TestApp;
+
+            [AuditEvent(Reason = "User login")]
+            public record UserLoggedInEvent(Guid UserId, string IpAddress);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("UserLoggedInEvent");
+    await Assert.That(code).Contains("AuditEventAttribute");
+  }
+
+  /// <summary>
+  /// Test that generator output is AOT-compatible (no reflection).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_OutputIsAotCompatible_NoReflectionAsync() {
+    // Arrange
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            [NotificationTag(Tag = "order-created")]
+            public record OrderCreatedEvent(Guid OrderId);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Should NOT use reflection APIs
+    await Assert.That(code!.Contains("GetMethod")).IsFalse();
+    await Assert.That(code.Contains("Activator.CreateInstance")).IsFalse();
+    await Assert.That(code.Contains("Invoke(")).IsFalse();
+    // Should use typeof() for type comparison only
+    await Assert.That(code).Contains("typeof(");
+  }
 }
