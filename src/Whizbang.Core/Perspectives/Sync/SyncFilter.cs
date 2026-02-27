@@ -59,6 +59,122 @@ public static class SyncFilter {
   /// <summary>
   /// Creates a filter for specific event types.
   /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5, T6>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5, T6, T7>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5, T6, T7, T8>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <typeparam name="T10">The tenth event type to filter by.</typeparam>
+  /// <returns>A builder for further configuration.</returns>
+  public static SyncFilterBuilder ForEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>() {
+    return new SyncFilterBuilder(new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9), typeof(T10)]));
+  }
+
+  /// <summary>
+  /// Creates a filter for specific event types.
+  /// </summary>
   /// <param name="eventTypes">The event types to filter by.</param>
   /// <returns>A builder for further configuration.</returns>
   public static SyncFilterBuilder ForEventTypes(params Type[] eventTypes) {

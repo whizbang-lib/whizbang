@@ -83,6 +83,130 @@ public sealed class SyncFilterBuilder {
   /// <summary>
   /// Adds an event type filter with AND logic.
   /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5, T6>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5, T6, T7>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5, T6, T7, T8>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <typeparam name="T10">The tenth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder AndEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>() {
+    _filter = new AndFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9), typeof(T10)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with AND logic.
+  /// </summary>
   /// <param name="eventTypes">The event types to filter by.</param>
   /// <returns>This builder for chaining.</returns>
   public SyncFilterBuilder AndEventTypes(params Type[] eventTypes) {
@@ -143,6 +267,130 @@ public sealed class SyncFilterBuilder {
   /// <returns>This builder for chaining.</returns>
   public SyncFilterBuilder OrEventTypes<T1, T2>() {
     _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5, T6>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5, T6, T7>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5, T6, T7, T8>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9)]));
+    return this;
+  }
+
+  /// <summary>
+  /// Adds an event type filter with OR logic.
+  /// </summary>
+  /// <typeparam name="T1">The first event type to filter by.</typeparam>
+  /// <typeparam name="T2">The second event type to filter by.</typeparam>
+  /// <typeparam name="T3">The third event type to filter by.</typeparam>
+  /// <typeparam name="T4">The fourth event type to filter by.</typeparam>
+  /// <typeparam name="T5">The fifth event type to filter by.</typeparam>
+  /// <typeparam name="T6">The sixth event type to filter by.</typeparam>
+  /// <typeparam name="T7">The seventh event type to filter by.</typeparam>
+  /// <typeparam name="T8">The eighth event type to filter by.</typeparam>
+  /// <typeparam name="T9">The ninth event type to filter by.</typeparam>
+  /// <typeparam name="T10">The tenth event type to filter by.</typeparam>
+  /// <returns>This builder for chaining.</returns>
+  public SyncFilterBuilder OrEventTypes<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>() {
+    _filter = new OrFilter(_filter, new EventTypeFilter([typeof(T1), typeof(T2), typeof(T3), typeof(T4), typeof(T5), typeof(T6), typeof(T7), typeof(T8), typeof(T9), typeof(T10)]));
     return this;
   }
 
