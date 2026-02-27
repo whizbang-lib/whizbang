@@ -60,6 +60,12 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       return;
     }
 
+    // Early return if no tags registered for this message type
+    // Check before creating scope to avoid unnecessary scope creation
+    if (!MessageTagRegistry.GetTagsFor(messageType).Any()) {
+      return;
+    }
+
     // If using scope factory, create a scope for this entire ProcessTagsAsync call
     // All hooks resolved during this call will share the same scope
     if (_scopeFactory is not null) {
