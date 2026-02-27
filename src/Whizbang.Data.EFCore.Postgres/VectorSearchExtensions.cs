@@ -114,6 +114,13 @@ public static class VectorSearchExtensions {
   /// Orders results by cosine distance between two vector columns (closest first).
   /// PostgreSQL: <c>ORDER BY column1 <![CDATA[<=>]]> column2 ASC</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <returns>An ordered queryable with results where the two vectors are closest first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
+  /// <exception cref="ArgumentException">Thrown when either selector is not a valid property access expression.</exception>
   /// <remarks>
   /// This overload compares two columns in SQL without sending vector data to C#.
   /// Useful for finding rows where one embedding matches another embedding.
@@ -148,6 +155,12 @@ public static class VectorSearchExtensions {
   /// Orders results by cosine distance between vectors from any queryable (including joins).
   /// PostgreSQL: <c>ORDER BY column1 <![CDATA[<=>]]> column2 ASC</c>
   /// </summary>
+  /// <typeparam name="T">The element type of the queryable.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property.</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <returns>An ordered queryable with results where the two vectors are closest first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
   /// <remarks>
   /// This generic overload works with any IQueryable&lt;T&gt;, enabling cross-table vector comparisons after joins.
   /// </remarks>
@@ -173,6 +186,13 @@ public static class VectorSearchExtensions {
   /// Orders results by L2 (Euclidean) distance to the search vector (closest first).
   /// PostgreSQL: <c>ORDER BY column <![CDATA[<->]]> @search ASC</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVector">The vector to compare against.</param>
+  /// <returns>An ordered queryable with results closest to search vector first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVector is null.</exception>
+  /// <exception cref="ArgumentException">Thrown when vectorSelector is not a valid property access expression.</exception>
   public static IOrderedQueryable<PerspectiveRow<TModel>> OrderByL2Distance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -197,8 +217,16 @@ public static class VectorSearchExtensions {
   }
 
   /// <summary>
-  /// Orders results by L2 distance between two vector columns.
+  /// Orders results by L2 (Euclidean) distance between two vector columns (closest first).
+  /// PostgreSQL: <c>ORDER BY column1 <![CDATA[<->]]> column2 ASC</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <returns>An ordered queryable with results where the two vectors are closest first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
+  /// <exception cref="ArgumentException">Thrown when either selector is not a valid property access expression.</exception>
   public static IOrderedQueryable<PerspectiveRow<TModel>> OrderByL2Distance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -226,8 +254,15 @@ public static class VectorSearchExtensions {
   // ========================================
 
   /// <summary>
-  /// Orders results by L2 distance between vectors from any queryable (including joins).
+  /// Orders results by L2 (Euclidean) distance between vectors from any queryable (including joins).
+  /// PostgreSQL: <c>ORDER BY column1 <![CDATA[<->]]> column2 ASC</c>
   /// </summary>
+  /// <typeparam name="T">The element type of the queryable.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property.</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <returns>An ordered queryable with results where the two vectors are closest first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
   public static IOrderedQueryable<T> OrderByL2Distance<T>(
       this IQueryable<T> query,
       Expression<Func<T, float[]?>> vectorSelector,
@@ -250,6 +285,13 @@ public static class VectorSearchExtensions {
   /// Orders results by inner product distance to the search vector.
   /// PostgreSQL: <c>ORDER BY column <![CDATA[<#>]]> @search ASC</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to order.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVector">The vector to compare against.</param>
+  /// <returns>An ordered queryable with results having highest inner product first.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVector is null.</exception>
+  /// <exception cref="ArgumentException">Thrown when vectorSelector is not a valid property access expression.</exception>
   /// <remarks>
   /// Inner product is negated so that higher dot product = lower distance.
   /// Use with normalized vectors for best results.
@@ -285,6 +327,14 @@ public static class VectorSearchExtensions {
   /// Filters results to only include rows within the specified cosine distance threshold.
   /// PostgreSQL: <c>WHERE column <![CDATA[<=>]]> @search <![CDATA[<]]> @threshold</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVector">The vector to compare against.</param>
+  /// <param name="threshold">Maximum cosine distance (0 = identical, 2 = opposite). Only rows with distance less than this are included.</param>
+  /// <returns>A filtered queryable containing only rows within the distance threshold.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVector is null.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">Thrown when threshold is negative.</exception>
   public static IQueryable<PerspectiveRow<TModel>> WithinCosineDistance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -313,7 +363,16 @@ public static class VectorSearchExtensions {
 
   /// <summary>
   /// Filters results to only include rows within the cosine distance threshold between two columns.
+  /// PostgreSQL: <c>WHERE column1 <![CDATA[<=>]]> column2 <![CDATA[<]]> @threshold</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <param name="threshold">Maximum cosine distance (0 = identical, 2 = opposite). Only rows with distance less than this are included.</param>
+  /// <returns>A filtered queryable containing only rows within the distance threshold.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">Thrown when threshold is negative.</exception>
   public static IQueryable<PerspectiveRow<TModel>> WithinCosineDistance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -345,7 +404,16 @@ public static class VectorSearchExtensions {
 
   /// <summary>
   /// Filters results to only include rows within cosine distance threshold (cross-table).
+  /// PostgreSQL: <c>WHERE column1 <![CDATA[<=>]]> column2 <![CDATA[<]]> @threshold</c>
   /// </summary>
+  /// <typeparam name="T">The element type of the queryable.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property.</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <param name="threshold">Maximum cosine distance (0 = identical, 2 = opposite). Only rows with distance less than this are included.</param>
+  /// <returns>A filtered queryable containing only rows within the distance threshold.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">Thrown when threshold is negative.</exception>
   public static IQueryable<T> WithinCosineDistance<T>(
       this IQueryable<T> query,
       Expression<Func<T, float[]?>> vectorSelector,
@@ -370,6 +438,14 @@ public static class VectorSearchExtensions {
   /// Filters results to only include rows within the specified L2 (Euclidean) distance threshold.
   /// PostgreSQL: <c>WHERE column <![CDATA[<->]]> @search <![CDATA[<]]> @threshold</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVector">The vector to compare against.</param>
+  /// <param name="threshold">Maximum L2 distance. Only rows with distance less than this are included.</param>
+  /// <returns>A filtered queryable containing only rows within the distance threshold.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVector is null.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">Thrown when threshold is negative.</exception>
   public static IQueryable<PerspectiveRow<TModel>> WithinL2Distance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -397,8 +473,17 @@ public static class VectorSearchExtensions {
   }
 
   /// <summary>
-  /// Filters results to only include rows within L2 distance threshold between two columns.
+  /// Filters results to only include rows within L2 (Euclidean) distance threshold between two columns.
+  /// PostgreSQL: <c>WHERE column1 <![CDATA[<->]]> column2 <![CDATA[<]]> @threshold</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to filter.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the first vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVectorSelector">Lambda expression selecting the second vector property to compare against.</param>
+  /// <param name="threshold">Maximum L2 distance. Only rows with distance less than this are included.</param>
+  /// <returns>A filtered queryable containing only rows within the distance threshold.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVectorSelector is null.</exception>
+  /// <exception cref="ArgumentOutOfRangeException">Thrown when threshold is negative.</exception>
   public static IQueryable<PerspectiveRow<TModel>> WithinL2Distance<TModel>(
       this IQueryable<PerspectiveRow<TModel>> query,
       Expression<Func<TModel, float[]?>> vectorSelector,
@@ -466,6 +551,12 @@ public static class VectorSearchExtensions {
   /// Projects rows with cosine distance and similarity scores.
   /// PostgreSQL: <c>SELECT *, (column <![CDATA[<=>]]> @search) AS Distance</c>
   /// </summary>
+  /// <typeparam name="TModel">The perspective model type.</typeparam>
+  /// <param name="query">The queryable to project.</param>
+  /// <param name="vectorSelector">Lambda expression selecting the vector property (e.g., m => m.Embedding).</param>
+  /// <param name="searchVector">The vector to compare against.</param>
+  /// <returns>A queryable of <see cref="VectorSearchResult{TModel}"/> containing the original row plus Distance and Similarity scores.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when vectorSelector or searchVector is null.</exception>
   /// <remarks>
   /// Returns <see cref="VectorSearchResult{TModel}"/> with Distance (0 = identical, 2 = opposite)
   /// and Similarity (1 = identical, -1 = opposite).
