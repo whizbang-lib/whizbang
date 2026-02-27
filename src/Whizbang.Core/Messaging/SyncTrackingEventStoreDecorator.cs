@@ -62,10 +62,10 @@ public sealed class SyncTrackingEventStoreDecorator : IEventStore {
     var messageId = envelope.MessageId;
 
     // Track the emitted event in scoped tracker (same request scope)
-    _tracker?.TrackEmittedEvent(streamId, eventType, messageId);
+    _tracker?.TrackEmittedEvent(streamId, eventType, messageId.Value);
 
     // Track in singleton tracker for cross-scope sync (if event type is registered)
-    _trackInSingletonTracker(eventType, messageId, streamId);
+    _trackInSingletonTracker(eventType, messageId.Value, streamId);
   }
 
   /// <inheritdoc />
@@ -79,10 +79,10 @@ public sealed class SyncTrackingEventStoreDecorator : IEventStore {
     var eventType = typeof(TMessage);
 
     // Track the emitted event in scoped tracker (same request scope)
-    _tracker?.TrackEmittedEvent(streamId, eventType, messageId);
+    _tracker?.TrackEmittedEvent(streamId, eventType, messageId.Value);
 
     // Track in singleton tracker for cross-scope sync (if event type is registered)
-    _trackInSingletonTracker(eventType, messageId, streamId);
+    _trackInSingletonTracker(eventType, messageId.Value, streamId);
   }
 
   /// <summary>

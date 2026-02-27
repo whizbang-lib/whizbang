@@ -1,6 +1,8 @@
+extern alias shared;
+
 using TUnit.Assertions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Utilities;
+using shared::Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Tests.Utilities;
 
