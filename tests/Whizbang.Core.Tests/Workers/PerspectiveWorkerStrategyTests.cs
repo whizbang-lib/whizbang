@@ -184,6 +184,9 @@ public class PerspectiveWorkerStrategyTests {
       await workerTask;
     } catch (OperationCanceledException) {
       // Expected during shutdown
+    } catch (InvalidOperationException) {
+      // Expected - the test runner throws InvalidOperationException("Test exception")
+      // This is the exception we're testing gets reported via the failure strategy
     }
 
     // Assert - Strategy should have reported failure immediately
