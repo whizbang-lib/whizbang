@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -678,6 +679,178 @@ public class MessageTagProcessorTests {
     // Arrange & Act & Assert
     await Assert.That(() => new MessageTagProcessor(null!))
       .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullScopeFactory_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new TagOptions();
+
+    // Act & Assert
+    await Assert.That(() => new MessageTagProcessor(options, scopeFactory: null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  #endregion
+
+  #region ScopeFactory Tests
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithScopeFactory_CreatesScope_Async() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+
+    // Create a mock scope factory that tracks scope creation
+    var scopeFactory = new TrackingScopeFactory(hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - scope was created and hook was invoked
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(1);
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithScopeFactory_DisposesScope_Async() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+
+    var scopeFactory = new TrackingScopeFactory(hook);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - scope was disposed after processing
+    await Assert.That(scopeFactory.LastScope?.Disposed).IsTrue();
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithScopeFactory_MultipleHooksShareSameScope_Async() {
+    // Arrange
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hook1 = new TrackingHook();
+    var hook2 = new TrackingHook();
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>(priority: 0);
+    options.UseHook<NotificationTagAttribute, TrackingHook>(priority: 10);
+
+    var hookIndex = 0;
+    var hooks = new[] { hook1, hook2 };
+    var scopeFactory = new TrackingScopeFactory(type => hooks[hookIndex++]);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - only ONE scope was created for both hooks
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(1);
+    await Assert.That(hook1.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook2.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_WithNoHooksAndScopeFactory_DoesNotCreateScope_Async() {
+    // Arrange
+    _cleanupRegistry();
+    // Don't register any tags
+
+    var options = new TagOptions();
+    // Don't register any hooks
+
+    var scopeFactory = new TrackingScopeFactory(_ => null);
+    var processor = new MessageTagProcessor(options, scopeFactory);
+    var message = new TaggedTestMessage("123");
+
+    // Act
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage));
+
+    // Assert - no scope should be created if no tags exist
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test scope factory that tracks scope creation and disposal.
+  /// </summary>
+  private sealed class TrackingScopeFactory : IServiceScopeFactory {
+    private readonly Func<Type, object?> _resolver;
+
+    public TrackingScopeFactory(TrackingHook hook) {
+      _resolver = type => type == typeof(TrackingHook) ? hook : null;
+    }
+
+    public TrackingScopeFactory(Func<Type, object?> resolver) {
+      _resolver = resolver;
+    }
+
+    public int ScopesCreated { get; private set; }
+    public TrackingScope? LastScope { get; private set; }
+
+    public IServiceScope CreateScope() {
+      ScopesCreated++;
+      LastScope = new TrackingScope(_resolver);
+      return LastScope;
+    }
+  }
+
+  private sealed class TrackingScope : IServiceScope, IAsyncDisposable {
+    private readonly Func<Type, object?> _resolver;
+
+    public TrackingScope(Func<Type, object?> resolver) {
+      _resolver = resolver;
+      ServiceProvider = new TrackingServiceProvider(resolver);
+    }
+
+    public bool Disposed { get; private set; }
+    public IServiceProvider ServiceProvider { get; }
+
+    public void Dispose() {
+      Disposed = true;
+    }
+
+    public ValueTask DisposeAsync() {
+      Disposed = true;
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class TrackingServiceProvider : IServiceProvider {
+    private readonly Func<Type, object?> _resolver;
+
+    public TrackingServiceProvider(Func<Type, object?> resolver) {
+      _resolver = resolver;
+    }
+
+    public object? GetService(Type serviceType) {
+      return _resolver(serviceType);
+    }
   }
 
   #endregion
