@@ -101,6 +101,89 @@ public class SyncFilterBuilderTests {
   }
 
   [Test]
+  public async Task SyncFilter_ForEventTypes_3Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(3);
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(string));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(int));
+    await Assert.That(typeFilter.EventTypes).Contains(typeof(double));
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_4Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_5Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_6Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal, long>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(6);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_7Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal, long, short>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_8Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal, long, short, byte>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_9Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal, long, short, byte, char>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(9);
+  }
+
+  [Test]
+  public async Task SyncFilter_ForEventTypes_10Generic_CreatesBuilderAsync() {
+    var builder = SyncFilter.ForEventTypes<string, int, double, float, decimal, long, short, byte, char, bool>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)options.Filter;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(10);
+  }
+
+  [Test]
   public async Task SyncFilter_ForEventTypes_Params_CreatesBuilderAsync() {
     var builder = SyncFilter.ForEventTypes(typeof(string), typeof(int));
     var options = builder.Build();
@@ -168,6 +251,111 @@ public class SyncFilterBuilderTests {
   }
 
   [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_3Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    await Assert.That(andFilter.Right).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_4Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_5Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_6Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal, long>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(6);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_7Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal, long, short>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_8Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal, long, short, byte>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_9Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal, long, short, byte, char>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(9);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_AndEventTypes_10Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .AndEventTypes<string, int, double, float, decimal, long, short, byte, char, bool>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<AndFilter>();
+    var andFilter = (AndFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)andFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(10);
+  }
+
+  [Test]
   public async Task SyncFilterBuilder_AndEventTypes_Params_AddsEventTypeFilterAsync() {
     var streamId = Guid.NewGuid();
     var builder = SyncFilter.ForStream(streamId)
@@ -229,6 +417,111 @@ public class SyncFilterBuilderTests {
     await Assert.That(options.Filter).IsTypeOf<OrFilter>();
     var orFilter = (OrFilter)options.Filter;
     await Assert.That(orFilter.Right).IsTypeOf<EventTypeFilter>();
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_3Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    await Assert.That(orFilter.Right).IsTypeOf<EventTypeFilter>();
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_4Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_5Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(5);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_6Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal, long>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(6);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_7Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal, long, short>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_8Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal, long, short, byte>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(8);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_9Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal, long, short, byte, char>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(9);
+  }
+
+  [Test]
+  public async Task SyncFilterBuilder_OrEventTypes_10Generic_AddsEventTypeFilterAsync() {
+    var streamId = Guid.NewGuid();
+    var builder = SyncFilter.ForStream(streamId)
+        .OrEventTypes<string, int, double, float, decimal, long, short, byte, char, bool>();
+    var options = builder.Build();
+
+    await Assert.That(options.Filter).IsTypeOf<OrFilter>();
+    var orFilter = (OrFilter)options.Filter;
+    var typeFilter = (EventTypeFilter)orFilter.Right;
+    await Assert.That(typeFilter.EventTypes.Count).IsEqualTo(10);
   }
 
   // ==========================================================================
