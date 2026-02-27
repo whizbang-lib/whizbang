@@ -31,7 +31,7 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
   ///     DispatcherSecurityBuilderVoidReceptor)
   ///
-  /// Total: 56 receptors
+  /// Total: 57 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 56;
+  public const int EXPECTED_RECEPTOR_COUNT = 57;
 }

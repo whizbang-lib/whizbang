@@ -98,6 +98,15 @@ public class MessageContextTests {
   }
 
   [Test]
+  public async Task TenantId_IsNullByDefaultAsync() {
+    // Arrange & Act
+    var context = new MessageContext();
+
+    // Assert
+    await Assert.That(context.TenantId).IsNull();
+  }
+
+  [Test]
   public async Task Properties_CanBeSetViaInitializer_WithInitSyntaxAsync() {
     // Arrange
     var messageId = MessageId.New();
@@ -105,6 +114,7 @@ public class MessageContextTests {
     var causationId = MessageId.New();
     var timestamp = DateTimeOffset.UtcNow.AddHours(-1);
     var userId = "user123";
+    var tenantId = "tenant-456";
 
     // Act
     var context = new MessageContext {
@@ -112,7 +122,8 @@ public class MessageContextTests {
       CorrelationId = correlationId,
       CausationId = causationId,
       Timestamp = timestamp,
-      UserId = userId
+      UserId = userId,
+      TenantId = tenantId
     };
 
     // Assert
@@ -121,5 +132,6 @@ public class MessageContextTests {
     await Assert.That(context.CausationId).IsEqualTo(causationId);
     await Assert.That(context.Timestamp).IsEqualTo(timestamp);
     await Assert.That(context.UserId).IsEqualTo(userId);
+    await Assert.That(context.TenantId).IsEqualTo(tenantId);
   }
 }

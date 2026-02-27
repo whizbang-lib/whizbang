@@ -360,6 +360,150 @@ public class DispatcherSecurityBuilderTests {
   }
 
   // ============================================
+  // WithTenant Tests
+  // ============================================
+
+  /// <summary>
+  /// WithTenant() should set TenantId on the security context.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_SetsTenantIdOnContextAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - System operation on a specific tenant
+    await dispatcher.AsSystem().WithTenant("target-tenant-123").SendAsync(command);
+
+    // Assert - Captured context should have TenantId set
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.Scope.TenantId).IsEqualTo("target-tenant-123");
+  }
+
+  /// <summary>
+  /// WithTenant() with RunAs() should set both tenant and user identity.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_WithRunAs_SetsBothTenantAndUserAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - Impersonation in a different tenant
+    await dispatcher.RunAs("target-user@example.com").WithTenant("target-tenant").SendAsync(command);
+
+    // Assert
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.Scope.TenantId).IsEqualTo("target-tenant");
+    await Assert.That(context.EffectivePrincipal).IsEqualTo("target-user@example.com");
+    await Assert.That(context.ContextType).IsEqualTo(SecurityContextType.Impersonated);
+  }
+
+  /// <summary>
+  /// WithTenant() with null should throw ArgumentException.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_WithNull_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Act & Assert
+    await Assert.That(() => dispatcher.AsSystem().WithTenant(null!)).ThrowsException();
+  }
+
+  /// <summary>
+  /// WithTenant() with empty string should throw ArgumentException.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_WithEmptyString_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Act & Assert
+    await Assert.That(() => dispatcher.AsSystem().WithTenant("")).ThrowsException();
+  }
+
+  /// <summary>
+  /// WithTenant() with whitespace should throw ArgumentException.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_WithWhitespace_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Act & Assert
+    await Assert.That(() => dispatcher.AsSystem().WithTenant("   ")).ThrowsException();
+  }
+
+  /// <summary>
+  /// AsSystem() without WithTenant() should have null TenantId.
+  /// </summary>
+  [Test]
+  public async Task AsSystem_WithoutWithTenant_TenantIdIsNullAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - System operation without tenant
+    await dispatcher.AsSystem().SendAsync(command);
+
+    // Assert - TenantId should be null for cross-tenant operations
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.Scope.TenantId).IsNull();
+  }
+
+  /// <summary>
+  /// WithTenant() should propagate TenantId to message envelope hops.
+  /// </summary>
+  [Test]
+  public async Task WithTenant_PropagatesTenantIdToEnvelopeHopsAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var correlationId = CorrelationId.New();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+    var context = MessageContext.Create(correlationId);
+
+    // Act
+    await dispatcher.AsSystem().WithTenant("propagated-tenant").SendAsync(command, context);
+
+    // Assert - Envelope hop should have TenantId in SecurityContext
+    var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
+    await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
+
+    var envelope = envelopes[0];
+    await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
+
+    var hop = envelope.Hops[0];
+    await Assert.That(hop.SecurityContext).IsNotNull();
+    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("propagated-tenant");
+  }
+
+  // ============================================
   // Edge Cases for 100% Branch Coverage
   // ============================================
 

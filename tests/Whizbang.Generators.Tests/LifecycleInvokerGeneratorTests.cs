@@ -412,4 +412,240 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     return source.Substring(startIndex, endIndex - startIndex);
   }
+
+  // ========================================
+  // STAGE ISOLATION TESTS
+  // These tests verify that generated code includes explicit stage checks,
+  // ensuring receptors ONLY fire at their registered stage.
+  // Critical for PostPerspectiveAsync to fire AFTER perspective processing.
+  // ========================================
+
+  /// <summary>
+  /// CRITICAL TEST: Verifies that generated code contains explicit stage check for PostPerspectiveAsync.
+  /// If missing, the receptor would fire at ANY stage with matching message type.
+  /// </summary>
+  /// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
+  [Test]
+  [Category("StageIsolation")]
+  [Category("PostPerspectiveAsync")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PostPerspectiveAsyncReceptor_GeneratesExplicitStageCheckAsync() {
+    // Arrange - Receptor with [FireAt(LifecycleStage.PostPerspectiveAsync)]
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record ModelUpdatedEvent : IEvent;
+
+[FireAt(LifecycleStage.PostPerspectiveAsync)]
+public class PostPerspectiveHandler : IReceptor<ModelUpdatedEvent> {
+  public ValueTask HandleAsync(ModelUpdatedEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    // CRITICAL: Generated code MUST contain explicit stage check for PostPerspectiveAsync
+    // This ensures the receptor ONLY fires at PostPerspectiveAsync, NOT at PrePerspectiveAsync
+    await Assert.That(lifecycleInvoker!)
+        .Contains("stage ==")
+        .Because("Generated routing MUST check stage to ensure receptor fires only at registered stage");
+
+    await Assert.That(lifecycleInvoker)
+        .Contains("PostPerspectiveAsync")
+        .Because("Generated routing MUST reference PostPerspectiveAsync stage");
+
+    // Verify the stage check pattern: both message type AND stage must be checked
+    var routingSection = _extractRegionContent(lifecycleInvoker, "LIFECYCLE_ROUTING");
+    await Assert.That(routingSection).Contains("ModelUpdatedEvent")
+        .Because("Generated routing should contain the message type");
+    await Assert.That(routingSection).Contains("stage ==")
+        .Because("Generated routing MUST have stage == check for stage isolation");
+  }
+
+  /// <summary>
+  /// Verifies that PostPerspectiveAsync receptor generates combined condition with message type AND stage.
+  /// Pattern: if (messageType == typeof(X) && stage == LifecycleStage.PostPerspectiveAsync)
+  /// </summary>
+  [Test]
+  [Category("StageIsolation")]
+  [Category("PostPerspectiveAsync")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PostPerspectiveAsyncReceptor_GeneratesCombinedMessageTypeAndStageCheckAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record PerspectiveProcessedEvent : IEvent;
+
+[FireAt(LifecycleStage.PostPerspectiveAsync)]
+public class DataQueryHandler : IReceptor<PerspectiveProcessedEvent> {
+  public ValueTask HandleAsync(PerspectiveProcessedEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    // CRITICAL: Must have BOTH messageType AND stage in the same condition
+    // The pattern should be: if (messageType == typeof(X) && stage == Y)
+    await Assert.That(lifecycleInvoker!)
+        .Contains("&&")
+        .Because("Generated routing should use && to combine message type and stage checks");
+
+    // Both checks must appear together in the routing section
+    var routingSection = _extractRegionContent(lifecycleInvoker, "LIFECYCLE_ROUTING");
+    await Assert.That(routingSection).Contains("messageType == typeof")
+        .Because("Generated routing should check message type");
+    await Assert.That(routingSection).Contains("stage ==")
+        .Because("Generated routing should check stage");
+  }
+
+  /// <summary>
+  /// Verifies all 4 perspective lifecycle stages generate explicit stage checks.
+  /// PrePerspectiveAsync, PrePerspectiveInline, PostPerspectiveAsync, PostPerspectiveInline
+  /// </summary>
+  [Test]
+  [Category("StageIsolation")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllPerspectiveStages_GenerateExplicitStageChecksAsync() {
+    // Arrange - One receptor for each perspective stage
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record TestEvent1 : IEvent;
+public record TestEvent2 : IEvent;
+public record TestEvent3 : IEvent;
+public record TestEvent4 : IEvent;
+
+[FireAt(LifecycleStage.PrePerspectiveAsync)]
+public class PreAsyncHandler : IReceptor<TestEvent1> {
+  public ValueTask HandleAsync(TestEvent1 message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class PreInlineHandler : IReceptor<TestEvent2> {
+  public ValueTask HandleAsync(TestEvent2 message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PostPerspectiveAsync)]
+public class PostAsyncHandler : IReceptor<TestEvent3> {
+  public ValueTask HandleAsync(TestEvent3 message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PostPerspectiveInline)]
+public class PostInlineHandler : IReceptor<TestEvent4> {
+  public ValueTask HandleAsync(TestEvent4 message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    // All 4 perspective stages should be present with stage checks
+    await Assert.That(lifecycleInvoker!).Contains("PrePerspectiveAsync")
+        .Because("Generated routing should include PrePerspectiveAsync stage");
+    await Assert.That(lifecycleInvoker).Contains("PrePerspectiveInline")
+        .Because("Generated routing should include PrePerspectiveInline stage");
+    await Assert.That(lifecycleInvoker).Contains("PostPerspectiveAsync")
+        .Because("Generated routing should include PostPerspectiveAsync stage");
+    await Assert.That(lifecycleInvoker).Contains("PostPerspectiveInline")
+        .Because("Generated routing should include PostPerspectiveInline stage");
+
+    // Each should have a stage check
+    var routingSection = _extractRegionContent(lifecycleInvoker, "LIFECYCLE_ROUTING");
+
+    // Count occurrences of "stage ==" - should be 4 (one per receptor)
+    var stageCheckCount = System.Text.RegularExpressions.Regex.Count(routingSection, @"stage\s*==");
+    await Assert.That(stageCheckCount).IsGreaterThanOrEqualTo(4)
+        .Because("Each perspective stage receptor should have its own stage == check");
+  }
+
+  /// <summary>
+  /// Verifies that different message types with different stages are properly isolated.
+  /// </summary>
+  [Test]
+  [Category("StageIsolation")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DifferentMessagesAtDifferentStages_ProperlyIsolatedAsync() {
+    // Arrange - Same message type at different stages (via different receptors)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record SharedEvent : IEvent;
+
+[FireAt(LifecycleStage.PrePerspectiveAsync)]
+public class PreHandler : IReceptor<SharedEvent> {
+  public ValueTask HandleAsync(SharedEvent message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PostPerspectiveAsync)]
+public class PostHandler : IReceptor<SharedEvent> {
+  public ValueTask HandleAsync(SharedEvent message, CancellationToken ct = default) => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    var routingSection = _extractRegionContent(lifecycleInvoker!, "LIFECYCLE_ROUTING");
+
+    // Both handlers should have SharedEvent but with different stage checks
+    // This ensures PreHandler fires at PrePerspectiveAsync and PostHandler fires at PostPerspectiveAsync
+    await Assert.That(routingSection).Contains("PrePerspectiveAsync")
+        .Because("PreHandler should register at PrePerspectiveAsync");
+    await Assert.That(routingSection).Contains("PostPerspectiveAsync")
+        .Because("PostHandler should register at PostPerspectiveAsync");
+
+    // Count SharedEvent occurrences - should be 2 (one per handler)
+    var sharedEventCount = System.Text.RegularExpressions.Regex.Count(routingSection, @"SharedEvent");
+    await Assert.That(sharedEventCount).IsGreaterThanOrEqualTo(2)
+        .Because("Both PreHandler and PostHandler should have routing for SharedEvent");
+  }
 }

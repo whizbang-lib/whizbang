@@ -161,7 +161,7 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     }
 
     // Set message context from envelope for injectable IMessageContext
-    // This enables receptors to inject IMessageContext and access MessageId, CorrelationId, UserId, etc.
+    // This enables receptors to inject IMessageContext and access MessageId, CorrelationId, UserId, TenantId, etc.
     var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
       var securityContext = envelope.GetCurrentSecurityContext();
@@ -170,7 +170,8 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
         CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
         CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
         Timestamp = envelope.GetMessageTimestamp(),
-        UserId = securityContext?.UserId
+        UserId = securityContext?.UserId,
+        TenantId = securityContext?.TenantId
       };
     }
 

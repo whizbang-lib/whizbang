@@ -19,7 +19,14 @@ namespace Whizbang.Core.Messaging;
 /// Invocation is AOT-compatible - the registry provides pre-compiled delegates
 /// that eliminate reflection at invocation time.
 /// </para>
+/// <para>
+/// <strong>Stage Isolation</strong>: Receptors fire ONLY at their registered stage.
+/// A receptor registered at PostPerspectiveAsync will NOT fire at PrePerspectiveAsync
+/// or any other stage.
+/// </para>
 /// </remarks>
+/// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
+/// <tests>Whizbang.Core.Tests/Messaging/LifecycleStageIsolationTests.cs</tests>
 public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
   private readonly ILifecycleReceptorRegistry _registry;
 

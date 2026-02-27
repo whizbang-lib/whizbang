@@ -1685,5 +1685,251 @@ public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, 
     await Assert.That(cascadeSection).DoesNotContain("Routed<");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNullableTupleElement_PreservesNullabilityAsync() {
+    // Arrange - Tests that nullable tuple elements preserve the '?' annotation
+    // This is the exact scenario from JDNext where (List<IEvent>, FailedEvent?) was losing the ?
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatch : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record SuccessEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, FailureEvent?)> {
+  public ValueTask<(List<SuccessEvent>, FailureEvent?)> HandleAsync(ProcessBatch message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<SuccessEvent>, FailureEvent?)>((new List<SuccessEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher registration source which contains the full type names
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+
+    // The key assertion: the FailureEvent should have the ? preserved
+    // The generated code should contain the nullable type annotation
+    await Assert.That(registrations!).Contains("FailureEvent?");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNullableTupleElement_StripsNullabilityInTypeofAsync() {
+    // Arrange - Tests that nullable tuple elements have the '?' stripped in typeof() contexts
+    // This prevents CS8639: The typeof operator cannot be used on a nullable reference type
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatch : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record SuccessEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, FailureEvent?)> {
+  public ValueTask<(List<SuccessEvent>, FailureEvent?)> HandleAsync(ProcessBatch message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<SuccessEvent>, FailureEvent?)>((new List<SuccessEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains typeof() calls for outbox cascade
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: typeof() calls must NOT include the nullable annotation
+    // typeof(FailureEvent?) would cause CS8639, so we must have typeof(FailureEvent) instead
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::MyApp.Receptors.FailureEvent?)");
+
+    // Verify the non-nullable typeof() IS present (for outbox cascade)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListInTuple_ExtractsElementTypeForCascadeAsync() {
+    // Arrange - Tests that List<T> inside a tuple extracts the element type for cascade
+    // This is the exact scenario from JDNext where (List<IEvent>, FailedEvent?) was not cascading
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatchCommand : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record BatchEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<BatchEvent>, FailureEvent?)> {
+  public ValueTask<(List<BatchEvent>, FailureEvent?)> HandleAsync(ProcessBatchCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<BatchEvent>, FailureEvent?)>((new List<BatchEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: cascade should include typeof(BatchEvent), NOT typeof(List<BatchEvent>)
+    // List<T> element types should be extracted for cascade
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.BatchEvent)");
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.BatchEvent>)");
+
+    // Also verify FailureEvent is extracted (without the nullable annotation)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListResponseType_ExtractsElementTypeForCascadeAsync() {
+    // Arrange - Tests that List<T> as a direct response type extracts the element type for cascade
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record GetEventsCommand : ICommand {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record MyEvent : IEvent {
+  public string Data { get; init; } = string.Empty;
+}
+
+public class EventsReceptor : IReceptor<GetEventsCommand, List<MyEvent>> {
+  public ValueTask<List<MyEvent>> HandleAsync(GetEventsCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new List<MyEvent>());
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: cascade should include typeof(MyEvent), NOT typeof(List<MyEvent>)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.MyEvent)");
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.MyEvent>)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfIEvent_UsesPatternMatchingForCascadeAsync() {
+    // Arrange - Tests that List<IEvent> uses 'is IEvent' pattern matching instead of 'typeof(IEvent)'
+    // This is critical for the JDNext scenario where (List<IEvent>, FailedEvent?) returns concrete types
+    // At runtime, the message is typeof(ConcreteEvent), not typeof(IEvent), so exact matching fails
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatchCommand : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, FailureEvent?)> {
+  public ValueTask<(List<IEvent>, FailureEvent?)> HandleAsync(ProcessBatchCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<IEvent>, FailureEvent?)>((new List<IEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Key assertion: Interface types use pattern matching 'is IEvent' instead of 'typeof(IEvent)'
+    // This allows concrete types that implement IEvent to match at runtime
+    await Assert.That(dispatcher!).Contains("message is global::Whizbang.Core.IEvent");
+
+    // Should NOT use exact typeof() matching for IEvent (which would never match concrete types)
+    await Assert.That(dispatcher!).DoesNotContain("messageType == typeof(global::Whizbang.Core.IEvent)");
+
+    // Interface types use PublishToOutboxDynamicAsync (serializes using runtime type, not interface)
+    await Assert.That(dispatcher!).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope)");
+
+    // Concrete types like FailureEvent should still use exact typeof() matching
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+
+    // Concrete types use regular PublishToOutboxAsync
+    await Assert.That(dispatcher!).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)message");
+  }
+
   #endregion
 }

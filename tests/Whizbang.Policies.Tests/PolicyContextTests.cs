@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Registry;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Policies.Tests.Generated;
@@ -404,10 +405,13 @@ public class PolicyContextTests {
     // Arrange
     var services = new ServiceCollection()
         .AddWhizbang()
-        .Services
-        .BuildServiceProvider();
+        .Services;
+    // Register the composite IStreamIdExtractor from registry
+    // (normally done by AddWhizbangDispatcher() generated code)
+    services.AddSingleton<IStreamIdExtractor>(StreamIdExtractorRegistry.GetComposite());
+    var serviceProvider = services.BuildServiceProvider();
     var message = new MessageWithoutAttributeMarker("test");
-    var context = new PolicyContext(message, services: services);
+    var context = new PolicyContext(message, services: serviceProvider);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())

@@ -351,6 +351,10 @@ internal class FakeSubscription : ISubscription {
   public int PauseCallCount { get; private set; }
   public int ResumeCallCount { get; private set; }
 
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+
   public Task PauseAsync() {
     PauseCallCount++;
     IsActive = false;

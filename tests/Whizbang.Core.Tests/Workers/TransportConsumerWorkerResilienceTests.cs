@@ -551,6 +551,11 @@ public class TransportConsumerWorkerResilienceTests {
 
   private sealed class FakeSubscription : ISubscription {
     public bool IsActive => true;
+
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+
     public Task PauseAsync() => Task.CompletedTask;
     public Task ResumeAsync() => Task.CompletedTask;
     public void Dispose() { }

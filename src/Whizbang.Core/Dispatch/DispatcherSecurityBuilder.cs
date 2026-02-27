@@ -31,6 +31,12 @@ namespace Whizbang.Core.Dispatch;
 ///
 /// // Support impersonating a user for debugging
 /// await dispatcher.RunAs("target-user@example.com").SendAsync(command);
+///
+/// // System operation on a specific tenant
+/// await dispatcher.AsSystem().WithTenant("tenant-123").SendAsync(new TenantMaintenanceCommand());
+///
+/// // Admin impersonating user in a different tenant
+/// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
 /// </code>
 /// </example>
 /// <docs>core-concepts/message-security#explicit-security-context-api</docs>
@@ -40,6 +46,7 @@ public sealed class DispatcherSecurityBuilder {
   private readonly SecurityContextType _contextType;
   private readonly string? _effectivePrincipal;
   private readonly string? _actualPrincipal;
+  private readonly string? _tenantId;
 
   /// <summary>
   /// Creates a new security builder for dispatching with explicit security context.
@@ -48,15 +55,49 @@ public sealed class DispatcherSecurityBuilder {
   /// <param name="contextType">The type of security context being established.</param>
   /// <param name="effectivePrincipal">The effective principal (identity the operation runs as).</param>
   /// <param name="actualPrincipal">The actual principal (who initiated the operation, may be null for true system ops).</param>
+  /// <param name="tenantId">Optional explicit tenant ID for cross-tenant operations.</param>
   internal DispatcherSecurityBuilder(
     IDispatcher dispatcher,
     SecurityContextType contextType,
     string? effectivePrincipal,
-    string? actualPrincipal) {
+    string? actualPrincipal,
+    string? tenantId = null) {
     _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
     _contextType = contextType;
     _effectivePrincipal = effectivePrincipal;
     _actualPrincipal = actualPrincipal;
+    _tenantId = tenantId;
+  }
+
+  /// <summary>
+  /// Specifies an explicit tenant context for the dispatch operation.
+  /// Use for cross-tenant operations or backend services operating on behalf of a specific tenant.
+  /// </summary>
+  /// <param name="tenantId">The tenant ID to operate within.</param>
+  /// <returns>A new builder with the tenant context set.</returns>
+  /// <exception cref="ArgumentException">
+  /// Thrown when <paramref name="tenantId"/> is null, empty, or whitespace.
+  /// </exception>
+  /// <example>
+  /// <code>
+  /// // System operation on a specific tenant
+  /// await dispatcher.AsSystem().WithTenant("tenant-123").SendAsync(new TenantMaintenanceCommand());
+  ///
+  /// // Admin impersonating user in a different tenant
+  /// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
+  /// </code>
+  /// </example>
+  /// <docs>core-concepts/message-security#cross-tenant-operations</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
+  public DispatcherSecurityBuilder WithTenant(string tenantId) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));
+
+    return new DispatcherSecurityBuilder(
+      _dispatcher,
+      _contextType,
+      _effectivePrincipal,
+      _actualPrincipal,
+      tenantId: tenantId);
   }
 
   /// <summary>
@@ -182,7 +223,7 @@ public sealed class DispatcherSecurityBuilder {
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope {
         UserId = _effectivePrincipal,
-        TenantId = null // System/impersonation ops may be cross-tenant
+        TenantId = _tenantId // Explicit tenant or null for cross-tenant operations
       },
       Roles = new HashSet<string>(),
       Permissions = new HashSet<Permission>(),

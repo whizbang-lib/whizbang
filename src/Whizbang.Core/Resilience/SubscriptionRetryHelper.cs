@@ -65,6 +65,36 @@ public static partial class SubscriptionRetryHelper {
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
+        // Hook into disconnection event for immediate reconnection
+        subscription.OnDisconnected += (sender, args) => {
+          if (args.IsApplicationInitiated) {
+            return; // Don't reconnect if application is shutting down
+          }
+
+          LogSubscriptionDisconnected(logger, destination.Address, args.Reason);
+
+          // Mark as recovering and trigger immediate reconnection
+          state.Status = SubscriptionStatus.Recovering;
+          state.LastError = args.Exception;
+          state.LastErrorTime = DateTimeOffset.UtcNow;
+
+          // Fire-and-forget reconnection attempt
+          // Use Task.Run to avoid blocking the event handler
+          _ = Task.Run(async () => {
+            try {
+              // Small delay to allow transport to fully disconnect
+              await Task.Delay(options.InitialRetryDelay, cancellationToken);
+
+              // Attempt reconnection with retry logic
+              await SubscribeWithRetryAsync(transport, destination, handler, state, options, logger, cancellationToken);
+            } catch (OperationCanceledException) {
+              // Shutdown - ignore
+            } catch (Exception ex) {
+              LogReconnectionFailed(logger, destination.Address, ex);
+            }
+          }, cancellationToken);
+        };
+
         if (attempt == 1) {
           LogSubscriptionSuccess(logger, destination.Address, destination.RoutingKey ?? "#");
         } else {
@@ -133,4 +163,18 @@ public static partial class SubscriptionRetryHelper {
     Message = "Subscription to {Destination} still failing after {Attempt} attempts. Continuing to retry every {DelayMs}ms..."
   )]
   private static partial void LogSubscriptionStillFailing(ILogger logger, string destination, int attempt, double delayMs);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Warning,
+    Message = "Subscription to {Destination} disconnected: {Reason}. Attempting immediate reconnection..."
+  )]
+  private static partial void LogSubscriptionDisconnected(ILogger logger, string destination, string reason);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Error,
+    Message = "Failed to reconnect subscription to {Destination} after disconnection"
+  )]
+  private static partial void LogReconnectionFailed(ILogger logger, string destination, Exception ex);
 }

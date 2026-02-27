@@ -16,6 +16,7 @@ namespace Whizbang.Core.Generated;
 /// and other core Whizbang infrastructure.
 /// NOTE: MessageId and CorrelationId (including nullable versions) are provided by WhizbangIdJsonContext
 /// with custom converters. WhizbangIdJsonContext is registered FIRST in the resolver chain.
+/// NOTE: Nullable reference types (T?) cannot be used with typeof() - only nullable value types work.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesMessageHop_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesEnvelopeMetadata_Async</tests>
@@ -37,16 +38,29 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PolicyDecisionTrail))]
 [JsonSerializable(typeof(List<PolicyDecision>))]
 [JsonSerializable(typeof(PolicyDecision))]
-// Nullable primitive types for AOT compatibility
+// Nullable primitive types for AOT compatibility (value types only)
 [JsonSerializable(typeof(decimal?))]
 [JsonSerializable(typeof(int?))]
 [JsonSerializable(typeof(long?))]
 [JsonSerializable(typeof(bool?))]
 [JsonSerializable(typeof(DateTime?))]
 [JsonSerializable(typeof(DateTimeOffset?))]
+[JsonSerializable(typeof(TimeSpan))]
+[JsonSerializable(typeof(TimeSpan?))]
+[JsonSerializable(typeof(DateOnly))]
+[JsonSerializable(typeof(DateOnly?))]
+[JsonSerializable(typeof(TimeOnly))]
+[JsonSerializable(typeof(TimeOnly?))]
 [JsonSerializable(typeof(Guid?))]
 [JsonSerializable(typeof(double?))]
 [JsonSerializable(typeof(float?))]
+[JsonSerializable(typeof(byte?))]
+[JsonSerializable(typeof(sbyte?))]
+[JsonSerializable(typeof(short?))]
+[JsonSerializable(typeof(ushort?))]
+[JsonSerializable(typeof(uint?))]
+[JsonSerializable(typeof(ulong?))]
+[JsonSerializable(typeof(char?))]
 // JsonElement support for outbox deserialization
 [JsonSerializable(typeof(System.Text.Json.JsonElement))]
 [JsonSerializable(typeof(MessageEnvelope<System.Text.Json.JsonElement>))]
@@ -68,6 +82,7 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PerspectiveCheckpointFailure))]
 [JsonSerializable(typeof(PerspectiveCheckpointFailure[]))]
 [JsonSerializable(typeof(Guid[]))]
+[JsonSerializable(typeof(Guid?[]))]  // Array of nullable Guids
 // Sync inquiry types (for perspective sync awaiter)
 [JsonSerializable(typeof(SyncInquiry))]
 [JsonSerializable(typeof(SyncInquiry[]))]
@@ -77,9 +92,23 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PerspectiveMetadata))]
 [JsonSerializable(typeof(PerspectiveScope))]
 // Security principal types (for AllowedPrincipals in PerspectiveScope)
+// SecurityPrincipalId is a readonly record struct (value type)
 [JsonSerializable(typeof(SecurityPrincipalId))]
+[JsonSerializable(typeof(SecurityPrincipalId?))]
+[JsonSerializable(typeof(SecurityPrincipalId?[]))]
 [JsonSerializable(typeof(List<SecurityPrincipalId>))]
+[JsonSerializable(typeof(List<SecurityPrincipalId?>))]
 [JsonSerializable(typeof(IReadOnlyList<SecurityPrincipalId>))]
+// Core message interfaces (for polymorphic collections)
+[JsonSerializable(typeof(IMessage))]
+[JsonSerializable(typeof(IMessage[]))]
+[JsonSerializable(typeof(List<IMessage>))]
+[JsonSerializable(typeof(IEvent))]
+[JsonSerializable(typeof(IEvent[]))]
+[JsonSerializable(typeof(List<IEvent>))]
+[JsonSerializable(typeof(ICommand))]
+[JsonSerializable(typeof(ICommand[]))]
+[JsonSerializable(typeof(List<ICommand>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {

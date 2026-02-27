@@ -15,8 +15,15 @@ namespace Whizbang.Core.Messaging;
 /// For AOT compatibility, receptors are converted to delegates at registration time using reflection.
 /// This means reflection happens once during test setup, but invocation is reflection-free and AOT-safe.
 /// </para>
+/// <para>
+/// <strong>Stage Isolation</strong>: The registry enforces strict stage isolation.
+/// Receptors registered at one stage (e.g., PostPerspectiveAsync) are never returned
+/// when querying for a different stage (e.g., PrePerspectiveAsync).
+/// </para>
 /// </remarks>
 /// <docs>testing/lifecycle-synchronization</docs>
+/// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
+/// <tests>Whizbang.Core.Tests/Messaging/LifecycleStageIsolationTests.cs</tests>
 public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistry {
   // Key: (MessageType, LifecycleStage), Value: List of (receptor instance, invocation delegate) pairs
   private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Receptor, Func<object, ILifecycleContext?, CancellationToken, ValueTask> Handler)>> _receptors = new();
