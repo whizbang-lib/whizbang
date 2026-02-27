@@ -136,70 +136,76 @@ public class PerspectiveWorkerStrategyTests {
 
   [Test]
   public async Task PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async() {
-    // Arrange
-    var strategy = new InstantCompletionStrategy();
-    var coordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var registry = new FakePerspectiveRunnerRegistry {
-      ShouldThrow = true // Force runner to throw exception
-    };
-    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
-
-    // Return 1 perspective work item
-    var streamId = Guid.NewGuid();
-    coordinator.PerspectiveWorkToReturn = [
-      new PerspectiveWork {
-        StreamId = streamId,
-        PerspectiveName = "TestPerspective",
-        LastProcessedEventId = null,
-        PartitionNumber = 1
+    // Arrange - Set up handler to suppress unobserved task exceptions from this test
+    // The test intentionally throws an exception from the worker, which may not be observed
+    // before GC runs during parallel test execution
+    EventHandler<UnobservedTaskExceptionEventArgs> handler = (s, e) => {
+      if (e.Exception.InnerException is InvalidOperationException ioe &&
+          ioe.Message == "Test exception") {
+        e.SetObserved();
       }
-    ];
-
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
-      strategy,
-      databaseReadiness,
-      null
-    );
-
-    // Act - Run worker for one poll cycle
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-
-    // Wait for the worker to process (which will fail) OR timeout
-    // Use ContinueWith to observe any exception immediately to prevent unobserved task exception
-    var observerTask = workerTask.ContinueWith(t => {
-      // This observes any exception on the task, preventing unobserved task exception
-      _ = t.Exception;
-    }, TaskContinuationOptions.OnlyOnFaulted);
-
-    await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
-    cts.Cancel();
+    };
+    TaskScheduler.UnobservedTaskException += handler;
 
     try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    } catch (InvalidOperationException) {
-      // Expected - the test runner throws InvalidOperationException("Test exception")
-      // This is the exception we're testing gets reported via the failure strategy
-    }
+      var strategy = new InstantCompletionStrategy();
+      var coordinator = new FakeWorkCoordinator();
+      var instanceProvider = new FakeServiceInstanceProvider();
+      var registry = new FakePerspectiveRunnerRegistry {
+        ShouldThrow = true // Force runner to throw exception
+      };
+      var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
 
-    // Assert - Strategy should have reported failure immediately
-    await Assert.That(coordinator.ReportFailureCallCount).IsGreaterThanOrEqualTo(1)
-      .Because("Instant strategy should report failures immediately via coordinator");
+      // Return 1 perspective work item
+      var streamId = Guid.NewGuid();
+      coordinator.PerspectiveWorkToReturn = [
+        new PerspectiveWork {
+          StreamId = streamId,
+          PerspectiveName = "TestPerspective",
+          LastProcessedEventId = null,
+          PartitionNumber = 1
+        }
+      ];
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+      services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+      services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+      services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+      services.AddLogging();
+
+      var serviceProvider = services.BuildServiceProvider();
+
+      var worker = new PerspectiveWorker(
+        instanceProvider,
+        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        strategy,
+        databaseReadiness,
+        null
+      );
+
+      // Act - Run worker for one poll cycle
+      using var cts = new CancellationTokenSource();
+      var workerTask = worker.StartAsync(cts.Token);
+      await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
+      cts.Cancel();
+
+      try {
+        await workerTask;
+      } catch (OperationCanceledException) {
+        // Expected during shutdown
+      } catch (InvalidOperationException) {
+        // Expected - the test runner throws InvalidOperationException("Test exception")
+        // This is the exception we're testing gets reported via the failure strategy
+      }
+
+      // Assert - Strategy should have reported failure immediately
+      await Assert.That(coordinator.ReportFailureCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Instant strategy should report failures immediately via coordinator");
+    } finally {
+      TaskScheduler.UnobservedTaskException -= handler;
+    }
   }
 
   // ==================== CLR Type Name Registry Lookup Tests ====================
