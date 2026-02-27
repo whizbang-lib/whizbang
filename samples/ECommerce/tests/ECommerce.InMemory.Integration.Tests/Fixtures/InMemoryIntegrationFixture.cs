@@ -7,6 +7,7 @@ using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -235,6 +236,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = postgresConnection
+    });
+
     // Register service instance provider with unique instance ID
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
 
@@ -379,6 +386,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost _createBffHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
+
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = postgresConnection
+    });
 
     // Register service instance provider with unique instance ID
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));

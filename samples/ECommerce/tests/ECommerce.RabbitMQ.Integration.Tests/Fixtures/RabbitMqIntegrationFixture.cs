@@ -8,6 +8,7 @@ using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -214,6 +215,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost() {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = _inventoryPostgresConnection
+    });
+
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
       new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "InventoryWorker"));
@@ -360,6 +367,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   private IHost _createBffHost() {
     var builder = Host.CreateApplicationBuilder();
+
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = _bffPostgresConnection
+    });
 
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>

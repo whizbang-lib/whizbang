@@ -4,6 +4,7 @@ using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
@@ -129,6 +130,12 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = postgresConnection
+    });
+
     // Register Azure Service Bus transport
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 
@@ -205,6 +212,12 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
+
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = postgresConnection
+    });
 
     // Register Azure Service Bus transport
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
