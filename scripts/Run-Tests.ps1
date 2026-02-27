@@ -588,6 +588,21 @@ try {
             $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter })
         }
 
+        # Apply Tag filter if specified (coverage mode)
+        if ($Tag) {
+            $testProjectPaths = @($testProjectPaths | Where-Object {
+                $csprojPath = $_
+                $tags = @()
+                if (Test-Path $csprojPath) {
+                    $content = Get-Content $csprojPath -Raw
+                    if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                        $tags = $matches[1] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+                    }
+                }
+                $tags -contains $Tag
+            })
+        }
+
         if ($testProjectPaths.Count -eq 0) {
             Write-Warning "No test projects found matching filters."
             exit 1
