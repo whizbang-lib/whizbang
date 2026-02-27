@@ -601,6 +601,7 @@ try {
         $allPassed = $true
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
+        $failedProjects = @()  # Track which projects failed for reporting
         $failFastTriggered = $false  # Initialize for finally block
         $startTime = Get-Date
 
@@ -656,9 +657,12 @@ try {
                 }
             } else {
                 $totalProjectsFailed++
+                $failedProjects += $projectName
                 $allPassed = $false
                 if ($useAiOutput) {
                     Write-Host "  ✗ $projectName failed" -ForegroundColor Red
+                } else {
+                    Write-Host "  ✗ FAILED" -ForegroundColor Red
                 }
                 if ($FailFast) {
                     Write-Host "Stopping due to -FailFast" -ForegroundColor Red
@@ -681,6 +685,15 @@ try {
         Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
         Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
         Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
+
+        # List failed projects for easy identification
+        if ($failedProjects.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Failed Projects:" -ForegroundColor Red
+            foreach ($failedProject in $failedProjects) {
+                Write-Host "  - $failedProject" -ForegroundColor Red
+            }
+        }
         Write-Host ""
 
         if ($allPassed) {
