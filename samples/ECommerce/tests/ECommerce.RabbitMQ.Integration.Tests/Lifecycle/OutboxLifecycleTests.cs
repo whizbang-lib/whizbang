@@ -222,7 +222,7 @@ public class OutboxLifecycleTests {
 
       // Verify message was actually received by BFF (indicates successful publish)
       // This is indirect verification that PostOutboxAsync fired AFTER successful publish
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 60000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 120000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);

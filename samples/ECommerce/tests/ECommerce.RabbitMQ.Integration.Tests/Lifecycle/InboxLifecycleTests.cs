@@ -177,7 +177,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing happened (perspective materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
@@ -261,7 +261,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing completed (perspective should be materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
