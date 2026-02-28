@@ -146,7 +146,6 @@ public class TransportConsumerWorkerProvisioningTests {
         logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>()
     );
   }

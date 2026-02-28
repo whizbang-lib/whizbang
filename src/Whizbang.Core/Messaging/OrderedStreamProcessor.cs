@@ -4,8 +4,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Whizbang.Core.Tracing;
-using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
@@ -22,7 +20,6 @@ namespace Whizbang.Core.Messaging;
 public partial class OrderedStreamProcessor {
   private readonly bool _parallelizeStreams;
   private readonly ILogger<OrderedStreamProcessor>? _logger;
-  private readonly ITracer? _tracer;
 
   /// <summary>
   /// Creates a new OrderedStreamProcessor.
@@ -32,19 +29,14 @@ public partial class OrderedStreamProcessor {
   /// When false, all streams processed sequentially (safer, simpler debugging).
   /// </param>
   /// <param name="logger">Optional logger</param>
-  /// <param name="tracer">Optional tracer for stream processing tracing</param>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
-  public OrderedStreamProcessor(
-    bool parallelizeStreams = false,
-    ILogger<OrderedStreamProcessor>? logger = null,
-    ITracer? tracer = null) {
+  public OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
     _parallelizeStreams = parallelizeStreams;
     _logger = logger;
-    _tracer = tracer;
   }
 
   /// <summary>
@@ -72,9 +64,6 @@ public partial class OrderedStreamProcessor {
       return;
     }
 
-    // Check if we should trace stream ordering
-    var shouldTrace = _tracer?.ShouldTrace(TraceComponents.Inbox, handlerName: null, messageType: null) ?? false;
-
     if (_logger != null) {
       LogProcessingInboxMessages(_logger, inboxWork.Count);
     }
@@ -92,52 +81,20 @@ public partial class OrderedStreamProcessor {
       LogGroupedIntoStreams(_logger, streamGroups.Count);
     }
 
-    // Begin trace scope if tracing is enabled
-    ITraceScope? orderingScope = null;
-    if (shouldTrace && _tracer is not null) {
-      var traceContext = new TraceContext {
-        MessageId = Guid.Empty,
-        CorrelationId = $"inbox-streams-{TrackedGuid.NewMedo():N}",
-        CausationId = null,
-        MessageType = "InboxStreamOrdering",
-        Component = TraceComponents.Inbox,
-        Verbosity = _tracer.GetEffectiveVerbosity(handlerName: null, messageType: null, attributeVerbosity: null),
-        StartTime = DateTimeOffset.UtcNow,
-        HopCount = 0,
-        IsExplicit = false
-      };
-      traceContext.Properties["TotalMessages"] = inboxWork.Count;
-      traceContext.Properties["StreamCount"] = streamGroups.Count;
-      traceContext.Properties["Parallel"] = _parallelizeStreams;
-      orderingScope = _tracer.BeginTrace(traceContext);
-    }
-
-    try {
-      if (_parallelizeStreams) {
-        // Process different streams in parallel
-        await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-          await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-        });
-      } else {
-        // Process streams sequentially (safer default)
-        foreach (var streamBatch in streamGroups) {
-          if (ct.IsCancellationRequested) {
-            break;
-          }
-
-          await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, ct);
+    if (_parallelizeStreams) {
+      // Process different streams in parallel
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
+        await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
+      });
+    } else {
+      // Process streams sequentially (safer default)
+      foreach (var streamBatch in streamGroups) {
+        if (ct.IsCancellationRequested) {
+          break;
         }
-      }
 
-      orderingScope?.Complete();
-    } catch (OperationCanceledException) {
-      orderingScope?.EarlyReturn();
-      throw;
-    } catch (Exception ex) {
-      orderingScope?.Fail(ex);
-      throw;
-    } finally {
-      orderingScope?.Dispose();
+        await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, ct);
+      }
     }
   }
 
@@ -163,9 +120,6 @@ public partial class OrderedStreamProcessor {
       return;
     }
 
-    // Check if we should trace stream ordering
-    var shouldTrace = _tracer?.ShouldTrace(TraceComponents.Outbox, handlerName: null, messageType: null) ?? false;
-
     if (_logger != null) {
       LogProcessingOutboxMessages(_logger, outboxWork.Count);
     }
@@ -183,50 +137,18 @@ public partial class OrderedStreamProcessor {
       LogGroupedIntoStreams(_logger, streamGroups.Count);
     }
 
-    // Begin trace scope if tracing is enabled
-    ITraceScope? orderingScope = null;
-    if (shouldTrace && _tracer is not null) {
-      var traceContext = new TraceContext {
-        MessageId = Guid.Empty,
-        CorrelationId = $"outbox-streams-{TrackedGuid.NewMedo():N}",
-        CausationId = null,
-        MessageType = "OutboxStreamOrdering",
-        Component = TraceComponents.Outbox,
-        Verbosity = _tracer.GetEffectiveVerbosity(handlerName: null, messageType: null, attributeVerbosity: null),
-        StartTime = DateTimeOffset.UtcNow,
-        HopCount = 0,
-        IsExplicit = false
-      };
-      traceContext.Properties["TotalMessages"] = outboxWork.Count;
-      traceContext.Properties["StreamCount"] = streamGroups.Count;
-      traceContext.Properties["Parallel"] = _parallelizeStreams;
-      orderingScope = _tracer.BeginTrace(traceContext);
-    }
-
-    try {
-      if (_parallelizeStreams) {
-        await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-          await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-        });
-      } else {
-        foreach (var streamBatch in streamGroups) {
-          if (ct.IsCancellationRequested) {
-            break;
-          }
-
-          await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, ct);
+    if (_parallelizeStreams) {
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
+        await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
+      });
+    } else {
+      foreach (var streamBatch in streamGroups) {
+        if (ct.IsCancellationRequested) {
+          break;
         }
-      }
 
-      orderingScope?.Complete();
-    } catch (OperationCanceledException) {
-      orderingScope?.EarlyReturn();
-      throw;
-    } catch (Exception ex) {
-      orderingScope?.Fail(ex);
-      throw;
-    } finally {
-      orderingScope?.Dispose();
+        await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, ct);
+      }
     }
   }
 

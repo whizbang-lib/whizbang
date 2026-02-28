@@ -150,7 +150,6 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      tracer: null,
       ct
     );
 
@@ -162,7 +161,6 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      tracer: null,
       ct
     );
 
@@ -200,7 +198,6 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      tracer: null,
       ct
     );
 
