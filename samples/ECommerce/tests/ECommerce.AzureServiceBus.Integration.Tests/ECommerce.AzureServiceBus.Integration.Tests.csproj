@@ -9,8 +9,8 @@
     <IsPackable>false</IsPackable>
     <!-- Integration: Requires PostgreSQL + Azure Service Bus via Testcontainers -->
     <WhizbangTestType>Integration</WhizbangTestType>
-    <!-- Tags for filtering: AzureServiceBus, Postgres, Docker, Messaging, ECommerce -->
-    <WhizbangTestTags>AzureServiceBus;Postgres;Docker;Messaging;ECommerce</WhizbangTestTags>
+    <!-- Tags for filtering: AzureServiceBus, Docker, Messaging, ECommerce (uses Postgres but not Postgres-specific tests) -->
+    <WhizbangTestTags>AzureServiceBus;Docker;Messaging;ECommerce</WhizbangTestTags>
     <NoWarn>$(NoWarn);TUnit0015;TUnit0023;WHIZ055;WHIZ056</NoWarn>
   </PropertyGroup>
 
