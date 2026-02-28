@@ -663,7 +663,7 @@ try {
                 $projectArgs += "--fail-fast"
             }
 
-            $projectResult = & dotnet @projectArgs
+            $projectResult = & dotnet @projectArgs 2>&1
 
             if ($LASTEXITCODE -eq 0) {
                 $totalProjectsPassed++
@@ -676,6 +676,12 @@ try {
                 $allPassed = $false
                 if ($useAiOutput) {
                     Write-Host "  ✗ $projectName failed" -ForegroundColor Red
+                    # Show last 30 lines of output to help diagnose failures
+                    Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
+                    $projectResult | Select-Object -Last 30 | ForEach-Object {
+                        Write-Host "    $_" -ForegroundColor Gray
+                    }
+                    Write-Host "    --- End output ---" -ForegroundColor DarkGray
                 } else {
                     Write-Host "  ✗ FAILED" -ForegroundColor Red
                 }
