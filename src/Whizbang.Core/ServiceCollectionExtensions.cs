@@ -1,11 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core;
 
@@ -98,6 +100,35 @@ public static class ServiceCollectionExtensions {
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new MessageTagProcessor(tagOptions, scopeFactory);
     });
+
+    // Register tracing services
+    // TracingOptions is wrapped in IOptions for runtime configuration support
+    services.AddSingleton<IOptions<TracingOptions>>(Options.Create(coreOptions.Tracing));
+
+    // Register trace outputs (multiple can be active)
+    // LoggerTraceOutput writes to ILogger with structured logging
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITraceOutput, LoggerTraceOutput>());
+    // OpenTelemetryTraceOutput emits spans via System.Diagnostics.ActivitySource
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<ITraceOutput, OpenTelemetryTraceOutput>());
+
+    // Register the tracer orchestrator
+    services.TryAddSingleton<ITracer, Tracer>();
+
+    // Register metrics services
+    // MetricsOptions is wrapped in IOptionsMonitor for runtime configuration updates
+    services.Configure<MetricsOptions>(opt => {
+      opt.Enabled = coreOptions.Metrics.Enabled;
+      opt.Components = coreOptions.Metrics.Components;
+      opt.MeterName = coreOptions.Metrics.MeterName;
+      opt.MeterVersion = coreOptions.Metrics.MeterVersion;
+      opt.IncludeHandlerNameTag = coreOptions.Metrics.IncludeHandlerNameTag;
+      opt.IncludeMessageTypeTag = coreOptions.Metrics.IncludeMessageTypeTag;
+      opt.DurationBuckets = coreOptions.Metrics.DurationBuckets;
+    });
+
+    // Register IHandlerMetrics - use real implementation when enabled, null otherwise
+    // Note: HandlerMetrics checks options at runtime, so we always register it
+    services.TryAddSingleton<IHandlerMetrics, HandlerMetrics>();
 
     // Register core infrastructure services
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();

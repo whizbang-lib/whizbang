@@ -5,6 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
@@ -35,6 +37,7 @@ public static class LifecycleInvocationHelper {
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
+  /// <param name="tracer">Optional tracer for lifecycle stage tracing</param>
   /// <param name="ct">Cancellation token</param>
   /// <remarks>
   /// <para>
@@ -65,6 +68,7 @@ public static class LifecycleInvocationHelper {
     ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILogger? logger,
+    ITracer? tracer = null,
     CancellationToken ct = default) {
 
     // Early return if lifecycle infrastructure not configured
@@ -72,85 +76,122 @@ public static class LifecycleInvocationHelper {
       return;
     }
 
+    // Check if we should trace lifecycle invocations
+    var shouldTrace = tracer?.ShouldTrace(TraceComponents.Lifecycle, handlerName: null, messageType: null) ?? false;
+
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     // The main thread may modify the original collections while the background task iterates
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
 
-    // Invoke async stage (non-blocking, backgrounded)
-    _ = Task.Run(async () => {
-      try {
-        // Process outbox messages with MessageSource.Outbox context
-        foreach (var outboxMsg in outboxSnapshot) {
-          var outboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Outbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
-
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-          var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
-        }
-
-        // Process inbox messages with MessageSource.Inbox context
-        foreach (var inboxMsg in inboxSnapshot) {
-          var inboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
-
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-          var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
-        }
-      } catch (Exception ex) {
-        if (logger != null) {
-#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-          logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
-#pragma warning restore CA1848
-        }
-      }
-    }, ct);
-
-    // Invoke inline stage (blocking, sequential)
-    // Process outbox messages with MessageSource.Outbox context
-    foreach (var outboxMsg in outboxSnapshot) {
-      var outboxContext = new LifecycleExecutionContext {
-        CurrentStage = inlineStage,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = Messaging.MessageSource.Outbox,
-        AttemptNumber = null // Attempt info not available at this stage
+    // Begin trace scope if tracing is enabled
+    ITraceScope? lifecycleScope = null;
+    if (shouldTrace && tracer is not null) {
+      var traceContext = new TraceContext {
+        MessageId = Guid.Empty,
+        CorrelationId = $"lifecycle-{asyncStage}-{TrackedGuid.NewMedo():N}",
+        CausationId = null,
+        MessageType = $"{asyncStage}/{inlineStage}",
+        Component = TraceComponents.Lifecycle,
+        Verbosity = tracer.GetEffectiveVerbosity(handlerName: null, messageType: null, attributeVerbosity: null),
+        StartTime = DateTimeOffset.UtcNow,
+        HopCount = 0,
+        IsExplicit = false
       };
-
-      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-      var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
+      traceContext.Properties["AsyncStage"] = asyncStage.ToString();
+      traceContext.Properties["InlineStage"] = inlineStage.ToString();
+      traceContext.Properties["OutboxCount"] = outboxSnapshot.Length;
+      traceContext.Properties["InboxCount"] = inboxSnapshot.Length;
+      lifecycleScope = tracer.BeginTrace(traceContext);
     }
 
-    // Process inbox messages with MessageSource.Inbox context
-    foreach (var inboxMsg in inboxSnapshot) {
-      var inboxContext = new LifecycleExecutionContext {
-        CurrentStage = inlineStage,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = Messaging.MessageSource.Inbox,
-        AttemptNumber = null // Attempt info not available at this stage
-      };
+    try {
+      // Invoke async stage (non-blocking, backgrounded)
+      _ = Task.Run(async () => {
+        try {
+          // Process outbox messages with MessageSource.Outbox context
+          foreach (var outboxMsg in outboxSnapshot) {
+            var outboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Outbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
 
-      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-      var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+            var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
+          }
+
+          // Process inbox messages with MessageSource.Inbox context
+          foreach (var inboxMsg in inboxSnapshot) {
+            var inboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Inbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
+
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+            var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
+          }
+        } catch (Exception ex) {
+          if (logger != null) {
+#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
+            logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
+#pragma warning restore CA1848
+          }
+        }
+      }, ct);
+
+      // Invoke inline stage (blocking, sequential)
+      // Process outbox messages with MessageSource.Outbox context
+      foreach (var outboxMsg in outboxSnapshot) {
+        var outboxContext = new LifecycleExecutionContext {
+          CurrentStage = inlineStage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = Messaging.MessageSource.Outbox,
+          AttemptNumber = null // Attempt info not available at this stage
+        };
+
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+        var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
+      }
+
+      // Process inbox messages with MessageSource.Inbox context
+      foreach (var inboxMsg in inboxSnapshot) {
+        var inboxContext = new LifecycleExecutionContext {
+          CurrentStage = inlineStage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = Messaging.MessageSource.Inbox,
+          AttemptNumber = null // Attempt info not available at this stage
+        };
+
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+        var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
+      }
+
+      // Mark trace as successfully completed
+      lifecycleScope?.Complete();
+    } catch (OperationCanceledException) {
+      lifecycleScope?.EarlyReturn();
+      throw;
+    } catch (Exception ex) {
+      lifecycleScope?.Fail(ex);
+      throw;
+    } finally {
+      lifecycleScope?.Dispose();
     }
   }
 
@@ -164,6 +205,7 @@ public static class LifecycleInvocationHelper {
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
+  /// <param name="tracer">Optional tracer for lifecycle stage tracing</param>
   /// <param name="ct">Cancellation token</param>
   /// <remarks>
   /// <para>
@@ -192,6 +234,7 @@ public static class LifecycleInvocationHelper {
     ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILogger? logger,
+    ITracer? tracer = null,
     CancellationToken ct = default) {
 
     // Early return if lifecycle infrastructure not configured
@@ -199,12 +242,35 @@ public static class LifecycleInvocationHelper {
       return;
     }
 
+    // Check if we should trace lifecycle invocations
+    var shouldTrace = tracer?.ShouldTrace(TraceComponents.Lifecycle, handlerName: null, messageType: null) ?? false;
+
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
     _ = Task.Run(async () => {
+      // Begin trace scope inside Task.Run (for async-only stages)
+      ITraceScope? lifecycleScope = null;
+      if (shouldTrace && tracer is not null) {
+        var traceContext = new TraceContext {
+          MessageId = Guid.Empty,
+          CorrelationId = $"lifecycle-{asyncStage}-{TrackedGuid.NewMedo():N}",
+          CausationId = null,
+          MessageType = asyncStage.ToString(),
+          Component = TraceComponents.Lifecycle,
+          Verbosity = tracer.GetEffectiveVerbosity(handlerName: null, messageType: null, attributeVerbosity: null),
+          StartTime = DateTimeOffset.UtcNow,
+          HopCount = 0,
+          IsExplicit = false
+        };
+        traceContext.Properties["AsyncStage"] = asyncStage.ToString();
+        traceContext.Properties["OutboxCount"] = outboxSnapshot.Length;
+        traceContext.Properties["InboxCount"] = inboxSnapshot.Length;
+        lifecycleScope = tracer.BeginTrace(traceContext);
+      }
+
       try {
         // Process outbox messages with MessageSource.Outbox context
         foreach (var outboxMsg in outboxSnapshot) {
@@ -237,12 +303,21 @@ public static class LifecycleInvocationHelper {
           var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
           await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
         }
+
+        // Mark trace as successfully completed
+        lifecycleScope?.Complete();
+      } catch (OperationCanceledException) {
+        lifecycleScope?.EarlyReturn();
+        // Don't rethrow - this is a background task
       } catch (Exception ex) {
+        lifecycleScope?.Fail(ex);
         if (logger != null) {
 #pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
           logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
 #pragma warning restore CA1848
         }
+      } finally {
+        lifecycleScope?.Dispose();
       }
     }, ct);
   }

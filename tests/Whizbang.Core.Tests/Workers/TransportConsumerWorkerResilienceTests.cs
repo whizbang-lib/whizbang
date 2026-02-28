@@ -406,6 +406,7 @@ public class TransportConsumerWorkerResilienceTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
+      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
   }

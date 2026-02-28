@@ -1,4 +1,5 @@
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Configuration;
 
@@ -30,6 +31,45 @@ public sealed class WhizbangCoreOptions {
   /// Use this property to register tag hooks that process messages after successful handling.
   /// </remarks>
   public TagOptions Tags { get; } = new();
+
+  /// <summary>
+  /// Gets the tracing configuration.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this property to configure handler and message tracing for diagnostics and debugging.
+  /// Tracing can output to ILogger and/or OpenTelemetry spans.
+  /// </para>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///   options.Tracing.Verbosity = TraceVerbosity.Verbose;
+  ///   options.Tracing.Components = TraceComponents.Handlers | TraceComponents.EventStore;
+  ///   options.Tracing.TracedHandlers["OrderReceptor"] = TraceVerbosity.Debug;
+  /// });
+  /// </code>
+  /// </example>
+  /// </remarks>
+  public TracingOptions Tracing { get; } = new();
+
+  /// <summary>
+  /// Gets the metrics configuration.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this property to configure OpenTelemetry metrics collection.
+  /// Metrics are emitted via System.Diagnostics.Metrics API.
+  /// </para>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///   options.Metrics.Enabled = true;
+  ///   options.Metrics.Components = MetricComponents.Handlers | MetricComponents.EventStore;
+  /// });
+  /// </code>
+  /// </example>
+  /// </remarks>
+  public MetricsOptions Metrics { get; } = new();
 
   /// <summary>
   /// Gets or sets whether tag processing is enabled.

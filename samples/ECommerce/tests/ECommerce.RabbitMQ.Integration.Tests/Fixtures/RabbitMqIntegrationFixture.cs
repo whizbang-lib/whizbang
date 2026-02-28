@@ -352,6 +352,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetRequiredService<ILifecycleInvoker>(),
+        tracer: null,
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -518,6 +519,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetRequiredService<ILifecycleInvoker>(),
+        tracer: null,
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
