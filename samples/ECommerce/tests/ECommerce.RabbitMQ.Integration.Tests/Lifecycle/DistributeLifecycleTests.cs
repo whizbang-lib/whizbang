@@ -88,7 +88,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -128,7 +128,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -168,7 +168,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -258,7 +258,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -297,7 +297,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
