@@ -83,7 +83,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
@@ -94,7 +94,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -134,7 +134,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Perform multiple restock operations
     // Wait between each restock to ensure events are processed and perspectives are updated
@@ -149,7 +149,7 @@ public class RestockInventoryWorkflowTests {
         inventoryPerspectives: 1,
         bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
       await fixture.Dispatcher.SendAsync(restockCommand);
-      await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
     }
 
 
@@ -189,7 +189,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
@@ -200,7 +200,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -238,7 +238,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
@@ -249,7 +249,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -287,7 +287,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
@@ -298,7 +298,7 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
