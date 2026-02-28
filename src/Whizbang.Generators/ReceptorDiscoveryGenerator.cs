@@ -42,6 +42,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
+  private const string TRACING_SNIPPET_FILE = "TracingSnippets.cs";
   private const string PLACEHOLDER_RECEPTOR_INTERFACE = "__RECEPTOR_INTERFACE__";
   private const string PLACEHOLDER_SYNC_RECEPTOR_INTERFACE = "__SYNC_RECEPTOR_INTERFACE__";
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
@@ -54,6 +55,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RESPONSE_NAME = "__RESPONSE_NAME__";
   private const string PLACEHOLDER_SYNC_ATTRIBUTES = "__SYNC_ATTRIBUTES__";
   private const string PLACEHOLDER_SYNC_AWAIT_CODE = "__SYNC_AWAIT_CODE__";
+  private const string PLACEHOLDER_TRACE_VERBOSITY = "__TRACE_VERBOSITY__";
+  private const string PLACEHOLDER_HAS_TRACE_ATTRIBUTE = "__HAS_TRACE_ATTRIBUTE__";
+  private const string PLACEHOLDER_METRIC_RECORDING_LIFECYCLE = "__METRIC_RECORDING_LIFECYCLE__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -132,6 +136,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Extract perspective sync attributes from [AwaitPerspectiveSync] attributes
     var syncAttributes = _extractSyncAttributes(classSymbol);
 
+    // Extract trace attribute from [TraceHandler] attribute
+    var (hasTraceAttribute, traceVerbosity) = _extractTraceAttribute(classSymbol);
+
+    // Extract metric attribute from [MetricHandler] attribute
+    var hasMetricAttribute = _extractMetricAttribute(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
@@ -148,7 +158,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute,
+          TraceVerbosity: traceVerbosity,
+          HasMetricAttribute: hasMetricAttribute
       );
     }
 
@@ -165,7 +178,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute,
+          TraceVerbosity: traceVerbosity,
+          HasMetricAttribute: hasMetricAttribute
       );
     }
 
@@ -185,7 +201,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute,
+          TraceVerbosity: traceVerbosity,
+          HasMetricAttribute: hasMetricAttribute
       );
     }
 
@@ -202,7 +221,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute,
+          TraceVerbosity: traceVerbosity,
+          HasMetricAttribute: hasMetricAttribute
       );
     }
 
@@ -470,6 +492,51 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Extracts trace attribute information from [TraceHandler] attribute on a receptor class.
+  /// Returns a tuple of (hasAttribute, verbosity) where verbosity is the TraceVerbosity enum value as int.
+  /// TraceVerbosity values: 0=Off, 1=Minimal, 2=Normal, 3=Verbose (default), 4=Debug.
+  /// </summary>
+  private static (bool HasAttribute, int? Verbosity) _extractTraceAttribute(INamedTypeSymbol classSymbol) {
+    const string TRACE_HANDLER_ATTRIBUTE = "Whizbang.Core.Tracing.TraceHandlerAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() != TRACE_HANDLER_ATTRIBUTE) {
+        continue;
+      }
+
+      // [TraceHandler] or [TraceHandler(TraceVerbosity.Debug)]
+      // Constructor argument is optional TraceVerbosity enum value (defaults to Verbose = 3)
+      if (attribute.ConstructorArguments.Length > 0) {
+        var verbosityArg = attribute.ConstructorArguments[0];
+        if (verbosityArg.Value is int verbosityValue) {
+          return (true, verbosityValue);
+        }
+      }
+
+      // Default verbosity is Verbose (3) when no argument provided
+      return (true, 3);
+    }
+
+    return (false, null);
+  }
+
+  /// <summary>
+  /// Extracts metric attribute from [MetricHandler] attribute on a receptor class.
+  /// Returns true if the receptor has the attribute.
+  /// </summary>
+  private static bool _extractMetricAttribute(INamedTypeSymbol classSymbol) {
+    const string METRIC_HANDLER_ATTRIBUTE = "Whizbang.Core.Tracing.MetricHandlerAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() == METRIC_HANDLER_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /// <summary>
@@ -1306,6 +1373,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// - Receptors WITH [FireAt(X)] are registered at stage X only
   /// - Receptors WITHOUT [FireAt] are registered at LocalImmediateInline, PreOutboxInline, PostInboxInline
   /// This is the UNIFIED receptor invocation approach - no distinction between "lifecycle" and "business" receptors.
+  /// Enhanced to inject tracing code for receptors with [TraceHandler] or [MetricHandler] attributes.
   /// </summary>
   private static string _generateReceptorRegistrySource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
@@ -1318,7 +1386,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "ReceptorRegistryTemplate.cs"
     );
 
-    // Load snippets for receptor registry routing
+    // Load snippets for receptor registry routing (non-traced)
     var responseSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
         TEMPLATE_SNIPPET_FILE,
@@ -1329,6 +1397,32 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         typeof(ReceptorDiscoveryGenerator).Assembly,
         TEMPLATE_SNIPPET_FILE,
         "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"
+    );
+
+    // Load traced snippets for receptors with [TraceHandler] or [MetricHandler]
+    var tracedResponseSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TRACING_SNIPPET_FILE,
+        "TRACED_LIFECYCLE_INVOKER_SNIPPET"
+    );
+
+    var tracedVoidSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TRACING_SNIPPET_FILE,
+        "TRACED_VOID_LIFECYCLE_INVOKER_SNIPPET"
+    );
+
+    // Load metric recording snippets
+    var metricRecordingSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TRACING_SNIPPET_FILE,
+        "METRIC_RECORDING_LIFECYCLE_SNIPPET"
+    );
+
+    var noMetricRecordingSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TRACING_SNIPPET_FILE,
+        "NO_METRIC_RECORDING_LIFECYCLE_SNIPPET"
     );
 
     // Default stages for receptors WITHOUT [FireAt] attribute
@@ -1363,23 +1457,62 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Generate the sync attributes code for this receptor
       var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
 
-      if (receptor.IsVoid) {
-        // Void receptor: IReceptor<TMessage>
-        generatedCode = voidSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
-            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+      // Determine if this receptor needs tracing/metrics injection
+      var needsTracing = receptor.HasTraceAttribute || receptor.HasMetricAttribute;
+
+      if (needsTracing) {
+        // Use traced snippets for receptors with [TraceHandler] or [MetricHandler]
+        var traceVerbosityCode = receptor.TraceVerbosity.HasValue
+            ? receptor.TraceVerbosity.Value.ToString(CultureInfo.InvariantCulture)
+            : "null";
+        var hasTraceAttributeCode = receptor.HasTraceAttribute ? "true" : "false";
+        var metricRecordingCode = receptor.HasMetricAttribute
+            ? metricRecordingSnippet
+            : noMetricRecordingSnippet;
+
+        if (receptor.IsVoid) {
+          // Traced void receptor: IReceptor<TMessage>
+          generatedCode = _generateTracedReceptorRegistryEntry(
+              tracedVoidSnippet,
+              receptor,
+              stage,
+              syncAttributesCode,
+              traceVerbosityCode,
+              hasTraceAttributeCode,
+              metricRecordingCode,
+              isVoid: true);
+        } else {
+          // Traced regular receptor: IReceptor<TMessage, TResponse>
+          generatedCode = _generateTracedReceptorRegistryEntry(
+              tracedResponseSnippet,
+              receptor,
+              stage,
+              syncAttributesCode,
+              traceVerbosityCode,
+              hasTraceAttributeCode,
+              metricRecordingCode,
+              isVoid: false);
+        }
       } else {
-        // Regular receptor: IReceptor<TMessage, TResponse>
-        generatedCode = responseSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
-            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+        // Use non-traced snippets (zero overhead)
+        if (receptor.IsVoid) {
+          // Void receptor: IReceptor<TMessage>
+          generatedCode = voidSnippet
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+              .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
+              .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+        } else {
+          // Regular receptor: IReceptor<TMessage, TResponse>
+          generatedCode = responseSnippet
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+              .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
+              .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+        }
       }
 
       routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
@@ -1393,6 +1526,52 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode.ToString());
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates a traced receptor registry entry by wrapping the traced snippet in the registry entry format.
+  /// The traced snippet contains the full traced invocation logic; this method wraps it in the ReceptorInfo structure.
+  /// </summary>
+  private static string _generateTracedReceptorRegistryEntry(
+      string tracedSnippet,
+      ReceptorInfo receptor,
+      string stage,
+      string syncAttributesCode,
+      string traceVerbosityCode,
+      string hasTraceAttributeCode,
+      string metricRecordingCode,
+      bool isVoid) {
+    // The traced snippet is the full invocation code, but we need to wrap it in the ReceptorInfo structure
+    // First, apply all placeholder replacements
+    var invokerCode = tracedSnippet
+        .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+        .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+        .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+        .Replace(PLACEHOLDER_TRACE_VERBOSITY, traceVerbosityCode)
+        .Replace(PLACEHOLDER_HAS_TRACE_ATTRIBUTE, hasTraceAttributeCode)
+        .Replace(PLACEHOLDER_METRIC_RECORDING_LIFECYCLE, metricRecordingCode);
+
+    if (!isVoid && receptor.ResponseType is not null) {
+      invokerCode = invokerCode.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
+    }
+
+    // Build the ReceptorInfo structure with the traced invoker
+    var sb = new StringBuilder();
+    sb.AppendLine($"if (messageType == typeof({receptor.MessageType}) && stage == {stage}) {{");
+    sb.AppendLine($"  return new global::Whizbang.Core.Messaging.ReceptorInfo[] {{");
+    sb.AppendLine($"    new global::Whizbang.Core.Messaging.ReceptorInfo(");
+    sb.AppendLine($"      MessageType: typeof({receptor.MessageType}),");
+    sb.AppendLine($"      ReceptorId: \"{receptor.ClassName}\",");
+    sb.AppendLine($"      InvokeAsync: async (sp, msg, ct) => {{");
+    // Indent the traced invoker code
+    sb.AppendLine(TemplateUtilities.IndentCode(invokerCode, "        "));
+    sb.AppendLine($"      }},");
+    sb.AppendLine($"      SyncAttributes: {syncAttributesCode}");
+    sb.AppendLine($"    )");
+    sb.AppendLine($"  }};");
+    sb.AppendLine($"}}");
+
+    return sb.ToString();
   }
 
   /// <summary>

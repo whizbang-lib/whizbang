@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
@@ -40,6 +41,7 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly OrderedStreamProcessor _orderedProcessor;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly ITracer? _tracer;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
@@ -56,6 +58,7 @@ public class TransportConsumerWorker : BackgroundService {
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
   /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
   /// <param name="lifecycleInvoker">Optional lifecycle invoker for runtime test/lifecycle receptors</param>
+  /// <param name="tracer">Optional tracer for inbox processing tracing</param>
   /// <param name="logger">Logger instance</param>
   /// <remarks>
   /// <para>
@@ -73,6 +76,7 @@ public class TransportConsumerWorker : BackgroundService {
     OrderedStreamProcessor orderedProcessor,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILifecycleInvoker? lifecycleInvoker,
+    ITracer? tracer,
     ILogger<TransportConsumerWorker> logger
   ) {
     ArgumentNullException.ThrowIfNull(transport);
@@ -91,6 +95,7 @@ public class TransportConsumerWorker : BackgroundService {
     _orderedProcessor = orderedProcessor;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _lifecycleInvoker = lifecycleInvoker;
+    _tracer = tracer;
     _logger = logger;
 
     // Initialize state for each destination
@@ -305,6 +310,33 @@ public class TransportConsumerWorker : BackgroundService {
     string? envelopeType,
     CancellationToken cancellationToken
   ) {
+    // Extract message type for tracing
+    var messageTypeName = envelopeType != null
+      ? _extractMessageTypeFromEnvelopeType(envelopeType).Split(',')[0].Split('.').Last()
+      : "Unknown";
+
+    // Check if we should trace this inbox processing
+    var shouldTrace = _tracer?.ShouldTrace(TraceComponents.Inbox, handlerName: null, messageTypeName) ?? false;
+
+    // Begin trace scope if tracing is enabled
+    ITraceScope? inboxScope = null;
+    if (shouldTrace && _tracer is not null) {
+      var traceContext = new TraceContext {
+        MessageId = envelope.MessageId,
+        CorrelationId = envelope.GetCorrelationId()?.ToString() ?? $"inbox-{envelope.MessageId:N}",
+        CausationId = envelope.GetCausationId()?.ToString(),
+        MessageType = messageTypeName,
+        Component = TraceComponents.Inbox,
+        Verbosity = _tracer.GetEffectiveVerbosity(handlerName: null, messageTypeName, attributeVerbosity: null),
+        StartTime = DateTimeOffset.UtcNow,
+        HopCount = envelope.Hops?.Count ?? 0,
+        IsExplicit = false
+      };
+      traceContext.Properties["EnvelopeType"] = envelopeType ?? "Unknown";
+      traceContext.Properties["Transport"] = _transport.GetType().Name;
+      inboxScope = _tracer.BeginTrace(traceContext);
+    }
+
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
@@ -341,8 +373,11 @@ public class TransportConsumerWorker : BackgroundService {
             messageId
           );
         }
+        // Mark trace as early return (duplicate message)
+        inboxScope?.EarlyReturn();
         return;
       }
+
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var messageId = envelope.MessageId;
@@ -481,9 +516,20 @@ public class TransportConsumerWorker : BackgroundService {
         var messageId = envelope.MessageId;
         _logger.LogDebug("Successfully processed message {MessageId}", messageId);
       }
+
+      // Mark trace as successfully completed
+      inboxScope?.Complete();
+    } catch (OperationCanceledException) {
+      // Mark trace as cancelled but don't suppress the exception
+      inboxScope?.EarlyReturn();
+      throw;
     } catch (Exception ex) {
+      // Mark trace as failed with the exception
+      inboxScope?.Fail(ex);
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter
+    } finally {
+      inboxScope?.Dispose();
     }
   }
 

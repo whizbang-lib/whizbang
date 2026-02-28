@@ -14,6 +14,9 @@ namespace Whizbang.Generators;
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
+/// <param name="HasTraceAttribute">True if receptor has [TraceHandler] attribute for explicit tracing.</param>
+/// <param name="TraceVerbosity">Verbosity level from [TraceHandler] attribute. Null if no attribute. Values: 0=Off, 1=Minimal, 2=Normal, 3=Verbose, 4=Debug.</param>
+/// <param name="HasMetricAttribute">True if receptor has [MetricHandler] attribute for explicit metric collection.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -22,7 +25,10 @@ public sealed record ReceptorInfo(
     string[] LifecycleStages,
     bool IsSync = false,
     string? DefaultRouting = null,
-    SyncAttributeInfo[]? SyncAttributes = null
+    SyncAttributeInfo[]? SyncAttributes = null,
+    bool HasTraceAttribute = false,
+    int? TraceVerbosity = null,
+    bool HasMetricAttribute = false
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
