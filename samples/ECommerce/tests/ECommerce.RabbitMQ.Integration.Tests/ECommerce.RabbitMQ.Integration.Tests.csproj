@@ -9,8 +9,8 @@
     <IsTestProject>true</IsTestProject>
     <!-- Integration: Requires RabbitMQ + PostgreSQL via Testcontainers -->
     <WhizbangTestType>Integration</WhizbangTestType>
-    <!-- Tags for filtering: RabbitMQ, Postgres, Docker, Messaging, ECommerce -->
-    <WhizbangTestTags>RabbitMQ;Postgres;Docker;Messaging;ECommerce</WhizbangTestTags>
+    <!-- Tags for filtering: RabbitMQ, Docker, Messaging, ECommerce (uses Postgres but not Postgres-specific tests) -->
+    <WhizbangTestTags>RabbitMQ;Docker;Messaging;ECommerce</WhizbangTestTags>
     <!-- Test fixtures use Guid.NewGuid() for test IDs - acceptable in test code -->
     <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
 

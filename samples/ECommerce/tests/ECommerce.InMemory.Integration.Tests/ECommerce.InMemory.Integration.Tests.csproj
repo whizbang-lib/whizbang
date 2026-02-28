@@ -9,8 +9,8 @@
     <IsPackable>false</IsPackable>
     <!-- Integration: Requires PostgreSQL via Testcontainers -->
     <WhizbangTestType>Integration</WhizbangTestType>
-    <!-- Tags for filtering: Postgres, Docker, ECommerce, InMemory -->
-    <WhizbangTestTags>Postgres;Docker;ECommerce;InMemory</WhizbangTestTags>
+    <!-- Tags for filtering: Docker, ECommerce, InMemory (uses Postgres but not Postgres-specific tests) -->
+    <WhizbangTestTags>Docker;ECommerce;InMemory</WhizbangTestTags>
     <NoWarn>$(NoWarn);TUnit0015;TUnit0023;WHIZ055;WHIZ056</NoWarn>
   </PropertyGroup>
 
