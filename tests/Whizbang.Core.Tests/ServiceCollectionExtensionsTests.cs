@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -12,7 +11,6 @@ using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tags;
-using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Tests;
 
@@ -429,125 +427,6 @@ public class ServiceCollectionExtensionsTests {
   }
 
   // ==========================================================================
-  // Tracing Service Registration Tests
-  // ==========================================================================
-
-  [Test]
-  public async Task AddWhizbang_RegistersITracer_AsSingletonAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-
-    // Act
-    _ = services.AddWhizbang();
-    var provider = services.BuildServiceProvider();
-
-    // Assert
-    var tracer1 = provider.GetService<ITracer>();
-    var tracer2 = provider.GetService<ITracer>();
-
-    await Assert.That(tracer1).IsNotNull();
-    await Assert.That(tracer1).IsTypeOf<Tracer>();
-    await Assert.That(tracer1).IsSameReferenceAs(tracer2); // Singleton
-  }
-
-  [Test]
-  public async Task AddWhizbang_RegistersTracingOptions_AsIOptionsAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act
-    _ = services.AddWhizbang();
-    var provider = services.BuildServiceProvider();
-
-    // Assert
-    var options = provider.GetService<IOptions<TracingOptions>>();
-
-    await Assert.That(options).IsNotNull();
-    await Assert.That(options!.Value).IsNotNull();
-    await Assert.That(options.Value.Verbosity).IsEqualTo(TraceVerbosity.Off); // Default
-  }
-
-  [Test]
-  public async Task AddWhizbang_RegistersTraceOutputs_AsEnumerableAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-
-    // Act
-    _ = services.AddWhizbang();
-    var provider = services.BuildServiceProvider();
-
-    // Assert
-    var outputs = provider.GetServices<ITraceOutput>().ToList();
-
-    await Assert.That(outputs.Count).IsGreaterThanOrEqualTo(2);
-    await Assert.That(outputs.Any(o => o is LoggerTraceOutput)).IsTrue();
-    await Assert.That(outputs.Any(o => o is OpenTelemetryTraceOutput)).IsTrue();
-  }
-
-  [Test]
-  public async Task AddWhizbang_WithTracingConfig_ConfiguresTracingOptionsAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-
-    // Act
-    _ = services.AddWhizbang(options => {
-      options.Tracing.Verbosity = TraceVerbosity.Verbose;
-      options.Tracing.Components = TraceComponents.Handlers | TraceComponents.EventStore;
-      options.Tracing.TracedHandlers["OrderReceptor"] = TraceVerbosity.Debug;
-    });
-    var provider = services.BuildServiceProvider();
-
-    // Assert
-    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
-
-    await Assert.That(tracingOptions.Verbosity).IsEqualTo(TraceVerbosity.Verbose);
-    await Assert.That(tracingOptions.Components).IsEqualTo(TraceComponents.Handlers | TraceComponents.EventStore);
-    await Assert.That(tracingOptions.TracedHandlers["OrderReceptor"]).IsEqualTo(TraceVerbosity.Debug);
-  }
-
-  [Test]
-  public async Task AddWhizbang_ITracer_AllowsOverrideAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-
-    // Pre-register custom tracer before AddWhizbang()
-    var customTracer = new TestTracer();
-    services.AddSingleton<ITracer>(customTracer);
-
-    // Act
-    _ = services.AddWhizbang();
-    var provider = services.BuildServiceProvider();
-
-    // Assert - TryAdd should not override pre-registered singleton
-    var resolvedTracer = provider.GetService<ITracer>();
-    await Assert.That(resolvedTracer).IsSameReferenceAs(customTracer);
-  }
-
-  [Test]
-  public async Task AddWhizbang_TracingOptions_ConfiguredFromWhizbangCoreOptionsAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    services.AddLogging();
-
-    // Act
-    _ = services.AddWhizbang(options => {
-      options.Tracing.TracedMessages["ReseedSystemEvent"] = TraceVerbosity.Debug;
-    });
-    var provider = services.BuildServiceProvider();
-
-    // Assert - TracingOptions from WhizbangCoreOptions should be accessible
-    var coreOptions = provider.GetRequiredService<WhizbangCoreOptions>();
-    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
-
-    await Assert.That(coreOptions.Tracing.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Debug);
-    await Assert.That(tracingOptions.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Debug);
-  }
-
-  // ==========================================================================
   // Test Hook Implementations for Options Lambda Tests
   // ==========================================================================
 
@@ -614,36 +493,6 @@ public class ServiceCollectionExtensionsTests {
         string perspectiveName,
         CancellationToken cancellationToken = default) {
       return Task.FromResult<PerspectiveCheckpointInfo?>(null);
-    }
-  }
-
-  /// <summary>
-  /// Test ITracer for DI resolution tests.
-  /// </summary>
-  private sealed class TestTracer : ITracer {
-    public bool ShouldTrace(TraceComponents component, string? handlerName = null, string? messageType = null) => false;
-
-    public TraceVerbosity GetEffectiveVerbosity(string? handlerName, string? messageType, TraceVerbosity? attributeVerbosity) =>
-        attributeVerbosity ?? TraceVerbosity.Off;
-
-    public ITraceScope BeginTrace(TraceContext context) => new TestTraceScope();
-
-    public void BeginHandlerTrace(string handlerName, string messageTypeName, int? attributeVerbosity, bool hasTraceAttribute) { }
-
-    public void EndHandlerTrace(
-        string handlerName,
-        string messageTypeName,
-        HandlerStatus status,
-        double durationMs,
-        long startTimestamp,
-        long endTimestamp,
-        Exception? exception) { }
-
-    private sealed class TestTraceScope : ITraceScope {
-      public void Complete() { }
-      public void Fail(Exception exception) { }
-      public void EarlyReturn() { }
-      public void Dispose() { }
     }
   }
 }

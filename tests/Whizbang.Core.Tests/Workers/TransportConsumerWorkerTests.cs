@@ -47,7 +47,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -88,7 +87,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -137,7 +135,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -184,7 +181,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -232,7 +228,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -281,7 +276,6 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       lifecycleInvoker: null,
-      tracer: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 

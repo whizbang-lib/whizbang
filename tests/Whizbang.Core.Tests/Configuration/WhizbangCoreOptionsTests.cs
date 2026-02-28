@@ -4,7 +4,6 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Tags;
-using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Tests.Configuration;
 
@@ -158,90 +157,6 @@ public class WhizbangCoreOptionsTests {
     // Assert
     await Assert.That(options.Tags.HookRegistrations.Count).IsEqualTo(1);
     await Assert.That(options.Tags.HookRegistrations[0].AttributeType).IsEqualTo(typeof(MessageTagAttribute));
-  }
-
-  #endregion
-
-  #region Tracing Tests
-
-  [Test]
-  public async Task Constructor_InitializesTracingOptions_NotNullAsync() {
-    // Arrange & Act
-    var options = new WhizbangCoreOptions();
-
-    // Assert
-    await Assert.That(options.Tracing).IsNotNull();
-  }
-
-  [Test]
-  public async Task Constructor_TracingProperty_IsNewInstance_EachTimeAsync() {
-    // Arrange & Act
-    var options1 = new WhizbangCoreOptions();
-    var options2 = new WhizbangCoreOptions();
-
-    // Assert - each instance should have its own TracingOptions
-    await Assert.That(options1.Tracing).IsNotEqualTo(options2.Tracing);
-  }
-
-  [Test]
-  public async Task Tracing_DefaultVerbosity_IsOffAsync() {
-    // Arrange & Act
-    var options = new WhizbangCoreOptions();
-
-    // Assert
-    await Assert.That(options.Tracing.Verbosity).IsEqualTo(TraceVerbosity.Off);
-  }
-
-  [Test]
-  public async Task Tracing_CanConfigureVerbosity_SuccessfullyAsync() {
-    // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.Tracing.Verbosity = TraceVerbosity.Verbose;
-
-    // Assert
-    await Assert.That(options.Tracing.Verbosity).IsEqualTo(TraceVerbosity.Verbose);
-  }
-
-  [Test]
-  public async Task Tracing_CanConfigureComponents_SuccessfullyAsync() {
-    // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.Tracing.Components = TraceComponents.Handlers | TraceComponents.EventStore;
-
-    // Assert
-    await Assert.That(options.Tracing.Components).IsEqualTo(TraceComponents.Handlers | TraceComponents.EventStore);
-  }
-
-  [Test]
-  public async Task Tracing_CanAddTracedHandlers_SuccessfullyAsync() {
-    // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.Tracing.TracedHandlers["OrderReceptor"] = TraceVerbosity.Debug;
-    options.Tracing.TracedHandlers["Payment*"] = TraceVerbosity.Verbose;
-
-    // Assert
-    await Assert.That(options.Tracing.TracedHandlers.Count).IsEqualTo(2);
-    await Assert.That(options.Tracing.TracedHandlers["OrderReceptor"]).IsEqualTo(TraceVerbosity.Debug);
-    await Assert.That(options.Tracing.TracedHandlers["Payment*"]).IsEqualTo(TraceVerbosity.Verbose);
-  }
-
-  [Test]
-  public async Task Tracing_CanAddTracedMessages_SuccessfullyAsync() {
-    // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.Tracing.TracedMessages["ReseedSystemEvent"] = TraceVerbosity.Debug;
-
-    // Assert
-    await Assert.That(options.Tracing.TracedMessages.Count).IsEqualTo(1);
-    await Assert.That(options.Tracing.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Debug);
   }
 
   #endregion

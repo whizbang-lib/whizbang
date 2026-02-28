@@ -259,7 +259,6 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        tracer: null,
         ct
       );
 
@@ -271,7 +270,6 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        tracer: null,
         ct
       );
 
@@ -314,7 +312,6 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        tracer: null,
         ct
       );
 

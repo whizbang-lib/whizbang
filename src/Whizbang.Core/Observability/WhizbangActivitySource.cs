@@ -51,21 +51,6 @@ public static class WhizbangActivitySource {
   public static readonly ActivitySource Hosting = new("Whizbang.Hosting", "1.0.0");
 
   /// <summary>
-  /// ActivitySource for handler and message tracing.
-  /// Tracks message dispatch, handler invocation, and lifecycle stages.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Use this source when integrating OpenTelemetry to capture tracing spans:
-  /// </para>
-  /// <code>
-  /// services.AddOpenTelemetry()
-  ///   .WithTracing(builder => builder.AddSource("Whizbang.Tracing"));
-  /// </code>
-  /// </remarks>
-  public static readonly ActivitySource Tracing = new("Whizbang.Tracing", "1.0.0");
-
-  /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
   /// Sets activity status to Error and adds exception details.
   /// </summary>
