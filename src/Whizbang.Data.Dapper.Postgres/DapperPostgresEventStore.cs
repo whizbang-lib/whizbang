@@ -306,14 +306,14 @@ public class DapperPostgresEventStore(
       var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-      // Extract MessageId from metadata
-      var messageId = metadataDict.TryGetValue("MessageId", out var msgIdElem)
+      // Extract MessageId from metadata (snake_case key to match ToJsonb)
+      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("MessageId not found in metadata");
+        : throw new InvalidOperationException("message_id not found in metadata");
 
-      // Deserialize Hops from metadata
+      // Deserialize Hops from metadata (snake_case key)
       List<MessageHop> hops;
-      if (metadataDict.TryGetValue("Hops", out var hopsElem)) {
+      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
         var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
                            ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
