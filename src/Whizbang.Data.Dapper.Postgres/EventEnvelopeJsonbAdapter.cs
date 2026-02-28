@@ -101,14 +101,14 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-    // Extract envelope properties from metadata (PascalCase keys)
-    var messageId = metadataDict.TryGetValue("MessageId", out var msgIdElem)
+    // Extract envelope properties from metadata (snake_case keys to match ToJsonb)
+    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
       ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("MessageId not found in metadata");
+      : throw new InvalidOperationException("message_id not found in metadata");
 
-    // Deserialize Hops (AOT-compatible)
+    // Deserialize Hops (AOT-compatible, using snake_case key)
     List<MessageHop> hops;
-    if (metadataDict.TryGetValue("Hops", out var hopsElem)) {
+    if (metadataDict.TryGetValue("hops", out var hopsElem)) {
       var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>. Ensure the type is registered in WhizbangJsonContext.");
       hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
     } else {
