@@ -115,6 +115,30 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       hops = [];
     }
 
+    // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+    if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
+      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                              ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
+      var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+      if (scopeDict != null) {
+        string? tenantId = null;
+        string? userId = null;
+
+        if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+          tenantId = tenantElem.Value.GetString();
+        }
+        if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+          userId = userElem.Value.GetString();
+        }
+
+        if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+          // Update first hop with SecurityContext
+          var firstHop = hops[0];
+          hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+        }
+      }
+    }
+
     // Deserialize payload (event data) with concrete type - AOT-compatible
     var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TMessage).FullName}. Ensure the type is registered in WhizbangJsonContext.");
     var payload = JsonSerializer.Deserialize(jsonb.DataJson, payloadTypeInfo)
