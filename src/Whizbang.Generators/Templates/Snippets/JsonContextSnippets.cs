@@ -79,6 +79,33 @@ private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> 
 }
 #endregion
 
+#region LAZY_FIELD_IREADONLYLIST
+private JsonTypeInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>>? _IReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_IREADONLYLIST
+if (type == typeof(global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>)) {
+  return CreateIReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region IREADONLYLIST_TYPE_FACTORY
+private JsonTypeInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>> CreateIReadOnlyList___ELEMENT_UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  // Get element type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
+  var elementInfo = TryGetOrCreateTypeInfo<__ELEMENT_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the element type is properly registered.");
+  var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>> {
+    ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
+    ElementInfo = elementInfo
+  };
+  var jsonTypeInfo = JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
 #region LAZY_FIELD_ENUM
 private JsonTypeInfo<__FULLY_QUALIFIED_NAME__>? _Enum___UNIQUE_IDENTIFIER__;
 #endregion

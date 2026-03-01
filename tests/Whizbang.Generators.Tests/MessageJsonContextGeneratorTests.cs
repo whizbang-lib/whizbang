@@ -5357,4 +5357,170 @@ public record NestedDictEvent : IEvent {
     await Assert.That(code).Contains("NestedItem");
     await Assert.That(code).Contains("Create_TestApp_NestedItem");
   }
+
+  #region IReadOnlyList<T> Type Generation Tests
+
+  /// <summary>
+  /// Tests that IReadOnlyList&lt;T&gt; property generates IReadOnlyList factory.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverIReadOnlyListTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CatalogItem {
+  public required string Name { get; init; }
+}
+
+public record CatalogEvent : IEvent {
+  public required IReadOnlyList<CatalogItem> Items { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate IReadOnlyList factory
+    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+    await Assert.That(code).Contains("IReadOnlyList<global::TestApp.CatalogItem>");
+
+    // Should also discover and generate factory for element type
+    await Assert.That(code).Contains("CatalogItem");
+    await Assert.That(code).Contains("Create_TestApp_CatalogItem");
+  }
+
+  /// <summary>
+  /// Tests that multiple IReadOnlyList properties generate all needed factories.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverIReadOnlyListTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleIReadOnlyListProperties_GeneratesAllFactoriesAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ItemA { public required string A { get; init; } }
+public record ItemB { public required string B { get; init; } }
+
+public record MultiListEvent : IEvent {
+  public required IReadOnlyList<ItemA> ListA { get; init; }
+  public required IReadOnlyList<ItemB> ListB { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate factories for both IReadOnlyList types
+    await Assert.That(code!).Contains("IReadOnlyList<global::TestApp.ItemA>");
+    await Assert.That(code).Contains("IReadOnlyList<global::TestApp.ItemB>");
+
+    // Both element types should be discovered
+    await Assert.That(code).Contains("Create_TestApp_ItemA");
+    await Assert.That(code).Contains("Create_TestApp_ItemB");
+  }
+
+  /// <summary>
+  /// Tests that IReadOnlyList with nested generic element type generates correct factory.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_generateIReadOnlyListFactories</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IReadOnlyListWithNestedGenericElement_GeneratesFactoryAsync() {
+    // Arrange - IReadOnlyList<List<NestedItem>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record NestedItem {
+  public required string Value { get; init; }
+}
+
+public record NestedListEvent : IEvent {
+  public required IReadOnlyList<List<NestedItem>> NestedLists { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate IReadOnlyList factory
+    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+
+    // Should discover NestedItem through nested extraction
+    await Assert.That(code).Contains("Create_TestApp_NestedItem");
+  }
+
+  /// <summary>
+  /// Bug report reproduction: IReadOnlyList&lt;JobTemplateFieldCatalogItem&gt; should generate factory.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverIReadOnlyListTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_BugReport_IReadOnlyListCatalogItem_GeneratesFactoryAsync() {
+    // Arrange - Reproduces the actual bug scenario
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace JDX.Contracts.Job;
+
+public record JobTemplateFieldCatalogItem {
+  public required string Name { get; init; }
+  public required string Type { get; init; }
+}
+
+public record JobTemplateFieldCatalogInitializedEvent : IEvent {
+  public required IReadOnlyList<JobTemplateFieldCatalogItem> Items { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate IReadOnlyList factory for JobTemplateFieldCatalogItem
+    await Assert.That(code!).Contains("CreateIReadOnlyList_");
+    await Assert.That(code).Contains("IReadOnlyList<global::JDX.Contracts.Job.JobTemplateFieldCatalogItem>");
+
+    // Should generate type info check for IReadOnlyList
+    await Assert.That(code).Contains("typeof(global::System.Collections.Generic.IReadOnlyList<global::JDX.Contracts.Job.JobTemplateFieldCatalogItem>)");
+  }
+
+  #endregion
 }
