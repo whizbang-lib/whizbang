@@ -344,6 +344,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
+    // Discover IReadOnlyList<T> types used in all messages and nested types
+    var iReadOnlyListTypes = _discoverIReadOnlyListTypes(allTypes);
+
+    // Report diagnostics for discovered IReadOnlyList types
+    foreach (var iReadOnlyListType in iReadOnlyListTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          $"IReadOnlyList<{iReadOnlyListType.ElementSimpleName}>",
+          "collection interface type"
+      ));
+    }
+
     // Discover array types (T[]) used in all messages and nested types
     var arrayTypes = _discoverArrayTypes(allTypes);
 
@@ -411,19 +424,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Replace HEADER region with timestamp
     template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
 
-    // Generate lazy fields (messages + nested types + lists + arrays + dictionaries + enums + polymorphic)
+    // Generate lazy fields (messages + nested types + lists + ireadonlylists + arrays + dictionaries + enums + polymorphic)
     var lazyFields = new System.Text.StringBuilder();
     lazyFields.Append(_generateLazyFields(assembly, allTypes));
     lazyFields.Append(_generateListLazyFields(assembly, listTypes));
+    lazyFields.Append(_generateIReadOnlyListLazyFields(assembly, iReadOnlyListTypes));
     lazyFields.Append(_generateArrayLazyFields(assembly, arrayTypes));
     lazyFields.Append(_generateDictionaryLazyFields(assembly, dictionaryTypes));
     lazyFields.Append(_generateEnumLazyFields(assembly, enumTypes));
     lazyFields.Append(_generatePolymorphicLazyFields(assembly, polymorphicTypes));
 
-    // Generate factory methods (messages + lists + arrays + dictionaries + enums + polymorphic)
+    // Generate factory methods (messages + lists + ireadonlylists + arrays + dictionaries + enums + polymorphic)
     var factories = new System.Text.StringBuilder();
     factories.Append(_generateMessageTypeFactories(assembly, allTypes));
     factories.Append(_generateListFactories(assembly, listTypes));
+    factories.Append(_generateIReadOnlyListFactories(assembly, iReadOnlyListTypes));
     factories.Append(_generateArrayFactories(assembly, arrayTypes));
     factories.Append(_generateDictionaryFactories(assembly, dictionaryTypes));
     factories.Append(_generateEnumFactories(assembly, enumTypes));
@@ -436,7 +451,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
@@ -521,7 +536,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
 
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -544,6 +559,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         assembly,
         TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_LIST");
+
+    var iReadOnlyListCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_IREADONLYLIST");
 
     var arrayCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -636,6 +656,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var check = listCheckSnippet
             .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+        sb.AppendLine(check);
+        sb.AppendLine();
+      }
+    }
+
+    // IReadOnlyList<T> types discovered in messages
+    if (!iReadOnlyListTypes.IsEmpty) {
+      sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
+      foreach (var iReadOnlyListType in iReadOnlyListTypes) {
+        var check = iReadOnlyListCheckSnippet
+            .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
+            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1729,6 +1761,127 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var factory = snippet
           .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
           .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+      sb.AppendLine(factory);
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Discovers IReadOnlyList&lt;T&gt; types used in message properties.
+  /// Returns info needed to generate explicit IReadOnlyList&lt;T&gt; JsonTypeInfo for AOT compatibility.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleIReadOnlyListProperties_GeneratesAllFactoriesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_BugReport_IReadOnlyListCatalogItem_GeneratesFactoryAsync</tests>
+  private static ImmutableArray<IReadOnlyListTypeInfo> _discoverIReadOnlyListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var iReadOnlyListTypes = new Dictionary<string, IReadOnlyListTypeInfo>();
+
+    foreach (var type in allTypes) {
+      foreach (var property in type.Properties) {
+        _discoverIReadOnlyListType(property.Type, iReadOnlyListTypes);
+      }
+    }
+
+    return iReadOnlyListTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Extracts IReadOnlyList type info from a fully qualified type name if it's an IReadOnlyList type.
+  /// </summary>
+  private static void _discoverIReadOnlyListType(string fullyQualifiedTypeName, Dictionary<string, IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+    // Strip nullable suffix for analysis
+    var typeName = fullyQualifiedTypeName;
+    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
+      typeName = typeName[..^1];
+    }
+
+    const string iReadOnlyListPrefix = "global::System.Collections.Generic.IReadOnlyList<";
+
+    if (typeName.StartsWith(iReadOnlyListPrefix, StringComparison.Ordinal)) {
+      var startIndex = iReadOnlyListPrefix.Length;
+      var endIndex = typeName.LastIndexOf('>');
+      if (endIndex > startIndex) {
+        var rawElementTypeName = typeName[startIndex..endIndex];
+        var elementTypeName = _normalizeKeywordAliases(rawElementTypeName);
+
+        // Create key using the IReadOnlyList type
+        var iReadOnlyListTypeName = $"global::System.Collections.Generic.IReadOnlyList<{elementTypeName}>";
+        if (iReadOnlyListTypes.ContainsKey(iReadOnlyListTypeName)) {
+          return;
+        }
+
+        // Extract simple name from element type
+        var parts = elementTypeName.Split('.');
+        var elementSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+
+        iReadOnlyListTypes[iReadOnlyListTypeName] = new IReadOnlyListTypeInfo(
+            IReadOnlyListTypeName: iReadOnlyListTypeName,
+            ElementTypeName: elementTypeName,
+            ElementSimpleName: elementSimpleName
+        );
+
+        // Recursively discover IReadOnlyList in the element type
+        _discoverIReadOnlyListType(elementTypeName, iReadOnlyListTypes);
+      }
+    }
+
+    // Also check if this is a collection containing IReadOnlyList (e.g., List<IReadOnlyList<T>>)
+    var elementType = _extractElementTypeSingleLevel(typeName);
+    if (elementType != null) {
+      _discoverIReadOnlyListType(elementType, iReadOnlyListTypes);
+    }
+  }
+
+  /// <summary>
+  /// Generates lazy fields for IReadOnlyList&lt;T&gt; types.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
+  private static string _generateIReadOnlyListLazyFields(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+    if (iReadOnlyListTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+
+    // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
+    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine();
+
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_IREADONLYLIST");
+
+    foreach (var iReadOnlyListType in iReadOnlyListTypes) {
+      var field = snippet
+          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
+          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+      sb.AppendLine(field);
+    }
+
+    // Restore CS0169 warning
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore CS0169");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates factory methods for IReadOnlyList&lt;T&gt; types.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IReadOnlyListWithNestedGenericElement_GeneratesFactoryAsync</tests>
+  private static string _generateIReadOnlyListFactories(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+    if (iReadOnlyListTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "IREADONLYLIST_TYPE_FACTORY");
+
+    foreach (var iReadOnlyListType in iReadOnlyListTypes) {
+      var factory = snippet
+          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
+          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
