@@ -171,6 +171,11 @@ public partial class PerspectiveWorker(
   }
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
+    // Capture parent context BEFORE making span decisions
+    // This ensures child spans can find a parent even when intermediate spans are skipped
+    // On background threads, Activity.Current is typically null unless explicitly set
+    var parentContext = Activity.Current?.Context ?? default;
+
     // Optionally create parent activity for all perspective processing in this batch
     // When enabled, all child activities (Perspective {name}, Lifecycle stages) will be parented to this
     // Controlled by TracingOptions.EnableWorkerBatchSpans (default: false to reduce noise)
@@ -183,6 +188,10 @@ public partial class PerspectiveWorker(
       batchActivity.SetTag("whizbang.service.name", _instanceProvider.ServiceName);
       batchActivity.SetTag("whizbang.instance.id", _instanceProvider.InstanceId.ToString());
     }
+
+    // Compute effective parent: use batch span if created, otherwise use captured parent
+    // This cascades parent context even when batch span is disabled
+    var effectiveParent = batchActivity?.Context ?? parentContext;
 
     // Create a scope to resolve scoped IWorkCoordinator
     await using var scope = _scopeFactory.CreateAsyncScope();
@@ -320,9 +329,11 @@ public partial class PerspectiveWorker(
       // Create parent activity for all perspective processing stages
       // Child activities (PrePerspectiveAsync, PrePerspectiveInline, RunAsync, PostPerspectiveInline)
       // will automatically be parented to this via Activity.Current
+      // When batch span is disabled, use effectiveParent to cascade parent context
       using var perspectiveActivity = WhizbangActivitySource.Tracing.StartActivity(
         $"Perspective {perspectiveName}",
-        ActivityKind.Internal);
+        ActivityKind.Internal,
+        parentContext: batchActivity is null ? effectiveParent : default);
       perspectiveActivity?.SetTag("whizbang.perspective.name", perspectiveName);
       perspectiveActivity?.SetTag("whizbang.stream.id", streamId.ToString());
 
