@@ -1,0 +1,55 @@
+{
+  "name": "Dispatch ReseedSystemCommand",
+  "kind": "Internal",
+  "status": "Unset",
+  "tags": {
+    "whizbang.message.type": "ReseedSystemCommand"
+  },
+  "children": [
+    {
+      "name": "Lifecycle PreDistributeInline",
+      "kind": "Internal",
+      "status": "Unset",
+      "tags": {
+        "whizbang.lifecycle.stage": "PreDistributeInline"
+      },
+      "children": []
+    },
+    {
+      "name": "Lifecycle PreDistributeAsync",
+      "kind": "Internal",
+      "status": "Unset",
+      "tags": {
+        "whizbang.lifecycle.stage": "PreDistributeAsync"
+      },
+      "children": []
+    },
+    {
+      "name": "Lifecycle DistributeAsync",
+      "kind": "Internal",
+      "status": "Unset",
+      "tags": {
+        "whizbang.lifecycle.stage": "DistributeAsync"
+      },
+      "children": []
+    },
+    {
+      "name": "Lifecycle PostDistributeInline",
+      "kind": "Internal",
+      "status": "Unset",
+      "tags": {
+        "whizbang.lifecycle.stage": "PostDistributeInline"
+      },
+      "children": []
+    },
+    {
+      "name": "Lifecycle PostDistributeAsync",
+      "kind": "Internal",
+      "status": "Unset",
+      "tags": {
+        "whizbang.lifecycle.stage": "PostDistributeAsync"
+      },
+      "children": []
+    }
+  ]
+}

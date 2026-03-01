@@ -1,0 +1,20 @@
+{
+  "name": "Dispatch PaymentCommand",
+  "kind": "Internal",
+  "status": "Unset",
+  "tags": {
+    "whizbang.message.type": "PaymentCommand"
+  },
+  "children": [
+    {
+      "name": "Handler: PaymentHandler",
+      "kind": "Internal",
+      "status": "Error",
+      "tags": {
+        "whizbang.handler.name": "PaymentHandler",
+        "whizbang.handler.status": "Failed"
+      },
+      "children": []
+    }
+  ]
+}

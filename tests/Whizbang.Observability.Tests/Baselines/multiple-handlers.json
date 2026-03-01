@@ -1,0 +1,41 @@
+{
+  "name": "Dispatch OrderCreatedEvent",
+  "kind": "Internal",
+  "status": "Unset",
+  "tags": {
+    "whizbang.message.type": "OrderCreatedEvent",
+    "whizbang.handler.count": "3"
+  },
+  "children": [
+    {
+      "name": "Handler: NotificationHandler",
+      "kind": "Internal",
+      "status": "Ok",
+      "tags": {
+        "whizbang.handler.name": "NotificationHandler",
+        "whizbang.trace.explicit": "False"
+      },
+      "children": []
+    },
+    {
+      "name": "Handler: InventoryHandler",
+      "kind": "Internal",
+      "status": "Ok",
+      "tags": {
+        "whizbang.handler.name": "InventoryHandler",
+        "whizbang.trace.explicit": "False"
+      },
+      "children": []
+    },
+    {
+      "name": "Handler: AnalyticsHandler",
+      "kind": "Internal",
+      "status": "Ok",
+      "tags": {
+        "whizbang.handler.name": "AnalyticsHandler",
+        "whizbang.trace.explicit": "True"
+      },
+      "children": []
+    }
+  ]
+}

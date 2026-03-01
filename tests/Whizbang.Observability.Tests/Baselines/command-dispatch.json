@@ -1,0 +1,21 @@
+{
+  "name": "Dispatch CreateOrderCommand",
+  "kind": "Internal",
+  "status": "Unset",
+  "tags": {
+    "whizbang.message.type": "CreateOrderCommand",
+    "whizbang.route": "Direct"
+  },
+  "children": [
+    {
+      "name": "Handler: OrderReceptor",
+      "kind": "Internal",
+      "status": "Ok",
+      "tags": {
+        "whizbang.handler.name": "ECommerce.Orders.OrderReceptor",
+        "whizbang.handler.status": "Success"
+      },
+      "children": []
+    }
+  ]
+}
