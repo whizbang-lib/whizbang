@@ -144,6 +144,38 @@ private JsonTypeInfo<__ELEMENT_TYPE__[]> CreateArray___ELEMENT_UNIQUE_IDENTIFIER
 }
 #endregion
 
+#region LAZY_FIELD_DICTIONARY
+private JsonTypeInfo<global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>>? _Dictionary___UNIQUE_IDENTIFIER__;
+#endregion
+
+#region GET_TYPE_INFO_DICTIONARY
+if (type == typeof(global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>)) {
+  return CreateDictionary___UNIQUE_IDENTIFIER__(options);
+}
+#endregion
+
+#region DICTIONARY_TYPE_FACTORY
+private JsonTypeInfo<global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>> CreateDictionary___UNIQUE_IDENTIFIER__(JsonSerializerOptions options) {
+  // Get key and value type info - use TryGetOrCreateTypeInfo to handle circular references gracefully
+  var keyInfo = TryGetOrCreateTypeInfo<__KEY_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for key type __KEY_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the key type is properly registered.");
+  var valueInfo = TryGetOrCreateTypeInfo<__VALUE_TYPE__>(options)
+    ?? throw new InvalidOperationException(
+        "No JsonTypeInfo found for value type __VALUE_TYPE__. " +
+        "This may indicate a circular type reference. Ensure the value type is properly registered.");
+  var dictionaryInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>> {
+    ObjectCreator = static () => new global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>(),
+    KeyInfo = keyInfo,
+    ElementInfo = valueInfo
+  };
+  var jsonTypeInfo = JsonMetadataServices.CreateDictionaryInfo<global::System.Collections.Generic.Dictionary<__KEY_TYPE__, __VALUE_TYPE__>, __KEY_TYPE__, __VALUE_TYPE__>(options, dictionaryInfo);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
 #region LAZY_FIELD_POLYMORPHIC
 private JsonTypeInfo<__BASE_TYPE__>? _Polymorphic___UNIQUE_IDENTIFIER__;
 #endregion

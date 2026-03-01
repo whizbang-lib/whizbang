@@ -5231,4 +5231,130 @@ public record CollectionTypeTestEvent : IEvent {
     await Assert.That(code!).Contains("CollectionTestItem");
     await Assert.That(code).Contains("Create_TestApp_CollectionTestItem");
   }
+
+  /// <summary>
+  /// Tests that Dictionary types generate JsonTypeInfo factories.
+  /// The generator must create CreateDictionary_* methods for AOT serialization.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverDictionaryTypes</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_generateDictionaryFactories</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_generateDictionaryLazyFields</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithDictionaryProperty_GeneratesDictionaryFactoryAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record SectionConfig {
+  public required string Name { get; init; }
+}
+
+public record ConfigEvent : IEvent {
+  public required Dictionary<string, SectionConfig> Sections { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate Dictionary factory
+    await Assert.That(code!).Contains("CreateDictionary_");
+    await Assert.That(code).Contains("Dictionary<string, global::TestApp.SectionConfig>");
+
+    // Should also discover and generate factory for value type
+    await Assert.That(code).Contains("SectionConfig");
+    await Assert.That(code).Contains("Create_TestApp_SectionConfig");
+  }
+
+  /// <summary>
+  /// Tests that multiple Dictionary properties generate all needed factories.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverDictionaryTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleDictionaryProperties_GeneratesAllFactoriesAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record TypeA { public required string A { get; init; } }
+public record TypeB { public required string B { get; init; } }
+
+public record MultiDictEvent : IEvent {
+  public required Dictionary<string, TypeA> DictA { get; init; }
+  public required Dictionary<int, TypeB> DictB { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate factories for both Dictionary types
+    await Assert.That(code!).Contains("Dictionary<string, global::TestApp.TypeA>");
+    await Assert.That(code).Contains("Dictionary<global::System.Int32, global::TestApp.TypeB>");
+
+    // Both value types should be discovered
+    await Assert.That(code).Contains("Create_TestApp_TypeA");
+    await Assert.That(code).Contains("Create_TestApp_TypeB");
+  }
+
+  /// <summary>
+  /// Tests Dictionary with nested generic value generates correct factory.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_generateDictionaryFactories</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithNestedGenericValue_GeneratesFactoryAsync() {
+    // Arrange - Dictionary<string, List<NestedItem>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record NestedItem {
+  public required string Value { get; init; }
+}
+
+public record NestedDictEvent : IEvent {
+  public required Dictionary<string, List<NestedItem>> NestedDict { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate Dictionary factory with List value type
+    await Assert.That(code!).Contains("CreateDictionary_");
+    await Assert.That(code).Contains("List<global::TestApp.NestedItem>");
+
+    // Should discover NestedItem through the nested List
+    await Assert.That(code).Contains("NestedItem");
+    await Assert.That(code).Contains("Create_TestApp_NestedItem");
+  }
 }

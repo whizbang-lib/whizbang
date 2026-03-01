@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 
@@ -193,11 +194,11 @@ public class SubscriptionRetryHelperTests {
     var handler = _createNoOpHandler();
     using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
-    // Act & Assert
+    // Act & Assert - TaskCanceledException is a subclass of OperationCanceledException
     await Assert.That(() => SubscriptionRetryHelper.SubscribeWithRetryAsync(
       transport, destination, handler, state, options,
       NullLogger.Instance, cts.Token))
-      .ThrowsExactly<OperationCanceledException>();
+      .Throws<OperationCanceledException>();
   }
 
   [Test]
@@ -246,7 +247,11 @@ public class SubscriptionRetryHelperTests {
       _failFirstNAttempts = failFirstNAttempts;
     }
 
-    public string Name => "MockTransport";
+    public bool IsInitialized => true;
+
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<ISubscription> SubscribeAsync(
       Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
@@ -266,33 +271,48 @@ public class SubscriptionRetryHelperTests {
       return Task.FromResult<ISubscription>(new MockSubscription());
     }
 
-    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
+    public Task PublishAsync(
+      IMessageEnvelope envelope,
+      TransportDestination destination,
+      string? envelopeType = null,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task PublishAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
-    }
-
-    public ValueTask DisposeAsync() {
-      return ValueTask.CompletedTask;
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
+      IMessageEnvelope requestEnvelope,
+      TransportDestination destination,
+      CancellationToken cancellationToken = default)
+      where TRequest : notnull
+      where TResponse : notnull {
+      throw new NotSupportedException("Request/response not supported in mock");
     }
   }
 
   private sealed class MockSubscription : ISubscription {
-    public string SubscriptionId => Guid.NewGuid().ToString();
-
     public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
 
-    public Task PauseAsync() => Task.CompletedTask;
-    public Task ResumeAsync() => Task.CompletedTask;
-    public Task CancelAsync() => Task.CompletedTask;
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public bool IsActive { get; private set; } = true;
+
+    public Task PauseAsync() {
+      IsActive = false;
+      return Task.CompletedTask;
+    }
+
+    public Task ResumeAsync() {
+      IsActive = true;
+      return Task.CompletedTask;
+    }
+
+    public void Dispose() {
+      IsActive = false;
+    }
 
     // Helper to trigger disconnect event for testing
-    public void TriggerDisconnect(string reason, bool applicationInitiated) {
-      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs(
-        SubscriptionId, reason, null, applicationInitiated));
+    public void TriggerDisconnect(string reason, Exception? exception = null, bool applicationInitiated = false) {
+      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+        Reason = reason,
+        Exception = exception,
+        IsApplicationInitiated = applicationInitiated
+      });
     }
   }
 }

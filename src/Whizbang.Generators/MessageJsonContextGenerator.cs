@@ -357,6 +357,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
+    // Discover Dictionary<TKey, TValue> types used in all messages and nested types
+    var dictionaryTypes = _discoverDictionaryTypes(allTypes);
+
+    // Report diagnostics for discovered dictionary types
+    foreach (var dictType in dictionaryTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          $"Dictionary<{dictType.KeyTypeName}, {dictType.ValueSimpleName}>",
+          "dictionary type"
+      ));
+    }
+
     // Discover enum types used in message and nested type properties
     var enumTypes = _discoverEnumTypes(allTypes, compilation);
 
@@ -398,19 +411,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Replace HEADER region with timestamp
     template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
 
-    // Generate lazy fields (messages + nested types + lists + arrays + enums + polymorphic)
+    // Generate lazy fields (messages + nested types + lists + arrays + dictionaries + enums + polymorphic)
     var lazyFields = new System.Text.StringBuilder();
     lazyFields.Append(_generateLazyFields(assembly, allTypes));
     lazyFields.Append(_generateListLazyFields(assembly, listTypes));
     lazyFields.Append(_generateArrayLazyFields(assembly, arrayTypes));
+    lazyFields.Append(_generateDictionaryLazyFields(assembly, dictionaryTypes));
     lazyFields.Append(_generateEnumLazyFields(assembly, enumTypes));
     lazyFields.Append(_generatePolymorphicLazyFields(assembly, polymorphicTypes));
 
-    // Generate factory methods (messages + lists + arrays + enums + polymorphic)
+    // Generate factory methods (messages + lists + arrays + dictionaries + enums + polymorphic)
     var factories = new System.Text.StringBuilder();
     factories.Append(_generateMessageTypeFactories(assembly, allTypes));
     factories.Append(_generateListFactories(assembly, listTypes));
     factories.Append(_generateArrayFactories(assembly, arrayTypes));
+    factories.Append(_generateDictionaryFactories(assembly, dictionaryTypes));
     factories.Append(_generateEnumFactories(assembly, enumTypes));
     factories.Append(_generatePolymorphicFactories(assembly, polymorphicTypes));
 
@@ -421,7 +436,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, arrayTypes, enumTypes, polymorphicTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
@@ -506,7 +521,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
 
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -534,6 +549,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         assembly,
         TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_ARRAY");
+
+    var dictionaryCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_DICTIONARY");
 
     var enumCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -628,6 +648,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var check = arrayCheckSnippet
             .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+        sb.AppendLine(check);
+        sb.AppendLine();
+      }
+    }
+
+    // Dictionary<TKey, TValue> types discovered in messages
+    if (!dictionaryTypes.IsEmpty) {
+      sb.AppendLine("  // Dictionary<TKey, TValue> types discovered in messages");
+      foreach (var dictType in dictionaryTypes) {
+        var check = dictionaryCheckSnippet
+            .Replace("__KEY_TYPE__", dictType.KeyTypeName)
+            .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
+            .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1748,6 +1781,143 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var factory = snippet
           .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
           .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+      sb.AppendLine(factory);
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Discovers Dictionary&lt;TKey, TValue&gt; types used in message properties.
+  /// Returns info needed to generate explicit Dictionary JsonTypeInfo for AOT compatibility.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDictionaryProperty_GeneratesDictionaryFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleDictionaryProperties_GeneratesAllFactoriesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleDictionaryProperties_DiscoversAllValueTypesAsync</tests>
+  private static ImmutableArray<DictionaryTypeInfo> _discoverDictionaryTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var dictionaryTypes = new Dictionary<string, DictionaryTypeInfo>();
+
+    foreach (var type in allTypes) {
+      foreach (var property in type.Properties) {
+        _discoverDictionaryType(property.Type, dictionaryTypes);
+      }
+    }
+
+    return dictionaryTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Extracts Dictionary type info from a fully qualified type name if it's a Dictionary type.
+  /// </summary>
+  private static void _discoverDictionaryType(string fullyQualifiedTypeName, Dictionary<string, DictionaryTypeInfo> dictionaryTypes) {
+    // Strip nullable suffix for analysis
+    var typeName = fullyQualifiedTypeName;
+    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
+      typeName = typeName[..^1];
+    }
+
+    // Check for dictionary types
+    var dictionaryPrefixes = new[] {
+      "global::System.Collections.Generic.Dictionary<",
+      "global::System.Collections.Generic.IDictionary<",
+      "global::System.Collections.Generic.IReadOnlyDictionary<"
+    };
+
+    var matchingPrefix = dictionaryPrefixes.FirstOrDefault(prefix =>
+        typeName.StartsWith(prefix, StringComparison.Ordinal));
+
+    if (matchingPrefix != null) {
+      var startIndex = matchingPrefix.Length;
+      var endIndex = typeName.LastIndexOf('>');
+      if (endIndex > startIndex) {
+        var typeArgs = typeName[startIndex..endIndex];
+        var commaIndex = _findTopLevelComma(typeArgs);
+        if (commaIndex > 0) {
+          var keyType = _normalizeKeywordAliases(typeArgs[..commaIndex].Trim());
+          var valueType = _normalizeKeywordAliases(typeArgs[(commaIndex + 1)..].Trim());
+
+          // Create key using the concrete Dictionary type (not interface)
+          var dictionaryTypeName = $"global::System.Collections.Generic.Dictionary<{keyType}, {valueType}>";
+          if (dictionaryTypes.ContainsKey(dictionaryTypeName)) {
+            return;
+          }
+
+          // Extract simple name from value type
+          var parts = valueType.Split('.');
+          var valueSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+
+          dictionaryTypes[dictionaryTypeName] = new DictionaryTypeInfo(
+              DictionaryTypeName: dictionaryTypeName,
+              KeyTypeName: keyType,
+              ValueTypeName: valueType,
+              ValueSimpleName: valueSimpleName
+          );
+
+          // Recursively discover dictionaries in the value type
+          _discoverDictionaryType(valueType, dictionaryTypes);
+        }
+      }
+    }
+
+    // Also check if this is a collection containing dictionaries (e.g., List<Dictionary<K,V>>)
+    var elementType = _extractElementTypeSingleLevel(typeName);
+    if (elementType != null) {
+      _discoverDictionaryType(elementType, dictionaryTypes);
+    }
+  }
+
+  /// <summary>
+  /// Generates lazy fields for Dictionary&lt;TKey, TValue&gt; types.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDictionaryProperty_GeneratesDictionaryFactoryAsync</tests>
+  private static string _generateDictionaryLazyFields(Assembly assembly, ImmutableArray<DictionaryTypeInfo> dictionaryTypes) {
+    if (dictionaryTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+
+    // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
+    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine();
+
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_DICTIONARY");
+
+    foreach (var dictType in dictionaryTypes) {
+      var field = snippet
+          .Replace("__KEY_TYPE__", dictType.KeyTypeName)
+          .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
+          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+      sb.AppendLine(field);
+    }
+
+    // Restore CS0169 warning
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore CS0169");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates factory methods for Dictionary&lt;TKey, TValue&gt; types.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDictionaryProperty_GeneratesDictionaryFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithNestedGenericValue_GeneratesFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleDictionaryProperties_GeneratesAllFactoriesAsync</tests>
+  private static string _generateDictionaryFactories(Assembly assembly, ImmutableArray<DictionaryTypeInfo> dictionaryTypes) {
+    if (dictionaryTypes.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "DICTIONARY_TYPE_FACTORY");
+
+    foreach (var dictType in dictionaryTypes) {
+      var factory = snippet
+          .Replace("__KEY_TYPE__", dictType.KeyTypeName)
+          .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
+          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
