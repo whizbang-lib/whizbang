@@ -155,7 +155,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
@@ -166,7 +166,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     // Call process_work_batch with all queued operations
@@ -218,7 +218,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     // Clear queues after successful flush

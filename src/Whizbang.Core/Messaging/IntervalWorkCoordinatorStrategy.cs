@@ -259,7 +259,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        ct
+        ct: ct
       );
 
       // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
@@ -270,7 +270,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        ct
+        ct: ct
       );
 
       // Call process_work_batch with snapshot
@@ -312,7 +312,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
-        ct
+        ct: ct
       );
 
       return workBatch;

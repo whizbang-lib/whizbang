@@ -150,7 +150,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
@@ -161,7 +161,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     var request = new ProcessWorkBatchRequest {
@@ -198,7 +198,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
-      ct
+      ct: ct
     );
 
     // Clear queues after flush
