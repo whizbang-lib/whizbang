@@ -625,7 +625,7 @@ public static class VectorSearchExtensions {
     magnitudeA = Math.Sqrt(magnitudeA);
     magnitudeB = Math.Sqrt(magnitudeB);
 
-    if (magnitudeA == 0 || magnitudeB == 0) {
+    if (magnitudeA < double.Epsilon || magnitudeB < double.Epsilon) {
       return double.MaxValue;
     }
 

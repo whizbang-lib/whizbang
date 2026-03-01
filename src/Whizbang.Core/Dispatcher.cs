@@ -1132,7 +1132,8 @@ public abstract class Dispatcher(
     var skippedCount = 0;
     foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
       // Skip the extracted response - it goes to RPC caller, not cascade
-      if (extractedResponse != null && ReferenceEquals(msg, extractedResponse)) {
+      // Use !Equals(default) instead of != null to handle value types correctly
+      if (!EqualityComparer<TResult>.Default.Equals(extractedResponse, default) && ReferenceEquals(msg, extractedResponse)) {
         skippedCount++;
         CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Skipping extracted response (ReferenceEquals match)");
         continue;
