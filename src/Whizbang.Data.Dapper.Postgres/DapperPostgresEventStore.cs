@@ -128,7 +128,8 @@ public class DapperPostgresEventStore(
       Hops = [
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };
@@ -400,12 +401,13 @@ public class DapperPostgresEventStore(
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
+  /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
     SELECT event_type AS EventType, event_data::text AS EventData, metadata::text AS Metadata, scope::text AS Scope
     FROM wh_event_store
     WHERE stream_id = @StreamId
-      AND event_id <= @UpToEventId
+      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR event_id <= @UpToEventId)
       AND (@AfterEventId IS NULL OR event_id > @AfterEventId)
     ORDER BY event_id";
 

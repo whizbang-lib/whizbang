@@ -2,6 +2,7 @@ using System.Text.Json;
 using ECommerce.InventoryWorker;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
@@ -27,6 +28,12 @@ public class IEventStoreRegistrationTests {
 
     // Use in-memory connection for this diagnostic test
     var connectionString = "Host=localhost;Port=5432;Database=test;Username=test;Password=test";
+
+    // Add connection string to configuration (required by generated turnkey code)
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = connectionString
+    });
 
     // Register service instance provider
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>

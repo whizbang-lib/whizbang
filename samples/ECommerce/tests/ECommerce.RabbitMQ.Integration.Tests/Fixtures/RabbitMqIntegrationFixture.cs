@@ -10,6 +10,7 @@ using Medo;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
@@ -274,6 +275,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    // and test events don't have TenantId/UserId in their hops
+    builder.Services.Replace(ServiceDescriptor.Singleton(new Whizbang.Core.Security.MessageSecurityOptions { AllowAnonymous = true }));
+
     // Register perspective runners
     ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
@@ -430,6 +436,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    // and test events don't have TenantId/UserId in their hops
+    builder.Services.Replace(ServiceDescriptor.Singleton(new Whizbang.Core.Security.MessageSecurityOptions { AllowAnonymous = true }));
 
     // Register TopicRegistry
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();

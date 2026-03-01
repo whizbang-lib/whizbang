@@ -112,7 +112,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       Hops = [
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };
@@ -316,8 +317,14 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+      .Where(e => e.StreamId == streamId);
+
+    // Apply upper bound only if upToEventId is not Guid.Empty
+    if (upToEventId != Guid.Empty) {
+      query = query.Where(e => e.Id <= upToEventId);
+    }
 
     if (afterEventId != null) {
       query = query.Where(e => e.Id > afterEventId.Value);
@@ -377,8 +384,14 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     }
 
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+      .Where(e => e.StreamId == streamId);
+
+    // Apply upper bound only if upToEventId is not Guid.Empty
+    if (upToEventId != Guid.Empty) {
+      query = query.Where(e => e.Id <= upToEventId);
+    }
 
     if (afterEventId != null) {
       query = query.Where(e => e.Id > afterEventId.Value);
