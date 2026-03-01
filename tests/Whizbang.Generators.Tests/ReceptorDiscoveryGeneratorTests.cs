@@ -1175,6 +1175,7 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
+  [Skip("WHIZ080 diagnostic is disabled by default pending key-based RPC handler selection feature")]
   public async Task Generator_WithMultipleRpcHandlers_ReportsWHIZ080ErrorAsync() {
     // Arrange - Two handlers for the same message type with response (RPC pattern)
     var source = @"
