@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Tracing;
@@ -8,34 +10,87 @@ namespace Whizbang.Core.Tracing;
 /// Default implementation of <see cref="ITracer"/> that emits traces via
 /// OpenTelemetry ActivitySource and structured logging.
 /// </summary>
+/// <remarks>
+/// <para>
+/// The Tracer respects <see cref="TracingOptions"/> configuration to control
+/// when traces are emitted. Key configuration options:
+/// </para>
+/// <list type="bullet">
+/// <item><description><see cref="TracingOptions.Verbosity"/> - Global verbosity level</description></item>
+/// <item><description><see cref="TracingOptions.Components"/> - Which components emit traces</description></item>
+/// <item><description><see cref="TracingOptions.TracedHandlers"/> - Handlers to trace regardless of verbosity</description></item>
+/// <item><description><see cref="TracingOptions.TracedMessages"/> - Messages to trace regardless of verbosity</description></item>
+/// <item><description><see cref="TracingOptions.EnableOpenTelemetry"/> - Whether to emit OTel spans</description></item>
+/// <item><description><see cref="TracingOptions.EnableStructuredLogging"/> - Whether to emit log messages</description></item>
+/// </list>
+/// </remarks>
+/// <docs>observability/tracing#tracer</docs>
+/// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
+/// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
 public sealed partial class Tracer : ITracer {
   private readonly ILogger<Tracer> _logger;
+  private readonly IOptionsMonitor<TracingOptions> _options;
 
   // Thread-local storage for current activity (to match Begin/End calls)
   private static readonly AsyncLocal<Activity?> _currentActivity = new();
 
-  public Tracer(ILogger<Tracer> logger) {
+  // Thread-local storage to track if current trace is explicit (elevated)
+  private static readonly AsyncLocal<bool> _isExplicitTrace = new();
+
+  /// <summary>
+  /// Initializes a new instance of the <see cref="Tracer"/> class.
+  /// </summary>
+  /// <param name="logger">Logger for structured logging output.</param>
+  /// <param name="options">Tracing options monitor for runtime configuration.</param>
+  public Tracer(ILogger<Tracer> logger, IOptionsMonitor<TracingOptions> options) {
     _logger = logger;
+    _options = options;
   }
 
   public void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit) {
-    var activity = WhizbangActivitySource.Tracing.StartActivity(
-      $"Handler: {_extractShortHandlerName(handlerName)}",
-      ActivityKind.Internal);
+    var options = _options.CurrentValue;
 
-    if (activity != null) {
-      activity.SetTag("whizbang.handler.name", handlerName);
-      activity.SetTag("whizbang.message.type", messageTypeName);
-      activity.SetTag("whizbang.handler.count", handlerCount);
-      activity.SetTag("whizbang.trace.explicit", isExplicit);
-
-      _currentActivity.Value = activity;
+    // Check if tracing is completely off
+    if (options.Verbosity == TraceVerbosity.Off) {
+      return;
     }
 
-    if (isExplicit) {
-      LogExplicitHandlerBegin(handlerName, messageTypeName, handlerCount);
-    } else {
-      LogHandlerBegin(handlerName, messageTypeName, handlerCount);
+    // Check if Handlers component is enabled
+    if (!options.IsEnabled(TraceComponents.Handlers)) {
+      return;
+    }
+
+    // Determine if this trace is elevated (explicit via config or attribute)
+    var isElevated = isExplicit ||
+                     _matchesTracedHandler(handlerName, options) ||
+                     _matchesTracedMessage(messageTypeName, options);
+
+    // Store the elevated state for EndHandlerTrace
+    _isExplicitTrace.Value = isElevated;
+
+    // Emit OpenTelemetry span if enabled
+    if (options.EnableOpenTelemetry) {
+      var activity = WhizbangActivitySource.Tracing.StartActivity(
+        $"Handler: {_extractShortHandlerName(handlerName)}",
+        ActivityKind.Internal);
+
+      if (activity != null) {
+        activity.SetTag("whizbang.handler.name", handlerName);
+        activity.SetTag("whizbang.message.type", messageTypeName);
+        activity.SetTag("whizbang.handler.count", handlerCount);
+        activity.SetTag("whizbang.trace.explicit", isElevated);
+
+        _currentActivity.Value = activity;
+      }
+    }
+
+    // Emit structured log if enabled
+    if (options.EnableStructuredLogging) {
+      if (isElevated) {
+        LogExplicitHandlerBegin(handlerName, messageTypeName, handlerCount);
+      } else {
+        LogHandlerBegin(handlerName, messageTypeName, handlerCount);
+      }
     }
   }
 
@@ -48,8 +103,20 @@ public sealed partial class Tracer : ITracer {
     long endTimestamp,
     Exception? exception) {
 
+    var options = _options.CurrentValue;
+
+    // Check if tracing is completely off
+    if (options.Verbosity == TraceVerbosity.Off) {
+      return;
+    }
+
+    // Check if Handlers component is enabled
+    if (!options.IsEnabled(TraceComponents.Handlers)) {
+      return;
+    }
+
     var activity = _currentActivity.Value;
-    if (activity != null) {
+    if (activity != null && options.EnableOpenTelemetry) {
       activity.SetTag("whizbang.handler.status", status.ToString());
       activity.SetTag("whizbang.handler.duration_ms", durationMs);
 
@@ -70,16 +137,94 @@ public sealed partial class Tracer : ITracer {
       _currentActivity.Value = null;
     }
 
-    var isExplicit = activity?.GetTagItem("whizbang.trace.explicit") is true;
-    var statusString = status.ToString();
+    // Emit structured log if enabled
+    if (options.EnableStructuredLogging) {
+      var isExplicit = _isExplicitTrace.Value;
+      var statusString = status.ToString();
 
-    if (status == HandlerStatus.Failed && exception != null) {
-      LogHandlerFailed(handlerName, messageTypeName, durationMs, exception);
-    } else if (isExplicit) {
-      LogExplicitHandlerEnd(handlerName, messageTypeName, statusString, durationMs);
-    } else {
-      LogHandlerEnd(handlerName, messageTypeName, statusString, durationMs);
+      if (status == HandlerStatus.Failed && exception != null) {
+        LogHandlerFailed(handlerName, messageTypeName, durationMs, exception);
+      } else if (isExplicit) {
+        LogExplicitHandlerEnd(handlerName, messageTypeName, statusString, durationMs);
+      } else {
+        LogHandlerEnd(handlerName, messageTypeName, statusString, durationMs);
+      }
     }
+
+    // Reset the explicit trace flag
+    _isExplicitTrace.Value = false;
+  }
+
+  /// <summary>
+  /// Checks if a handler name matches any pattern in TracedHandlers configuration.
+  /// </summary>
+  private static bool _matchesTracedHandler(string handlerName, TracingOptions options) {
+    foreach (var pattern in options.TracedHandlers.Keys) {
+      if (_matchesPattern(handlerName, pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a message type name matches any pattern in TracedMessages configuration.
+  /// </summary>
+  private static bool _matchesTracedMessage(string messageTypeName, TracingOptions options) {
+    foreach (var pattern in options.TracedMessages.Keys) {
+      if (_matchesPattern(messageTypeName, pattern)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Matches a name against a pattern that may include wildcards.
+  /// </summary>
+  /// <remarks>
+  /// Supports:
+  /// - Exact match: "OrderReceptor"
+  /// - Prefix wildcard: "Order*" matches OrderReceptor, OrderValidator, etc.
+  /// - Suffix wildcard: "*Receptor" matches OrderReceptor, PaymentReceptor, etc.
+  /// - Namespace match: Handler name contains the pattern (e.g., "OrderReceptor" matches "MyApp.Handlers.OrderReceptor")
+  /// </remarks>
+  private static bool _matchesPattern(string name, string pattern) {
+    // Exact match (case-insensitive)
+    if (string.Equals(name, pattern, StringComparison.OrdinalIgnoreCase)) {
+      return true;
+    }
+
+    // Check if pattern has wildcards
+    if (pattern.Contains('*')) {
+      // Convert glob pattern to regex
+      var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
+      if (Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase)) {
+        return true;
+      }
+
+      // Also check the short name (last segment after dot)
+      var shortName = _extractShortName(name);
+      if (Regex.IsMatch(shortName, regexPattern, RegexOptions.IgnoreCase)) {
+        return true;
+      }
+    } else {
+      // No wildcard - check if the pattern matches the end of the name
+      // This allows "OrderReceptor" to match "MyApp.Handlers.OrderReceptor"
+      if (name.EndsWith(pattern, StringComparison.OrdinalIgnoreCase)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Extracts the short name (class name only) from a fully qualified name.
+  /// </summary>
+  private static string _extractShortName(string fullName) {
+    var lastDot = fullName.LastIndexOf('.');
+    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
   }
 
   private static string _extractShortHandlerName(string fullName) {
@@ -94,7 +239,7 @@ public sealed partial class Tracer : ITracer {
     return fullName;
   }
 
-  [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers) - explicit via [TraceHandler]")]
+  [LoggerMessage(Level = LogLevel.Information, Message = "[TRACE] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers) - explicit via [WhizbangTrace]")]
   private partial void LogExplicitHandlerBegin(string handlerName, string messageType, int handlerCount);
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "[trace] Handler invocation: {HandlerName} for {MessageType} ({HandlerCount} handlers)")]

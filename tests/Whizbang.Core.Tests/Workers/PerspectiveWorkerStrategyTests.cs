@@ -49,9 +49,9 @@ public class PerspectiveWorkerStrategyTests {
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
       strategy,
-      databaseReadiness,
-      null
+      databaseReadiness
     );
 
     // Act - Run worker for multiple poll cycles
@@ -110,9 +110,9 @@ public class PerspectiveWorkerStrategyTests {
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
       strategy,
-      databaseReadiness,
-      null
+      databaseReadiness
     );
 
     // Act - Run worker for one poll cycle
@@ -180,9 +180,9 @@ public class PerspectiveWorkerStrategyTests {
         instanceProvider,
         serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        tracingOptions: null,
         strategy,
-        databaseReadiness,
-        null
+        databaseReadiness
       );
 
       // Act - Run worker for one poll cycle
@@ -244,9 +244,9 @@ public class PerspectiveWorkerStrategyTests {
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
       strategy,
-      databaseReadiness,
-      null
+      databaseReadiness
     );
 
     // Act - Run worker and wait for completion to be reported
@@ -306,9 +306,9 @@ public class PerspectiveWorkerStrategyTests {
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
       strategy,
-      databaseReadiness,
-      null
+      databaseReadiness
     );
 
     // Act - Run worker and wait for registry lookup to occur
@@ -367,9 +367,9 @@ public class PerspectiveWorkerStrategyTests {
       instanceProvider,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
       strategy,
-      databaseReadiness,
-      null
+      databaseReadiness
     );
 
     // Act - Run worker and wait for registry lookup to occur

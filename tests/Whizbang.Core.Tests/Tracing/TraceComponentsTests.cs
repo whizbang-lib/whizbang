@@ -180,4 +180,83 @@ public class TraceComponentsTests {
 
     await Assert.That(hasFlagsAttribute).IsTrue();
   }
+
+  // ==========================================================================
+  // Convenience Combination Tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AllWithoutWorkers_ExcludesOnlyWorkersAsync() {
+    var combo = TraceComponents.AllWithoutWorkers;
+
+    // Should include everything except Workers
+    await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Lifecycle)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Dispatcher)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Messages)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Events)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Outbox)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Inbox)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.EventStore)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Perspectives)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Tags)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Security)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Errors)).IsTrue();
+
+    // Should NOT include Workers
+    await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
+  }
+
+  [Test]
+  public async Task Core_IncludesHandlersLifecycleDispatcherMessagesAsync() {
+    var combo = TraceComponents.Core;
+
+    await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Lifecycle)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Dispatcher)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Messages)).IsTrue();
+
+    // Should NOT include other components
+    await Assert.That(combo.HasFlag(TraceComponents.Outbox)).IsFalse();
+    await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
+  }
+
+  [Test]
+  public async Task Messaging_IncludesMessagesEventsOutboxInboxAsync() {
+    var combo = TraceComponents.Messaging;
+
+    await Assert.That(combo.HasFlag(TraceComponents.Messages)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Events)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Outbox)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Inbox)).IsTrue();
+
+    // Should NOT include other components
+    await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsFalse();
+    await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
+  }
+
+  [Test]
+  public async Task Storage_IncludesEventStorePerspectivesAsync() {
+    var combo = TraceComponents.Storage;
+
+    await Assert.That(combo.HasFlag(TraceComponents.EventStore)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Perspectives)).IsTrue();
+
+    // Should NOT include other components
+    await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsFalse();
+    await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
+  }
+
+  [Test]
+  public async Task Production_IncludesHandlersErrorsSecurityAsync() {
+    var combo = TraceComponents.Production;
+
+    await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Errors)).IsTrue();
+    await Assert.That(combo.HasFlag(TraceComponents.Security)).IsTrue();
+
+    // Should NOT include noisy components
+    await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
+    await Assert.That(combo.HasFlag(TraceComponents.Lifecycle)).IsFalse();
+  }
 }

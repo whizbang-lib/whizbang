@@ -56,6 +56,13 @@ public class TracingOptionsTests {
     await Assert.That(options.TracedMessages.Count).IsEqualTo(0);
   }
 
+  [Test]
+  public async Task EnableWorkerBatchSpans_DefaultValue_IsFalseAsync() {
+    var options = new TracingOptions();
+
+    await Assert.That(options.EnableWorkerBatchSpans).IsFalse();
+  }
+
   // ==========================================================================
   // Property Setter Tests
   // ==========================================================================
@@ -89,6 +96,13 @@ public class TracingOptionsTests {
     var options = new TracingOptions { EnableStructuredLogging = false };
 
     await Assert.That(options.EnableStructuredLogging).IsFalse();
+  }
+
+  [Test]
+  public async Task EnableWorkerBatchSpans_CanBeSetToTrueAsync() {
+    var options = new TracingOptions { EnableWorkerBatchSpans = true };
+
+    await Assert.That(options.EnableWorkerBatchSpans).IsTrue();
   }
 
   [Test]

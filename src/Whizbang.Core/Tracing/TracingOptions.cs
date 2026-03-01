@@ -103,6 +103,20 @@ public sealed class TracingOptions {
   public Dictionary<string, TraceVerbosity> TracedMessages { get; } = [];
 
   /// <summary>
+  /// Gets or sets whether to emit batch-level parent spans for background workers.
+  /// When true, PerspectiveWorker emits a "PerspectiveWorker ProcessBatch" parent span
+  /// that groups all perspective spans processed in the same polling cycle.
+  /// Default: false (reduces noise in trace UI).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Enable this when debugging perspective processing to see which perspectives
+  /// are processed together and understand batch boundaries.
+  /// </para>
+  /// </remarks>
+  public bool EnableWorkerBatchSpans { get; set; }
+
+  /// <summary>
   /// Checks whether tracing is enabled for a specific component.
   /// Returns true only if both verbosity is not Off AND the component is included.
   /// </summary>

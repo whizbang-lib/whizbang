@@ -446,7 +446,7 @@ public class DispatcherSnippets {
   /// <summary>
   /// Example method showing snippet structure for traced receptor registry routing.
   /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
-  /// Used for async receptors with response and [TraceHandler] attribute.
+  /// Used for async receptors with response and [WhizbangTrace] attribute.
   /// Includes timing capture, ITracer integration, and explicit trace marking.
   /// </summary>
   protected IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> ReceptorRegistryTracedRoutingExample(
@@ -519,7 +519,7 @@ public class DispatcherSnippets {
   /// <summary>
   /// Example method showing snippet structure for traced void receptor registry routing.
   /// Returns a list of ReceptorInfo for a given (messageType, stage) combination.
-  /// Used for void async receptors with [TraceHandler] attribute.
+  /// Used for void async receptors with [WhizbangTrace] attribute.
   /// Includes timing capture, ITracer integration, and explicit trace marking.
   /// </summary>
   protected IReadOnlyList<global::Whizbang.Core.Messaging.ReceptorInfo> ReceptorRegistryTracedVoidRoutingExample(

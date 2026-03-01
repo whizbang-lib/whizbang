@@ -65,6 +65,23 @@ public enum TraceComponents {
   /// <summary>Error and exception handling.</summary>
   Errors = 1 << 12,
 
+  // ==================== Convenience Combinations ====================
+
   /// <summary>All components enabled.</summary>
-  All = ~None
+  All = ~None,
+
+  /// <summary>All components except background workers (reduces noise).</summary>
+  AllWithoutWorkers = All & ~Workers,
+
+  /// <summary>Core message processing: Handlers, Lifecycle, Dispatcher, Messages.</summary>
+  Core = Handlers | Lifecycle | Dispatcher | Messages,
+
+  /// <summary>Messaging pipeline: Messages, Events, Outbox, Inbox.</summary>
+  Messaging = Messages | Events | Outbox | Inbox,
+
+  /// <summary>Data storage: EventStore, Perspectives.</summary>
+  Storage = EventStore | Perspectives,
+
+  /// <summary>Production defaults: Handlers, Errors, Security.</summary>
+  Production = Handlers | Errors | Security
 }

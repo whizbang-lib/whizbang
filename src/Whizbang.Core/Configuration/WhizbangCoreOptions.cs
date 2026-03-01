@@ -1,4 +1,5 @@
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Configuration;
 
@@ -30,6 +31,27 @@ public sealed class WhizbangCoreOptions {
   /// Use this property to register tag hooks that process messages after successful handling.
   /// </remarks>
   public TagOptions Tags { get; } = new();
+
+  /// <summary>
+  /// Gets the tracing system configuration.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this property to configure handler and message tracing.
+  /// Tracing supports both OpenTelemetry spans and structured logging.
+  /// </para>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///   options.Tracing.Verbosity = TraceVerbosity.Verbose;
+  ///   options.Tracing.Components = TraceComponents.Handlers | TraceComponents.Lifecycle;
+  ///   options.Tracing.TracedHandlers["ReseedSystemEventHandler"] = TraceVerbosity.Debug;
+  /// });
+  /// </code>
+  /// </example>
+  /// </remarks>
+  /// <docs>observability/tracing#configuration</docs>
+  public TracingOptions Tracing { get; } = new();
 
   /// <summary>
   /// Gets or sets whether tag processing is enabled.

@@ -61,7 +61,7 @@ public static class Extensions {
                   .AddHttpClientInstrumentation()
                   // Whizbang ActivitySources for distributed tracing
                   .AddSource("Whizbang.Execution")   // Dispatch activities (parent spans)
-                  .AddSource("Whizbang.Tracing")     // Handler traces (child spans for [TraceHandler])
+                  .AddSource("Whizbang.Tracing")     // Handler traces (child spans for [WhizbangTrace])
                   .AddSource("Whizbang.Transport")   // Transport operations
                   .AddSource("Whizbang.Hosting");    // Hosting/infrastructure operations
         });

@@ -11,7 +11,7 @@ public interface ITracer {
   /// <param name="handlerName">Fully qualified name of the handler.</param>
   /// <param name="messageTypeName">Name of the message type being handled.</param>
   /// <param name="handlerCount">Total number of handlers for this message type.</param>
-  /// <param name="isExplicit">True if handler has [TraceHandler] attribute or message has [TraceMessage].</param>
+  /// <param name="isExplicit">True if handler or message has [WhizbangTrace] attribute.</param>
   void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit);
 
   /// <summary>

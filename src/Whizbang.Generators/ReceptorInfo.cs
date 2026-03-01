@@ -14,7 +14,7 @@ namespace Whizbang.Generators;
 /// <param name="IsSync">True if this is a sync receptor (ISyncReceptor), false for async receptor (IReceptor).</param>
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
-/// <param name="HasTraceAttribute">True if receptor class has [TraceHandler] attribute for explicit tracing.</param>
+/// <param name="HasTraceAttribute">True if receptor class has [WhizbangTrace] attribute for explicit tracing.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
