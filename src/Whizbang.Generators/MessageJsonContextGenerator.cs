@@ -1253,8 +1253,43 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts the element type from a generic collection type.
   /// For example: "global::System.Collections.Generic.List&lt;global::MyApp.OrderLineItem&gt;" returns "global::MyApp.OrderLineItem"
+  /// For Dictionary types, extracts the VALUE type (second type parameter).
+  /// For example: "global::System.Collections.Generic.Dictionary&lt;string, global::MyApp.SeedSectionContext&gt;" returns "global::MyApp.SeedSectionContext"
+  /// For nested collections (e.g., Dictionary&lt;string, List&lt;T&gt;&gt;), recursively extracts until reaching a non-collection type.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDictionaryProperty_DiscoversValueTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithNestedDictionaryValue_DiscoversDeepTypesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIDictionaryProperty_DiscoversValueTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithNestedGenericValue_DiscoversInnerTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NestedDictionaryValue_DiscoversDeepestTypeAsync</tests>
   private static string? _extractElementType(string fullyQualifiedTypeName) {
+    var elementType = _extractElementTypeSingleLevel(fullyQualifiedTypeName);
+
+    // If the extracted element type is itself a collection, recursively extract
+    // This handles cases like Dictionary<string, List<T>> -> T
+    // or Dictionary<string, Dictionary<int, T>> -> T
+    while (elementType != null) {
+      var nestedElementType = _extractElementTypeSingleLevel(elementType);
+      if (nestedElementType == null) {
+        // No more nesting, return the current element type
+        break;
+      }
+      elementType = nestedElementType;
+    }
+
+    return elementType;
+  }
+
+  /// <summary>
+  /// Extracts the element type from a generic collection type (single level, no recursion).
+  /// For List/IEnumerable types, returns the type argument.
+  /// For Dictionary types, returns the VALUE type (second type parameter).
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TripleNestedCollections_DiscoversDeepestTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithArrayValue_DiscoversArrayElementTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TripleNestedList_DiscoversDeepestTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithIEnumerableValue_DiscoversElementTypeAsync</tests>
+  private static string? _extractElementTypeSingleLevel(string fullyQualifiedTypeName) {
     // Strip nullable suffix for analysis (e.g., "T[]?" -> "T[]")
     var typeName = fullyQualifiedTypeName;
     if (typeName.EndsWith("?", StringComparison.Ordinal)) {
@@ -1266,8 +1301,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return typeName[..^2]; // Remove "[]" suffix to get element type
     }
 
-    // Check for common generic collection types
-    var genericTypes = new[] {
+    // Check for common generic collection types (single type parameter)
+    var singleTypeParamCollections = new[] {
       "global::System.Collections.Generic.List<",
       "global::System.Collections.Generic.IList<",
       "global::System.Collections.Generic.IReadOnlyList<",
@@ -1276,7 +1311,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       "global::System.Collections.Generic.IEnumerable<"
     };
 
-    var matchingPrefix = genericTypes.FirstOrDefault(prefix =>
+    var matchingPrefix = singleTypeParamCollections.FirstOrDefault(prefix =>
         typeName.StartsWith(prefix, StringComparison.Ordinal));
 
     if (matchingPrefix != null) {
@@ -1288,19 +1323,75 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
+    // Check for dictionary types (extract VALUE type - second type parameter)
+    var dictionaryTypes = new[] {
+      "global::System.Collections.Generic.Dictionary<",
+      "global::System.Collections.Generic.IDictionary<",
+      "global::System.Collections.Generic.IReadOnlyDictionary<"
+    };
+
+    var matchingDictPrefix = dictionaryTypes.FirstOrDefault(prefix =>
+        typeName.StartsWith(prefix, StringComparison.Ordinal));
+
+    if (matchingDictPrefix != null) {
+      // Extract the VALUE type (second type argument)
+      // Format: Dictionary<TKey, TValue>
+      var startIndex = matchingDictPrefix.Length;
+      var endIndex = typeName.LastIndexOf('>');
+      if (endIndex > startIndex) {
+        var typeArgs = typeName[startIndex..endIndex];
+        // Find the comma separating TKey and TValue (accounting for nested generics)
+        var commaIndex = _findTopLevelComma(typeArgs);
+        if (commaIndex > 0) {
+          // Return TValue (everything after comma, trimmed)
+          return typeArgs[(commaIndex + 1)..].Trim();
+        }
+      }
+    }
+
     return null;
   }
 
   /// <summary>
-  /// Checks if a type is a collection type that would be handled by _extractElementType.
+  /// Finds the index of the first top-level comma in a type arguments string.
+  /// This correctly handles nested generics like "string, Dictionary&lt;int, string&gt;".
   /// </summary>
+  /// <param name="typeArgs">The type arguments string (e.g., "string, MyType" or "int, List&lt;string&gt;")</param>
+  /// <returns>The index of the top-level comma, or -1 if not found</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithNonStringKey_DiscoversValueTypeOnlyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryWithNestedGenericValue_DiscoversInnerTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NestedDictionaryValue_DiscoversDeepestTypeAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_TripleNestedCollections_DiscoversDeepestTypeAsync</tests>
+  private static int _findTopLevelComma(string typeArgs) {
+    int depth = 0;
+    for (int i = 0; i < typeArgs.Length; i++) {
+      char c = typeArgs[i];
+      if (c == '<') {
+        depth++;
+      } else if (c == '>') {
+        depth--;
+      } else if (c == ',' && depth == 0) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// <summary>
+  /// Checks if a type is a collection type that would be handled by _extractElementType.
+  /// Includes Dictionary types whose value types are extracted.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_DictionaryAsDirectProperty_TreatedAsCollectionAsync</tests>
   private static bool _isCollectionType(string fullyQualifiedTypeName) {
     return fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.List<", StringComparison.Ordinal) ||
            fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IList<", StringComparison.Ordinal) ||
            fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
            fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
            fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
-           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IEnumerable<", StringComparison.Ordinal);
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.Dictionary<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IDictionary<", StringComparison.Ordinal) ||
+           fullyQualifiedTypeName.StartsWith("global::System.Collections.Generic.IReadOnlyDictionary<", StringComparison.Ordinal);
   }
 
   /// <summary>

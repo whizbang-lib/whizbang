@@ -4576,4 +4576,659 @@ public record TestCommand : ICommand {
         d.GetMessage(CultureInfo.InvariantCulture).Contains("DiagnosticTestEvent"));
     await Assert.That(diagnostic).IsNotNull();
   }
+
+  // ============================================================================
+  // Dictionary Value Type Discovery Tests
+  // ============================================================================
+  // Tests for _extractElementType handling of Dictionary<TKey, TValue> types.
+  // The generator should extract and discover the VALUE type (TValue) for
+  // AOT-compatible JSON serialization.
+  // <docs>source-generators/json-contexts</docs>
+  // ============================================================================
+
+  /// <summary>
+  /// Tests that Dictionary&lt;string, TValue&gt; properties have their value type discovered.
+  /// This is the basic case - value type should be extracted and included in generated JsonContext.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithDictionaryProperty_DiscoversValueTypeAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record SeedSectionContext {
+  public required string SectionName { get; init; }
+  public required System.Guid SectionId { get; init; }
+}
+
+public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
+  public required Dictionary<string, SeedSectionContext> SectionContexts { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - SeedSectionContext should be discovered as a nested type
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Value type must be discovered and have JsonTypeInfo generated
+    await Assert.That(code!).Contains("SeedSectionContext");
+    await Assert.That(code).Contains("Create_TestApp_SeedSectionContext");
+  }
+
+  /// <summary>
+  /// Tests that deeply nested Dictionary value types are discovered recursively.
+  /// When Dictionary&lt;string, ComplexType&gt; where ComplexType has its own nested types,
+  /// all levels should be discovered.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithNestedDictionaryValue_DiscoversDeepTypesAsync() {
+    // Arrange - Dictionary value type has its own nested types
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record InnerDetail {
+  public required string Value { get; init; }
+}
+
+public record OuterConfig {
+  public required string Name { get; init; }
+  public required List<InnerDetail> Details { get; init; }
+}
+
+public record ConfigurationEvent : IEvent {
+  public required Dictionary<string, OuterConfig> Configurations { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both OuterConfig AND InnerDetail should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All nested levels must be discovered
+    await Assert.That(code!).Contains("OuterConfig");
+    await Assert.That(code).Contains("InnerDetail");
+    await Assert.That(code).Contains("Create_TestApp_OuterConfig");
+    await Assert.That(code).Contains("Create_TestApp_InnerDetail");
+  }
+
+  /// <summary>
+  /// Tests that IDictionary&lt;TKey, TValue&gt; interface properties have their value type discovered.
+  /// Interface variants should work the same as concrete Dictionary.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithIDictionaryProperty_DiscoversValueTypeAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record MetadataValue {
+  public required string Key { get; init; }
+  public required object Value { get; init; }
+}
+
+public record MetadataEvent : IEvent {
+  public required IDictionary<string, MetadataValue> Metadata { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("MetadataValue");
+    await Assert.That(code).Contains("Create_TestApp_MetadataValue");
+  }
+
+  /// <summary>
+  /// Tests that IReadOnlyDictionary&lt;TKey, TValue&gt; properties have their value type discovered.
+  /// Read-only interface variants should work the same as concrete Dictionary.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithIReadOnlyDictionaryProperty_DiscoversValueTypeAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CacheEntry {
+  public required string Data { get; init; }
+  public required System.DateTime ExpiresAt { get; init; }
+}
+
+public record CacheSnapshotEvent : IEvent {
+  public required IReadOnlyDictionary<string, CacheEntry> Entries { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("CacheEntry");
+    await Assert.That(code).Contains("Create_TestApp_CacheEntry");
+  }
+
+  /// <summary>
+  /// Tests that Dictionary with complex key type (non-string) still extracts value type.
+  /// The key type (TKey) is handled by System.Text.Json natively, we only need value type.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_findTopLevelComma</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithNonStringKey_DiscoversValueTypeOnlyAsync() {
+    // Arrange - Dictionary<int, CustomType> - int key handled by STJ, CustomType value needs discovery
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record IndexedItem {
+  public required string Name { get; init; }
+  public required int Position { get; init; }
+}
+
+public record IndexedCollectionEvent : IEvent {
+  public required Dictionary<int, IndexedItem> ItemsByIndex { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Value type should be discovered
+    await Assert.That(code!).Contains("IndexedItem");
+    await Assert.That(code).Contains("Create_TestApp_IndexedItem");
+  }
+
+  /// <summary>
+  /// Tests Dictionary with nested generic value type: Dictionary&lt;string, List&lt;T&gt;&gt;.
+  /// The _findTopLevelComma helper must correctly parse nested angle brackets.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_findTopLevelComma</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithNestedGenericValue_DiscoversInnerTypeAsync() {
+    // Arrange - Dictionary<string, List<CustomItem>> - need to discover CustomItem through the List
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record GroupedItem {
+  public required string Label { get; init; }
+}
+
+public record GroupedDataEvent : IEvent {
+  public required Dictionary<string, List<GroupedItem>> GroupedItems { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // GroupedItem should be discovered through List<GroupedItem> which is the Dictionary value
+    await Assert.That(code!).Contains("GroupedItem");
+    await Assert.That(code).Contains("Create_TestApp_GroupedItem");
+  }
+
+  /// <summary>
+  /// Tests Dictionary with primitive value type - should NOT trigger nested type discovery.
+  /// Dictionary&lt;string, int&gt; should work without generating custom type info for int.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_isPrimitiveOrFrameworkType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithPrimitiveValue_SkipsNestedDiscoveryAsync() {
+    // Arrange - Dictionary<string, int> - no custom type to discover
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CounterEvent : IEvent {
+  public required Dictionary<string, int> Counters { get; init; }
+  public required Dictionary<string, decimal> Amounts { get; init; }
+  public required Dictionary<string, string> Labels { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should succeed without discovering any nested types from Dictionary values
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Only the event itself should have factory, no primitive type factories
+    await Assert.That(code!).Contains("CounterEvent");
+  }
+
+  /// <summary>
+  /// Tests nullable Dictionary property: Dictionary&lt;string, T&gt;?
+  /// Nullable suffix should be stripped before extracting value type.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NullableDictionaryProperty_DiscoversValueTypeAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record OptionalConfig {
+  public required string Setting { get; init; }
+}
+
+public record OptionalDataEvent : IEvent {
+  public Dictionary<string, OptionalConfig>? OptionalConfigs { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Value type should still be discovered even with nullable Dictionary
+    await Assert.That(code!).Contains("OptionalConfig");
+    await Assert.That(code).Contains("Create_TestApp_OptionalConfig");
+  }
+
+  /// <summary>
+  /// Tests Dictionary value that is also a Dictionary: Dictionary&lt;string, Dictionary&lt;int, T&gt;&gt;.
+  /// Nested Dictionary handling with proper comma parsing.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_findTopLevelComma</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedDictionaryValue_DiscoversDeepestTypeAsync() {
+    // Arrange - Dictionary<string, Dictionary<int, DeepItem>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record DeepItem {
+  public required string DeepValue { get; init; }
+}
+
+public record DeepNestedEvent : IEvent {
+  public required Dictionary<string, Dictionary<int, DeepItem>> DeepMap { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // DeepItem should be discovered through the nested Dictionary chain
+    await Assert.That(code!).Contains("DeepItem");
+    await Assert.That(code).Contains("Create_TestApp_DeepItem");
+  }
+
+  /// <summary>
+  /// Tests multiple Dictionary properties with different value types.
+  /// All unique value types should be discovered.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_discoverNestedTypes</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleDictionaryProperties_DiscoversAllValueTypesAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record UserProfile {
+  public required string Username { get; init; }
+}
+
+public record Permission {
+  public required string Name { get; init; }
+  public required bool Granted { get; init; }
+}
+
+public record Setting {
+  public required string Key { get; init; }
+  public required string Value { get; init; }
+}
+
+public record SystemStateEvent : IEvent {
+  public required Dictionary<string, UserProfile> Users { get; init; }
+  public required Dictionary<string, Permission> Permissions { get; init; }
+  public required Dictionary<string, Setting> Settings { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - All three value types should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("UserProfile");
+    await Assert.That(code).Contains("Permission");
+    await Assert.That(code).Contains("Setting");
+    await Assert.That(code).Contains("Create_TestApp_UserProfile");
+    await Assert.That(code).Contains("Create_TestApp_Permission");
+    await Assert.That(code).Contains("Create_TestApp_Setting");
+  }
+
+  /// <summary>
+  /// Tests the exact scenario from the bug report: JobTemplateSeedOrchestrationInitiatedEvent
+  /// with Dictionary&lt;string, SeedSectionContext&gt;.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_BugReport_DictionarySeedSectionContext_DiscoversValueTypeAsync() {
+    // Arrange - Exact reproduction of the bug report scenario
+    var source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp.Orchestration;
+
+public record SeedSectionContext {
+  public required string SectionName { get; init; }
+  public required Guid SectionId { get; init; }
+}
+
+public record JobTemplateSeedOrchestrationInitiatedEvent : IEvent {
+  public required Dictionary<string, SeedSectionContext> SectionContexts { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - This was the exact failure case - SeedSectionContext must be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Without the fix, SeedSectionContext would NOT be present, causing runtime NotSupportedException
+    await Assert.That(code!).Contains("SeedSectionContext");
+    await Assert.That(code).Contains("Create_TestApp_Orchestration_SeedSectionContext");
+
+    // Also verify the event itself is present
+    await Assert.That(code).Contains("JobTemplateSeedOrchestrationInitiatedEvent");
+  }
+
+  /// <summary>
+  /// Tests triple nesting: Dictionary&lt;string, List&lt;Dictionary&lt;int, T&gt;&gt;&gt;.
+  /// The recursive extraction must handle multiple levels of collection nesting.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementTypeSingleLevel</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_TripleNestedCollections_DiscoversDeepestTypeAsync() {
+    // Arrange - Dictionary<string, List<Dictionary<int, TripleNestedItem>>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record TripleNestedItem {
+  public required string TripleValue { get; init; }
+}
+
+public record TripleNestedEvent : IEvent {
+  public required Dictionary<string, List<Dictionary<int, TripleNestedItem>>> TripleNested { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - TripleNestedItem should be discovered through all three levels
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("TripleNestedItem");
+    await Assert.That(code).Contains("Create_TestApp_TripleNestedItem");
+  }
+
+  /// <summary>
+  /// Tests array inside Dictionary: Dictionary&lt;string, T[]&gt;.
+  /// Array element types should be discovered from Dictionary values.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementTypeSingleLevel</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithArrayValue_DiscoversArrayElementTypeAsync() {
+    // Arrange - Dictionary<string, ArrayItem[]>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record ArrayItem {
+  public required string ArrayValue { get; init; }
+}
+
+public record ArrayDictEvent : IEvent {
+  public required Dictionary<string, ArrayItem[]> ArrayDict { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - ArrayItem should be discovered through the array
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("ArrayItem");
+    await Assert.That(code).Contains("Create_TestApp_ArrayItem");
+  }
+
+  /// <summary>
+  /// Tests multiple levels of List nesting: List&lt;List&lt;List&lt;T&gt;&gt;&gt;.
+  /// Recursive extraction should handle any depth of List nesting.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementTypeSingleLevel</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_TripleNestedList_DiscoversDeepestTypeAsync() {
+    // Arrange - List<List<List<DeepListItem>>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record DeepListItem {
+  public required string DeepListValue { get; init; }
+}
+
+public record DeepListEvent : IEvent {
+  public required List<List<List<DeepListItem>>> DeepList { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - DeepListItem should be discovered through all three List levels
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("DeepListItem");
+    await Assert.That(code).Contains("Create_TestApp_DeepListItem");
+  }
+
+  /// <summary>
+  /// Tests IEnumerable nested in Dictionary: Dictionary&lt;string, IEnumerable&lt;T&gt;&gt;.
+  /// All IEnumerable variants should be handled in recursive extraction.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementType</tests>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_extractElementTypeSingleLevel</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithIEnumerableValue_DiscoversElementTypeAsync() {
+    // Arrange - Dictionary<string, IEnumerable<EnumerableItem>>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record EnumerableItem {
+  public required string EnumerableValue { get; init; }
+}
+
+public record EnumerableDictEvent : IEvent {
+  public required Dictionary<string, IEnumerable<EnumerableItem>> EnumerableDict { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - EnumerableItem should be discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    await Assert.That(code!).Contains("EnumerableItem");
+    await Assert.That(code).Contains("Create_TestApp_EnumerableItem");
+  }
+
+  /// <summary>
+  /// Tests _isCollectionType correctly identifies Dictionary types.
+  /// Dictionary types should be treated as collections for nested type discovery.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/MessageJsonContextGenerator.cs:_isCollectionType</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryAsDirectProperty_TreatedAsCollectionAsync() {
+    // Arrange - Ensure Dictionary is correctly identified as a collection
+    // and its value type is discovered, not the Dictionary itself
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CollectionTestItem {
+  public required string ItemName { get; init; }
+}
+
+public record CollectionTypeTestEvent : IEvent {
+  // Dictionary should be treated as collection, value type discovered
+  public required Dictionary<string, CollectionTestItem> DictItems { get; init; }
+
+  // List should also be treated as collection (existing behavior)
+  public required List<CollectionTestItem> ListItems { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // CollectionTestItem should be discovered only once (deduplication)
+    await Assert.That(code!).Contains("CollectionTestItem");
+    await Assert.That(code).Contains("Create_TestApp_CollectionTestItem");
+  }
 }
