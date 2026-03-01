@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -306,27 +305,6 @@ public class TransportConsumerWorker : BackgroundService {
     string? envelopeType,
     CancellationToken cancellationToken
   ) {
-    // Restore distributed trace context from the incoming message's TraceParent
-    // This enables cross-service tracing by linking spans from sender to receiver
-    Activity? inboxActivity = null;
-    var traceParent = envelope.Hops
-      .Where(h => h.Type == HopType.Current)
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      // Start a new activity as child of the sender's span
-      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
-      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
-        $"Inbox {messageType}",
-        ActivityKind.Consumer,
-        parentContext
-      );
-      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
-      inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
-    }
-
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
@@ -398,40 +376,25 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          // PreInboxAsync stage
-          using (var stageActivity = WhizbangActivitySource.Tracing.StartActivity(
-            $"Lifecycle PreInboxAsync",
-            ActivityKind.Internal)) {
-            stageActivity?.SetTag("whizbang.lifecycle.stage", "PreInboxAsync");
-            stageActivity?.SetTag("whizbang.message.type", work.MessageType);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          }
 
-            // Invoke compile-time business receptors via IReceptorInvoker
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-            }
-
-            // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-            }
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
           }
 
           // PreInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
 
-          using (var stageActivity = WhizbangActivitySource.Tracing.StartActivity(
-            $"Lifecycle PreInboxInline",
-            ActivityKind.Internal)) {
-            stageActivity?.SetTag("whizbang.lifecycle.stage", "PreInboxInline");
-            stageActivity?.SetTag("whizbang.message.type", work.MessageType);
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          }
 
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-            }
-
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-            }
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
           }
         }
       }
@@ -488,40 +451,25 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          // PostInboxAsync stage
-          using (var stageActivity = WhizbangActivitySource.Tracing.StartActivity(
-            $"Lifecycle PostInboxAsync",
-            ActivityKind.Internal)) {
-            stageActivity?.SetTag("whizbang.lifecycle.stage", "PostInboxAsync");
-            stageActivity?.SetTag("whizbang.message.type", work.MessageType);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          }
 
-            // Invoke compile-time business receptors via IReceptorInvoker
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-            }
-
-            // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-            }
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
           }
 
           // PostInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
 
-          using (var stageActivity = WhizbangActivitySource.Tracing.StartActivity(
-            $"Lifecycle PostInboxInline",
-            ActivityKind.Internal)) {
-            stageActivity?.SetTag("whizbang.lifecycle.stage", "PostInboxInline");
-            stageActivity?.SetTag("whizbang.message.type", work.MessageType);
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          }
 
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-            }
-
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-            }
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
           }
         }
       }
@@ -533,16 +481,9 @@ public class TransportConsumerWorker : BackgroundService {
         var messageId = envelope.MessageId;
         _logger.LogDebug("Successfully processed message {MessageId}", messageId);
       }
-
-      inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
-      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
-      inboxActivity?.SetTag("exception.message", ex.Message);
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter
-    } finally {
-      inboxActivity?.Dispose();
     }
   }
 
@@ -718,7 +659,6 @@ public class TransportConsumerWorker : BackgroundService {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
     _linkedCts?.Cancel();
-    _linkedCts?.Dispose();
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
