@@ -53,10 +53,13 @@ jobs:
 
       - name: Calculate Final Version
         id: version
+        env:
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+          INPUT_MANUAL_VERSION: ${{ inputs.manual_version }}
         run: |
-          if [ "${{ inputs.release_type }}" = "manual" ]; then
+          if [ "$INPUT_RELEASE_TYPE" = "manual" ]; then
             # Use manually specified version
-            MANUAL_VER="${{ inputs.manual_version }}"
+            MANUAL_VER="$INPUT_MANUAL_VERSION"
             if [ -z "$MANUAL_VER" ]; then
               echo "::error::Manual version is required when release_type is 'manual'"
               exit 1
@@ -73,7 +76,7 @@ jobs:
             PATCH=${{ steps.gitversion.outputs.patch }}
             PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
 
-            case "${{ inputs.release_type }}" in
+            case "$INPUT_RELEASE_TYPE" in
               major)
                 MAJOR=$((MAJOR + 1))
                 MINOR=0

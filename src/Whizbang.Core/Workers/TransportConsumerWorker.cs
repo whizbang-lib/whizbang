@@ -659,6 +659,7 @@ public class TransportConsumerWorker : BackgroundService {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
     _linkedCts?.Cancel();
+    _linkedCts?.Dispose();
 
     // Dispose all subscriptions
     foreach (var state in _states.Values) {
