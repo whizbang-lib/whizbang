@@ -697,12 +697,12 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
     await Assert.That(diagnostics).IsNotNull();
   }
 
-  // ==================== TraceHandler Tests ====================
+  // ==================== WhizbangTrace Tests ====================
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_WithTraceHandlerAttribute_GeneratesTracingCodeAsync() {
-    // Arrange - Tests [TraceHandler] attribute detection
+  public async Task Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync() {
+    // Arrange - Tests [WhizbangTrace] attribute detection
     var source = @"
 using System.Threading;
 using System.Threading.Tasks;
@@ -719,7 +719,7 @@ public record OrderCreated : IEvent {
   public string OrderId { get; init; } = string.Empty;
 }
 
-[TraceHandler]
+[WhizbangTrace]
 public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
     return new OrderCreated { OrderId = message.OrderId };
@@ -745,8 +745,8 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_WithoutTraceHandlerAttribute_DoesNotGenerateTracingCodeAsync() {
-    // Arrange - Tests that tracing code is NOT generated for normal receptors
+  public async Task Generator_WithoutWhizbangTraceAttribute_DoesNotGenerateTracingCodeAsync() {
+    // Arrange - Tests that tracing code is NOT generated for non-traced receptors
     var source = @"
 using System.Threading;
 using System.Threading.Tasks;

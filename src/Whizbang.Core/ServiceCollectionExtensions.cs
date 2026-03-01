@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Observability;
@@ -85,6 +87,95 @@ public static class ServiceCollectionExtensions {
 
     // Register TagOptions as singleton
     services.AddSingleton(coreOptions.Tags);
+
+    // Register TracingOptions with IOptions pattern
+    // 1. Start with programmatic defaults from coreOptions.Tracing
+    // 2. Override with IConfiguration binding if available (Whizbang:Tracing section)
+    services.AddOptions<TracingOptions>()
+      .Configure(tracingOptions => {
+        // Copy programmatic defaults from WhizbangCoreOptions.Tracing
+        tracingOptions.Verbosity = coreOptions.Tracing.Verbosity;
+        tracingOptions.Components = coreOptions.Tracing.Components;
+        tracingOptions.EnableOpenTelemetry = coreOptions.Tracing.EnableOpenTelemetry;
+        tracingOptions.EnableStructuredLogging = coreOptions.Tracing.EnableStructuredLogging;
+
+        // Copy dictionaries
+        foreach (var kvp in coreOptions.Tracing.TracedHandlers) {
+          tracingOptions.TracedHandlers[kvp.Key] = kvp.Value;
+        }
+
+        foreach (var kvp in coreOptions.Tracing.TracedMessages) {
+          tracingOptions.TracedMessages[kvp.Key] = kvp.Value;
+        }
+      });
+
+    // Register IConfiguration binding as PostConfigure (only if IConfiguration is available)
+    // Uses GetService (nullable) instead of GetRequiredService to handle scenarios without IConfiguration
+    services.AddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
+      var config = sp.GetService<IConfiguration>();
+      return new PostConfigureOptions<TracingOptions>(Options.DefaultName, tracingOptions => {
+        // Skip if IConfiguration is not registered
+        if (config == null) {
+          return;
+        }
+
+        // AOT-compatible manual binding from IConfiguration
+        // Avoids reflection-based ConfigurationBinder.Bind() which triggers IL2026
+        var section = config.GetSection("Whizbang:Tracing");
+        if (!section.Exists()) {
+          return;
+        }
+
+        // Bind Verbosity enum
+        var verbosityValue = section["Verbosity"];
+        if (!string.IsNullOrEmpty(verbosityValue) &&
+            Enum.TryParse<TraceVerbosity>(verbosityValue, ignoreCase: true, out var verbosity)) {
+          tracingOptions.Verbosity = verbosity;
+        }
+
+        // Bind Components flags enum
+        var componentsValue = section["Components"];
+        if (!string.IsNullOrEmpty(componentsValue) &&
+            Enum.TryParse<TraceComponents>(componentsValue, ignoreCase: true, out var components)) {
+          tracingOptions.Components = components;
+        }
+
+        // Bind boolean properties
+        var enableOtelValue = section["EnableOpenTelemetry"];
+        if (!string.IsNullOrEmpty(enableOtelValue) &&
+            bool.TryParse(enableOtelValue, out var enableOtel)) {
+          tracingOptions.EnableOpenTelemetry = enableOtel;
+        }
+
+        var enableLoggingValue = section["EnableStructuredLogging"];
+        if (!string.IsNullOrEmpty(enableLoggingValue) &&
+            bool.TryParse(enableLoggingValue, out var enableLogging)) {
+          tracingOptions.EnableStructuredLogging = enableLogging;
+        }
+
+        // Bind TracedHandlers dictionary
+        var handlersSection = section.GetSection("TracedHandlers");
+        if (handlersSection.Exists()) {
+          foreach (var child in handlersSection.GetChildren()) {
+            if (!string.IsNullOrEmpty(child.Value) &&
+                Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var handlerVerbosity)) {
+              tracingOptions.TracedHandlers[child.Key] = handlerVerbosity;
+            }
+          }
+        }
+
+        // Bind TracedMessages dictionary
+        var messagesSection = section.GetSection("TracedMessages");
+        if (messagesSection.Exists()) {
+          foreach (var child in messagesSection.GetChildren()) {
+            if (!string.IsNullOrEmpty(child.Value) &&
+                Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var messageVerbosity)) {
+              tracingOptions.TracedMessages[child.Key] = messageVerbosity;
+            }
+          }
+        }
+      });
+    });
 
     // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
     foreach (var registration in coreOptions.Tags.HookRegistrations) {

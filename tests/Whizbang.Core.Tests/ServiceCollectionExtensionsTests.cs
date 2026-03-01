@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,6 +13,7 @@ using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Tests;
 
@@ -424,6 +427,182 @@ public class ServiceCollectionExtensionsTests {
     using var scope = provider.CreateScope();
     var resolvedHook = scope.ServiceProvider.GetService<TestNotificationHook>();
     await Assert.That(resolvedHook).IsSameReferenceAs(existingHook);
+  }
+
+  // ==========================================================================
+  // TracingOptions Registration Tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AddWhizbang_RegistersTracingOptions_AsIOptionsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var options = provider.GetService<IOptions<TracingOptions>>();
+    await Assert.That(options).IsNotNull();
+    await Assert.That(options!.Value).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddWhizbang_RegistersTracingOptions_AsIOptionsMonitorAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var optionsMonitor = provider.GetService<IOptionsMonitor<TracingOptions>>();
+    await Assert.That(optionsMonitor).IsNotNull();
+    await Assert.That(optionsMonitor!.CurrentValue).IsNotNull();
+  }
+
+  [Test]
+  public async Task AddWhizbang_WithTracingConfig_ConfiguresTracingOptionsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Tracing.Verbosity = TraceVerbosity.Verbose;
+      options.Tracing.Components = TraceComponents.Handlers | TraceComponents.Lifecycle;
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.Verbosity).IsEqualTo(TraceVerbosity.Verbose);
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Handlers)).IsTrue();
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Lifecycle)).IsTrue();
+    await Assert.That(tracingOptions.IsEnabled(TraceComponents.Outbox)).IsFalse();
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_ConfiguredFromWhizbangCoreOptionsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act - Configure via WhizbangCoreOptions
+    _ = services.AddWhizbang(options => {
+      options.Tracing.TracedHandlers["OrderReceptor"] = TraceVerbosity.Debug;
+      options.Tracing.TracedMessages["ReseedSystemEvent"] = TraceVerbosity.Verbose;
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert - TracingOptions should have the configured values
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.TracedHandlers.ContainsKey("OrderReceptor")).IsTrue();
+    await Assert.That(tracingOptions.TracedHandlers["OrderReceptor"]).IsEqualTo(TraceVerbosity.Debug);
+    await Assert.That(tracingOptions.TracedMessages.ContainsKey("ReseedSystemEvent")).IsTrue();
+    await Assert.That(tracingOptions.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Verbose);
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_BoundFromIConfigurationAsync() {
+    // Arrange
+    var configData = new Dictionary<string, string?> {
+      ["Whizbang:Tracing:Verbosity"] = "Verbose",
+      ["Whizbang:Tracing:EnableOpenTelemetry"] = "true",
+      ["Whizbang:Tracing:EnableStructuredLogging"] = "false"
+    };
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(configData)
+      .Build();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.Verbosity).IsEqualTo(TraceVerbosity.Verbose);
+    await Assert.That(tracingOptions.EnableOpenTelemetry).IsTrue();
+    await Assert.That(tracingOptions.EnableStructuredLogging).IsFalse();
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_IConfigurationOverridesProgrammaticDefaultsAsync() {
+    // Arrange - Configuration has Verbose, programmatic sets Normal
+    var configData = new Dictionary<string, string?> {
+      ["Whizbang:Tracing:Verbosity"] = "Debug"
+    };
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(configData)
+      .Build();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+
+    // Act - Programmatic defaults get set, then IConfiguration overrides
+    _ = services.AddWhizbang(options => {
+      options.Tracing.Verbosity = TraceVerbosity.Normal;
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert - IConfiguration should win
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.Verbosity).IsEqualTo(TraceVerbosity.Debug);
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_TracedHandlersDictionaryBoundFromConfigAsync() {
+    // Arrange
+    var configData = new Dictionary<string, string?> {
+      ["Whizbang:Tracing:TracedHandlers:OrderReceptor"] = "Debug",
+      ["Whizbang:Tracing:TracedHandlers:PaymentHandler"] = "Verbose"
+    };
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(configData)
+      .Build();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.TracedHandlers.ContainsKey("OrderReceptor")).IsTrue();
+    await Assert.That(tracingOptions.TracedHandlers["OrderReceptor"]).IsEqualTo(TraceVerbosity.Debug);
+    await Assert.That(tracingOptions.TracedHandlers.ContainsKey("PaymentHandler")).IsTrue();
+    await Assert.That(tracingOptions.TracedHandlers["PaymentHandler"]).IsEqualTo(TraceVerbosity.Verbose);
+  }
+
+  [Test]
+  public async Task AddWhizbang_TracingOptions_TracedMessagesDictionaryBoundFromConfigAsync() {
+    // Arrange
+    var configData = new Dictionary<string, string?> {
+      ["Whizbang:Tracing:TracedMessages:ReseedSystemEvent"] = "Debug",
+      ["Whizbang:Tracing:TracedMessages:CreateOrderCommand"] = "Normal"
+    };
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(configData)
+      .Build();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var tracingOptions = provider.GetRequiredService<IOptions<TracingOptions>>().Value;
+    await Assert.That(tracingOptions.TracedMessages.ContainsKey("ReseedSystemEvent")).IsTrue();
+    await Assert.That(tracingOptions.TracedMessages["ReseedSystemEvent"]).IsEqualTo(TraceVerbosity.Debug);
+    await Assert.That(tracingOptions.TracedMessages.ContainsKey("CreateOrderCommand")).IsTrue();
+    await Assert.That(tracingOptions.TracedMessages["CreateOrderCommand"]).IsEqualTo(TraceVerbosity.Normal);
   }
 
   // ==========================================================================

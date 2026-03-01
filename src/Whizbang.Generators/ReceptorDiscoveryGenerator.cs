@@ -134,8 +134,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Extract perspective sync attributes from [AwaitPerspectiveSync] attributes
     var syncAttributes = _extractSyncAttributes(classSymbol);
 
-    // Check for [TraceHandler] attribute
-    var hasTraceAttribute = _hasTraceHandlerAttribute(classSymbol);
+    // Check for [WhizbangTrace] attribute
+    var hasTraceAttribute = _hasWhizbangTraceAttribute(classSymbol);
 
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
@@ -482,15 +482,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a class symbol has the [TraceHandler] attribute.
+  /// Checks if a class symbol has the [WhizbangTrace] attribute.
   /// Returns true if the attribute is present, false otherwise.
   /// Used to determine if tracing code should be generated for a receptor.
   /// </summary>
-  private static bool _hasTraceHandlerAttribute(INamedTypeSymbol classSymbol) {
-    const string TRACE_HANDLER_ATTRIBUTE = "Whizbang.Core.Tracing.TraceHandlerAttribute";
+  private static bool _hasWhizbangTraceAttribute(INamedTypeSymbol classSymbol) {
+    const string WHIZBANG_TRACE_ATTRIBUTE = "Whizbang.Core.Tracing.WhizbangTraceAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == TRACE_HANDLER_ATTRIBUTE) {
+      if (attribute.AttributeClass?.ToDisplayString() == WHIZBANG_TRACE_ATTRIBUTE) {
         return true;
       }
     }
@@ -1388,7 +1388,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"
     );
 
-    // Load traced snippets for receptors with [TraceHandler] attribute
+    // Load traced snippets for receptors with [WhizbangTrace] attribute
     var tracedResponseSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
         TEMPLATE_SNIPPET_FILE,

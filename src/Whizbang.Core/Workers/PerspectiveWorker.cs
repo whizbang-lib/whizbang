@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
@@ -26,6 +27,7 @@ public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleInvoker? lifecycleInvoker = null,
@@ -37,6 +39,7 @@ public partial class PerspectiveWorker(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
@@ -168,6 +171,19 @@ public partial class PerspectiveWorker(
   }
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
+    // Optionally create parent activity for all perspective processing in this batch
+    // When enabled, all child activities (Perspective {name}, Lifecycle stages) will be parented to this
+    // Controlled by TracingOptions.EnableWorkerBatchSpans (default: false to reduce noise)
+    var enableBatchSpan = _tracingOptions?.CurrentValue.EnableWorkerBatchSpans ?? false;
+    using var batchActivity = enableBatchSpan
+      ? WhizbangActivitySource.Tracing.StartActivity("PerspectiveWorker ProcessBatch", ActivityKind.Internal)
+      : null;
+    if (batchActivity is not null) {
+      batchActivity.SetTag("whizbang.worker", "PerspectiveWorker");
+      batchActivity.SetTag("whizbang.service.name", _instanceProvider.ServiceName);
+      batchActivity.SetTag("whizbang.instance.id", _instanceProvider.InstanceId.ToString());
+    }
+
     // Create a scope to resolve scoped IWorkCoordinator
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -274,6 +290,12 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
+    // Add batch metrics to parent span for tracing visibility
+    batchActivity?.SetTag("whizbang.perspective.batch.work_items", workBatch.PerspectiveWork.Count);
+    batchActivity?.SetTag("whizbang.perspective.batch.groups", groupedWork.Count);
+    batchActivity?.SetTag("whizbang.perspective.batch.completions_sent", completionsToSend.Length);
+    batchActivity?.SetTag("whizbang.perspective.batch.failures_sent", failuresToSend.Length);
+
 #pragma warning disable CA1848 // Temporary diagnostic logging
     // Diagnostic logging for perspective work batch
     var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
@@ -294,6 +316,15 @@ public partial class PerspectiveWorker(
     foreach (var group in groupedWork) {
       var streamId = group.Key.StreamId;
       var perspectiveName = group.Key.PerspectiveName;
+
+      // Create parent activity for all perspective processing stages
+      // Child activities (PrePerspectiveAsync, PrePerspectiveInline, RunAsync, PostPerspectiveInline)
+      // will automatically be parented to this via Activity.Current
+      using var perspectiveActivity = WhizbangActivitySource.Tracing.StartActivity(
+        $"Perspective {perspectiveName}",
+        ActivityKind.Internal);
+      perspectiveActivity?.SetTag("whizbang.perspective.name", perspectiveName);
+      perspectiveActivity?.SetTag("whizbang.stream.id", streamId.ToString());
 
       try {
         // Look up the checkpoint to get the LastProcessedEventId

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Rocks;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -25,8 +26,7 @@ public class TracerTests {
   public async Task BeginHandlerTrace_CreatesSpanWithHandlerTagsAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace(
@@ -58,8 +58,7 @@ public class TracerTests {
   public async Task BeginHandlerTrace_ExplicitTrue_SetsExplicitTagAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace(
@@ -86,8 +85,7 @@ public class TracerTests {
   public async Task EndHandlerTrace_Success_SetsOkStatusAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace("Handler", "Message", 1, false);
@@ -103,8 +101,7 @@ public class TracerTests {
   public async Task EndHandlerTrace_EarlyReturn_SetsOkStatusAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace("Handler", "Message", 1, false);
@@ -120,8 +117,7 @@ public class TracerTests {
   public async Task EndHandlerTrace_Failed_SetsErrorStatusAndRecordsExceptionAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
     var exception = new InvalidOperationException("Handler failed");
 
     // Act
@@ -144,8 +140,7 @@ public class TracerTests {
   public async Task EndHandlerTrace_RecordsDurationAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace("Handler", "Message", 1, false);
@@ -160,8 +155,7 @@ public class TracerTests {
   public async Task Tracer_ExtractsShortHandlerNameForSpanAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act
     tracer.BeginHandlerTrace(
@@ -190,8 +184,7 @@ public class TracerTests {
   public async Task MultipleHandlers_CreateSeparateSpansAsync() {
     // Arrange
     using var collector = new InMemorySpanCollector("Whizbang.Tracing");
-    var logger = new LoggerMockBuilder().Build();
-    var tracer = new Tracer(logger);
+    var tracer = _createTracerWithDefaults();
 
     // Act - Simulate multiple handlers being invoked
     tracer.BeginHandlerTrace("Handler1", "Event", 3, false);
@@ -220,21 +213,45 @@ public class TracerTests {
     await Assert.That(explicitSpan).IsNotNull();
     await Assert.That(explicitSpan!.Tags["whizbang.trace.explicit"]).IsEqualTo(true);
   }
-}
 
-/// <summary>
-/// Builder for creating mock ILogger instances for tests.
-/// </summary>
-internal sealed class LoggerMockBuilder {
-  public ILogger<Tracer> Build() {
-    // For these tests, we just need a no-op logger since we're testing span output
-    return new NullLogger();
+  // ==========================================================================
+  // Helper Methods
+  // ==========================================================================
+
+  /// <summary>
+  /// Creates a Tracer with default options (tracing enabled for Handlers).
+  /// </summary>
+  private static Tracer _createTracerWithDefaults() {
+    var options = new TracingOptions {
+      Verbosity = TraceVerbosity.Verbose,
+      Components = TraceComponents.Handlers,
+      EnableOpenTelemetry = true,
+      EnableStructuredLogging = false // Disable logging to focus on OTel spans
+    };
+    var optionsMonitor = new TestOptionsMonitor<TracingOptions>(options);
+    var logger = new TestNullLogger();
+    return new Tracer(logger, optionsMonitor);
+  }
+
+  /// <summary>
+  /// Simple IOptionsMonitor implementation for testing.
+  /// </summary>
+  private sealed class TestOptionsMonitor<T> : IOptionsMonitor<T> {
+    private readonly T _options;
+
+    public TestOptionsMonitor(T options) {
+      _options = options;
+    }
+
+    public T CurrentValue => _options;
+    public T Get(string? name) => _options;
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
   }
 
   /// <summary>
   /// Minimal null logger implementation for testing.
   /// </summary>
-  private sealed class NullLogger : ILogger<Tracer> {
+  private sealed class TestNullLogger : ILogger<Tracer> {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => false;
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) { }
