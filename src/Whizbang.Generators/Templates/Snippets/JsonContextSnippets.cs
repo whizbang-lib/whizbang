@@ -96,11 +96,14 @@ private JsonTypeInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_
     ?? throw new InvalidOperationException(
         "No JsonTypeInfo found for element type __ELEMENT_TYPE__. " +
         "This may indicate a circular type reference. Ensure the element type is properly registered.");
+  // IReadOnlyList<T> doesn't implement IList<T>, so we can't use CreateListInfo.
+  // Use CreateIEnumerableInfo which works with any IEnumerable<T> (IReadOnlyList<T> extends it).
+  // ObjectCreator returns List<T> which implements IReadOnlyList<T> for deserialization.
   var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>> {
     ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
     ElementInfo = elementInfo
   };
-  var jsonTypeInfo = JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
+  var jsonTypeInfo = JsonMetadataServices.CreateIEnumerableInfo<global::System.Collections.Generic.IReadOnlyList<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
   jsonTypeInfo.OriginatingResolver = this;
   return jsonTypeInfo;
 }

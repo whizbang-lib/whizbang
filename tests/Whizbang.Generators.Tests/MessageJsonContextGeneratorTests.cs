@@ -5522,5 +5522,48 @@ public record JobTemplateFieldCatalogInitializedEvent : IEvent {
     await Assert.That(code).Contains("typeof(global::System.Collections.Generic.IReadOnlyList<global::JDX.Contracts.Job.JobTemplateFieldCatalogItem>)");
   }
 
+  /// <summary>
+  /// Tests that IReadOnlyList&lt;T&gt; factory does NOT use CreateListInfo (which has IList constraint).
+  /// IReadOnlyList&lt;T&gt; doesn't implement IList&lt;T&gt;, so CreateListInfo won't compile.
+  /// Must use CreateIEnumerableInfo or similar API that works with read-only collections.
+  /// </summary>
+  /// <tests>src/Whizbang.Generators/Templates/Snippets/JsonContextSnippets.cs:IREADONLYLIST_TYPE_FACTORY</tests>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IReadOnlyListFactory_DoesNotUseCreateListInfoAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CatalogItem {
+  public required string Name { get; init; }
+}
+
+public record CatalogEvent : IEvent {
+  public required IReadOnlyList<CatalogItem> Items { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Generator should produce no errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get generated code
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // The IReadOnlyList factory should NOT use CreateListInfo (IList<T> constraint violation)
+    // It should use CreateIEnumerableInfo or similar API for read-only collections
+    await Assert.That(code!).DoesNotContain("CreateListInfo<global::System.Collections.Generic.IReadOnlyList<");
+
+    // Should use the correct API for IReadOnlyList
+    await Assert.That(code).Contains("CreateIReadOnlyList_");
+  }
+
   #endregion
 }
