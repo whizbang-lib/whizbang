@@ -2068,23 +2068,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         break; // Stop walking up the chain once we hit System types
       }
 
-      // Skip abstract types that can't be serialized directly
-      // Note: We still track non-abstract base classes for polymorphism
-      if (!currentBase.IsAbstract) {
-        inheritanceList.Add(new InheritanceInfo(
-            DerivedTypeName: derivedTypeName,
-            BaseTypeName: baseTypeName,
-            IsInterface: false
-        ));
-      } else {
-        // For abstract base classes, still record the relationship
-        // so derived types are discovered for the abstract base
-        inheritanceList.Add(new InheritanceInfo(
-            DerivedTypeName: derivedTypeName,
-            BaseTypeName: baseTypeName,
-            IsInterface: false
-        ));
-      }
+      // Record the relationship for both abstract and non-abstract base classes
+      // so derived types are discovered for polymorphic serialization
+      inheritanceList.Add(new InheritanceInfo(
+          DerivedTypeName: derivedTypeName,
+          BaseTypeName: baseTypeName,
+          IsInterface: false
+      ));
 
       currentBase = currentBase.BaseType;
     }
