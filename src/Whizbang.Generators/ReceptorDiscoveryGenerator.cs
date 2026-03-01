@@ -54,6 +54,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_RESPONSE_NAME = "__RESPONSE_NAME__";
   private const string PLACEHOLDER_SYNC_ATTRIBUTES = "__SYNC_ATTRIBUTES__";
   private const string PLACEHOLDER_SYNC_AWAIT_CODE = "__SYNC_AWAIT_CODE__";
+  private const string PLACEHOLDER_HANDLER_COUNT = "__HANDLER_COUNT__";
+  private const string PLACEHOLDER_IS_EXPLICIT = "__IS_EXPLICIT__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -132,6 +134,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Extract perspective sync attributes from [AwaitPerspectiveSync] attributes
     var syncAttributes = _extractSyncAttributes(classSymbol);
 
+    // Check for [TraceHandler] attribute
+    var hasTraceAttribute = _hasTraceHandlerAttribute(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
@@ -148,7 +153,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute
       );
     }
 
@@ -165,7 +171,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute
       );
     }
 
@@ -185,7 +192,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute
       );
     }
 
@@ -202,7 +210,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
-          SyncAttributes: syncAttributes
+          SyncAttributes: syncAttributes,
+          HasTraceAttribute: hasTraceAttribute
       );
     }
 
@@ -470,6 +479,23 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Checks if a class symbol has the [TraceHandler] attribute.
+  /// Returns true if the attribute is present, false otherwise.
+  /// Used to determine if tracing code should be generated for a receptor.
+  /// </summary>
+  private static bool _hasTraceHandlerAttribute(INamedTypeSymbol classSymbol) {
+    const string TRACE_HANDLER_ATTRIBUTE = "Whizbang.Core.Tracing.TraceHandlerAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() == TRACE_HANDLER_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /// <summary>
@@ -794,6 +820,27 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ));
     }
 
+    // Validate: RPC handlers (non-void receptors) must have exactly one handler per message type
+    // Multiple handlers are allowed for void receptors (event-style dispatch)
+    // Multiple handlers are also allowed for sync receptors (ISyncReceptor) which don't go through RPC path
+    var rpcReceptorsByMessage = receptors
+        .Where(r => !r.IsVoid && !r.IsSync)  // Only async receptors with response are RPC
+        .GroupBy(r => r.MessageType)
+        .Where(g => g.Count() > 1)  // Only groups with multiple handlers
+        .ToList();
+
+    foreach (var conflictGroup in rpcReceptorsByMessage) {
+      var messageType = conflictGroup.Key;
+      var handlerNames = string.Join(", ", conflictGroup.Select(r => TypeNameUtilities.GetSimpleName(r.ClassName)));
+
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.MultipleHandlersForRpcMessage,
+          Location.None,
+          TypeNameUtilities.GetSimpleName(messageType),
+          handlerNames
+      ));
+    }
+
     var registrationSource = _generateRegistrationSource(compilation, receptors);
     context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
 
@@ -975,6 +1022,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
@@ -1000,6 +1048,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var generatedCode = voidSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
@@ -1065,7 +1114,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var generatedCode = syncSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
       syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -1080,10 +1130,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Generate Void Sync Send routing code for void sync receptors using snippet template
     var voidSyncSendRouting = new StringBuilder();
     foreach (var messageType in voidSyncReceptorsByMessage.Keys) {
+      var receptorList = voidSyncReceptorsByMessage[messageType];
+      var firstReceptor = receptorList[0];
+
       // Replace placeholders with actual types
       var generatedCode = voidSyncSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
       voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -1110,6 +1164,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
       anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
@@ -1278,6 +1333,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         generatedCode = voidSnippet
             .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
             .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
       } else {
         // Regular receptor: IReceptor<TMessage, TResponse>
@@ -1285,6 +1341,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
             .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
             .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
             .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
       }
 
@@ -1331,6 +1388,19 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"
     );
 
+    // Load traced snippets for receptors with [TraceHandler] attribute
+    var tracedResponseSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "RECEPTOR_REGISTRY_TRACED_ROUTING_SNIPPET"
+    );
+
+    var tracedVoidSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "RECEPTOR_REGISTRY_TRACED_VOID_ROUTING_SNIPPET"
+    );
+
     // Default stages for receptors WITHOUT [FireAt] attribute
     var defaultStages = new[] {
       "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
@@ -1355,34 +1425,56 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    // Generate routing code for each (receptor, stage) pair
+    // Group routing pairs by (messageType, stage) to generate combined if-blocks
+    // This ensures all receptors for the same (messageType, stage) are in a single array
+    var groupedRoutingPairs = routingPairs
+        .GroupBy(p => (p.Receptor.MessageType, p.Stage))
+        .ToList();
+
+    // Calculate handler count per (message type, stage) for tracing
+    var handlerCountByKey = groupedRoutingPairs
+        .ToDictionary(g => g.Key, g => g.Count());
+
+    // Generate routing code for each (messageType, stage) group
     var routingCode = new StringBuilder();
-    foreach (var (receptor, stage) in routingPairs) {
-      string generatedCode;
+    foreach (var group in groupedRoutingPairs) {
+      var (messageType, stage) = group.Key;
+      var receptorsInGroup = group.Select(g => g.Receptor).ToList();
+      var handlerCount = receptorsInGroup.Count;
 
-      // Generate the sync attributes code for this receptor
-      var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
+      // Generate if-block header
+      routingCode.AppendLine($"    if (messageType == typeof({messageType}) && stage == {stage}) {{");
+      routingCode.AppendLine("      return new global::Whizbang.Core.Messaging.ReceptorInfo[] {");
 
-      if (receptor.IsVoid) {
-        // Void receptor: IReceptor<TMessage>
-        generatedCode = voidSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
-            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
-      } else {
-        // Regular receptor: IReceptor<TMessage, TResponse>
-        generatedCode = responseSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage)
-            .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+      // Generate each ReceptorInfo entry in the array
+      for (int i = 0; i < receptorsInGroup.Count; i++) {
+        var receptor = receptorsInGroup[i];
+        var isLast = (i == receptorsInGroup.Count - 1);
+
+        // Generate the sync attributes code for this receptor
+        var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
+
+        // Generate ReceptorInfo entry
+        var receptorEntry = _generateReceptorInfoEntry(
+            receptor,
+            syncAttributesCode,
+            handlerCount,
+            responseSnippet,
+            voidSnippet,
+            tracedResponseSnippet,
+            tracedVoidSnippet);
+
+        // Add comma if not last entry
+        if (!isLast) {
+          receptorEntry = receptorEntry.TrimEnd() + ",";
+        }
+
+        routingCode.AppendLine(TemplateUtilities.IndentCode(receptorEntry, "        "));
       }
 
-      routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
+      // Generate if-block footer
+      routingCode.AppendLine("      };");
+      routingCode.AppendLine("    }");
     }
 
     // Replace template markers
@@ -1393,6 +1485,106 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode.ToString());
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates a single ReceptorInfo entry for the routing array.
+  /// This is used when multiple receptors handle the same (messageType, stage) combination.
+  /// </summary>
+  private static string _generateReceptorInfoEntry(
+      ReceptorInfo receptor,
+      string syncAttributesCode,
+      int handlerCount,
+      string responseSnippet,
+      string voidSnippet,
+      string tracedResponseSnippet,
+      string tracedVoidSnippet) {
+
+    string snippet;
+    if (receptor.HasTraceAttribute) {
+      snippet = receptor.IsVoid ? tracedVoidSnippet : tracedResponseSnippet;
+    } else {
+      snippet = receptor.IsVoid ? voidSnippet : responseSnippet;
+    }
+
+    // Extract just the ReceptorInfo entry from the snippet (skip the if-block wrapper)
+    // The snippets have structure: if (...) { return new ReceptorInfo[] { <entry> }; }
+    // We need just the <entry> part
+    var entryStart = snippet.IndexOf("new global::Whizbang.Core.Messaging.ReceptorInfo(", StringComparison.Ordinal);
+    if (entryStart < 0) {
+      // Fallback: generate manually if snippet structure is unexpected
+      return _generateReceptorInfoEntryManually(receptor, syncAttributesCode, handlerCount);
+    }
+
+    // Find matching closing parenthesis for the ReceptorInfo constructor
+    int parenDepth = 0;
+    int entryEnd = entryStart;
+    for (int i = entryStart; i < snippet.Length; i++) {
+      if (snippet[i] == '(') {
+        parenDepth++;
+      } else if (snippet[i] == ')') {
+        parenDepth--;
+        if (parenDepth == 0) {
+          entryEnd = i + 1;
+          break;
+        }
+      }
+    }
+
+    var entryTemplate = snippet.Substring(entryStart, entryEnd - entryStart);
+
+    // Apply replacements
+    var result = entryTemplate
+        .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+        .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+        .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
+        .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+
+    if (!receptor.IsVoid && receptor.ResponseType is not null) {
+      result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
+    }
+
+    if (receptor.HasTraceAttribute) {
+      result = result
+          .Replace(PLACEHOLDER_HANDLER_COUNT, handlerCount.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_IS_EXPLICIT, "true");
+    }
+
+    return result;
+  }
+
+  /// <summary>
+  /// Fallback method to generate ReceptorInfo entry manually if snippet extraction fails.
+  /// </summary>
+  private static string _generateReceptorInfoEntryManually(
+      ReceptorInfo receptor,
+      string syncAttributesCode,
+      int handlerCount) {
+
+    var sb = new StringBuilder();
+    sb.AppendLine($"new global::Whizbang.Core.Messaging.ReceptorInfo(");
+    sb.AppendLine($"  MessageType: typeof({receptor.MessageType}),");
+    sb.AppendLine($"  ReceptorId: \"{receptor.ClassName}\",");
+    sb.AppendLine($"  InvokeAsync: async (sp, msg, ct) => {{");
+
+    if (receptor.IsVoid) {
+      sb.AppendLine($"    var receptor = sp.GetRequiredService<{RECEPTOR_INTERFACE_NAME}<{receptor.MessageType}>>();");
+      sb.AppendLine($"    await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
+      sb.AppendLine($"    return null;");
+    } else {
+      sb.AppendLine($"    var receptor = sp.GetRequiredService<{RECEPTOR_INTERFACE_NAME}<{receptor.MessageType}, {receptor.ResponseType}>>();");
+      sb.AppendLine($"    var result = await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
+      sb.AppendLine($"    if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {{");
+      sb.AppendLine($"      return routedResult.Value;");
+      sb.AppendLine($"    }}");
+      sb.AppendLine($"    return result;");
+    }
+
+    sb.AppendLine($"  }},");
+    sb.AppendLine($"  SyncAttributes: {syncAttributesCode}");
+    sb.Append(')');
+
+    return sb.ToString();
   }
 
   /// <summary>

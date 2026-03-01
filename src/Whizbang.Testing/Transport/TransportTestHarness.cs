@@ -160,7 +160,8 @@ public static class TransportTestHarness {
             Type = HopType.Current,
             Timestamp = DateTimeOffset.UtcNow,
             Topic = "test-topic",
-            ServiceInstance = ServiceInstanceInfo.Unknown
+            ServiceInstance = ServiceInstanceInfo.Unknown,
+            TraceParent = System.Diagnostics.Activity.Current?.Id
           }
         ]
       },

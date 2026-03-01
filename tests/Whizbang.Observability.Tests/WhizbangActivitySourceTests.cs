@@ -145,4 +145,79 @@ public class WhizbangActivitySourceTests {
     await Assert.That(activity).IsNotNull();
     await Assert.That(activity!.Source.Name).IsEqualTo("Whizbang.Transport");
   }
+
+  [Test]
+  public async Task TracingActivitySource_IsInitializedAsync() {
+    // Act
+    var activitySource = WhizbangActivitySource.Tracing;
+
+    // Assert
+    await Assert.That(activitySource).IsNotNull();
+    await Assert.That(activitySource.Name).IsEqualTo("Whizbang.Tracing");
+    await Assert.That(activitySource.Version).IsEqualTo("1.0.0");
+  }
+
+  [Test]
+  public async Task TracingActivitySource_CanCreateActivitiesAsync() {
+    // Arrange
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Tracing",
+      Sample = (ref _) => ActivitySamplingResult.AllData
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    // Act
+    using var activity = WhizbangActivitySource.Tracing.StartActivity("HandlerTrace");
+
+    // Assert
+    await Assert.That(activity).IsNotNull();
+    await Assert.That(activity!.Source.Name).IsEqualTo("Whizbang.Tracing");
+  }
+
+  [Test]
+  public async Task TracingActivity_IsChildOfExecutionActivity_WhenNestedAsync() {
+    // Arrange - Listen to BOTH sources
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Execution" || s.Name == "Whizbang.Tracing",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    // Act - Start parent (Dispatch) then child (Handler) - simulating what Dispatcher does
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity("Dispatch TestCommand");
+    dispatchActivity?.SetTag("whizbang.message.type", "TestCommand");
+
+    // This simulates what ITracer.BeginHandlerTrace does
+    using var handlerActivity = WhizbangActivitySource.Tracing.StartActivity("Handler: TestHandler");
+    handlerActivity?.SetTag("whizbang.handler.name", "TestHandler");
+
+    // Assert - Handler activity should be child of Dispatch activity
+    await Assert.That(dispatchActivity).IsNotNull();
+    await Assert.That(handlerActivity).IsNotNull();
+
+    // Verify parent-child relationship - THIS IS THE KEY ASSERTION
+    await Assert.That(handlerActivity!.ParentId).IsEqualTo(dispatchActivity!.Id);
+    await Assert.That(handlerActivity.ParentSpanId).IsEqualTo(dispatchActivity.SpanId);
+
+    // Verify both activities share the same TraceId
+    await Assert.That(handlerActivity.TraceId).IsEqualTo(dispatchActivity.TraceId);
+  }
+
+  [Test]
+  public async Task TracingActivity_WithoutParent_HasNoParentIdAsync() {
+    // Arrange - Only listen to Tracing source (no parent activity)
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Tracing",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    // Act - Start handler activity WITHOUT a parent dispatch activity
+    using var handlerActivity = WhizbangActivitySource.Tracing.StartActivity("Handler: OrphanHandler");
+
+    // Assert - Should have no parent
+    await Assert.That(handlerActivity).IsNotNull();
+    await Assert.That(handlerActivity!.ParentId).IsNull();
+    await Assert.That(handlerActivity.ParentSpanId.ToString()).IsEqualTo("0000000000000000");
+  }
 }

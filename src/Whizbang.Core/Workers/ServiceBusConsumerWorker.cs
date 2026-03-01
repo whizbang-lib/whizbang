@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,6 +125,27 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+    // Restore distributed trace context from the incoming message's TraceParent
+    // This enables cross-service tracing by linking spans from sender to receiver
+    Activity? inboxActivity = null;
+    var traceParent = envelope.Hops
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      // Start a new activity as child of the sender's span
+      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
+        $"Inbox {messageType}",
+        ActivityKind.Consumer,
+        parentContext
+      );
+      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+      inboxActivity?.SetTag("messaging.operation", "receive");
+      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
+    }
+
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
@@ -271,9 +293,15 @@ public partial class ServiceBusConsumerWorker(
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
 
       // Scope will be disposed automatically by 'await using' at end of method
+      inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
+      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
+      inboxActivity?.SetTag("exception.message", ex.Message);
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw; // Let the transport handle retry/dead-letter
+    } finally {
+      inboxActivity?.Dispose();
     }
   }
 

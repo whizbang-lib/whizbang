@@ -80,6 +80,12 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   }
 
   /// <inheritdoc />
+  public long GetCurrentTimestamp() {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    return Stopwatch.GetTimestamp();
+  }
+
+  /// <inheritdoc />
   public void Dispose() {
     if (_disposed) {
       return;

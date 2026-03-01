@@ -64,8 +64,18 @@ public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.
     var registry = registryScope.ServiceProvider.GetService<ILifecycleReceptorRegistry>();
     if (registry is not null) {
       var handlers = registry.GetHandlers(messageType, stage);
+      var handlerIndex = 0;
       foreach (var handler in handlers) {
+        // Create activity for each lifecycle receptor invocation
+        using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
+          $"LifecycleReceptor {messageType.Name}[{handlerIndex}]",
+          ActivityKind.Internal);
+        receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
+        receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
+        receptorActivity?.SetTag("whizbang.receptor.index", handlerIndex);
+
         await handler(message, context, cancellationToken);
+        handlerIndex++;
       }
     }
   }

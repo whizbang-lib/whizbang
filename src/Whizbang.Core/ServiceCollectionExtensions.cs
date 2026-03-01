@@ -6,6 +6,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core;
 
@@ -133,6 +134,7 @@ public static class ServiceCollectionExtensions {
     // Register perspective synchronization services
     // Enables read-your-writes consistency for perspectives
     services.TryAddSingleton<IDebuggerAwareClock, DebuggerAwareClock>();
+    services.TryAddSingleton<ITracer, Tracer>(); // Handler tracing with OpenTelemetry integration
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>(); // Singleton for cross-scope signaling
     // Register scoped event tracker with factory that sets AsyncLocal for singleton Dispatcher access
     services.TryAddScoped<IScopedEventTracker>(sp => {

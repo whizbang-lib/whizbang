@@ -69,4 +69,10 @@ public interface IDebuggerAwareClock : IDisposable {
   /// Useful for VS Code extension integration or test synchronization.
   /// </remarks>
   IDisposable OnPauseStateChanged(Action<bool> handler);
+
+  /// <summary>
+  /// Gets the current timestamp in Stopwatch ticks, adjusted for debugger pauses.
+  /// </summary>
+  /// <returns>Current timestamp in high-resolution ticks.</returns>
+  long GetCurrentTimestamp();
 }
