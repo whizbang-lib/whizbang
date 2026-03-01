@@ -280,79 +280,144 @@ public partial class WorkCoordinatorPublisherWorker(
         await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
         var receptorInvoker = lifecycleScope.ServiceProvider.GetService<IReceptorInvoker>();
 
+        // Extract trace context from envelope hops FIRST to parent all lifecycle spans
+        // This ensures all outbox processing appears as children of the original request trace
+        var latestHop = work.Envelope.Hops.LastOrDefault();
+        ActivityContext traceContext = default;
+        var traceParentValue = latestHop?.TraceParent;
+        var parseSucceeded = false;
+        if (traceParentValue is not null &&
+            ActivityContext.TryParse(traceParentValue, null, out var parsedContext)) {
+          traceContext = parsedContext;
+          parseSucceeded = true;
+        }
+
         // PreOutbox lifecycle stages (before publishing to transport)
         // ALL receptors registered at PreOutbox stages fire here, including:
         // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
         // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
-        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreOutboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Outbox,
-            AttemptNumber = work.Attempts
-          };
-
-          // Invoke compile-time business receptors
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+        // Always trace lifecycle stages even when no receptors are registered
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext)) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PreOutboxAsync,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+            }
           }
-          // Invoke runtime test/lifecycle receptors
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-          }
+        }
 
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreOutboxInline };
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
-          }
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext)) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PreOutboxInline,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+            }
           }
         }
 
         // Publish via strategy
         LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
-        var result = await _publishStrategy.PublishAsync(work, stoppingToken);
+        MessagePublishResult result;
+
+        using (var activity = WhizbangActivitySource.Tracing.StartActivity(
+          "Outbox PublishAsync",
+          ActivityKind.Producer,
+          parentContext: traceContext)) {
+          activity?.SetTag("whizbang.message.id", work.MessageId.ToString());
+          activity?.SetTag("whizbang.message.type", work.MessageType);
+          activity?.SetTag("whizbang.message.destination", work.Destination ?? "local");
+          activity?.SetTag("whizbang.message.attempts", work.Attempts);
+          activity?.SetTag("whizbang.trace.context_restored", traceContext != default);
+          activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops.Count);
+          activity?.SetTag("whizbang.trace.traceparent_raw", traceParentValue ?? "(null)");
+          activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
+
+          result = await _publishStrategy.PublishAsync(work, stoppingToken);
+
+          activity?.SetTag("whizbang.publish.success", result.Success.ToString());
+          activity?.SetTag("whizbang.publish.status", result.CompletedStatus.ToString());
+          if (!result.Success && result.Error != null) {
+            activity?.SetTag("whizbang.publish.error", result.Error);
+            activity?.SetTag("whizbang.publish.failure_reason", result.Reason.ToString());
+          }
+        }
         LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
         // PostOutbox lifecycle stages (after publishing to transport)
         // ALL receptors registered at PostOutbox stages fire here
         // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
-        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+        // Always trace lifecycle stages even when no receptors are registered
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext)) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            // Reconstruct envelope with deserialized payload to preserve security context
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostOutboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Outbox,
-            AttemptNumber = work.Attempts
-          };
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PostOutboxAsync,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
 
-          // Invoke compile-time business receptors
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            // Invoke compile-time business receptors
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            }
+            // Invoke runtime test/lifecycle receptors
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            }
           }
-          // Invoke runtime test/lifecycle receptors
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-          }
+        }
 
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostOutboxInline };
-          if (receptorInvoker is not null) {
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-          }
-          if (_lifecycleInvoker is not null) {
-            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext)) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            // Reconstruct envelope with deserialized payload to preserve security context
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PostOutboxInline,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+            }
           }
         }
 

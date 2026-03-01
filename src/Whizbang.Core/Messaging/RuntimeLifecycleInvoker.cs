@@ -60,11 +60,22 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
       return;
     }
 
-    // Invoke all registered receptors
+    // Invoke all registered receptors with individual tracing
+    var handlerIndex = 0;
     foreach (var handler in handlers) {
+      // Create activity for each lifecycle receptor invocation
+      using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
+        $"LifecycleReceptor {messageType.Name}[{handlerIndex}]",
+        System.Diagnostics.ActivityKind.Internal);
+      receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
+      receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
+      receptorActivity?.SetTag("whizbang.receptor.index", handlerIndex);
+
       try {
         await handler(message, context, cancellationToken).ConfigureAwait(false);
       } catch (Exception ex) {
+        receptorActivity?.SetTag("whizbang.receptor.error", true);
+        receptorActivity?.SetTag("whizbang.receptor.error_type", ex.GetType().FullName);
         // Log error but don't stop processing other receptors
         // In production, this should use ILogger, but for now we'll rethrow to catch test issues
         // FUTURE: Add ILogger support for error logging
@@ -72,6 +83,8 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
           $"Lifecycle receptor failed at stage {stage} for message type {messageType.Name}: {ex.Message}",
           ex);
       }
+
+      handlerIndex++;
     }
   }
 }

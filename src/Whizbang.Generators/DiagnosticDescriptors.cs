@@ -604,6 +604,28 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
+  // RPC Handler Validation Diagnostics (WHIZ080-089)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ080: Warning - Multiple handlers detected for RPC message type (with return value).
+  /// RPC patterns (LocalInvoke with result) require exactly one handler because we can only return one result.
+  /// Multiple handlers are allowed for void receptors (event handlers) but not for RPC (command handlers with response).
+  /// Note: Disabled by default pending implementation of key-based RPC handler selection.
+  /// Future: Handlers can be decorated with [RpcKey] and RPC calls can specify which handler to use.
+  /// </summary>
+  /// <docs>diagnostics/whiz080</docs>
+  public static readonly DiagnosticDescriptor MultipleHandlersForRpcMessage = new(
+      id: "WHIZ080",
+      title: "Multiple Handlers for RPC Message",
+      messageFormat: "Multiple handlers found for '{0}' which returns a response (found: {1}), but RPC requires exactly one handler",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: false,  // Disabled pending key-based RPC handler selection feature
+      description: "When using LocalInvoke<TMessage, TResponse>() (RPC pattern), only one handler can be registered because we need to return a single result. For event-style dispatch where multiple handlers should respond, use IReceptor<TMessage> (void receptor) instead."
+  );
+
+  // ========================================
   // Physical Field Diagnostics (WHIZ801-809)
   // ========================================
 

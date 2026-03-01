@@ -344,6 +344,13 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       // This enables cross-scope sync where one handler emits events and another waits
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
@@ -366,26 +373,47 @@ public abstract class Dispatcher(
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
       // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = null
-        };
+      // Always trace lifecycle stages even when no receptors are registered
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        }
+      }
 
-        // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        }
+      }
 
-        // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
-
-        // Fire LocalImmediateInline stage (blocking, local-only)
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        }
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -475,6 +503,12 @@ public abstract class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
+      // Start dispatch activity to serve as parent for handler traces
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
@@ -544,6 +578,18 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
+
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
 
@@ -560,26 +606,47 @@ public abstract class Dispatcher(
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
       // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = null
-        };
+      // Always trace lifecycle stages even when no receptors are registered
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        }
+      }
 
-        // Fire ImmediateAsync stage (fires after receptor returns, before DB writes)
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        }
+      }
 
-        // Fire LocalImmediateAsync stage (same timing as ImmediateAsync but for local-only receptors)
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
-
-        // Fire LocalImmediateInline stage (blocking, local-only)
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        }
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
@@ -636,6 +703,13 @@ public abstract class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
@@ -648,21 +722,47 @@ public abstract class Dispatcher(
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = null
-        };
+      // Always trace lifecycle stages even when no receptors are registered
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+        }
+      }
 
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateAsync };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
-        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.LocalImmediateInline };
-        await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
+        }
+      }
+
+      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
+        }
       }
     } finally {
       _envelopeRegistry?.Unregister(envelope);
@@ -912,6 +1012,11 @@ public abstract class Dispatcher(
     object message,
     Type messageType
   ) {
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
     var result = await invoker(message);
     await _cascadeEventsFromResultAsync(result, messageType);
 
@@ -945,6 +1050,10 @@ public abstract class Dispatcher(
     object message,
     Type messageType
   ) {
+    // Start dispatch activity to serve as parent for handler traces
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var msgTypeName = messageType.Name;
@@ -1076,6 +1185,11 @@ public abstract class Dispatcher(
     object message,
     Type messageType
   ) {
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var msgTypeName = messageType.Name;
@@ -1120,6 +1234,13 @@ public abstract class Dispatcher(
       if (_traceStore != null) {
         await _traceStore.StoreAsync(envelope);
       }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
@@ -1227,6 +1348,18 @@ public abstract class Dispatcher(
     try {
       if (_traceStore != null) {
         await _traceStore.StoreAsync(envelope);
+      }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
       }
 
       // Invoke using delegate with unwrapped message - zero reflection, strongly typed
@@ -1395,6 +1528,7 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
+    var messageType = message.GetType();
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
@@ -1403,6 +1537,13 @@ public abstract class Dispatcher(
       if (_traceStore != null) {
         await _traceStore.StoreAsync(envelope);
       }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       await invoker(message);
@@ -1437,6 +1578,13 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       // Invoke using delegate - zero reflection, strongly typed
       await invoker(message);
     } finally {
@@ -1456,6 +1604,11 @@ public abstract class Dispatcher(
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
 
     // Invoke synchronously
     invoker(message);
@@ -1559,6 +1712,13 @@ public abstract class Dispatcher(
       if (_traceStore != null) {
         await _traceStore.StoreAsync(envelope);
       }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate with unwrapped message - zero reflection, strongly typed
       await invoker(actualMessage);
@@ -1729,6 +1889,13 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
       await _cascadeEventsFromResultAsync(result, messageType);
@@ -1774,6 +1941,13 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
     } finally {
@@ -1811,7 +1985,8 @@ public abstract class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation()
+      SecurityContext = _getSecurityContextForPropagation(),
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
     envelope.AddHop(hop);
@@ -1851,7 +2026,8 @@ public abstract class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation()
+      SecurityContext = _getSecurityContextForPropagation(),
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
     envelope.AddHop(hop);
@@ -2433,7 +2609,8 @@ public abstract class Dispatcher(
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = finalSecurityContext
+        SecurityContext = finalSecurityContext,
+        TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       envelope.AddHop(hop);
 
@@ -2441,6 +2618,8 @@ public abstract class Dispatcher(
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+        CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
+          hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
       }
 #pragma warning restore CA1848
 
@@ -2539,7 +2718,8 @@ public abstract class Dispatcher(
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext()
+        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext(),
+        TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       jsonEnvelope.AddHop(hop);
 
@@ -2723,6 +2903,19 @@ public abstract class Dispatcher(
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
+      // Start dispatch activity to serve as parent for handler traces (on receiving end)
+      // The activity context will be propagated through the outbox message
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
+
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
 
@@ -2797,6 +2990,19 @@ public abstract class Dispatcher(
       // WARN: This creates MessageEnvelope<object> - type information is lost
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+      // Start dispatch activity to serve as parent for handler traces (on receiving end)
+      // The activity context will be propagated through the outbox message
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);

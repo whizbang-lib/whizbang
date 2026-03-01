@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -342,69 +343,115 @@ public partial class PerspectiveWorker(
 
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
-        if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
-          try {
-            // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
-            var eventTypes = _eventTypeProvider.GetEventTypes();
-            if (eventTypes.Count > 0) {
-              // Load events that will be processed to invoke PrePerspective receptors
-              var upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
-                streamId,
-                lastProcessedEventId,
-                Guid.Empty, // Read all events after lastProcessedEventId
-                eventTypes,
-                cancellationToken
-              );
+        // Always trace lifecycle stages even when no receptors are registered
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal)) {
+          if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
+            try {
+              // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
+              var eventTypes = _eventTypeProvider.GetEventTypes();
+              if (eventTypes.Count > 0) {
+                // Load events that will be processed to invoke PrePerspective receptors
+                var upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
+                  streamId,
+                  lastProcessedEventId,
+                  Guid.Empty, // Read all events after lastProcessedEventId
+                  eventTypes,
+                  cancellationToken
+                );
 
-              if (upcomingEvents.Count > 0) {
-                var context = new LifecycleExecutionContext {
-                  CurrentStage = LifecycleStage.PrePerspectiveAsync,
-                  StreamId = streamId,
-                  LastProcessedEventId = lastProcessedEventId,
-                  MessageSource = MessageSource.Local,
-                  AttemptNumber = 1 // Perspectives process from local event store
-                };
+                if (upcomingEvents.Count > 0) {
+                  var context = new LifecycleExecutionContext {
+                    CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                    StreamId = streamId,
+                    LastProcessedEventId = lastProcessedEventId,
+                    MessageSource = MessageSource.Local,
+                    AttemptNumber = 1 // Perspectives process from local event store
+                  };
 
-                // PrePerspectiveAsync (non-blocking)
-                foreach (var envelope in upcomingEvents) {
-                  await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                  await _lifecycleInvoker.InvokeAsync(
-                    envelope,
-                    LifecycleStage.PrePerspectiveAsync,
-                    context,
-                    cancellationToken
-                  );
+                  // PrePerspectiveAsync (non-blocking)
+                  foreach (var envelope in upcomingEvents) {
+                    await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+                    await _lifecycleInvoker.InvokeAsync(
+                      envelope,
+                      LifecycleStage.PrePerspectiveAsync,
+                      context,
+                      cancellationToken
+                    );
+                  }
                 }
+              } else {
+                LogWarningNoEventTypes(_logger, perspectiveName, streamId);
+              }
+            } catch (Exception ex) {
+              LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+              throw; // Never swallow exceptions
+            }
+          }
+        }
 
-                // PrePerspectiveInline (blocking)
-                context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
-                foreach (var envelope in upcomingEvents) {
-                  await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                  await _lifecycleInvoker.InvokeAsync(
-                    envelope,
-                    LifecycleStage.PrePerspectiveInline,
-                    context,
-                    cancellationToken
-                  );
+        // PrePerspectiveInline (blocking)
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal)) {
+          if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
+            try {
+              var eventTypes = _eventTypeProvider.GetEventTypes();
+              if (eventTypes.Count > 0) {
+                var upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
+                  streamId,
+                  lastProcessedEventId,
+                  Guid.Empty,
+                  eventTypes,
+                  cancellationToken
+                );
+
+                if (upcomingEvents.Count > 0) {
+                  var context = new LifecycleExecutionContext {
+                    CurrentStage = LifecycleStage.PrePerspectiveInline,
+                    StreamId = streamId,
+                    LastProcessedEventId = lastProcessedEventId,
+                    MessageSource = MessageSource.Local,
+                    AttemptNumber = 1
+                  };
+
+                  foreach (var envelope in upcomingEvents) {
+                    await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+                    await _lifecycleInvoker.InvokeAsync(
+                      envelope,
+                      LifecycleStage.PrePerspectiveInline,
+                      context,
+                      cancellationToken
+                    );
+                  }
                 }
               }
-            } else {
-              LogWarningNoEventTypes(_logger, perspectiveName, streamId);
+            } catch (Exception ex) {
+              LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+              throw;
             }
-          } catch (Exception ex) {
-            LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
-            throw; // Never swallow exceptions
           }
         }
 
         // Invoke runner to process ALL events for this stream/perspective
         // The runner will read from lastProcessedEventId onwards and process all available events
-        var result = await runner.RunAsync(
-          streamId,
-          perspectiveName,
-          lastProcessedEventId,
-          cancellationToken
-        );
+        // NOTE: Perspective runs aggregate events from multiple request traces. Trace linking would require
+        // loading events twice (once to extract trace contexts, once in runner) or refactoring the runner.
+        // For now, perspectives create independent traces. The processed events have their own trace context
+        // in their Hops which can be correlated via MessageId/CorrelationId attributes.
+        PerspectiveCheckpointCompletion result;
+        using (var activity = WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) {
+          activity?.SetTag("whizbang.perspective.name", perspectiveName);
+          activity?.SetTag("whizbang.stream.id", streamId.ToString());
+          activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
+
+          result = await runner.RunAsync(
+            streamId,
+            perspectiveName,
+            lastProcessedEventId,
+            cancellationToken
+          );
+
+          activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
+          activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+        }
 
         // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
         // Only load once to avoid duplicate queries and potential transaction issues
@@ -462,35 +509,38 @@ public partial class PerspectiveWorker(
 
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
+        // Always trace lifecycle stages even when no receptors are registered
         LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, _lifecycleInvoker is not null);
 
-        if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
-          LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
+        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal)) {
+          if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+            LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
 
-          await _invokeLifecycleReceptorsForEventsAsync(
-            processedEvents,
-            streamId,
-            perspectiveName,
-            result.PerspectiveType,
-            result.LastEventId,
-            LifecycleStage.PostPerspectiveInline,
-            scope.ServiceProvider,
-            cancellationToken
-          );
-          LogPostPerspectiveInlineCompleted(_logger);
-        } else {
-          if (processedEvents.Count == 0) {
-            LogSkippingPostPerspectiveInlineNoEvents(_logger);
-            if (_logger.IsEnabled(LogLevel.Debug)) {
-              var lastProcessed = lastProcessedEventId.GetValueOrDefault();
-              var current = result.LastEventId;
-              LogDiagnosticNoEvents(_logger, perspectiveName, streamId, lastProcessed, current);
+            await _invokeLifecycleReceptorsForEventsAsync(
+              processedEvents,
+              streamId,
+              perspectiveName,
+              result.PerspectiveType,
+              result.LastEventId,
+              LifecycleStage.PostPerspectiveInline,
+              scope.ServiceProvider,
+              cancellationToken
+            );
+            LogPostPerspectiveInlineCompleted(_logger);
+          } else {
+            if (processedEvents.Count == 0) {
+              LogSkippingPostPerspectiveInlineNoEvents(_logger);
+              if (_logger.IsEnabled(LogLevel.Debug)) {
+                var lastProcessed = lastProcessedEventId.GetValueOrDefault();
+                var current = result.LastEventId;
+                LogDiagnosticNoEvents(_logger, perspectiveName, streamId, lastProcessed, current);
+              }
             }
-          }
-          if (_lifecycleInvoker is null) {
-            LogSkippingPostPerspectiveInlineNoInvoker(_logger);
-            if (_logger.IsEnabled(LogLevel.Debug)) {
-              LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
+            if (_lifecycleInvoker is null) {
+              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
+              if (_logger.IsEnabled(LogLevel.Debug)) {
+                LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
+              }
             }
           }
         }

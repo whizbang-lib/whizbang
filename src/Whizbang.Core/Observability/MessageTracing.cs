@@ -109,7 +109,8 @@ public static class MessageTracing {
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Duration = duration ?? TimeSpan.Zero
+      Duration = duration ?? TimeSpan.Zero,
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
   }
 }

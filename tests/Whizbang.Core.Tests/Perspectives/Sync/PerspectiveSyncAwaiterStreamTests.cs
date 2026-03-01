@@ -286,6 +286,8 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     public IDisposable OnPauseStateChanged(Action<bool> handler) => new NoOpDisposable();
 
+    public long GetCurrentTimestamp() => System.Diagnostics.Stopwatch.GetTimestamp();
+
     public void Dispose() { }
 
     private sealed class NoOpDisposable : IDisposable {

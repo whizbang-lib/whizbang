@@ -174,7 +174,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };

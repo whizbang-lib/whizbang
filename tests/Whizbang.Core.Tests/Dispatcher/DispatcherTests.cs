@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -241,6 +242,66 @@ public class DispatcherTests {
     await Assert.That(receipt).IsNotNull();
     await Assert.That(receipt.CausationId).IsEqualTo(causationId);
     await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
+  }
+
+  // ========================================
+  // ACTIVITY TRACING TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
+    // Arrange - Set up listener for Whizbang.Execution source
+    var capturedActivities = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Execution",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStarted = activity => {
+        if (activity.OperationName.StartsWith("Dispatch ", StringComparison.Ordinal)) {
+          capturedActivities.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - Verify dispatch activity was created
+    await Assert.That(capturedActivities.Count).IsGreaterThanOrEqualTo(1);
+    var dispatchActivity = capturedActivities.First(a => a.OperationName.Contains("CreateOrder"));
+    await Assert.That(dispatchActivity.OperationName).IsEqualTo("Dispatch CreateOrder");
+    await Assert.That(dispatchActivity.GetTagItem("whizbang.message.type")).IsNotNull();
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
+    // Arrange - Set up listener for Whizbang.Execution source
+    var capturedActivities = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Execution",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStarted = activity => {
+        if (activity.OperationName.StartsWith("Dispatch ", StringComparison.Ordinal)) {
+          capturedActivities.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    await dispatcher.LocalInvokeAsync<OrderCreated>(command);
+
+    // Assert - Verify dispatch activity was created
+    await Assert.That(capturedActivities.Count).IsGreaterThanOrEqualTo(1);
+    var dispatchActivity = capturedActivities.First(a => a.OperationName.Contains("CreateOrder"));
+    await Assert.That(dispatchActivity.OperationName).IsEqualTo("Dispatch CreateOrder");
+    await Assert.That(dispatchActivity.GetTagItem("whizbang.message.type")).IsNotNull();
   }
 
   // Helper method to create dispatcher

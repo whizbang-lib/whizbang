@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -180,68 +181,86 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
     foreach (var receptor in receptors) {
-      // Check for [AwaitPerspectiveSync] attributes and await sync if needed
-      if (_syncAwaiter is not null && receptor.SyncAttributes is { Count: > 0 }) {
-        foreach (var syncAttr in receptor.SyncAttributes) {
-          var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
-          SyncResult syncResult;
+      // Start activity for this receptor invocation - enables per-handler tracing
+      using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
+        $"Receptor {receptor.ReceptorId}",
+        ActivityKind.Internal);
+      receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
+      receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
+      receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
 
-          // Use stream-based sync when stream ID extractor is available
-          if (extractedStreamId.HasValue) {
-            var eventTypes = syncAttr.EventTypes?.ToArray();
-            // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
-            // Without this, WaitForStreamAsync has no way to know what event to wait for
-            // when the event was emitted in a different scope (e.g., command handler)
-            syncResult = await _syncAwaiter.WaitForStreamAsync(
-                syncAttr.PerspectiveType,
-                extractedStreamId.Value,
-                eventTypes,
-                timeout,
-                eventIdToAwait: context?.EventId,
-                cancellationToken).ConfigureAwait(false);
+      try {
+        // Check for [AwaitPerspectiveSync] attributes and await sync if needed
+        if (_syncAwaiter is not null && receptor.SyncAttributes is { Count: > 0 }) {
+          foreach (var syncAttr in receptor.SyncAttributes) {
+            var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
+            SyncResult syncResult;
 
-            // Create and set SyncContext for receptor access via AsyncLocal
-            var syncContext = new SyncContext {
-              StreamId = extractedStreamId.Value,
-              PerspectiveType = syncAttr.PerspectiveType,
-              Outcome = syncResult.Outcome,
-              EventsAwaited = syncResult.EventsAwaited,
-              ElapsedTime = syncResult.ElapsedTime,
-              FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
-            };
-            SyncContextAccessor.CurrentContext = syncContext;
-          } else {
-            // Fall back to scope-based sync when no stream ID extractor
-            var syncOptions = syncAttr.EventTypes is { Count: > 0 }
-                ? SyncFilter.ForEventTypes(syncAttr.EventTypes.ToArray()).WithTimeout(timeout).Build()
-                : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
+            // Use stream-based sync when stream ID extractor is available
+            if (extractedStreamId.HasValue) {
+              var eventTypes = syncAttr.EventTypes?.ToArray();
+              // Pass the incoming event's ID for cross-scope sync - this is CRITICAL
+              // Without this, WaitForStreamAsync has no way to know what event to wait for
+              // when the event was emitted in a different scope (e.g., command handler)
+              syncResult = await _syncAwaiter.WaitForStreamAsync(
+                  syncAttr.PerspectiveType,
+                  extractedStreamId.Value,
+                  eventTypes,
+                  timeout,
+                  eventIdToAwait: context?.EventId,
+                  cancellationToken).ConfigureAwait(false);
 
-            syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+              // Create and set SyncContext for receptor access via AsyncLocal
+              var syncContext = new SyncContext {
+                StreamId = extractedStreamId.Value,
+                PerspectiveType = syncAttr.PerspectiveType,
+                Outcome = syncResult.Outcome,
+                EventsAwaited = syncResult.EventsAwaited,
+                ElapsedTime = syncResult.ElapsedTime,
+                FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
+              };
+              SyncContextAccessor.CurrentContext = syncContext;
+            } else {
+              // Fall back to scope-based sync when no stream ID extractor
+              var syncOptions = syncAttr.EventTypes is { Count: > 0 }
+                  ? SyncFilter.ForEventTypes(syncAttr.EventTypes.ToArray()).WithTimeout(timeout).Build()
+                  : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
+
+              syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);
+            }
+
+            // If FireBehavior is FireOnSuccess and we timed out, throw an exception
+            if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
+              throw new PerspectiveSyncTimeoutException(
+                  syncAttr.PerspectiveType,
+                  timeout,
+                  $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
+            }
+            // FireBehavior.FireAlways continues regardless of timeout
+            // FireBehavior.FireOnEachEvent is future functionality
           }
-
-          // If FireBehavior is FireOnSuccess and we timed out, throw an exception
-          if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
-            throw new PerspectiveSyncTimeoutException(
-                syncAttr.PerspectiveType,
-                timeout,
-                $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {receptor.ReceptorId}");
-          }
-          // FireBehavior.FireAlways continues regardless of timeout
-          // FireBehavior.FireOnEachEvent is future functionality
         }
-      }
 
-      // InvokeAsync is a pre-compiled delegate (no reflection)
-      // Pass the scoped provider so receptor can be resolved with its dependencies
-      var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);
+        // InvokeAsync is a pre-compiled delegate (no reflection)
+        // Pass the scoped provider so receptor can be resolved with its dependencies
+        var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);
 
-      // Cascade any IMessage instances (events and commands) from the receptor's return value
-      // Handles tuples, arrays, Route wrappers via IEventCascader
-      // Pass source envelope so cascaded messages can inherit SecurityContext
-      // Note: Receptor default routing not passed through - routing is determined by
-      // message attributes, Route wrappers, or system default (Outbox)
-      if (result is not null && _eventCascader is not null) {
-        await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+        receptorActivity?.SetStatus(ActivityStatusCode.Ok);
+        receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
+
+        // Cascade any IMessage instances (events and commands) from the receptor's return value
+        // Handles tuples, arrays, Route wrappers via IEventCascader
+        // Pass source envelope so cascaded messages can inherit SecurityContext
+        // Note: Receptor default routing not passed through - routing is determined by
+        // message attributes, Route wrappers, or system default (Outbox)
+        if (result is not null && _eventCascader is not null) {
+          await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+        }
+      } catch (Exception ex) {
+        receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        receptorActivity?.SetTag("exception.type", ex.GetType().FullName);
+        receptorActivity?.SetTag("exception.message", ex.Message);
+        throw;
       }
     }
   }

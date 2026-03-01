@@ -697,6 +697,92 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
     await Assert.That(diagnostics).IsNotNull();
   }
 
+  // ==================== TraceHandler Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTraceHandlerAttribute_GeneratesTracingCodeAsync() {
+    // Arrange - Tests [TraceHandler] attribute detection
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Tracing;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+[TraceHandler]
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate ReceptorRegistry.g.cs with tracing code
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The traced snippet should include ITracer calls
+    await Assert.That(registry!).Contains("ITracer");
+    await Assert.That(registry).Contains("BeginHandlerTrace");
+    await Assert.That(registry).Contains("EndHandlerTrace");
+    await Assert.That(registry).Contains("IDebuggerAwareClock");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutTraceHandlerAttribute_DoesNotGenerateTracingCodeAsync() {
+    // Arrange - Tests that tracing code is NOT generated for normal receptors
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT contain tracing code for non-traced receptors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The normal snippet should NOT include ITracer calls
+    await Assert.That(registry!).DoesNotContain("ITracer");
+    await Assert.That(registry).DoesNotContain("BeginHandlerTrace");
+  }
+
   // ==================== Sync Receptor Tests ====================
 
   [Test]
@@ -1079,6 +1165,130 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
     await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
     await Assert.That(registry).Contains("return _emptyList");
   }
+
+  #region Multiple Handler Validation Tests
+
+  /// <summary>
+  /// Tests that WHIZ080 error is reported when multiple handlers handle the same
+  /// message type with a response (RPC pattern). RPC requires exactly one handler
+  /// because we can only return one result.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleRpcHandlers_ReportsWHIZ080ErrorAsync() {
+    // Arrange - Two handlers for the same message type with response (RPC pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+// First handler for CreateOrder
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+
+// Second handler for same message type - this is an error for RPC!
+public class AnotherOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ080 error
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+    var whiz080 = errors.FirstOrDefault(d => d.Id == "WHIZ080");
+    await Assert.That(whiz080).IsNotNull();
+    var message = whiz080!.GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("CreateOrder");
+    await Assert.That(message).Contains("OrderReceptor");
+    await Assert.That(message).Contains("AnotherOrderReceptor");
+  }
+
+  /// <summary>
+  /// Tests that WHIZ080 is NOT reported for void receptors (event handlers).
+  /// Multiple handlers for the same event type is expected and valid.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleVoidHandlers_NoErrorAsync() {
+    // Arrange - Two void handlers for the same message type (event handling pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record OrderCreated : IEvent;
+
+// First void handler for OrderCreated
+public class EmailNotificationHandler : IReceptor<OrderCreated> {
+  public ValueTask HandleAsync(OrderCreated message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+// Second void handler for same event - this is valid!
+public class SmsNotificationHandler : IReceptor<OrderCreated> {
+  public ValueTask HandleAsync(OrderCreated message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT report WHIZ080 error for void handlers
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ080");
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+  }
+
+  /// <summary>
+  /// Tests that WHIZ080 is NOT reported for ISyncReceptor handlers even with response.
+  /// Sync receptors don't go through the RPC path.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleSyncHandlers_NoErrorAsync() {
+    // Arrange - Two sync handlers for the same message type with response
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ValidateOrder : ICommand;
+public record ValidationResult : IEvent;
+
+// First sync handler for ValidateOrder
+public class FirstValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
+  public ValidationResult Handle(ValidateOrder message)
+    => new ValidationResult();
+}
+
+// Second sync handler for same message - this is allowed for sync receptors
+public class SecondValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
+  public ValidationResult Handle(ValidateOrder message)
+    => new ValidationResult();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT report WHIZ080 error for sync handlers
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ080");
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+  }
+
+  #endregion
 
   #region DefaultRouting Attribute Detection Tests
 

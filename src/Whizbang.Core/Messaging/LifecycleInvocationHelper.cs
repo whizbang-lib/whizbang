@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -67,90 +68,101 @@ public static class LifecycleInvocationHelper {
     ILogger? logger,
     CancellationToken ct = default) {
 
-    // Early return if lifecycle infrastructure not configured
-    if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
-      return;
-    }
-
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     // The main thread may modify the original collections while the background task iterates
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded)
+    // Always trace lifecycle stages even when no receptors are registered
     _ = Task.Run(async () => {
-      try {
-        // Process outbox messages with MessageSource.Outbox context
-        foreach (var outboxMsg in outboxSnapshot) {
-          var outboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Outbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
-
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-          var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
+      using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal)) {
+        // Early return if lifecycle infrastructure not configured
+        if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
+          return;
         }
 
-        // Process inbox messages with MessageSource.Inbox context
-        foreach (var inboxMsg in inboxSnapshot) {
-          var inboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
+        try {
+          // Process outbox messages with MessageSource.Outbox context
+          foreach (var outboxMsg in outboxSnapshot) {
+            var outboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Outbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
 
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-          var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
-        }
-      } catch (Exception ex) {
-        if (logger != null) {
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+            var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
+          }
+
+          // Process inbox messages with MessageSource.Inbox context
+          foreach (var inboxMsg in inboxSnapshot) {
+            var inboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Inbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
+
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+            var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
+          }
+        } catch (Exception ex) {
+          if (logger != null) {
 #pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-          logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
+            logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
 #pragma warning restore CA1848
+          }
         }
       }
     }, ct);
 
     // Invoke inline stage (blocking, sequential)
-    // Process outbox messages with MessageSource.Outbox context
-    foreach (var outboxMsg in outboxSnapshot) {
-      var outboxContext = new LifecycleExecutionContext {
-        CurrentStage = inlineStage,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = Messaging.MessageSource.Outbox,
-        AttemptNumber = null // Attempt info not available at this stage
-      };
+    // Always trace lifecycle stages even when no receptors are registered
+    using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal)) {
+      // Early return if lifecycle infrastructure not configured
+      if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
+        return;
+      }
 
-      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-      var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
-    }
+      // Process outbox messages with MessageSource.Outbox context
+      foreach (var outboxMsg in outboxSnapshot) {
+        var outboxContext = new LifecycleExecutionContext {
+          CurrentStage = inlineStage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = Messaging.MessageSource.Outbox,
+          AttemptNumber = null // Attempt info not available at this stage
+        };
 
-    // Process inbox messages with MessageSource.Inbox context
-    foreach (var inboxMsg in inboxSnapshot) {
-      var inboxContext = new LifecycleExecutionContext {
-        CurrentStage = inlineStage,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = Messaging.MessageSource.Inbox,
-        AttemptNumber = null // Attempt info not available at this stage
-      };
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+        var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
+      }
 
-      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-      var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-      await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
+      // Process inbox messages with MessageSource.Inbox context
+      foreach (var inboxMsg in inboxSnapshot) {
+        var inboxContext = new LifecycleExecutionContext {
+          CurrentStage = inlineStage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = Messaging.MessageSource.Inbox,
+          AttemptNumber = null // Attempt info not available at this stage
+        };
+
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+        var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
+      }
     }
   }
 
@@ -194,54 +206,57 @@ public static class LifecycleInvocationHelper {
     ILogger? logger,
     CancellationToken ct = default) {
 
-    // Early return if lifecycle infrastructure not configured
-    if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
-      return;
-    }
-
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
+    // Always trace lifecycle stages even when no receptors are registered
     _ = Task.Run(async () => {
-      try {
-        // Process outbox messages with MessageSource.Outbox context
-        foreach (var outboxMsg in outboxSnapshot) {
-          var outboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Outbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
-
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-          var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
+      using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal)) {
+        // Early return if lifecycle infrastructure not configured
+        if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
+          return;
         }
 
-        // Process inbox messages with MessageSource.Inbox context
-        foreach (var inboxMsg in inboxSnapshot) {
-          var inboxContext = new LifecycleExecutionContext {
-            CurrentStage = asyncStage,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = Messaging.MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not available at this stage
-          };
+        try {
+          // Process outbox messages with MessageSource.Outbox context
+          foreach (var outboxMsg in outboxSnapshot) {
+            var outboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Outbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
 
-          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-          var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-          await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
-        }
-      } catch (Exception ex) {
-        if (logger != null) {
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+            var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
+          }
+
+          // Process inbox messages with MessageSource.Inbox context
+          foreach (var inboxMsg in inboxSnapshot) {
+            var inboxContext = new LifecycleExecutionContext {
+              CurrentStage = asyncStage,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = Messaging.MessageSource.Inbox,
+              AttemptNumber = null // Attempt info not available at this stage
+            };
+
+            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+            var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
+          }
+        } catch (Exception ex) {
+          if (logger != null) {
 #pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-          logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
+            logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
 #pragma warning restore CA1848
+          }
         }
       }
     }, ct);

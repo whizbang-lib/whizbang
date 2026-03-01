@@ -51,6 +51,19 @@ public static class WhizbangActivitySource {
   public static readonly ActivitySource Hosting = new("Whizbang.Hosting", "1.0.0");
 
   /// <summary>
+  /// ActivitySource for handler tracing operations.
+  /// Used by the ITracer implementation to emit handler invocation spans.
+  /// Add this source to OpenTelemetry to see handler-level traces.
+  /// </summary>
+  /// <remarks>
+  /// <code>
+  /// services.AddOpenTelemetry()
+  ///   .WithTracing(builder => builder.AddSource("Whizbang.Tracing"));
+  /// </code>
+  /// </remarks>
+  public static readonly ActivitySource Tracing = new("Whizbang.Tracing", "1.0.0");
+
+  /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
   /// Sets activity status to Error and adds exception details.
   /// </summary>
