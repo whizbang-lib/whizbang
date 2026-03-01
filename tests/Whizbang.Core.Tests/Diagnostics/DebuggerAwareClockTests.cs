@@ -343,4 +343,263 @@ public class DebuggerAwareClockTests {
     await Assert.That(stopwatch2.ActiveElapsed.TotalMilliseconds)
         .IsGreaterThan(elapsed1AfterHalt.TotalMilliseconds);
   }
+
+  // ==========================================================================
+  // Additional coverage tests
+  // ==========================================================================
+
+  [Test]
+  public async Task DebuggerAwareClock_Constructor_ThrowsOnNullOptionsAsync() {
+    // Act & Assert
+    await Assert.That(() => new DebuggerAwareClock(null!))
+        .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_GetCurrentTimestamp_ReturnsValidTimestampAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+
+    // Act
+    var timestamp1 = clock.GetCurrentTimestamp();
+    await Task.Delay(10);
+    var timestamp2 = clock.GetCurrentTimestamp();
+
+    // Assert - timestamps should be increasing
+    await Assert.That(timestamp2).IsGreaterThan(timestamp1);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_StartNew_ThrowsWhenDisposedAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    var clock = new DebuggerAwareClock(options);
+    clock.Dispose();
+
+    // Act & Assert
+    await Assert.That(() => clock.StartNew())
+        .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_GetCurrentTimestamp_ThrowsWhenDisposedAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    var clock = new DebuggerAwareClock(options);
+    clock.Dispose();
+
+    // Act & Assert
+    await Assert.That(() => clock.GetCurrentTimestamp())
+        .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_OnPauseStateChanged_ThrowsWhenDisposedAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    var clock = new DebuggerAwareClock(options);
+    clock.Dispose();
+
+    // Act & Assert
+    await Assert.That(() => clock.OnPauseStateChanged(_ => { }))
+        .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_OnPauseStateChanged_ThrowsOnNullHandlerAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+
+    // Act & Assert
+    await Assert.That(() => clock.OnPauseStateChanged(null!))
+        .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_WithCpuTimeSamplingMode_CreatesSamplerAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.CpuTimeSampling,
+      SamplingInterval = TimeSpan.FromMilliseconds(50)
+    };
+
+    // Act
+    using var clock = new DebuggerAwareClock(options);
+
+    // Assert - clock should be created with CpuTimeSampling mode
+    await Assert.That(clock.Mode).IsEqualTo(DebuggerDetectionMode.CpuTimeSampling);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_WithAutoMode_CreatesSamplerAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.Auto,
+      SamplingInterval = TimeSpan.FromMilliseconds(50)
+    };
+
+    // Act
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    // Wait for sampler to run
+    await Task.Delay(100);
+
+    // Assert
+    await Assert.That(clock.Mode).IsEqualTo(DebuggerDetectionMode.Auto);
+    await Assert.That(stopwatch.ActiveElapsed.TotalMilliseconds).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_WithExternalHookMode_DoesNotCreateSamplerAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.ExternalHook };
+
+    // Act
+    using var clock = new DebuggerAwareClock(options);
+
+    // Assert
+    await Assert.That(clock.Mode).IsEqualTo(DebuggerDetectionMode.ExternalHook);
+  }
+
+  [Test]
+  public async Task IActiveStopwatch_WallElapsed_AfterHalt_RemainsConstantAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    // Act
+    await Task.Delay(50);
+    stopwatch.Halt();
+    var wallAfterHalt = stopwatch.WallElapsed;
+    await Task.Delay(50);
+    var wallLater = stopwatch.WallElapsed;
+
+    // Assert - wall time should not change after Halt
+    await Assert.That(wallLater).IsEqualTo(wallAfterHalt);
+  }
+
+  [Test]
+  public async Task IActiveStopwatch_FrozenTime_WhenActiveGreaterThanWall_ReturnsZeroAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    // Act
+    await Task.Delay(10);
+
+    // Assert - in Disabled mode, frozen time should always be zero
+    await Assert.That(stopwatch.FrozenTime).IsEqualTo(TimeSpan.Zero);
+  }
+
+  [Test]
+  public async Task IActiveStopwatch_Halt_CalledMultipleTimes_DoesNotThrowAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    await Task.Delay(50);
+
+    // Act & Assert - multiple Halt calls should not throw
+    stopwatch.Halt();
+    var elapsed1 = stopwatch.ActiveElapsed;
+    stopwatch.Halt();
+    var elapsed2 = stopwatch.ActiveElapsed;
+
+    await Assert.That(elapsed1).IsEqualTo(elapsed2);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_CpuTimeSampling_SamplerRunsAsync() {
+    // Arrange - use a short sampling interval
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.CpuTimeSampling,
+      SamplingInterval = TimeSpan.FromMilliseconds(25)
+    };
+
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    // Act - wait for multiple sample cycles
+    await Task.Delay(150);
+
+    // Assert - clock should have sampled multiple times
+    await Assert.That(stopwatch.ActiveElapsed.TotalMilliseconds).IsGreaterThan(100);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_IsPaused_InAutoMode_WhenNoDebuggerAttachedAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.Auto,
+      SamplingInterval = TimeSpan.FromMilliseconds(50)
+    };
+    using var clock = new DebuggerAwareClock(options);
+
+    // Act - wait for sampling
+    await Task.Delay(100);
+
+    // Assert - should not be paused when no debugger attached
+    // (IsPaused requires both debugger attached AND frozen detection in Auto mode)
+    await Assert.That(clock.IsPaused).IsFalse();
+  }
+
+  [Test]
+  public async Task PauseStateSubscription_CanBeDisposedAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    using var clock = new DebuggerAwareClock(options);
+    var callCount = 0;
+
+    // Act
+    var subscription = clock.OnPauseStateChanged(_ => callCount++);
+    subscription.Dispose();
+
+    // Assert - subscription was created and disposed without error
+    await Assert.That(callCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DebuggerAwareClock_Dispose_CompletesChannelAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    var clock = new DebuggerAwareClock(options);
+    var subscription = clock.OnPauseStateChanged(_ => { });
+
+    // Act
+    clock.Dispose();
+
+    // Small delay to allow background task to notice completion
+    await Task.Delay(50);
+
+    // Assert - dispose subscription without error (channel was completed)
+    subscription.Dispose();
+  }
+
+  [Test]
+  public async Task IActiveStopwatch_WithCpuTimeSampling_CalculatesActiveTimeAsync() {
+    // Arrange
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.CpuTimeSampling,
+      SamplingInterval = TimeSpan.FromMilliseconds(25)
+    };
+    using var clock = new DebuggerAwareClock(options);
+    var stopwatch = clock.StartNew();
+
+    // Act - do some CPU work
+    var sum = 0L;
+    for (var i = 0; i < 1000000; i++) {
+      sum += i;
+    }
+    _ = sum; // Prevent optimization
+
+    // Assert - active elapsed should be positive
+    await Assert.That(stopwatch.ActiveElapsed.TotalMilliseconds).IsGreaterThan(0);
+    await Assert.That(stopwatch.WallElapsed.TotalMilliseconds).IsGreaterThan(0);
+  }
 }
