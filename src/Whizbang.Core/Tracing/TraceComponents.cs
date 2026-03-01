@@ -73,8 +73,8 @@ public enum TraceComponents {
   /// <summary>All components except background workers (reduces noise).</summary>
   AllWithoutWorkers = All & ~Workers,
 
-  /// <summary>Core message processing: Handlers, Lifecycle, Dispatcher, Messages.</summary>
-  Core = Handlers | Lifecycle | Dispatcher | Messages,
+  /// <summary>Core message processing: Handlers, Dispatcher, Messages (excludes noisy Lifecycle spans).</summary>
+  Core = Handlers | Dispatcher | Messages,
 
   /// <summary>Messaging pipeline: Messages, Events, Outbox, Inbox.</summary>
   Messaging = Messages | Events | Outbox | Inbox,

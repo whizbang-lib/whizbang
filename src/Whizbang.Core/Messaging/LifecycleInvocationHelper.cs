@@ -36,6 +36,7 @@ public static class LifecycleInvocationHelper {
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
+  /// <param name="enableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
   /// <param name="ct">Cancellation token</param>
   /// <remarks>
   /// <para>
@@ -50,6 +51,7 @@ public static class LifecycleInvocationHelper {
   ///   _lifecycleInvoker,
   ///   _lifecycleMessageDeserializer,
   ///   _logger,
+  ///   enableLifecycleTracing: true,
   ///   ct
   /// );
   /// </code>
@@ -66,6 +68,7 @@ public static class LifecycleInvocationHelper {
     ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILogger? logger,
+    bool enableLifecycleTracing = true,
     CancellationToken ct = default) {
 
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
@@ -87,7 +90,8 @@ public static class LifecycleInvocationHelper {
           // Extract TraceParent from the message's hops to correlate with original request
           var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
 
-          using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext)) {
+          // Only create span if lifecycle tracing is enabled
+          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
             var outboxContext = new LifecycleExecutionContext {
               CurrentStage = asyncStage,
               EventId = null,
@@ -108,7 +112,8 @@ public static class LifecycleInvocationHelper {
           // Extract TraceParent from the message's hops to correlate with original request
           var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
 
-          using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext)) {
+          // Only create span if lifecycle tracing is enabled
+          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
             var inboxContext = new LifecycleExecutionContext {
               CurrentStage = asyncStage,
               EventId = null,
@@ -144,7 +149,8 @@ public static class LifecycleInvocationHelper {
       // Extract TraceParent from the message's hops to correlate with original request
       var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
 
-      using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext)) {
+      // Only create span if lifecycle tracing is enabled
+      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var outboxContext = new LifecycleExecutionContext {
           CurrentStage = inlineStage,
           EventId = null,
@@ -165,7 +171,8 @@ public static class LifecycleInvocationHelper {
       // Extract TraceParent from the message's hops to correlate with original request
       var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
 
-      using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext)) {
+      // Only create span if lifecycle tracing is enabled
+      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var inboxContext = new LifecycleExecutionContext {
           CurrentStage = inlineStage,
           EventId = null,
@@ -192,6 +199,7 @@ public static class LifecycleInvocationHelper {
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
+  /// <param name="enableLifecycleTracing">Whether to create lifecycle OpenTelemetry spans. When false, lifecycle logic still runs but no spans are emitted.</param>
   /// <param name="ct">Cancellation token</param>
   /// <remarks>
   /// <para>
@@ -205,6 +213,7 @@ public static class LifecycleInvocationHelper {
   ///   _lifecycleInvoker,
   ///   _lifecycleMessageDeserializer,
   ///   _logger,
+  ///   enableLifecycleTracing: true,
   ///   ct
   /// );
   /// </code>
@@ -220,6 +229,7 @@ public static class LifecycleInvocationHelper {
     ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILogger? logger,
+    bool enableLifecycleTracing = true,
     CancellationToken ct = default) {
 
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
@@ -240,7 +250,8 @@ public static class LifecycleInvocationHelper {
           // Extract TraceParent from the message's hops to correlate with original request
           var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
 
-          using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext)) {
+          // Only create span if lifecycle tracing is enabled
+          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
             var outboxContext = new LifecycleExecutionContext {
               CurrentStage = asyncStage,
               EventId = null,
@@ -261,7 +272,8 @@ public static class LifecycleInvocationHelper {
           // Extract TraceParent from the message's hops to correlate with original request
           var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
 
-          using (WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext)) {
+          // Only create span if lifecycle tracing is enabled
+          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
             var inboxContext = new LifecycleExecutionContext {
               CurrentStage = asyncStage,
               EventId = null,
