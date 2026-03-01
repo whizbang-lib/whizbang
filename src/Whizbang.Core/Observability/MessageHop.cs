@@ -171,4 +171,15 @@ public record MessageHop {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public TimeSpan Duration { get; init; }
+
+  /// <summary>
+  /// W3C Trace Context traceparent header value for distributed tracing.
+  /// Format: {version}-{trace-id}-{parent-id}-{trace-flags}
+  /// Example: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+  /// </summary>
+  /// <remarks>
+  /// This enables correlation with OpenTelemetry spans and external tracing systems.
+  /// The value is captured from Activity.Current when the hop is created.
+  /// </remarks>
+  public string? TraceParent { get; init; }
 }
