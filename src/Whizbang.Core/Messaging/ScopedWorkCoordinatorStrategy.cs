@@ -6,7 +6,9 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Messaging;
 
@@ -27,6 +29,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
   // Queues for batching operations within the scope
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -45,7 +48,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     WorkCoordinatorOptions options,
     ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
     ILifecycleInvoker? lifecycleInvoker = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -54,6 +58,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     _logger = logger;
     _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _tracingOptions = tracingOptions;
   }
 
   public void QueueOutboxMessage(OutboxMessage message) {
@@ -146,6 +151,9 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LogFlushingWithInstanceId(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _queuedOutboxMessages.Count);
     }
 
+    // Check if lifecycle tracing is enabled
+    var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
     // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PreDistributeAsync,
@@ -155,6 +163,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 
@@ -166,6 +175,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 
@@ -218,6 +228,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 
