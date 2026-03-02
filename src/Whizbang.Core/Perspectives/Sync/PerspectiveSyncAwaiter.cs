@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Diagnostics;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Perspectives.Sync;
 
@@ -125,11 +127,20 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
           "WaitAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
 
+    // Create span for perspective sync wait - shows blocking time in traces
+    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+      $"PerspectiveSync {perspectiveType.Name}",
+      ActivityKind.Internal);
+    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
+
     var stopwatch = _clock.StartNew();
     var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
 
     // If no events match the filter, return immediately
     if (pendingEvents.Count == 0) {
+      syncActivity?.SetTag("whizbang.sync.outcome", "NoPendingEvents");
+      syncActivity?.SetTag("whizbang.sync.event_count", 0);
       return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
     }
 
@@ -138,8 +149,14 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
     var inquiries = _buildSyncInquiries(pendingEvents, perspectiveName);
 
     if (inquiries.Length == 0) {
+      syncActivity?.SetTag("whizbang.sync.outcome", "NoPendingEvents");
+      syncActivity?.SetTag("whizbang.sync.event_count", 0);
       return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
     }
+
+    // Set event count on activity now that we know the count
+    syncActivity?.SetTag("whizbang.sync.event_count", eventsToWait);
+    syncActivity?.SetTag("whizbang.sync.stream_count", inquiries.Length);
 
     // Log sync wait starting
     LogSyncWaitStarting(_logger, perspectiveName, eventsToWait, inquiries.Length);
@@ -160,12 +177,16 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       if (options.DebuggerAwareTimeout) {
         if (stopwatch.HasTimedOut(options.Timeout)) {
           stopwatch.Halt();
+          syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+          syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
           LogSyncWaitTimedOut(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
           return new SyncResult(SyncOutcome.TimedOut, eventsToWait, stopwatch.ActiveElapsed);
         }
       } else {
         if (stopwatch.ActiveElapsed >= options.Timeout) {
           stopwatch.Halt();
+          syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+          syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
           LogSyncWaitTimedOut(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
           return new SyncResult(SyncOutcome.TimedOut, eventsToWait, stopwatch.ActiveElapsed);
         }
@@ -198,6 +219,8 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       // Check if all inquiries are fully synced
       if (resultsWithExpected.All(r => r.IsFullySynced)) {
         stopwatch.Halt();
+        syncActivity?.SetTag("whizbang.sync.outcome", "Synced");
+        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
         LogSyncWaitCompleted(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
         return new SyncResult(SyncOutcome.Synced, eventsToWait, stopwatch.ActiveElapsed);
       }
@@ -208,6 +231,8 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
 
     ct.ThrowIfCancellationRequested();
     stopwatch.Halt();
+    syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+    syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
     LogSyncWaitTimedOut(_logger, perspectiveName, eventsToWait, stopwatch.ActiveElapsed.TotalMilliseconds);
     return new SyncResult(SyncOutcome.TimedOut, eventsToWait, stopwatch.ActiveElapsed);
   }
@@ -221,6 +246,17 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       Guid? eventIdToAwait = null,
       CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(perspectiveType);
+
+    // Create span for stream-based perspective sync wait - shows blocking time in traces
+    using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
+      $"PerspectiveSync {perspectiveType.Name} Stream",
+      ActivityKind.Internal);
+    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.stream_id", streamId.ToString());
+    syncActivity?.SetTag("whizbang.sync.timeout_ms", timeout.TotalMilliseconds);
+    if (eventIdToAwait.HasValue) {
+      syncActivity?.SetTag("whizbang.sync.event_id", eventIdToAwait.Value.ToString());
+    }
 
     var stopwatch = _clock.StartNew();
     var perspectiveName = _getPerspectiveName(perspectiveType);
@@ -313,6 +349,9 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       stopwatch.Halt();
 
       if (success) {
+        syncActivity?.SetTag("whizbang.sync.outcome", "Synced");
+        syncActivity?.SetTag("whizbang.sync.event_count", expectedEventIds.Length);
+        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
         LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, expectedEventIds.Length, stopwatch.ActiveElapsed.TotalMilliseconds);
         return new SyncResult(SyncOutcome.Synced, expectedEventIds.Length, stopwatch.ActiveElapsed);
       } else {
@@ -322,6 +361,9 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
             stopwatch.ActiveElapsed.TotalMilliseconds, string.Join(", ", expectedEventIds));
         }
 #pragma warning restore CA1848
+        syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+        syncActivity?.SetTag("whizbang.sync.event_count", expectedEventIds.Length);
+        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
         LogStreamSyncWaitTimedOut(_logger, perspectiveName, streamId, stopwatch.ActiveElapsed.TotalMilliseconds);
         return new SyncResult(SyncOutcome.TimedOut, expectedEventIds.Length, stopwatch.ActiveElapsed);
       }
@@ -356,6 +398,8 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       // Check timeout using debugger-aware stopwatch
       if (stopwatch.HasTimedOut(timeout)) {
         stopwatch.Halt();
+        syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
         LogStreamSyncWaitTimedOut(_logger, perspectiveName, streamId, stopwatch.ActiveElapsed.TotalMilliseconds);
         return new SyncResult(SyncOutcome.TimedOut, 0, stopwatch.ActiveElapsed);
       }
@@ -370,6 +414,9 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       // Previously, this would fall through and keep polling until timeout.
       if (result is null && expectedEventIds is null) {
         stopwatch.Halt();
+        syncActivity?.SetTag("whizbang.sync.outcome", "Synced");
+        syncActivity?.SetTag("whizbang.sync.event_count", 0);
+        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
         LogSyncDebugNoEventsFound(_logger, streamId);
         LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, 0, stopwatch.ActiveElapsed.TotalMilliseconds);
         return new SyncResult(SyncOutcome.Synced, 0, stopwatch.ActiveElapsed);
@@ -387,6 +434,9 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
           stopwatch.Halt();
           var processed = result.ProcessedCount;
 
+          syncActivity?.SetTag("whizbang.sync.outcome", "Synced");
+          syncActivity?.SetTag("whizbang.sync.event_count", processed);
+          syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
           LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, processed, stopwatch.ActiveElapsed.TotalMilliseconds);
           return new SyncResult(SyncOutcome.Synced, processed, stopwatch.ActiveElapsed);
         }
@@ -398,6 +448,8 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
 
     ct.ThrowIfCancellationRequested();
     stopwatch.Halt();
+    syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
+    syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
     return new SyncResult(SyncOutcome.TimedOut, 0, stopwatch.ActiveElapsed);
   }
 
