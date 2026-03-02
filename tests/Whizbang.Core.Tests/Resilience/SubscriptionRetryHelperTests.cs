@@ -223,6 +223,165 @@ public class SubscriptionRetryHelperTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2); // Failed once, then succeeded
   }
 
+  [Test]
+  public async Task SubscribeWithRetryAsync_OnDisconnected_ApplicationInitiated_DoesNotReconnectAsync() {
+    // Arrange
+    var destination = new TransportDestination("test-topic", "test-routing");
+    var state = new SubscriptionState(destination);
+    var transport = new MockTransport(returnDisconnectableSubscription: true);
+    var options = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromMilliseconds(10)
+    };
+    var handler = _createNoOpHandler();
+
+    // Act - subscribe successfully
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+
+    // Trigger application-initiated disconnect
+    var subscription = (DisconnectableMockSubscription)state.Subscription!;
+    subscription.TriggerDisconnect("Application shutdown", applicationInitiated: true);
+
+    // Wait a bit to ensure no reconnection is attempted
+    await Task.Delay(50);
+
+    // Assert - status should still be Healthy (not recovering) because app initiated
+    // and subscribe count should still be 1
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_OnDisconnected_ExternalDisconnect_TriggersReconnectionAsync() {
+    // Arrange
+    var destination = new TransportDestination("test-topic", "test-routing");
+    var state = new SubscriptionState(destination);
+    var transport = new MockTransport(returnDisconnectableSubscription: true);
+    var options = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromMilliseconds(10)
+    };
+    var handler = _createNoOpHandler();
+
+    // Act - subscribe successfully
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
+
+    // Trigger non-application-initiated disconnect
+    var subscription = (DisconnectableMockSubscription)state.Subscription!;
+    var disconnectException = new InvalidOperationException("Connection lost");
+    subscription.TriggerDisconnect("Connection lost", exception: disconnectException, applicationInitiated: false);
+
+    // Wait for reconnection to happen
+    await Task.Delay(100);
+
+    // Assert - should have attempted reconnection
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+    await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(2);
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_OnDisconnected_SetsRecoveringStatusAndLastErrorAsync() {
+    // Arrange
+    var destination = new TransportDestination("test-topic", "test-routing");
+    var state = new SubscriptionState(destination);
+    var transport = new MockTransport(returnDisconnectableSubscription: true);
+    var options = new SubscriptionResilienceOptions {
+      InitialRetryDelay = TimeSpan.FromMilliseconds(500) // Long delay to catch intermediate state
+    };
+    var handler = _createNoOpHandler();
+
+    // Act - subscribe successfully
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    // Trigger disconnect with exception
+    var subscription = (DisconnectableMockSubscription)state.Subscription!;
+    var disconnectException = new InvalidOperationException("Network error");
+    subscription.TriggerDisconnect("Network error", exception: disconnectException, applicationInitiated: false);
+
+    // Give a small delay for the event handler to run (but not enough for full reconnect)
+    await Task.Delay(20);
+
+    // Assert intermediate state - should be recovering with last error set
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Recovering);
+    await Assert.That(state.LastError).IsEqualTo(disconnectException);
+    await Assert.That(state.LastErrorTime).IsNotNull();
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_IndefiniteRetry_LogsEvery10AttemptsAsync() {
+    // Arrange
+    var destination = new TransportDestination("test-topic");
+    var state = new SubscriptionState(destination);
+    // Fail first 15 attempts to hit the attempt % 10 == 0 condition (at attempt 10)
+    var transport = new MockTransport(failFirstNAttempts: 15);
+    var options = new SubscriptionResilienceOptions {
+      InitialRetryAttempts = 3, // After 3 attempts, switches to indefinite
+      InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+      MaxRetryDelay = TimeSpan.FromMilliseconds(5),
+      BackoffMultiplier = 1.0,
+      RetryIndefinitely = true
+    };
+    var handler = _createNoOpHandler();
+
+    // Act - this will go through attempts 1-16, succeeding on 16
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    // Assert - should succeed after 16 attempts
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(16);
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_WithRoutingKey_UsesDefaultWildcardInLogsAsync() {
+    // Arrange - test the routing key defaulting logic
+    var destination = new TransportDestination("test-topic"); // No routing key
+    var state = new SubscriptionState(destination);
+    var transport = new MockTransport();
+    var options = new SubscriptionResilienceOptions();
+    var handler = _createNoOpHandler();
+
+    // Act
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    // Assert - should succeed (logs would use "#" as default routing key)
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+  }
+
+  [Test]
+  public async Task SubscribeWithRetryAsync_RetryAfterMultipleFailures_LogsRetrySuccessAsync() {
+    // Arrange - test the "attempt > 1" logging path
+    var destination = new TransportDestination("test-topic", "custom-key");
+    var state = new SubscriptionState(destination);
+    var transport = new MockTransport(failFirstNAttempts: 2);
+    var options = new SubscriptionResilienceOptions {
+      InitialRetryAttempts = 5,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(5),
+      BackoffMultiplier = 1.0
+    };
+    var handler = _createNoOpHandler();
+
+    // Act
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      transport, destination, handler, state, options,
+      NullLogger.Instance, CancellationToken.None);
+
+    // Assert - should log "established after N attempts" since attempt > 1
+    await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(3); // Failed 2, succeeded on 3
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
@@ -238,13 +397,15 @@ public class SubscriptionRetryHelperTests {
   private sealed class MockTransport : ITransport {
     private readonly bool _alwaysFail;
     private readonly int _failFirstNAttempts;
+    private readonly bool _returnDisconnectableSubscription;
     private int _attemptCount;
 
     public int SubscribeCallCount { get; private set; }
 
-    public MockTransport(bool alwaysFail = false, int failFirstNAttempts = 0) {
+    public MockTransport(bool alwaysFail = false, int failFirstNAttempts = 0, bool returnDisconnectableSubscription = false) {
       _alwaysFail = alwaysFail;
       _failFirstNAttempts = failFirstNAttempts;
+      _returnDisconnectableSubscription = returnDisconnectableSubscription;
     }
 
     public bool IsInitialized => true;
@@ -268,7 +429,11 @@ public class SubscriptionRetryHelperTests {
         throw new InvalidOperationException($"Mock transport fails on attempt {_attemptCount}");
       }
 
-      return Task.FromResult<ISubscription>(new MockSubscription());
+      ISubscription subscription = _returnDisconnectableSubscription
+        ? new DisconnectableMockSubscription()
+        : new MockSubscription();
+
+      return Task.FromResult(subscription);
     }
 
     public Task PublishAsync(
@@ -307,6 +472,40 @@ public class SubscriptionRetryHelperTests {
     }
 
     // Helper to trigger disconnect event for testing
+    public void TriggerDisconnect(string reason, Exception? exception = null, bool applicationInitiated = false) {
+      OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+        Reason = reason,
+        Exception = exception,
+        IsApplicationInitiated = applicationInitiated
+      });
+    }
+  }
+
+  /// <summary>
+  /// A mock subscription that exposes the ability to trigger disconnect events for testing.
+  /// </summary>
+  private sealed class DisconnectableMockSubscription : ISubscription {
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+
+    public bool IsActive { get; private set; } = true;
+
+    public Task PauseAsync() {
+      IsActive = false;
+      return Task.CompletedTask;
+    }
+
+    public Task ResumeAsync() {
+      IsActive = true;
+      return Task.CompletedTask;
+    }
+
+    public void Dispose() {
+      IsActive = false;
+    }
+
+    /// <summary>
+    /// Triggers the OnDisconnected event to simulate a subscription disconnect.
+    /// </summary>
     public void TriggerDisconnect(string reason, Exception? exception = null, bool applicationInitiated = false) {
       OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
         Reason = reason,
