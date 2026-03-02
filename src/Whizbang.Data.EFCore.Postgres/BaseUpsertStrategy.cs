@@ -71,6 +71,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       existingRow.Scope = CloneScope(scope);
       existingRow.UpdatedAt = now;
       existingRow.Version++;
+
+      // Force-mark Data as modified for polymorphic models where EF Core uses reference equality.
+      // Apply methods commonly mutate in place and return the same reference, which EF Core
+      // won't detect as a change. This ensures the JSONB data column is always included in UPDATEs.
+      context.Entry(existingRow).Property(e => e.Data).IsModified = true;
+
       row = existingRow;
     } else {
       row = _createNewRow(id, model, metadata, scope, now);
