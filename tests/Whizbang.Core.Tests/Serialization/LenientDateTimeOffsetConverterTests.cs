@@ -130,6 +130,88 @@ public class LenientDateTimeOffsetConverterTests {
   }
 
   [Test]
+  public async Task Read_NumberToken_ThrowsJsonExceptionAsync() {
+    // Arrange - JSON number instead of string
+    var json = "123456789";
+
+    // Act & Assert
+    await Assert.ThrowsAsync<JsonException>(async () => {
+      JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+      await Task.CompletedTask;
+    });
+  }
+
+  [Test]
+  public async Task Read_NegativeOffset_ParsesCorrectlyAsync() {
+    // Arrange
+    var json = "\"2024-01-15T10:30:00-08:00\"";
+
+    // Act
+    var result = JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+
+    // Assert
+    await Assert.That(result.Year).IsEqualTo(2024);
+    await Assert.That(result.Month).IsEqualTo(1);
+    await Assert.That(result.Day).IsEqualTo(15);
+    await Assert.That(result.Hour).IsEqualTo(10);
+    await Assert.That(result.Offset).IsEqualTo(TimeSpan.FromHours(-8));
+  }
+
+  [Test]
+  public async Task Read_WithMilliseconds_ParsesCorrectlyAsync() {
+    // Arrange
+    var json = "\"2024-01-15T10:30:00.123\"";
+
+    // Act
+    var result = JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+
+    // Assert
+    await Assert.That(result.Year).IsEqualTo(2024);
+    await Assert.That(result.Millisecond).IsEqualTo(123);
+    await Assert.That(result.Offset).IsEqualTo(TimeSpan.Zero);
+  }
+
+  [Test]
+  public async Task Read_WithMillisecondsAndOffset_ParsesCorrectlyAsync() {
+    // Arrange
+    var json = "\"2024-01-15T10:30:00.456+03:00\"";
+
+    // Act
+    var result = JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+
+    // Assert
+    await Assert.That(result.Year).IsEqualTo(2024);
+    await Assert.That(result.Millisecond).IsEqualTo(456);
+    await Assert.That(result.Offset).IsEqualTo(TimeSpan.FromHours(3));
+  }
+
+  [Test]
+  public async Task Read_LowercaseZ_ParsesCorrectlyAsync() {
+    // Arrange - lowercase 'z' is also valid
+    var json = "\"2024-01-15T10:30:00z\"";
+
+    // Act
+    var result = JsonSerializer.Deserialize<DateTimeOffset>(json, _options);
+
+    // Assert
+    await Assert.That(result.Year).IsEqualTo(2024);
+    await Assert.That(result.Offset).IsEqualTo(TimeSpan.Zero);
+  }
+
+  [Test]
+  public async Task Write_UtcValue_ProducesCorrectFormatAsync() {
+    // Arrange
+    var value = new DateTimeOffset(2024, 1, 15, 10, 30, 0, TimeSpan.Zero);
+
+    // Act
+    var json = JsonSerializer.Serialize(value, _options);
+
+    // Assert - Check the date/time parts (+ is Unicode escaped to \u002B)
+    await Assert.That(json).Contains("2024-01-15T10:30:00.0000000");
+    await Assert.That(json).Contains("00:00"); // The timezone part
+  }
+
+  [Test]
   public async Task Read_PostgresNegativeInfinity_ReturnsMinValueAsync() {
     // Arrange - PostgreSQL special timestamp value
     var json = "\"-infinity\"";
