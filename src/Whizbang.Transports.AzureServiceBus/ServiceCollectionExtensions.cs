@@ -62,12 +62,27 @@ public static class ServiceCollectionExtensions {
       });
     }
 
-    // Register transport as singleton, injecting shared client
+    // Auto-register admin client when AutoProvisionInfrastructure is enabled
+    // This allows the transport to auto-create topics and subscriptions
+    if (options.AutoProvisionInfrastructure) {
+      var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
+      if (!hasAdminClient) {
+        services.AddSingleton<IServiceBusAdminClient>(sp => {
+          var adminClient = new ServiceBusAdministrationClient(connectionString);
+          return new ServiceBusAdminClientWrapper(adminClient);
+        });
+      }
+    }
+
+    // Register transport as singleton, injecting shared client and optional admin client
     services.AddSingleton<ITransport>(sp => {
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
       var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
 
-      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger);
+      // Get admin client if available (for auto-provisioning)
+      var adminClient = sp.GetService<IServiceBusAdminClient>();
+
+      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger, adminClient);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
