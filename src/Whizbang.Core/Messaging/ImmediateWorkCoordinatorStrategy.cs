@@ -5,7 +5,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Messaging;
 
@@ -24,6 +26,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger;
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
   // Immediate strategy queues for single flush cycle
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -39,7 +42,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     WorkCoordinatorOptions options,
     ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
     ILifecycleInvoker? lifecycleInvoker = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -47,6 +51,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _logger = logger;
     _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _tracingOptions = tracingOptions;
   }
 
   /// <summary>
@@ -141,6 +146,9 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       );
     }
 
+    // Check if lifecycle tracing is enabled
+    var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
     // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PreDistributeAsync,
@@ -150,6 +158,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 
@@ -161,6 +170,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 
@@ -198,6 +208,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleInvoker,
       _lifecycleMessageDeserializer,
       _logger,
+      enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
     );
 

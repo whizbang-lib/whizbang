@@ -4,7 +4,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 
 namespace Whizbang.Core.Messaging;
 
@@ -24,6 +26,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly Timer _flushTimer;
 
   // Queues for batching operations within the interval
@@ -51,7 +54,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     WorkCoordinatorOptions options,
     ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
     ILifecycleInvoker? lifecycleInvoker = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+    IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -59,6 +63,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _logger = logger;
     _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _tracingOptions = tracingOptions;
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
@@ -250,6 +255,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
       }
 
+      // Check if lifecycle tracing is enabled
+      var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
       // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
       await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
         LifecycleStage.PreDistributeAsync,
@@ -259,6 +267,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
+        enableLifecycleTracing: enableLifecycleTracing,
         ct: ct
       );
 
@@ -270,6 +279,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
+        enableLifecycleTracing: enableLifecycleTracing,
         ct: ct
       );
 
@@ -312,6 +322,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleInvoker,
         _lifecycleMessageDeserializer,
         _logger,
+        enableLifecycleTracing: enableLifecycleTracing,
         ct: ct
       );
 
