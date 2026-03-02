@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -68,6 +69,7 @@ public partial class WorkCoordinatorPublisherWorker(
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   ILifecycleInvoker? lifecycleInvoker = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -77,6 +79,7 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -292,12 +295,15 @@ public partial class WorkCoordinatorPublisherWorker(
           parseSucceeded = true;
         }
 
+        // Check if Lifecycle tracing is enabled via TraceComponents
+        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
         // PreOutbox lifecycle stages (before publishing to transport)
         // ALL receptors registered at PreOutbox stages fire here, including:
         // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
         // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
-        // Always trace lifecycle stages even when no receptors are registered
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext)) {
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
           if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
@@ -318,7 +324,7 @@ public partial class WorkCoordinatorPublisherWorker(
           }
         }
 
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext)) {
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
           if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
@@ -370,8 +376,8 @@ public partial class WorkCoordinatorPublisherWorker(
         // PostOutbox lifecycle stages (after publishing to transport)
         // ALL receptors registered at PostOutbox stages fire here
         // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
-        // Always trace lifecycle stages even when no receptors are registered
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext)) {
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
           if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             // Reconstruct envelope with deserialized payload to preserve security context
@@ -397,7 +403,7 @@ public partial class WorkCoordinatorPublisherWorker(
           }
         }
 
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext)) {
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
           if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             // Reconstruct envelope with deserialized payload to preserve security context
