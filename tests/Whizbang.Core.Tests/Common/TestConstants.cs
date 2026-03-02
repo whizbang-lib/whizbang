@@ -12,11 +12,9 @@ public static class TestConstants {
   /// - 3 receptors from DispatcherTests.cs (DispatcherTestOrderReceptor, LogReceptor, ProcessReceptor)
   /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
   ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
-  /// - 5 receptors from MultiReceptorTests.cs (OrderReceptor, ShippingReceptor, PaymentReceptor,
-  ///     UserReceptor, EmailReceptor)
-  /// - 5 receptors from TupleReturnTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
+  /// - 5 receptors from ReceptorTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
   ///     PaymentReceptor, NotificationReceptor)
-  /// - 3 receptors from ExecutionTests.cs (ProcessPaymentReceptor, SendEmailReceptor, LogEventReceptor)
+  /// - 3 receptors from VoidReceptorTests.cs (ProcessPaymentReceptor, SendEmailReceptor, LogEventReceptor)
   /// - 9 receptors from DispatcherCascadeTests.cs (TupleReturningReceptor, ArrayReturningReceptor,
   ///     MultiEventTupleReceptor, NestedTupleReceptor, NonEventReturningReceptor, EmptyArrayReceptor,
   ///     EventTrackingReceptor, ShippedEventTrackingReceptor, NotificationEventTrackingReceptor)
@@ -25,14 +23,20 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherVoidCascadeTests.cs (ProcessOrderReceptor, OrderProcessedEventTracker)
   /// - 5 receptors from DispatcherRpcExtractionTests.cs (TupleReturningReceptor, MultiEventReceptor,
   ///     SimpleReceptor, InventoryReservedTracker, PaymentInitiatedTracker)
-  /// - 5 additional receptors from other test files
+  /// - 3 receptors from DispatcherTests.cs (DispatcherTestOrderReceptor, LogReceptor, ProcessReceptor)
   /// - 2 receptors from DispatcherDeliveryReceiptTests.cs (CreateOrderReceptor, ProcessPaymentReceptor)
-  /// - 1 receptor from SecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
+  /// - 1 receptor from DispatcherCascadeSecurityPropagationTests.cs (CascadeTestCommandReceptor)
+  /// - 1 receptor from DispatcherSecurityPropagationTests.cs (SecurityPropagationTestCommandReceptor)
   /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
   ///     DispatcherSecurityBuilderVoidReceptor)
   /// - 2 receptors from DispatcherTagProcessingTests.cs (TestCommandReceptor, ThrowingReceptor)
+  /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
+  ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
+  /// - 4 receptors from LifecycleContextTests/FireAtAttributeTests/LifecycleStageIsolationTests/LifecycleReceptorRegistryTests
+  ///     (TestReceptorWithContext, TestReceptorWithFireAt, TestReceptorWithMultipleFireAt, InvocationTrackingReceptor,
+  ///     TestReceptor, AnotherTestReceptor)
   ///
-  /// Total: 60 receptors (updated for tag processing tests)
+  /// Total: 55 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 60;
+  public const int EXPECTED_RECEPTOR_COUNT = 55;
 }
