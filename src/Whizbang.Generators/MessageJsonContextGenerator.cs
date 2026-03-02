@@ -316,7 +316,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Discover nested custom types used in message properties (e.g., OrderLineItem in List<OrderLineItem>)
-    var nestedTypes = _discoverNestedTypes(messages, compilation);
+    // Also discovers polymorphic base types with [JsonPolymorphic] attribute from property types
+    var (nestedTypes, propertyPolymorphicTypes) = _discoverNestedTypes(messages, compilation);
 
     // Report diagnostics for discovered nested types
     foreach (var nestedType in nestedTypes) {
@@ -396,9 +397,22 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
-    // Discover polymorphic base types from inheritance relationships
+    // Discover polymorphic base types from inheritance relationships (message types)
     var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
-    var polymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
+    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
+
+    // Merge message-derived and property-derived polymorphic types
+    // Property-derived types come from nested type discovery (e.g., AbstractFieldSettings with [JsonPolymorphic])
+    // Use dictionary to deduplicate by BaseTypeName (netstandard2.0 doesn't have DistinctBy)
+    var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
+    foreach (var polyType in messagePolymorphicTypes) {
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    foreach (var polyType in propertyPolymorphicTypes) {
+      // Property-derived types take precedence (they have [JsonDerivedType] attributes)
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
 
     // Report diagnostics for discovered polymorphic types
     foreach (var polyType in polymorphicTypes) {
@@ -1096,11 +1110,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDirectPropertyNestedType_DiscoversNestedTypeAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDeepDirectPropertyNesting_DiscoversAllTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithMixedCollectionAndDirectNestedTypes_DiscoversAllTypesAsync</tests>
-  private static ImmutableArray<JsonMessageTypeInfo> _discoverNestedTypes(
+  private static (ImmutableArray<JsonMessageTypeInfo> NestedTypes, ImmutableArray<PolymorphicTypeInfo> PolymorphicTypes) _discoverNestedTypes(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
 
     var nestedTypes = new Dictionary<string, JsonMessageTypeInfo>();
+    var discoveredPolymorphicTypes = new Dictionary<string, PolymorphicTypeInfo>();
 
     // Use a queue to process types recursively - starts with all message types
     var typesToProcess = new Queue<JsonMessageTypeInfo>(messages);
@@ -1148,15 +1163,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
 
         // Handle abstract types with [JsonPolymorphic] - discover their derived types
-        // For polymorphic types, we don't generate JsonTypeInfo for the abstract base,
-        // but we DO discover and generate for concrete derived types
+        // For polymorphic types, we generate JsonTypeInfo for both:
+        // 1. The abstract base type (with polymorphic options for derived type dispatch)
+        // 2. All concrete derived types (for actual serialization)
         if (typeSymbol.IsAbstract) {
           // Check if this abstract type has [JsonPolymorphic] attribute
           if (_hasJsonPolymorphicAttribute(typeSymbol)) {
             // Discover derived types from [JsonDerivedType] attributes
             var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol, compilation);
+            var derivedTypeNames = new List<string>();
+
             foreach (var derivedType in derivedTypes) {
               var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+              derivedTypeNames.Add(derivedTypeName);
 
               // Skip if already processed
               if (processedTypes.Contains(derivedTypeName)) {
@@ -1182,6 +1201,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
               nestedTypes[derivedTypeName] = derivedTypeInfo;
               processedTypes.Add(derivedTypeName);
               typesToProcess.Enqueue(derivedTypeInfo);
+            }
+
+            // Create polymorphic type info for the abstract base type
+            // This allows STJ to dispatch to the correct derived type during deserialization
+            if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
+              var simpleName = typeSymbol.Name;
+              var isInterface = typeSymbol.TypeKind == TypeKind.Interface;
+              discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
+                  BaseTypeName: typeNameToProcess,
+                  BaseSimpleName: simpleName,
+                  DerivedTypes: derivedTypeNames.ToImmutableArray(),
+                  IsInterface: isInterface
+              );
             }
           }
           // Mark abstract type as processed to avoid re-checking
@@ -1229,7 +1261,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return nestedTypes.Values.ToImmutableArray();
+    return (nestedTypes.Values.ToImmutableArray(), discoveredPolymorphicTypes.Values.ToImmutableArray());
   }
 
   /// <summary>
