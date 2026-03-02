@@ -199,13 +199,15 @@ public sealed partial class Tracer : ITracer {
     if (pattern.Contains('*')) {
       // Convert glob pattern to regex
       var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
-      if (Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase)) {
+      // Use timeout to prevent ReDoS attacks (although patterns come from config, not user input)
+      var timeout = TimeSpan.FromSeconds(1);
+      if (Regex.IsMatch(name, regexPattern, RegexOptions.IgnoreCase, timeout)) {
         return true;
       }
 
       // Also check the short name (last segment after dot)
       var shortName = _extractShortName(name);
-      if (Regex.IsMatch(shortName, regexPattern, RegexOptions.IgnoreCase)) {
+      if (Regex.IsMatch(shortName, regexPattern, RegexOptions.IgnoreCase, timeout)) {
         return true;
       }
     } else {
