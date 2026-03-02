@@ -117,6 +117,21 @@ public sealed class TracingOptions {
   public bool EnableWorkerBatchSpans { get; set; }
 
   /// <summary>
+  /// Gets or sets whether to emit per-event spans when processing perspectives.
+  /// When true, each event applied to a perspective creates a child span showing
+  /// the event type and processing time. Also adds summary tags to the RunAsync span.
+  /// Default: false (reduces noise in trace UI).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Enable this when debugging perspective processing to see exactly which events
+  /// are applied and in what order. This can generate many spans if a perspective
+  /// processes large batches of events.
+  /// </para>
+  /// </remarks>
+  public bool EnablePerspectiveEventSpans { get; set; }
+
+  /// <summary>
   /// Checks whether tracing is enabled for a specific component.
   /// Returns true only if both verbosity is not Off AND the component is included.
   /// </summary>

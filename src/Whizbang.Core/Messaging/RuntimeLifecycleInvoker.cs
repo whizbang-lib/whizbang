@@ -29,6 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>core-concepts/lifecycle-receptors#stage-isolation</docs>
+/// <docs>observability/tracing#parent-context</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/LifecycleStageIsolationTests.cs</tests>
 public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
   private readonly ILifecycleReceptorRegistry _registry;

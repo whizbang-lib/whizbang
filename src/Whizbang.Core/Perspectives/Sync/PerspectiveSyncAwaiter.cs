@@ -21,6 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>observability/tracing#perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
   private readonly IScopedEventTracker? _tracker;
