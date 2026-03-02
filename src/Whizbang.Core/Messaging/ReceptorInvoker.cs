@@ -180,11 +180,17 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
+    // Extract parent context from envelope hops for trace correlation
+    // This ensures receptor spans are parented to the original request even on background threads
+    var parentContext = _extractParentContext(envelope.Hops);
+
     foreach (var receptor in receptors) {
       // Start activity for this receptor invocation - enables per-handler tracing
+      // Pass parentContext to ensure proper parenting when Activity.Current is null (background threads)
       using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
         $"Receptor {receptor.ReceptorId}",
-        ActivityKind.Internal);
+        ActivityKind.Internal,
+        parentContext: parentContext);
       receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
       receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
       receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
@@ -263,6 +269,22 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
         throw;
       }
     }
+  }
+
+  /// <summary>
+  /// Extracts parent ActivityContext from message hops for trace correlation.
+  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
+  /// </summary>
+  private static ActivityContext _extractParentContext(System.Collections.Generic.IReadOnlyList<MessageHop> hops) {
+    var traceParent = hops
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      return parentContext;
+    }
+
+    return default;
   }
 }
 
