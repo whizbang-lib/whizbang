@@ -9,9 +9,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that valid subscriber and topic names produce expected format.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithValidNames_ReturnsExpectedFormatAsync() {
+  public async Task GenerateSubscriptionNameWithValidNamesReturnsExpectedFormatAsync() {
     // Arrange
     var subscriberName = "bff-service";
     var topicName = "jdx.contracts.chat";
@@ -26,9 +25,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that wildcard characters (#) are sanitized to valid characters.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithWildcard_SanitizesCorrectlyAsync() {
+  public async Task GenerateSubscriptionNameWithWildcardSanitizesCorrectlyAsync() {
     // Arrange - topic name contains # wildcard (invalid for ASB)
     var subscriberName = "inventory";
     var topicName = "myapp.events#test";
@@ -43,9 +41,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that names exceeding 50 characters are truncated.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_ExceedsMaxLength_TruncatesTo50CharsAsync() {
+  public async Task GenerateSubscriptionNameExceedsMaxLengthTruncatesTo50CharsAsync() {
     // Arrange - create names that exceed 50 chars when combined
     var subscriberName = "very-long-subscriber-name";
     var topicName = "equally.long.topic.namespace.events";
@@ -60,9 +57,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that empty subscriber name throws ArgumentException.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithEmptySubscriberName_ThrowsArgumentExceptionAsync() {
+  public async Task GenerateSubscriptionNameWithEmptySubscriberNameThrowsArgumentExceptionAsync() {
     // Arrange
     var subscriberName = "";
     var topicName = "valid.topic";
@@ -75,9 +71,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that empty topic name throws ArgumentException.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithEmptyTopicName_ThrowsArgumentExceptionAsync() {
+  public async Task GenerateSubscriptionNameWithEmptyTopicNameThrowsArgumentExceptionAsync() {
     // Arrange
     var subscriberName = "valid-subscriber";
     var topicName = "";
@@ -90,9 +85,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that null subscriber name throws ArgumentException.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithNullSubscriberName_ThrowsArgumentExceptionAsync() {
+  public async Task GenerateSubscriptionNameWithNullSubscriberNameThrowsArgumentExceptionAsync() {
     // Arrange
     string? subscriberName = null;
     var topicName = "valid.topic";
@@ -105,9 +99,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that asterisk wildcards (*) are sanitized.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithAsteriskWildcard_SanitizesCorrectlyAsync() {
+  public async Task GenerateSubscriptionNameWithAsteriskWildcardSanitizesCorrectlyAsync() {
     // Arrange
     var subscriberName = "svc";
     var topicName = "ns.*";
@@ -115,16 +108,15 @@ public class ServiceBusSubscriptionNameHelperTests {
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
 
-    // Assert - * should be replaced with hyphen
-    await Assert.That(result).IsEqualTo("svc-ns.-");
+    // Assert - * should be replaced with hyphen, trailing hyphen trimmed
+    await Assert.That(result).IsEqualTo("svc-ns.");
   }
 
   /// <summary>
   /// Verifies that comma-separated patterns are sanitized.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithCommaSeparatedPattern_SanitizesCorrectlyAsync() {
+  public async Task GenerateSubscriptionNameWithCommaSeparatedPatternSanitizesCorrectlyAsync() {
     // Arrange - comma-separated filter expression (invalid for ASB subscription name)
     var subscriberName = "worker";
     var topicName = "ns1,ns2";
@@ -139,9 +131,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that forward slashes are sanitized.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithForwardSlash_SanitizesCorrectlyAsync() {
+  public async Task GenerateSubscriptionNameWithForwardSlashSanitizesCorrectlyAsync() {
     // Arrange
     var subscriberName = "api/v1";
     var topicName = "events/topic";
@@ -156,9 +147,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that backslashes are sanitized.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithBackslash_SanitizesCorrectlyAsync() {
+  public async Task GenerateSubscriptionNameWithBackslashSanitizesCorrectlyAsync() {
     // Arrange
     var subscriberName = @"domain\service";
     var topicName = "topic";
@@ -173,9 +163,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that consecutive invalid characters result in single hyphen.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithConsecutiveInvalidChars_RemovesDoubleHyphensAsync() {
+  public async Task GenerateSubscriptionNameWithConsecutiveInvalidCharsRemovesDoubleHyphensAsync() {
     // Arrange
     var subscriberName = "svc";
     var topicName = "ns##test";
@@ -190,9 +179,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that result is lowercased for consistency.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithMixedCase_ReturnsLowercaseAsync() {
+  public async Task GenerateSubscriptionNameWithMixedCaseReturnsLowercaseAsync() {
     // Arrange
     var subscriberName = "MyService";
     var topicName = "MyApp.Events";
@@ -207,9 +195,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   /// <summary>
   /// Verifies that leading/trailing hyphens are trimmed.
   /// </summary>
-  /// <tests>src/Whizbang.Transports.AzureServiceBus/ServiceBusSubscriptionNameHelper.cs:GenerateSubscriptionName</tests>
   [Test]
-  public async Task GenerateSubscriptionName_WithLeadingTrailingInvalidChars_TrimsHyphensAsync() {
+  public async Task GenerateSubscriptionNameWithLeadingTrailingInvalidCharsTrimsHyphensAsync() {
     // Arrange
     var subscriberName = "#svc#";
     var topicName = "*topic*";
