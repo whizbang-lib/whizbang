@@ -75,7 +75,12 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       // Force-mark Data as modified for polymorphic models where EF Core uses reference equality.
       // Apply methods commonly mutate in place and return the same reference, which EF Core
       // won't detect as a change. This ensures the JSONB data column is always included in UPDATEs.
-      context.Entry(existingRow).Property(e => e.Data).IsModified = true;
+      // Note: This only applies to scalar JSONB properties, not owned/complex types.
+      var entry = context.Entry(existingRow);
+      var dataProperty = entry.Metadata.FindProperty(nameof(PerspectiveRow<TModel>.Data));
+      if (dataProperty != null) {
+        entry.Property(nameof(PerspectiveRow<TModel>.Data)).IsModified = true;
+      }
 
       row = existingRow;
     } else {
