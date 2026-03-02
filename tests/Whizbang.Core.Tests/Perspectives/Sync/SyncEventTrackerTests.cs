@@ -380,4 +380,228 @@ public class SyncEventTrackerTests {
     await Assert.That(pendingB.Count).IsEqualTo(1);
     await Assert.That(pendingA[0].EventId).IsNotEqualTo(pendingB[0].EventId);
   }
+
+  // ==========================================================================
+  // MarkProcessedByPerspective tests
+  // ==========================================================================
+
+  [Test]
+  public async Task MarkProcessedByPerspective_OnlyRemovesSpecificPerspective_LeavesOtherPerspectivesAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Same event tracked for TWO different perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // Mark processed for PerspectiveA only
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveA");
+
+    // Event should still be tracked for PerspectiveB
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds.Count).IsEqualTo(1);
+    await Assert.That(allIds[0]).IsEqualTo(eventId);
+
+    // PerspectiveA should have no pending events
+    var pendingA = tracker.GetPendingEvents(streamId, "PerspectiveA");
+    await Assert.That(pendingA.Count).IsEqualTo(0);
+
+    // PerspectiveB should still have the event
+    var pendingB = tracker.GetPendingEvents(streamId, "PerspectiveB");
+    await Assert.That(pendingB.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_NoOpForUnknownPerspectiveAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+
+    // Mark processed for a perspective that doesn't exist - should not throw
+    tracker.MarkProcessedByPerspective([eventId], "NonExistentPerspective");
+
+    // Event should still be tracked for PerspectiveA
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkProcessedByPerspective_MultipleEventsProcessedCorrectlyAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId1 = Guid.NewGuid();
+    var eventId2 = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventB), eventId2, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "PerspectiveB");
+
+    // Mark both events processed for PerspectiveA
+    tracker.MarkProcessedByPerspective([eventId1, eventId2], "PerspectiveA");
+
+    // eventId2 should be completely removed (only tracked by PerspectiveA)
+    // eventId1 should still be tracked (also tracked by PerspectiveB)
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds.Count).IsEqualTo(1);
+    await Assert.That(allIds[0]).IsEqualTo(eventId1);
+  }
+
+  // ==========================================================================
+  // WaitForPerspectiveEventsAsync tests (waits for SPECIFIC perspective)
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_SignalsWhenSpecificPerspectiveProcessedAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Track event for TWO perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // Start waiting for PerspectiveA specifically
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "PerspectiveA", TimeSpan.FromSeconds(5));
+
+    // Mark processed for PerspectiveA only
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveA");
+
+    // Wait should complete even though PerspectiveB hasn't processed
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+
+    // PerspectiveB should still have pending event
+    var pendingB = tracker.GetPendingEvents(streamId, "PerspectiveB");
+    await Assert.That(pendingB.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_DoesNotSignalWhenOtherPerspectiveProcessedAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Track event for TWO perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // Start waiting for PerspectiveA specifically with short timeout
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "PerspectiveA", TimeSpan.FromMilliseconds(100));
+
+    // Mark processed for PerspectiveB (NOT PerspectiveA)
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveB");
+
+    // Wait should timeout because PerspectiveA hasn't processed
+    var result = await waitTask;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_ReturnsImmediatelyWhenNotTrackedAsync() {
+    var tracker = new SyncEventTracker();
+
+    // Event not tracked - should return immediately
+    var result = await tracker.WaitForPerspectiveEventsAsync([Guid.NewGuid()], "PerspectiveA", TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  // ==========================================================================
+  // WaitForAllPerspectivesAsync tests (waits for ALL perspectives)
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_SignalsOnlyWhenAllPerspectivesDoneAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Track event for TWO perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // Start waiting for ALL perspectives
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5));
+
+    // Mark processed for PerspectiveA only - wait should NOT complete yet
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveA");
+
+    // Give it a moment to potentially (incorrectly) signal
+    await Task.Delay(50);
+    await Assert.That(waitTask.IsCompleted).IsFalse();
+
+    // Mark processed for PerspectiveB - NOW wait should complete
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveB");
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_TimeoutsWhenNotAllPerspectivesProcessedAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Track event for TWO perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // Mark processed for only ONE perspective
+    tracker.MarkProcessedByPerspective([eventId], "PerspectiveA");
+
+    // Wait with short timeout - should timeout
+    var result = await tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromMilliseconds(100));
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_ReturnsImmediatelyWhenNotTrackedAsync() {
+    var tracker = new SyncEventTracker();
+
+    // Event not tracked - should return immediately
+    var result = await tracker.WaitForAllPerspectivesAsync([Guid.NewGuid()], TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_HandlesMultipleEventsAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId1 = Guid.NewGuid();
+    var eventId2 = Guid.NewGuid();
+
+    // Track two events for different perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventB), eventId2, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId1, streamId, "PerspectiveB");
+
+    // Start waiting for ALL perspectives on BOTH events
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId1, eventId2], TimeSpan.FromSeconds(5));
+
+    // Mark eventId2 fully processed (only had PerspectiveA)
+    tracker.MarkProcessedByPerspective([eventId2], "PerspectiveA");
+
+    // Wait should NOT complete - eventId1 still has PerspectiveB pending
+    await Task.Delay(50);
+    await Assert.That(waitTask.IsCompleted).IsFalse();
+
+    // Mark eventId1 for PerspectiveA
+    tracker.MarkProcessedByPerspective([eventId1], "PerspectiveA");
+
+    // Wait should STILL NOT complete - eventId1 still has PerspectiveB pending
+    await Task.Delay(50);
+    await Assert.That(waitTask.IsCompleted).IsFalse();
+
+    // Mark eventId1 for PerspectiveB - NOW should complete
+    tracker.MarkProcessedByPerspective([eventId1], "PerspectiveB");
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+  }
 }

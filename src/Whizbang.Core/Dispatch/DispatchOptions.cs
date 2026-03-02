@@ -84,4 +84,62 @@ public sealed class DispatchOptions {
     Timeout = timeout;
     return this;
   }
+
+  /// <summary>
+  /// When true, LocalInvokeAsync waits for all perspectives to finish processing
+  /// any cascaded events before returning. Default is false.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this option for RPC-style calls where you need to ensure all perspectives
+  /// have processed the events before the response is returned to the caller.
+  /// </para>
+  /// <para>
+  /// This uses <see cref="Whizbang.Core.Perspectives.Sync.IEventCompletionAwaiter"/>
+  /// internally to wait for all perspectives.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_WaitForPerspectives_IsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WaitForPerspectives_PropertySetter_WorksAsync</tests>
+  public bool WaitForPerspectives { get; set; }
+
+  /// <summary>
+  /// Timeout for waiting for perspectives to finish processing.
+  /// Only used when <see cref="WaitForPerspectives"/> is true.
+  /// Default is 30 seconds.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_PerspectiveWaitTimeout_Is30SecondsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:PerspectiveWaitTimeout_PropertySetter_WorksAsync</tests>
+  public TimeSpan PerspectiveWaitTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+  /// <summary>
+  /// Enables waiting for all perspectives to process cascaded events before returning.
+  /// </summary>
+  /// <param name="timeout">Optional custom timeout. Default is 30 seconds.</param>
+  /// <returns>This options instance for fluent chaining.</returns>
+  /// <remarks>
+  /// <para>
+  /// Use this for RPC-style calls where you need to ensure all perspectives
+  /// have processed the events before the response is returned.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // Wait for perspectives with default timeout (30s)
+  /// var options = new DispatchOptions().WithPerspectiveWait();
+  ///
+  /// // Wait for perspectives with custom timeout
+  /// var options = new DispatchOptions().WithPerspectiveWait(TimeSpan.FromMinutes(2));
+  /// </code>
+  /// </example>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_SetsWaitForPerspectivesToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_WithTimeout_SetsTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:WithPerspectiveWait_NoTimeout_KeepsDefaultTimeoutAsync</tests>
+  public DispatchOptions WithPerspectiveWait(TimeSpan? timeout = null) {
+    WaitForPerspectives = true;
+    if (timeout.HasValue) {
+      PerspectiveWaitTimeout = timeout.Value;
+    }
+    return this;
+  }
 }

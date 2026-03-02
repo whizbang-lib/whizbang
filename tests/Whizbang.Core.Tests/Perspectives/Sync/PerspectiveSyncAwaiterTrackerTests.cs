@@ -19,6 +19,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync#tracker-integration</docs>
+[NotInParallel("SyncTests")]
 public class PerspectiveSyncAwaiterTrackerTests {
   // Dummy perspective type for testing
   private sealed class TestPerspective { }
@@ -96,10 +97,10 @@ public class PerspectiveSyncAwaiterTrackerTests {
         tracker: null,
         syncEventTracker: syncEventTracker);
 
-    // Simulate perspective worker calling MarkProcessed after a short delay
+    // Simulate perspective worker calling MarkProcessedByPerspective after a short delay
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      syncEventTracker.MarkProcessed([eventId]);
+      syncEventTracker.MarkProcessedByPerspective([eventId], perspectiveName);
     });
 
     // Act
@@ -189,11 +190,11 @@ public class PerspectiveSyncAwaiterTrackerTests {
         tracker: null,
         syncEventTracker: syncEventTracker);
 
-    // Simulate perspective worker calling MarkProcessed for eventIdA only
+    // Simulate perspective worker calling MarkProcessedByPerspective for eventIdA only
     // This verifies that filtering works - only eventIdA is waited for (not eventIdB)
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      syncEventTracker.MarkProcessed([eventIdA]); // Only mark the filtered event type
+      syncEventTracker.MarkProcessedByPerspective([eventIdA], perspectiveName); // Only mark the filtered event type
     });
 
     // Act - only filter for TestEventA
@@ -236,11 +237,11 @@ public class PerspectiveSyncAwaiterTrackerTests {
         tracker: null,
         syncEventTracker: syncEventTracker);
 
-    // Simulate perspective worker calling MarkProcessed only for the matching perspective's event
+    // Simulate perspective worker calling MarkProcessedByPerspective only for the matching perspective's event
     // This verifies that filtering by perspective works
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      syncEventTracker.MarkProcessed([eventIdMatchingPerspective]); // Only mark matching perspective's event
+      syncEventTracker.MarkProcessedByPerspective([eventIdMatchingPerspective], typeof(TestPerspective).FullName!); // Only mark matching perspective's event
     });
 
     // Act
@@ -281,11 +282,11 @@ public class PerspectiveSyncAwaiterTrackerTests {
         tracker: null,
         syncEventTracker: syncEventTracker);
 
-    // Simulate perspective worker calling MarkProcessed after a delay
+    // Simulate perspective worker calling MarkProcessedByPerspective after a delay
     // This simulates the real scenario where PerspectiveWorker processes events
     _ = Task.Run(async () => {
       await Task.Delay(100); // Wait a bit to verify we're truly waiting
-      syncEventTracker.MarkProcessed([eventId]);
+      syncEventTracker.MarkProcessedByPerspective([eventId], perspectiveName);
     });
 
     // Act - should block until MarkProcessed is called
@@ -426,7 +427,7 @@ public class PerspectiveSyncAwaiterTrackerTests {
     // Simulate PerspectiveWorker processing the event
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      sharedTracker.MarkProcessed([eventId]);
+      sharedTracker.MarkProcessedByPerspective([eventId], perspectiveName);
     });
 
     // Act
@@ -468,10 +469,10 @@ public class PerspectiveSyncAwaiterTrackerTests {
         tracker: null,
         syncEventTracker: sharedTracker);
 
-    // Simulate PerspectiveWorker calling MarkProcessed (which both signals waiters AND cleans up)
+    // Simulate PerspectiveWorker calling MarkProcessedByPerspective (which both signals waiters AND cleans up)
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      sharedTracker.MarkProcessed([eventId]); // This removes from tracker
+      sharedTracker.MarkProcessedByPerspective([eventId], perspectiveName); // This removes from tracker
     });
 
     // Act
@@ -699,7 +700,7 @@ public class PerspectiveSyncAwaiterTrackerTests {
     // - Request 2 (awaiter.WaitForStreamAsync) is notified
     _ = Task.Run(async () => {
       await Task.Delay(100); // Simulate processing time
-      sharedTracker.MarkProcessed([eventId]); // PerspectiveWorker calls this
+      sharedTracker.MarkProcessedByPerspective([eventId], perspectiveName); // PerspectiveWorker calls this
     });
 
     // Act - Request 2 waits for the event to be processed

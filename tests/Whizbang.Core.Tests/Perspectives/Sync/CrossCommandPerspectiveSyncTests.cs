@@ -18,6 +18,11 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// - Command E wants to wait until Perspective C has processed B
 /// - E's receptor should NOT fire until C.Apply(B) has completed
 /// </summary>
+/// <remarks>
+/// These tests use shared SyncEventTracker instances, so they must run
+/// sequentially to avoid interference.
+/// </remarks>
+[NotInParallel("SyncTests")]
 public class CrossCommandPerspectiveSyncTests {
 
   /// <summary>
@@ -72,7 +77,7 @@ public class CrossCommandPerspectiveSyncTests {
     var perspectiveProcessingTask = Task.Run(async () => {
       await Task.Delay(100); // Simulate processing time (well within 500ms timeout)
       executionOrder.Add("C.Apply(B) completed");
-      singletonTracker.MarkProcessed([eventBId]);
+      singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
     // === STEP 4: E is sent - awaiter should WAIT for C to process B ===
@@ -141,7 +146,7 @@ public class CrossCommandPerspectiveSyncTests {
     var perspectiveTask = Task.Run(async () => {
       await Task.Delay(100);
       executionOrder.Add("C.Apply(B) completed");
-      singletonTracker.MarkProcessed([eventBId]);
+      singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
     // WITHOUT sync - E's receptor fires immediately
@@ -189,8 +194,8 @@ public class CrossCommandPerspectiveSyncTests {
     _ = Task.Run(async () => {
       await Task.Delay(50);
       // Only mark processed for C's tracking entry
-      // The tracker tracks by eventId, so this marks ALL entries with this eventId
-      singletonTracker.MarkProcessed([eventBId]);
+      // Now using MarkProcessedByPerspective so it only signals C, not D
+      singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
     // Act - wait for C to process

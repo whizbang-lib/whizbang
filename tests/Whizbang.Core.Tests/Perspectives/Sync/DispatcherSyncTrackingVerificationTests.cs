@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
 /// sequentially to avoid interference.
 /// </remarks>
-[NotInParallel]
+[NotInParallel("SyncTests")]
 public class DispatcherSyncTrackingVerificationTests {
 
   /// <summary>
@@ -273,10 +273,10 @@ public class DispatcherSyncTrackingVerificationTests {
     await Assert.That(awaiter).IsNotNull()
       .Because("PerspectiveSyncAwaiter should be resolvable from DI");
 
-    // Simulate MarkProcessed after delay
+    // Simulate MarkProcessedByPerspective after delay (perspective processes event)
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      singletonTracker.MarkProcessed([eventId]);
+      singletonTracker.MarkProcessedByPerspective([eventId], typeof(VerificationTestPerspectiveC).FullName!);
     });
 
     // Act - awaiter should find the tracked event via singleton tracker

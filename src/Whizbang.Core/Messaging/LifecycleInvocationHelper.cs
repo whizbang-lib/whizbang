@@ -77,116 +77,15 @@ public static class LifecycleInvocationHelper {
     var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded)
-    // Each message gets its own correlated span linked to the original HTTP request trace
-    _ = Task.Run(async () => {
-      // Early return if lifecycle infrastructure not configured
-      if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
-        return;
-      }
-
-      try {
-        // Process outbox messages with MessageSource.Outbox context
-        foreach (var outboxMsg in outboxSnapshot) {
-          // Extract TraceParent from the message's hops to correlate with original request
-          var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
-
-          // Only create span if lifecycle tracing is enabled
-          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-            var outboxContext = new LifecycleExecutionContext {
-              CurrentStage = asyncStage,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = Messaging.MessageSource.Outbox,
-              AttemptNumber = null // Attempt info not available at this stage
-            };
-
-            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-            var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
-          }
-        }
-
-        // Process inbox messages with MessageSource.Inbox context
-        foreach (var inboxMsg in inboxSnapshot) {
-          // Extract TraceParent from the message's hops to correlate with original request
-          var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
-
-          // Only create span if lifecycle tracing is enabled
-          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-            var inboxContext = new LifecycleExecutionContext {
-              CurrentStage = asyncStage,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = Messaging.MessageSource.Inbox,
-              AttemptNumber = null // Attempt info not available at this stage
-            };
-
-            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-            var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
-          }
-        }
-      } catch (Exception ex) {
-        if (logger != null) {
-#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-          logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
-#pragma warning restore CA1848
-        }
-      }
-    }, ct);
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, logger, enableLifecycleTracing, ct);
 
     // Invoke inline stage (blocking, sequential)
-    // Each message gets its own correlated span linked to the original HTTP request trace
-    // Early return if lifecycle infrastructure not configured
     if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
       return;
     }
 
-    // Process outbox messages with MessageSource.Outbox context
-    foreach (var outboxMsg in outboxSnapshot) {
-      // Extract TraceParent from the message's hops to correlate with original request
-      var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
-
-      // Only create span if lifecycle tracing is enabled
-      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-        var outboxContext = new LifecycleExecutionContext {
-          CurrentStage = inlineStage,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = Messaging.MessageSource.Outbox,
-          AttemptNumber = null // Attempt info not available at this stage
-        };
-
-        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-        var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, outboxContext, ct);
-      }
-    }
-
-    // Process inbox messages with MessageSource.Inbox context
-    foreach (var inboxMsg in inboxSnapshot) {
-      // Extract TraceParent from the message's hops to correlate with original request
-      var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
-
-      // Only create span if lifecycle tracing is enabled
-      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {inlineStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-        var inboxContext = new LifecycleExecutionContext {
-          CurrentStage = inlineStage,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = Messaging.MessageSource.Inbox,
-          AttemptNumber = null // Attempt info not available at this stage
-        };
-
-        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-        var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-        await lifecycleInvoker.InvokeAsync(typedEnvelope, inlineStage, inboxContext, ct);
-      }
-    }
+    await _processOutboxMessagesAsync(outboxSnapshot, inlineStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
+    await _processInboxMessagesAsync(inboxSnapshot, inlineStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
   }
 
   /// <summary>
@@ -237,65 +136,47 @@ public static class LifecycleInvocationHelper {
     var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
-    // Each message gets its own correlated span linked to the original HTTP request trace
-    _ = Task.Run(async () => {
-      // Early return if lifecycle infrastructure not configured
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, logger, enableLifecycleTracing, ct);
+  }
+
+  /// <summary>
+  /// Invokes async stage lifecycle receptors in a background task.
+  /// Handles exceptions and logs errors without affecting the main thread.
+  /// </summary>
+  private static Task _invokeAsyncStageInBackgroundAsync(
+      OutboxMessage[] outboxSnapshot,
+      InboxMessage[] inboxSnapshot,
+      LifecycleStage asyncStage,
+      ILifecycleInvoker? lifecycleInvoker,
+      ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
+      ILogger? logger,
+      bool enableLifecycleTracing,
+      CancellationToken ct) {
+    return Task.Run(async () => {
       if (lifecycleInvoker is null || lifecycleMessageDeserializer is null) {
         return;
       }
 
       try {
-        // Process outbox messages with MessageSource.Outbox context
-        foreach (var outboxMsg in outboxSnapshot) {
-          // Extract TraceParent from the message's hops to correlate with original request
-          var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
-
-          // Only create span if lifecycle tracing is enabled
-          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-            var outboxContext = new LifecycleExecutionContext {
-              CurrentStage = asyncStage,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = Messaging.MessageSource.Outbox,
-              AttemptNumber = null // Attempt info not available at this stage
-            };
-
-            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
-            var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
-            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, outboxContext, ct);
-          }
-        }
-
-        // Process inbox messages with MessageSource.Inbox context
-        foreach (var inboxMsg in inboxSnapshot) {
-          // Extract TraceParent from the message's hops to correlate with original request
-          var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
-
-          // Only create span if lifecycle tracing is enabled
-          using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {asyncStage}", ActivityKind.Internal, parentContext: parentContext) : null) {
-            var inboxContext = new LifecycleExecutionContext {
-              CurrentStage = asyncStage,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = Messaging.MessageSource.Inbox,
-              AttemptNumber = null // Attempt info not available at this stage
-            };
-
-            var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
-            var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
-            await lifecycleInvoker.InvokeAsync(typedEnvelope, asyncStage, inboxContext, ct);
-          }
-        }
+        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
+        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, lifecycleInvoker, lifecycleMessageDeserializer, enableLifecycleTracing, ct);
       } catch (Exception ex) {
-        if (logger != null) {
-#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
-          logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", asyncStage);
-#pragma warning restore CA1848
-        }
+        _logLifecycleError(logger, asyncStage, ex);
       }
     }, ct);
+  }
+
+  /// <summary>
+  /// Logs lifecycle invocation errors if a logger is available.
+  /// </summary>
+  private static void _logLifecycleError(ILogger? logger, LifecycleStage stage, Exception ex) {
+    if (logger is null) {
+      return;
+    }
+
+#pragma warning disable CA1848 // LoggerMessage not applicable for exception handlers in background tasks
+    logger.LogError(ex, "Error invoking {Stage} lifecycle receptors", stage);
+#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -313,4 +194,61 @@ public static class LifecycleInvocationHelper {
 
     return default;
   }
+
+  /// <summary>
+  /// Processes outbox messages for a given lifecycle stage.
+  /// </summary>
+  private static async Task _processOutboxMessagesAsync(
+      OutboxMessage[] messages,
+      LifecycleStage stage,
+      ILifecycleInvoker lifecycleInvoker,
+      ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+      bool enableLifecycleTracing,
+      CancellationToken ct) {
+    foreach (var outboxMsg in messages) {
+      var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
+
+      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
+        var context = _createLifecycleContext(stage, MessageSource.Outbox);
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+        var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Processes inbox messages for a given lifecycle stage.
+  /// </summary>
+  private static async Task _processInboxMessagesAsync(
+      InboxMessage[] messages,
+      LifecycleStage stage,
+      ILifecycleInvoker lifecycleInvoker,
+      ILifecycleMessageDeserializer lifecycleMessageDeserializer,
+      bool enableLifecycleTracing,
+      CancellationToken ct) {
+    foreach (var inboxMsg in messages) {
+      var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
+
+      using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
+        var context = _createLifecycleContext(stage, MessageSource.Inbox);
+        var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
+        var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
+        await lifecycleInvoker.InvokeAsync(typedEnvelope, stage, context, ct);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Creates a LifecycleExecutionContext for the given stage and message source.
+  /// </summary>
+  private static LifecycleExecutionContext _createLifecycleContext(LifecycleStage stage, MessageSource source) =>
+    new() {
+      CurrentStage = stage,
+      EventId = null,
+      StreamId = null,
+      LastProcessedEventId = null,
+      MessageSource = source,
+      AttemptNumber = null
+    };
 }
