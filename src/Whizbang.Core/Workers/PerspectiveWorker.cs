@@ -408,20 +408,37 @@ public partial class PerspectiveWorker(
       }
 
       // === Phase 2: Create perspective activity with proper parent context ===
-      // Now we have trace context from the events, create the activity
-      using var perspectiveActivity = WhizbangActivitySource.Tracing.StartActivity(
-        $"Perspective {perspectiveName}",
-        ActivityKind.Internal,
-        parentContext: perspectiveParentContext);
+      // Only create perspective spans when TraceComponents.Perspectives is enabled
+      var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
+      using var perspectiveActivity = enablePerspectiveSpans
+        ? WhizbangActivitySource.Tracing.StartActivity(
+            $"Perspective {perspectiveName}",
+            ActivityKind.Internal,
+            parentContext: perspectiveParentContext)
+        : null;
       perspectiveActivity?.SetTag("whizbang.perspective.name", perspectiveName);
       perspectiveActivity?.SetTag("whizbang.stream.id", streamId.ToString());
+
+      // DIAGNOSTIC: Help debug orphaned perspective spans
+      perspectiveActivity?.SetTag("whizbang.perspective.events_loaded", upcomingEvents?.Count ?? 0);
+      perspectiveActivity?.SetTag("whizbang.perspective.has_parent_context", perspectiveParentContext != default);
+      if (upcomingEvents is { Count: > 0 }) {
+        var firstEventTraceParent = upcomingEvents[0].Hops
+          .Where(h => h.Type == HopType.Current)
+          .Select(h => h.TraceParent)
+          .LastOrDefault();
+        perspectiveActivity?.SetTag("whizbang.perspective.first_event_traceparent", firstEventTraceParent ?? "(none)");
+      }
+
+      // Check if Lifecycle tracing is enabled via TraceComponents
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
       try {
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
-        // Always trace lifecycle stages even when no receptors are registered
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
         // Events are already loaded above for trace context extraction
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal)) {
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal) : null) {
           if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
             try {
               var context = new LifecycleExecutionContext {
@@ -450,7 +467,7 @@ public partial class PerspectiveWorker(
         }
 
         // PrePerspectiveInline (blocking) - reuse already loaded events
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal)) {
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal) : null) {
           if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
             try {
               var context = new LifecycleExecutionContext {
@@ -481,7 +498,7 @@ public partial class PerspectiveWorker(
         // The runner will read from lastProcessedEventId onwards and process all available events
         // Note: Perspective spans are now linked to the first event's trace context (extracted above)
         PerspectiveCheckpointCompletion result;
-        using (var activity = WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal)) {
+        using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal) : null) {
           activity?.SetTag("whizbang.perspective.name", perspectiveName);
           activity?.SetTag("whizbang.stream.id", streamId.ToString());
           activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
@@ -556,7 +573,7 @@ public partial class PerspectiveWorker(
         // Always trace lifecycle stages even when no receptors are registered
         LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, _lifecycleInvoker is not null);
 
-        using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal)) {
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal) : null) {
           if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
             LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
 

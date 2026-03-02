@@ -8,6 +8,7 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -17,6 +18,7 @@ using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -81,7 +83,8 @@ public abstract class Dispatcher(
   IReceptorRegistry? receptorRegistry = null,
   IScopedEventTracker? scopedEventTracker = null,
   ISyncEventTracker? syncEventTracker = null,
-  ITrackedEventTypeRegistry? trackedEventTypeRegistry = null
+  ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -119,6 +122,8 @@ public abstract class Dispatcher(
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+  // Tracing options for component-level control (Lifecycle, Handlers, etc.)
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
@@ -373,8 +378,10 @@ public abstract class Dispatcher(
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
       // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      // Always trace lifecycle stages even when no receptors are registered
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.ImmediateAsync,
@@ -388,7 +395,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateAsync,
@@ -402,7 +409,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateInline,
@@ -606,8 +613,10 @@ public abstract class Dispatcher(
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
       // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      // Always trace lifecycle stages even when no receptors are registered
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.ImmediateAsync,
@@ -621,7 +630,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateAsync,
@@ -635,7 +644,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateInline,
@@ -722,8 +731,10 @@ public abstract class Dispatcher(
       // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
 
       // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
-      // Always trace lifecycle stages even when no receptors are registered
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal)) {
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.ImmediateAsync,
@@ -737,7 +748,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateAsync,
@@ -751,7 +762,7 @@ public abstract class Dispatcher(
         }
       }
 
-      using (WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal)) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
         if (_lifecycleInvoker is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.LocalImmediateInline,
