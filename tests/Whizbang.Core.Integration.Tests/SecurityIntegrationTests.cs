@@ -4,7 +4,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for the security system.

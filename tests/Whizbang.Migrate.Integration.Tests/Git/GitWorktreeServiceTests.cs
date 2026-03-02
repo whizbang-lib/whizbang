@@ -1,7 +1,7 @@
 using Whizbang.Migrate.Core;
 using Whizbang.Migrate.Git;
 
-namespace Whizbang.Migrate.Tests.Git;
+namespace Whizbang.Migrate.Integration.Tests.Git;
 
 /// <summary>
 /// Tests for the git worktree service that manages isolated migration environments.

@@ -4,7 +4,7 @@ using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
 using Whizbang.Core.SystemEvents;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for system events.

@@ -9,7 +9,7 @@ namespace Whizbang.Core.Observability;
 /// Each service instance (process) has a unique ID generated at startup.
 /// </summary>
 /// <docs>core-concepts/observability</docs>
-/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>

@@ -1,6 +1,6 @@
 using Whizbang.Transports.HotChocolate.Tests.Fixtures;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Integration;
+namespace Whizbang.Transports.HotChocolate.Integration.Tests;
 
 /// <summary>
 /// Integration tests for GraphQL query execution with Whizbang lenses.

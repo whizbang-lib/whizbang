@@ -8,7 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for event auditing flow.

@@ -578,4 +578,196 @@ public class TransportPublishStrategyTests {
       .Because("Transport should be called for messages with valid destination");
     await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("myapp.orders.events");
   }
+
+  // ========================================
+  // ROUTING KEY TESTS (Subject for ASB)
+  // ========================================
+  // These tests verify that RoutingKey is correctly set for Azure Service Bus
+  // The RoutingKey becomes the Subject property, used for SqlFilter matching
+
+  [Test]
+  public async Task PublishAsync_Command_RoutingKeySetToNamespaceAndTypeNameAsync() {
+    // Arrange - Commands must have RoutingKey set for SqlFilter matching
+    // RoutingKey format: namespace.typename (lowercase)
+    // This becomes the Subject property in Azure Service Bus
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createusercommand",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.CreateUserCommand, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Commands.CreateUserCommand, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox");
+    // RoutingKey should be namespace.typename (lowercase) for SqlFilter matching
+    // SqlFilter pattern: [Subject] LIKE 'myapp.commands.%' should match this
+    await Assert.That(transport.LastPublishedDestination.RoutingKey)
+      .IsEqualTo("myapp.commands.createusercommand")
+      .Because("RoutingKey must be namespace.typename for SqlFilter matching");
+  }
+
+  [Test]
+  public async Task PublishAsync_Event_RoutingKeySetToNamespaceAndTypeNameAsync() {
+    // Arrange - Events must have RoutingKey set for SqlFilter matching
+    // This is CRITICAL: Without RoutingKey, Subject defaults to "message"
+    // and SqlFilter patterns like '[Subject] LIKE 'myapp.orders.%' won't match
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events", // Event namespace topic
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("myapp.orders.events");
+    // RoutingKey must be set for events - this was the bug!
+    // Without RoutingKey, Azure Service Bus sets Subject = "message"
+    // and SqlFilter '[Subject] LIKE 'myapp.orders.%' won't match
+    await Assert.That(transport.LastPublishedDestination.RoutingKey)
+      .IsEqualTo("myapp.orders.events.ordercreatedevent")
+      .Because("Events must have RoutingKey set for SqlFilter matching - Subject defaults to 'message' otherwise");
+  }
+
+  [Test]
+  public async Task PublishAsync_NestedClassEvent_RoutingKeySetCorrectlyAsync() {
+    // Arrange - Nested class types (OuterClass+InnerType) should work correctly
+    // JDX uses patterns like JDX.Contracts.Chat.ChatConversationsContracts+CreateCommand
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "jdx.contracts.chat.events", // Event namespace topic
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.Chat.ChatEvents+ConversationCreatedEvent, JDX.Contracts]], Whizbang.Core",
+      MessageType = "JDX.Contracts.Chat.ChatEvents+ConversationCreatedEvent, JDX.Contracts",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("jdx.contracts.chat.events");
+    // RoutingKey should include the full nested type name (with +)
+    await Assert.That(transport.LastPublishedDestination.RoutingKey)
+      .IsEqualTo("jdx.contracts.chat.chatevents+conversationcreatedevent")
+      .Because("Nested class event types should have RoutingKey with full type name including +");
+  }
+
+  [Test]
+  public async Task PublishAsync_NestedClassCommand_RoutingKeySetCorrectlyAsync() {
+    // Arrange - Nested class commands (like ChatConversationsContracts+CreateCommand)
+    // should have RoutingKey set correctly for SqlFilter matching
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "createconversation",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.Chat.ChatConversationsContracts+CreateCommand, JDX.Contracts]], Whizbang.Core",
+      MessageType = "JDX.Contracts.Chat.ChatConversationsContracts+CreateCommand, JDX.Contracts",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox");
+    // RoutingKey for nested class should include the + character
+    // SqlFilter pattern '[Subject] LIKE 'jdx.contracts.chat.%' should match this
+    await Assert.That(transport.LastPublishedDestination.RoutingKey)
+      .IsEqualTo("jdx.contracts.chat.chatconversationscontracts+createcommand")
+      .Because("Nested command types should have RoutingKey matching SqlFilter pattern");
+  }
+
+  [Test]
+  public async Task PublishAsync_Command_RoutingKeyMatchesSqlFilterPatternAsync() {
+    // Arrange - This test verifies the RoutingKey will match SqlFilter patterns
+    // SqlFilter: [Subject] LIKE 'jdx.contracts.chat.%'
+    // RoutingKey: jdx.contracts.chat.activitytrackedcommand
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "activitytracked",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JDX.Contracts.Chat.ActivityTrackedCommand, JDX.Contracts]], Whizbang.Core",
+      MessageType = "JDX.Contracts.Chat.ActivityTrackedCommand, JDX.Contracts",
+      StreamId = Guid.CreateVersion7(),
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+
+    // Act
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination).IsNotNull();
+    var routingKey = transport.LastPublishedDestination!.RoutingKey;
+
+    // The RoutingKey MUST start with the pattern that SqlFilter expects
+    // SqlFilter: [Subject] LIKE 'jdx.contracts.chat.%'
+    await Assert.That(routingKey)
+      .StartsWith("jdx.contracts.chat.")
+      .Because("RoutingKey must match SqlFilter pattern '[Subject] LIKE 'jdx.contracts.chat.%'");
+    await Assert.That(routingKey)
+      .IsEqualTo("jdx.contracts.chat.activitytrackedcommand");
+  }
 }

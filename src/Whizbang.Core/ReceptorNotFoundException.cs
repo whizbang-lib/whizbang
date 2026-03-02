@@ -10,7 +10,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs:Integration_UnregisteredMessage_ShouldThrowReceptorNotFoundAsync</tests>
+/// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs:Integration_UnregisteredMessage_ShouldThrowReceptorNotFoundAsync</tests>
 [Serializable]
 public class ReceptorNotFoundException(Type messageType) : Exception(_formatMessage(messageType)) {
   public ReceptorNotFoundException() : this(typeof(object)) {

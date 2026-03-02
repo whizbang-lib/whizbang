@@ -85,6 +85,19 @@ public sealed class TransportSubscriptionBuilder {
     // Build metadata dictionary from InboxSubscription metadata
     var metadata = _buildMetadata(subscription);
 
+    // DIAGNOSTIC: Log metadata conversion
+    Console.WriteLine($"[DIAGNOSTIC TransportSubscriptionBuilder] Subscription.Metadata: {(subscription.Metadata == null ? "NULL" : string.Join(", ", subscription.Metadata.Keys))}");
+    if (subscription.Metadata?.TryGetValue("RoutingPatterns", out var patterns) == true) {
+      Console.WriteLine($"[DIAGNOSTIC TransportSubscriptionBuilder] RoutingPatterns type: {patterns?.GetType().Name}, count: {(patterns as System.Collections.ICollection)?.Count ?? -1}");
+      if (patterns is IEnumerable<string> stringPatterns) {
+        Console.WriteLine($"[DIAGNOSTIC TransportSubscriptionBuilder] RoutingPatterns values: [{string.Join(", ", stringPatterns)}]");
+      }
+    }
+    Console.WriteLine($"[DIAGNOSTIC TransportSubscriptionBuilder] Converted metadata: {(metadata == null ? "NULL" : string.Join(", ", metadata.Keys))}");
+    if (metadata?.TryGetValue("RoutingPatterns", out var convertedPatterns) == true) {
+      Console.WriteLine($"[DIAGNOSTIC TransportSubscriptionBuilder] Converted RoutingPatterns ValueKind: {convertedPatterns.ValueKind}, RawText: {convertedPatterns.GetRawText()}");
+    }
+
     // Add SubscriberName for deterministic queue naming (critical for competing consumers)
     metadata ??= new Dictionary<string, System.Text.Json.JsonElement>();
     metadata["SubscriberName"] = JsonElementHelper.FromString(_serviceName);

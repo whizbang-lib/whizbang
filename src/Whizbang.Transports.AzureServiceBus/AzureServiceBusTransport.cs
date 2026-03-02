@@ -219,6 +219,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ContentType = "application/json"
       };
 
+      // DIAGNOSTIC: Log the Subject being set (WARNING level to always show)
+      _logger.LogWarning(
+        "DIAGNOSTIC [PublishAsync]: Setting Subject={Subject} on message {MessageId} to topic {TopicName} (RoutingKey={RoutingKey})",
+        message.Subject,
+        envelope.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? "(null)");
+
       // DIAGNOSTIC: Log the Service Bus message ID to compare
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var serviceBusMessageId = message.MessageId;
@@ -310,6 +318,26 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       // Ensure infrastructure exists when auto-provisioning is enabled
       await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
+
+      // DIAGNOSTIC: Log metadata to trace RoutingPatterns flow
+      _logger.LogWarning(
+        "DIAGNOSTIC [SubscribeAsync]: Topic={TopicName}, Subscription={SubscriptionName}, MetadataNull={MetadataNull}, MetadataKeys=[{MetadataKeys}]",
+        topicName,
+        subscriptionName,
+        destination.Metadata == null,
+        destination.Metadata != null ? string.Join(", ", destination.Metadata.Keys) : "N/A");
+
+      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) == true) {
+        _logger.LogWarning(
+          "DIAGNOSTIC [SubscribeAsync]: Found RoutingPatterns! ValueKind={ValueKind}, RawText={RawText}",
+          routingPatternsElement.ValueKind,
+          routingPatternsElement.GetRawText());
+      } else {
+        _logger.LogWarning(
+          "DIAGNOSTIC [SubscribeAsync]: RoutingPatterns NOT FOUND in metadata for {TopicName}/{SubscriptionName}",
+          topicName,
+          subscriptionName);
+      }
 
       // Apply routing pattern filter if RoutingPatterns metadata exists (inbox pattern)
       if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsElem) == true &&
@@ -846,26 +874,32 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     const string ruleName = "RoutingPatternFilter";
 
     try {
-      // Delete existing rules
+      // Delete existing rules (including $Default)
+      var deletedRules = new List<string>();
       await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
         await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug("Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}", rule.Name, topicName, subscriptionName);
-        }
+        deletedRules.Add(rule.Name);
       }
+
+      // Log deleted rules at WARNING level for diagnostic visibility
+      _logger.LogWarning(
+        "DIAGNOSTIC [SqlFilter]: Deleted {RuleCount} existing rules from {TopicName}/{SubscriptionName}: [{DeletedRules}]",
+        deletedRules.Count,
+        topicName,
+        subscriptionName,
+        string.Join(", ", deletedRules));
 
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
       await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
 
-      if (_logger.IsEnabled(LogLevel.Information)) {
-        _logger.LogInformation(
-          "Applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
-          sqlExpression,
-          topicName,
-          subscriptionName
-        );
-      }
+      // Log at WARNING level for diagnostic visibility
+      _logger.LogWarning(
+        "DIAGNOSTIC [SqlFilter]: Applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
+        sqlExpression,
+        topicName,
+        subscriptionName
+      );
     } catch (Exception ex) {
       _logger.LogWarning(
         ex,
