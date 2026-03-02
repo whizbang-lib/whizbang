@@ -16,7 +16,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly ServiceBusClient _client;
-  private readonly ServiceBusAdministrationClient? _adminClient;
+  private readonly IServiceBusAdminClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
   private readonly Dictionary<string, ServiceBusSender> _senders = [];
   private readonly SemaphoreSlim _senderLock = new(1, 1);
@@ -35,11 +35,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="options">Optional transport configuration</param>
   /// <param name="logger">Optional logger instance</param>
+  /// <param name="adminClient">Optional admin client for auto-provisioning infrastructure</param>
   public AzureServiceBusTransport(
     ServiceBusClient client,
     JsonSerializerOptions jsonOptions,
     AzureServiceBusOptions? options = null,
-    ILogger<AzureServiceBusTransport>? logger = null
+    ILogger<AzureServiceBusTransport>? logger = null,
+    IServiceBusAdminClient? adminClient = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -48,25 +50,28 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _client = client;
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
+    _adminClient = adminClient;
 
     // Detect emulator from client endpoint
     var endpoint = client.FullyQualifiedNamespace;
     _isEmulator = endpoint.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
                   endpoint.Contains("127.0.0.1");
 
-    // Admin client disabled in shared mode - limitation accepted for v0.1.0
-    // Admin operations (like rule provisioning) should be handled externally
-    _adminClient = null;
-    _logger.LogInformation("Shared ServiceBusClient mode: Admin operations disabled");
-
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+
+    // Log admin client availability
+    if (_adminClient != null) {
+      _logger.LogInformation("Admin client provided - auto-provisioning enabled");
+    } else {
+      _logger.LogInformation("No admin client - auto-provisioning disabled, infrastructure must be pre-provisioned");
+    }
 
     // Add OTEL tags for observability
     activity?.SetTag("transport.type", "AzureServiceBus");
     activity?.SetTag("transport.emulator", _isEmulator);
-    activity?.SetTag("transport.admin_client_available", false);
-    activity?.SetTag("transport.shared_client", true);
+    activity?.SetTag("transport.admin_client_available", _adminClient != null);
+    activity?.SetTag("transport.auto_provision", _options.AutoProvisionInfrastructure);
   }
 
   /// <inheritdoc />
@@ -298,7 +303,30 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     try {
       var topicName = destination.Address;
-      var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+
+      // FIXED: Derive subscription name from SubscriberName metadata, NOT from RoutingKey
+      // The Core layer sets RoutingKey="#" for "subscribe to all" which is invalid for ASB
+      var subscriptionName = _deriveSubscriptionName(destination, topicName);
+
+      // Ensure infrastructure exists when auto-provisioning is enabled
+      await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
+
+      // Apply routing pattern filter if RoutingPatterns metadata exists (inbox pattern)
+      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsElem) == true &&
+          patternsElem.ValueKind == JsonValueKind.Array) {
+        var patterns = new List<string>();
+        foreach (var pattern in patternsElem.EnumerateArray()) {
+          if (pattern.ValueKind == JsonValueKind.String) {
+            var patternStr = pattern.GetString();
+            if (!string.IsNullOrWhiteSpace(patternStr)) {
+              patterns.Add(patternStr);
+            }
+          }
+        }
+        if (patterns.Count > 0) {
+          await _applyRoutingPatternFilterAsync(topicName, subscriptionName, patterns, cancellationToken);
+        }
+      }
 
       // Apply CorrelationFilter if specified in metadata (production without Aspire)
       // Skip if emulator (filters provisioned by Aspire AppHost)
@@ -669,6 +697,186 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       throw;
     }
   }
+
+  #region Subscription Name Derivation
+
+  /// <summary>
+  /// Derives subscription name from SubscriberName metadata, NOT RoutingKey.
+  /// The Core layer sets RoutingKey for routing patterns (e.g., "#" for all messages),
+  /// which are invalid for Azure Service Bus subscription names.
+  /// </summary>
+  /// <param name="destination">The transport destination containing metadata.</param>
+  /// <param name="topicName">The topic name being subscribed to.</param>
+  /// <returns>A valid Azure Service Bus subscription name.</returns>
+  /// <docs>components/transports/azure-service-bus#subscription-naming</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  private string _deriveSubscriptionName(TransportDestination destination, string topicName) {
+    // Try to get SubscriberName from metadata (set by TransportSubscriptionBuilder)
+    if (destination.Metadata?.TryGetValue("SubscriberName", out var elem) == true &&
+        elem.ValueKind == JsonValueKind.String) {
+      var subscriberName = elem.GetString();
+      if (!string.IsNullOrWhiteSpace(subscriberName)) {
+        var derivedName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug(
+            "Derived subscription name '{SubscriptionName}' from SubscriberName metadata '{SubscriberName}' for topic '{TopicName}'",
+            derivedName,
+            subscriberName,
+            topicName
+          );
+        }
+        return derivedName;
+      }
+    }
+
+    // Fallback - use routing key if it's a valid subscription name (no wildcards)
+    var routingKey = destination.RoutingKey;
+    if (!string.IsNullOrWhiteSpace(routingKey) && !_isWildcardPattern(routingKey)) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Using RoutingKey '{RoutingKey}' as subscription name for topic '{TopicName}'",
+          routingKey,
+          topicName
+        );
+      }
+      return routingKey;
+    }
+
+    // Final fallback - use default subscription name
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "Using default subscription name '{DefaultName}' for topic '{TopicName}' (RoutingKey '{RoutingKey}' is wildcard or empty)",
+        _options.DefaultSubscriptionName,
+        topicName,
+        routingKey ?? "(null)"
+      );
+    }
+    return _options.DefaultSubscriptionName;
+  }
+
+  /// <summary>
+  /// Determines if a routing key contains wildcard patterns that are invalid for subscription names.
+  /// </summary>
+  /// <param name="routingKey">The routing key to check.</param>
+  /// <returns>True if the routing key contains wildcard characters.</returns>
+  private static bool _isWildcardPattern(string routingKey) =>
+    routingKey.Contains('#') || routingKey.Contains('*') || routingKey.Contains(',');
+
+  #endregion
+
+  #region Infrastructure Provisioning
+
+  /// <summary>
+  /// Ensures topic and subscription exist when AutoProvisionInfrastructure is enabled.
+  /// Handles race conditions gracefully by ignoring 409 Conflict errors.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>components/transports/azure-service-bus#auto-provisioning</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
+  private async Task _ensureInfrastructureExistsAsync(
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken) {
+
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      return;
+    }
+
+    // Ensure topic exists
+    try {
+      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation("Creating topic {TopicName}", topicName);
+        }
+        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+      }
+    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition - topic created by another instance, safe to ignore
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Topic {TopicName} already exists (409 conflict)", topicName);
+      }
+    }
+
+    // Ensure subscription exists
+    try {
+      if (!await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken)) {
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
+        }
+        await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, cancellationToken);
+      }
+    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition - subscription created by another instance, safe to ignore
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Applies SqlFilter rules for routing pattern matching.
+  /// Translates RabbitMQ-style patterns (e.g., "ns.#") to SQL LIKE patterns.
+  /// </summary>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="routingPatterns">The routing patterns to filter by.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>components/transports/azure-service-bus#routing-filters</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
+  private async Task _applyRoutingPatternFilterAsync(
+    string topicName,
+    string subscriptionName,
+    IEnumerable<string> routingPatterns,
+    CancellationToken cancellationToken) {
+
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      return;
+    }
+
+    // Build SQL filter expression
+    // "ns1.#,ns2.#" → "[Subject] LIKE 'ns1.%' OR [Subject] LIKE 'ns2.%'"
+    var likePatterns = routingPatterns
+      .Select(p => p.Replace(".#", ".%").Replace(".*", ".%").Replace("#", "%").Replace("*", "%"))
+      .Select(p => $"[Subject] LIKE '{p}'");
+
+    var sqlExpression = string.Join(" OR ", likePatterns);
+
+    const string ruleName = "RoutingPatternFilter";
+
+    try {
+      // Delete existing rules
+      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
+        await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug("Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}", rule.Name, topicName, subscriptionName);
+        }
+      }
+
+      // Create SqlFilter rule
+      var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
+      await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation(
+          "Applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
+          sqlExpression,
+          topicName,
+          subscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      _logger.LogWarning(
+        ex,
+        "Failed to apply routing pattern filter to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+        topicName,
+        subscriptionName
+      );
+    }
+  }
+
+  #endregion
 
   /// <summary>
   /// Converts a JsonElement to an AMQP-compatible primitive value.

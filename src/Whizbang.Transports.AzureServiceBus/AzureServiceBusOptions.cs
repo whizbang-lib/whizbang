@@ -4,7 +4,16 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Configuration options for Azure Service Bus transport.
 /// </summary>
 /// <docs>components/transports/azure-service-bus</docs>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceCollectionExtensionsTests.cs</tests>
 public class AzureServiceBusOptions {
+  /// <summary>
+  /// If true, automatically create topics and subscriptions when subscribing.
+  /// Requires IServiceBusAdminClient to be registered (auto-registered when true).
+  /// Default: true (auto-provision infrastructure)
+  /// </summary>
+  /// <docs>components/transports/azure-service-bus#auto-provisioning</docs>
+  public bool AutoProvisionInfrastructure { get; set; } = true;
+
   /// <summary>
   /// Maximum number of concurrent message processing calls.
   /// Default: 10

@@ -22,12 +22,28 @@ public static class ServiceBusSubscriptionNameHelper {
   /// <param name="topicName">The topic name being subscribed to (e.g., "jdx.contracts.chat").</param>
   /// <returns>A valid Azure Service Bus subscription name in format: {subscriberName}-{topicName}</returns>
   /// <exception cref="ArgumentException">Thrown when subscriberName or topicName is null or whitespace.</exception>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionName_WithValidNames_ReturnsExpectedFormatAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionName_WithWildcard_SanitizesCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionName_ExceedsMaxLength_TruncatesTo50CharsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameWithValidNamesReturnsExpectedFormatAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameWithWildcardSanitizesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs:GenerateSubscriptionNameExceedsMaxLengthTruncatesTo50CharsAsync</tests>
   public static string GenerateSubscriptionName(string subscriberName, string topicName) {
-    // TDD RED: This will fail all tests
-    throw new NotImplementedException("TDD RED phase - implementation pending");
+    ArgumentException.ThrowIfNullOrWhiteSpace(subscriberName, nameof(subscriberName));
+    ArgumentException.ThrowIfNullOrWhiteSpace(topicName, nameof(topicName));
+
+    // Combine names with hyphen separator
+    var rawName = $"{subscriberName}-{topicName}";
+
+    // Sanitize the combined name
+    var sanitized = _sanitizeSubscriptionName(rawName);
+
+    // Truncate to max length if needed
+    if (sanitized.Length > MAX_SUBSCRIPTION_NAME_LENGTH) {
+      sanitized = sanitized[..MAX_SUBSCRIPTION_NAME_LENGTH];
+
+      // Ensure we don't end with a hyphen after truncation
+      sanitized = sanitized.TrimEnd('-');
+    }
+
+    return sanitized;
   }
 
   /// <summary>
@@ -36,6 +52,26 @@ public static class ServiceBusSubscriptionNameHelper {
   /// <param name="name">The raw name to sanitize.</param>
   /// <returns>A sanitized name suitable for use as an ASB subscription name.</returns>
   private static string _sanitizeSubscriptionName(string name) {
-    throw new NotImplementedException("TDD RED phase - implementation pending");
+    // Lowercase for consistency
+    var sanitized = name.ToLowerInvariant();
+
+    // Replace invalid characters with hyphens
+    // Invalid chars: #, *, /, \, ,
+    sanitized = sanitized
+      .Replace("#", "-")
+      .Replace("*", "-")
+      .Replace("/", "-")
+      .Replace("\\", "-")
+      .Replace(",", "-");
+
+    // Remove consecutive hyphens (collapse to single hyphen)
+    while (sanitized.Contains("--", StringComparison.Ordinal)) {
+      sanitized = sanitized.Replace("--", "-");
+    }
+
+    // Trim leading/trailing hyphens
+    sanitized = sanitized.Trim('-');
+
+    return sanitized;
   }
 }

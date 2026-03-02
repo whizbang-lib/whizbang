@@ -173,6 +173,33 @@ public class ServiceBusInfrastructureProvisionerTests {
       CreatedTopics.Add(topicName);
       return Task.CompletedTask;
     }
+
+    // Namespace management - not needed for provisioner tests
+    public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    // Subscription management - not needed for provisioner tests
+    public Task<bool> SubscriptionExistsAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task CreateSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    // Rule management - not needed for provisioner tests
+    public IAsyncEnumerable<RuleProperties> GetRulesAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task DeleteRuleAsync(string topicName, string subscriptionName, string ruleName, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
+
+    public Task CreateRuleAsync(string topicName, string subscriptionName, CreateRuleOptions options, CancellationToken cancellationToken = default) {
+      throw new NotImplementedException();
+    }
   }
 }
 
