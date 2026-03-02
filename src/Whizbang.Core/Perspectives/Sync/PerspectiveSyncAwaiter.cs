@@ -337,8 +337,8 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
     LogStreamSyncWaitStarting(_logger, perspectiveName, streamId);
 
     // EVENT-DRIVEN WAITING: If we have expected event IDs from singleton tracker,
-    // use the tracker's WaitForEventsAsync for efficient completion notification.
-    // This avoids polling and provides immediate notification when events are processed.
+    // use the tracker's WaitForPerspectiveEventsAsync for efficient completion notification.
+    // This waits for THIS SPECIFIC perspective to process events (not all perspectives).
     if (usedSingletonTracker && expectedEventIds is { Length: > 0 } && _syncEventTracker is not null) {
 #pragma warning disable CA1848
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -346,7 +346,7 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
           expectedEventIds.Length, string.Join(", ", expectedEventIds));
       }
 #pragma warning restore CA1848
-      var success = await _syncEventTracker.WaitForEventsAsync(expectedEventIds, timeout, ct);
+      var success = await _syncEventTracker.WaitForPerspectiveEventsAsync(expectedEventIds, perspectiveName, timeout, ct);
       stopwatch.Halt();
 
       if (success) {

@@ -18,6 +18,11 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// 4. WaitForStreamAsync checks singleton tracker and finds the event
 /// 5. Handler waits until event is processed
 /// </summary>
+/// <remarks>
+/// These tests use shared SyncEventTracker instances, so they must run
+/// sequentially to avoid interference.
+/// </remarks>
+[NotInParallel("SyncTests")]
 public class DispatcherSingletonTrackerTests {
 
   /// <summary>
@@ -134,10 +139,10 @@ public class DispatcherSingletonTrackerTests {
       syncEventTracker: singletonTracker
     );
 
-    // Simulate perspective worker calling MarkProcessed after a delay
+    // Simulate perspective worker calling MarkProcessedByPerspective after a delay
     _ = Task.Run(async () => {
       await Task.Delay(50);
-      singletonTracker.MarkProcessed([eventId]);
+      singletonTracker.MarkProcessedByPerspective([eventId], perspectiveName);
     });
 
     // Act

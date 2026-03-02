@@ -13,6 +13,18 @@ using Whizbang.Core.Tracing;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// Groups optional lifecycle and tracing dependencies for <see cref="ScopedWorkCoordinatorStrategy"/>.
+/// </summary>
+public record ScopedWorkCoordinatorDependencies {
+  /// <summary>Lifecycle invoker for message lifecycle hooks.</summary>
+  public ILifecycleInvoker? LifecycleInvoker { get; init; }
+  /// <summary>Deserializer for lifecycle messages.</summary>
+  public ILifecycleMessageDeserializer? LifecycleMessageDeserializer { get; init; }
+  /// <summary>Tracing options monitor for controlling span emission.</summary>
+  public IOptionsMonitor<TracingOptions>? TracingOptions { get; init; }
+}
+
+/// <summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
@@ -27,9 +39,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
   private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly ScopedWorkCoordinatorDependencies _dependencies;
 
   // Queues for batching operations within the scope
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -41,24 +51,23 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
   private bool _disposed;
 
+  /// <summary>
+  /// Initializes a new instance of <see cref="ScopedWorkCoordinatorStrategy"/>.
+  /// </summary>
   public ScopedWorkCoordinatorStrategy(
     IWorkCoordinator coordinator,
     IServiceInstanceProvider instanceProvider,
     IWorkChannelWriter? workChannelWriter,
     WorkCoordinatorOptions options,
     ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null
+    ScopedWorkCoordinatorDependencies? dependencies = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _workChannelWriter = workChannelWriter;
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
-    _lifecycleInvoker = lifecycleInvoker;
-    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-    _tracingOptions = tracingOptions;
+    _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   }
 
   public void QueueOutboxMessage(OutboxMessage message) {
@@ -152,7 +161,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     }
 
     // Check if lifecycle tracing is enabled
-    var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+    var enableLifecycleTracing = _dependencies.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
     // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
@@ -160,8 +169,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.PreDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
-      _lifecycleMessageDeserializer,
+      _dependencies.LifecycleInvoker,
+      _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
@@ -172,8 +181,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.DistributeAsync,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
-      _lifecycleMessageDeserializer,
+      _dependencies.LifecycleInvoker,
+      _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
       ct: ct
@@ -225,8 +234,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.PostDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
-      _lifecycleMessageDeserializer,
+      _dependencies.LifecycleInvoker,
+      _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
       ct: ct

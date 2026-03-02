@@ -17,6 +17,11 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 ///
 /// These tests verify the complete end-to-end integration, not just individual components.
 /// </summary>
+/// <remarks>
+/// These tests use shared SyncEventTracker instances and SyncEventTypeRegistrations,
+/// so they must run sequentially to avoid interference.
+/// </remarks>
+[NotInParallel("SyncTests")]
 public class DispatcherIntegrationSyncTests {
 
   /// <summary>
@@ -133,7 +138,7 @@ public class DispatcherIntegrationSyncTests {
     var perspectiveTask = Task.Run(async () => {
       await Task.Delay(100); // Simulate processing time
       executionOrder.Add("Perspective C processed Event B (Apply called)");
-      singletonTracker.MarkProcessed([eventBId]);
+      singletonTracker.MarkProcessedByPerspective([eventBId], perspectiveCName);
     });
 
     // === STEP 4: Command E is sent - should wait for sync ===

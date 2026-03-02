@@ -89,17 +89,44 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton(coreOptions.Tags);
 
     // Register TracingOptions with IOptions pattern
-    // 1. Start with programmatic defaults from coreOptions.Tracing
-    // 2. Override with IConfiguration binding if available (Whizbang:Tracing section)
+    _configureTracingOptions(services, coreOptions);
+
+    // Register IConfiguration binding as PostConfigure (IConfiguration is optional)
+    services.AddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
+      var config = sp.GetService<IConfiguration>();
+      return new TracingOptionsPostConfigure(config);
+    });
+
+    // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
+    _registerTagHooks(services, coreOptions);
+
+    // Register MessageTagProcessor as Singleton
+    services.AddSingleton<IMessageTagProcessor>(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      return new MessageTagProcessor(tagOptions, scopeFactory);
+    });
+
+    // Register core infrastructure services
+    _registerCoreServices(services);
+
+    // Register perspective synchronization services
+    _registerPerspectiveSyncServices(services);
+
+    return new WhizbangBuilder(services);
+  }
+
+  /// <summary>
+  /// Configures TracingOptions with programmatic defaults.
+  /// </summary>
+  private static void _configureTracingOptions(IServiceCollection services, WhizbangCoreOptions coreOptions) {
     services.AddOptions<TracingOptions>()
       .Configure(tracingOptions => {
-        // Copy programmatic defaults from WhizbangCoreOptions.Tracing
         tracingOptions.Verbosity = coreOptions.Tracing.Verbosity;
         tracingOptions.Components = coreOptions.Tracing.Components;
         tracingOptions.EnableOpenTelemetry = coreOptions.Tracing.EnableOpenTelemetry;
         tracingOptions.EnableStructuredLogging = coreOptions.Tracing.EnableStructuredLogging;
 
-        // Copy dictionaries
         foreach (var kvp in coreOptions.Tracing.TracedHandlers) {
           tracingOptions.TracedHandlers[kvp.Key] = kvp.Value;
         }
@@ -108,152 +135,146 @@ public static class ServiceCollectionExtensions {
           tracingOptions.TracedMessages[kvp.Key] = kvp.Value;
         }
       });
+  }
 
-    // Register IConfiguration binding as PostConfigure (only if IConfiguration is available)
-    // Uses GetService (nullable) instead of GetRequiredService to handle scenarios without IConfiguration
-    services.AddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
-      var config = sp.GetService<IConfiguration>();
-      return new PostConfigureOptions<TracingOptions>(Options.DefaultName, tracingOptions => {
-        // Skip if IConfiguration is not registered
-        if (config == null) {
-          return;
-        }
-
-        // AOT-compatible manual binding from IConfiguration
-        // Avoids reflection-based ConfigurationBinder.Bind() which triggers IL2026
-        var section = config.GetSection("Whizbang:Tracing");
-        if (!section.Exists()) {
-          return;
-        }
-
-        // Bind Verbosity enum
-        var verbosityValue = section["Verbosity"];
-        if (!string.IsNullOrEmpty(verbosityValue) &&
-            Enum.TryParse<TraceVerbosity>(verbosityValue, ignoreCase: true, out var verbosity)) {
-          tracingOptions.Verbosity = verbosity;
-        }
-
-        // Bind Components flags enum
-        var componentsValue = section["Components"];
-        if (!string.IsNullOrEmpty(componentsValue) &&
-            Enum.TryParse<TraceComponents>(componentsValue, ignoreCase: true, out var components)) {
-          tracingOptions.Components = components;
-        }
-
-        // Bind boolean properties
-        var enableOtelValue = section["EnableOpenTelemetry"];
-        if (!string.IsNullOrEmpty(enableOtelValue) &&
-            bool.TryParse(enableOtelValue, out var enableOtel)) {
-          tracingOptions.EnableOpenTelemetry = enableOtel;
-        }
-
-        var enableLoggingValue = section["EnableStructuredLogging"];
-        if (!string.IsNullOrEmpty(enableLoggingValue) &&
-            bool.TryParse(enableLoggingValue, out var enableLogging)) {
-          tracingOptions.EnableStructuredLogging = enableLogging;
-        }
-
-        // Bind TracedHandlers dictionary
-        var handlersSection = section.GetSection("TracedHandlers");
-        if (handlersSection.Exists()) {
-          foreach (var child in handlersSection.GetChildren()) {
-            if (!string.IsNullOrEmpty(child.Value) &&
-                Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var handlerVerbosity)) {
-              tracingOptions.TracedHandlers[child.Key] = handlerVerbosity;
-            }
-          }
-        }
-
-        // Bind TracedMessages dictionary
-        var messagesSection = section.GetSection("TracedMessages");
-        if (messagesSection.Exists()) {
-          foreach (var child in messagesSection.GetChildren()) {
-            if (!string.IsNullOrEmpty(child.Value) &&
-                Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var messageVerbosity)) {
-              tracingOptions.TracedMessages[child.Key] = messageVerbosity;
-            }
-          }
-        }
-      });
-    });
-
-    // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
+  /// <summary>
+  /// Registers tag hooks with DI.
+  /// </summary>
+  private static void _registerTagHooks(IServiceCollection services, WhizbangCoreOptions coreOptions) {
     foreach (var registration in coreOptions.Tags.HookRegistrations) {
       services.TryAddScoped(registration.HookType);
     }
+  }
 
-    // Register MessageTagProcessor as Singleton (Dispatcher is Singleton and needs it)
-    // Use IServiceScopeFactory to resolve scoped hooks at invocation time
-    // A new scope is created for each ProcessTagsAsync call, allowing hooks to be Scoped
-    services.AddSingleton<IMessageTagProcessor>(sp => {
-      var tagOptions = sp.GetRequiredService<TagOptions>();
-      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-      return new MessageTagProcessor(tagOptions, scopeFactory);
-    });
-
-    // Register core infrastructure services
+  /// <summary>
+  /// Registers core infrastructure services.
+  /// </summary>
+  private static void _registerCoreServices(IServiceCollection services) {
     services.AddSingleton<ITimeProvider, SystemTimeProvider>();
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
     services.AddSingleton<Messaging.ILifecycleInvoker, Messaging.RuntimeLifecycleInvoker>();
+
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
       return new Messaging.JsonLifecycleMessageDeserializer(jsonOptions);
     });
+
     services.AddSingleton<Messaging.IEnvelopeSerializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
       return new Messaging.EnvelopeSerializer(jsonOptions);
     });
 
-    // Register IServiceInstanceProvider - use TryAdd to allow overrides
     services.TryAddSingleton<IServiceInstanceProvider>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new ServiceInstanceProvider(configuration);
     });
 
-    // NOTE: IStreamIdExtractor is registered by the generated AddWhizbangStreamIdExtractor()
-    // which is called by AddWhizbangDispatcher(). The generated code registers a composite
-    // extractor from StreamIdExtractorRegistry that includes extractors from ALL assemblies
-    // (registered via [ModuleInitializer] pattern before Main() runs).
-    // DO NOT register a fallback here - it would win over the composite due to TryAddSingleton.
-
-    // Register message security services by default
-    // Enables security context propagation from message envelopes to receptors
     services.AddWhizbangMessageSecurity();
+  }
 
-    // Register perspective synchronization services
-    // Enables read-your-writes consistency for perspectives
+  /// <summary>
+  /// Registers perspective synchronization services.
+  /// </summary>
+  private static void _registerPerspectiveSyncServices(IServiceCollection services) {
     services.TryAddSingleton<IDebuggerAwareClock, DebuggerAwareClock>();
-    services.TryAddSingleton<ITracer, Tracer>(); // Handler tracing with OpenTelemetry integration
-    services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>(); // Singleton for cross-scope signaling
-    // Register scoped event tracker with factory that sets AsyncLocal for singleton Dispatcher access
+    services.TryAddSingleton<ITracer, Tracer>();
+    services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
+
     services.TryAddScoped<IScopedEventTracker>(sp => {
       var tracker = new ScopedEventTracker();
-      // Set AsyncLocal so singleton Dispatcher can access the scoped tracker
       ScopedEventTrackerAccessor.CurrentTracker = tracker;
       return tracker;
     });
+
     services.TryAddScoped<IPerspectiveSyncAwaiter, PerspectiveSyncAwaiter>();
-
-    // Register singleton event tracker for cross-scope perspective sync
-    // CRITICAL: This enables Route.Local() events to be tracked for sync BEFORE they hit the database
-    // Events tracked in Request 1 can be awaited in Request 2 via [AwaitPerspectiveSync]
     services.TryAddSingleton<ISyncEventTracker, SyncEventTracker>();
-
-    // Register tracked event type registry in DYNAMIC mode
-    // Uses parameterless constructor which reads from SyncEventTypeRegistrations on each call
-    // This supports module initializers that register mappings AFTER the registry is constructed
-    // (module initializers run when the assembly is first used, which may be after AddWhizbang())
+    services.TryAddSingleton<IEventCompletionAwaiter, EventCompletionAwaiter>();
     services.TryAddSingleton<ITrackedEventTypeRegistry, TrackedEventTypeRegistry>();
+  }
 
-    // FUTURE: Register generated services once available in consuming projects
-    // services.AddWhizbangDispatcher();  // Generated by ReceptorDiscoveryGenerator
-    // services.AddReceptors();  // Generated by ReceptorDiscoveryGenerator
-    // services.AddWhizbangStreamIdExtractor();  // Generated by StreamIdGenerator
-    // services.AddWhizbangPerspectiveInvoker();  // Generated by PerspectiveDiscoveryGenerator
+  /// <summary>
+  /// PostConfigure implementation for TracingOptions that binds from IConfiguration.
+  /// Extracted to reduce cognitive complexity of AddWhizbang.
+  /// </summary>
+  private sealed class TracingOptionsPostConfigure : IPostConfigureOptions<TracingOptions> {
+    private readonly IConfiguration? _config;
 
-    return new WhizbangBuilder(services);
+    public TracingOptionsPostConfigure(IConfiguration? config) => _config = config;
+
+    public void PostConfigure(string? name, TracingOptions options) {
+      if (_config == null) {
+        return;
+      }
+
+      var section = _config.GetSection("Whizbang:Tracing");
+      if (!section.Exists()) {
+        return;
+      }
+
+      _bindVerbosity(section, options);
+      _bindComponents(section, options);
+      _bindBooleans(section, options);
+      _bindTracedHandlers(section, options);
+      _bindTracedMessages(section, options);
+    }
+
+    private static void _bindVerbosity(IConfigurationSection section, TracingOptions options) {
+      var value = section["Verbosity"];
+      if (!string.IsNullOrEmpty(value) &&
+          Enum.TryParse<TraceVerbosity>(value, ignoreCase: true, out var verbosity)) {
+        options.Verbosity = verbosity;
+      }
+    }
+
+    private static void _bindComponents(IConfigurationSection section, TracingOptions options) {
+      var value = section["Components"];
+      if (!string.IsNullOrEmpty(value) &&
+          Enum.TryParse<TraceComponents>(value, ignoreCase: true, out var components)) {
+        options.Components = components;
+      }
+    }
+
+    private static void _bindBooleans(IConfigurationSection section, TracingOptions options) {
+      var enableOtelValue = section["EnableOpenTelemetry"];
+      if (!string.IsNullOrEmpty(enableOtelValue) && bool.TryParse(enableOtelValue, out var enableOtel)) {
+        options.EnableOpenTelemetry = enableOtel;
+      }
+
+      var enableLoggingValue = section["EnableStructuredLogging"];
+      if (!string.IsNullOrEmpty(enableLoggingValue) && bool.TryParse(enableLoggingValue, out var enableLogging)) {
+        options.EnableStructuredLogging = enableLogging;
+      }
+    }
+
+    private static void _bindTracedHandlers(IConfigurationSection section, TracingOptions options) {
+      var handlersSection = section.GetSection("TracedHandlers");
+      if (!handlersSection.Exists()) {
+        return;
+      }
+
+      foreach (var child in handlersSection.GetChildren()) {
+        if (!string.IsNullOrEmpty(child.Value) &&
+            Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var handlerVerbosity)) {
+          options.TracedHandlers[child.Key] = handlerVerbosity;
+        }
+      }
+    }
+
+    private static void _bindTracedMessages(IConfigurationSection section, TracingOptions options) {
+      var messagesSection = section.GetSection("TracedMessages");
+      if (!messagesSection.Exists()) {
+        return;
+      }
+
+      foreach (var child in messagesSection.GetChildren()) {
+        if (!string.IsNullOrEmpty(child.Value) &&
+            Enum.TryParse<TraceVerbosity>(child.Value, ignoreCase: true, out var messageVerbosity)) {
+          options.TracedMessages[child.Key] = messageVerbosity;
+        }
+      }
+    }
   }
 
   /// <summary>

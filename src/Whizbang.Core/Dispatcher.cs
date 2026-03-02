@@ -124,6 +124,8 @@ public abstract class Dispatcher(
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
+  // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
+  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = serviceProvider.GetService<IEventCompletionAwaiter>();
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
@@ -258,6 +260,58 @@ public abstract class Dispatcher(
             $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {syncReceptor.ReceptorId}");
       }
       // FireBehavior.FireAlways continues regardless of timeout
+    }
+  }
+
+  /// <summary>
+  /// Waits for all perspectives to process cascaded events when WaitForPerspectives is enabled.
+  /// Called at the end of LocalInvokeAsync methods that accept DispatchOptions.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method uses <see cref="IEventCompletionAwaiter"/> to wait for ALL perspectives
+  /// to process the events that were cascaded during the receptor invocation.
+  /// </para>
+  /// <para>
+  /// Events are tracked via <see cref="IScopedEventTracker"/> or <see cref="ScopedEventTrackerAccessor"/>.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/perspectives/event-completion#dispatcher-integration</docs>
+  private async ValueTask _waitForPerspectivesIfNeededAsync(DispatchOptions options) {
+    // Short-circuit if not waiting for perspectives
+    if (!options.WaitForPerspectives) {
+      return;
+    }
+
+    // Short-circuit if no event completion awaiter available
+    if (_eventCompletionAwaiter is null) {
+      return;
+    }
+
+    // Get the scoped event tracker (field or from AsyncLocal accessor)
+    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+    if (scopedTracker is null) {
+      return;
+    }
+
+    // Get the event IDs that were emitted
+    var emittedEvents = scopedTracker.GetEmittedEvents();
+    if (emittedEvents.Count == 0) {
+      return;
+    }
+
+    var eventIds = emittedEvents.Select(e => e.EventId).Distinct().ToList();
+
+    // Wait for all perspectives to process these events
+    var success = await _eventCompletionAwaiter.WaitForEventsAsync(
+        eventIds,
+        options.PerspectiveWaitTimeout,
+        options.CancellationToken);
+
+    if (!success) {
+      throw new PerspectiveSyncTimeoutException(
+          $"Timed out waiting for {eventIds.Count} events to be processed by all perspectives. " +
+          $"Timeout: {options.PerspectiveWaitTimeout.TotalMilliseconds}ms");
     }
   }
 
@@ -1795,27 +1849,35 @@ public abstract class Dispatcher(
     }
 
     var messageType = message.GetType();
+    TResult result;
+
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
       if (_traceStore != null || _receptorRegistry != null) {
-        return await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      } else {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        result = await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
       }
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      return await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
+    } else {
+      var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+      if (syncInvoker != null) {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        result = await _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
+      } else {
+        throw new ReceptorNotFoundException(messageType);
+      }
     }
 
-    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
-    if (syncInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      return await _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
-    }
+    // Wait for all perspectives to process cascaded events if requested
+    await _waitForPerspectivesIfNeededAsync(options);
 
-    throw new ReceptorNotFoundException(messageType);
+    return result;
   }
 
   /// <summary>
@@ -1846,36 +1908,36 @@ public abstract class Dispatcher(
     if (asyncInvoker != null) {
       if (_traceStore != null) {
         await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
-        return;
+      } else {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        await asyncInvoker(message);
       }
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      await asyncInvoker(message);
-      return;
+    } else {
+      var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+      if (syncInvoker != null) {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        syncInvoker(message);
+      } else {
+        // Fallback: Try to find any receptor (including those that return values)
+        // This allows void LocalInvokeAsync to call receptors that return events for cascading
+        var anyInvoker = GetReceptorInvokerAny(message, messageType);
+        if (anyInvoker != null) {
+          options.CancellationToken.ThrowIfCancellationRequested();
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+          await _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+        } else {
+          throw new ReceptorNotFoundException(messageType);
+        }
+      }
     }
 
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
-    if (syncInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      syncInvoker(message);
-      return;
-    }
-
-    // Fallback: Try to find any receptor (including those that return values)
-    // This allows void LocalInvokeAsync to call receptors that return events for cascading
-    var anyInvoker = GetReceptorInvokerAny(message, messageType);
-    if (anyInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
-      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      await _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
-      return;
-    }
-
-    throw new ReceptorNotFoundException(messageType);
+    // Wait for all perspectives to process cascaded events if requested
+    await _waitForPerspectivesIfNeededAsync(options);
   }
 
   /// <summary>

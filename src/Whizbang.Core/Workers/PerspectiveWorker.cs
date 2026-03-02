@@ -545,16 +545,17 @@ public partial class PerspectiveWorker(
         LogCompletionReported(_logger);
 
         // Phase 3c.0: Mark processed events in singleton tracker for cross-scope sync
-        // This signals any WaitForEventsAsync callers that these events have been processed
+        // This signals any WaitForPerspectiveEventsAsync callers that this perspective has processed these events
+        // Note: Uses MarkProcessedByPerspective to only remove THIS perspective's entry, not all perspectives
         if (processedEvents.Count > 0 && _syncEventTracker is not null) {
           var processedEventIds = processedEvents.Select(e => e.MessageId.Value).ToList();
 #pragma warning disable CA1848
           if (_logger.IsEnabled(LogLevel.Debug)) {
-            _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",
+            _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessedByPerspective: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",
               perspectiveName, streamId, processedEventIds.Count, string.Join(", ", processedEventIds));
           }
 #pragma warning restore CA1848
-          _syncEventTracker.MarkProcessed(processedEventIds);
+          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
         } else if (_logger.IsEnabled(LogLevel.Debug)) {
 #pragma warning disable CA1848
           _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}, HasTracker={HasTracker}",

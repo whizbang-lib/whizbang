@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 /// These tests use the shared static SyncEventTypeRegistrations, so they must run
 /// sequentially to avoid interference.
 /// </remarks>
-[NotInParallel]
+[NotInParallel("SyncTests")]
 public class UserScenarioReproductionTests {
 
   /// <summary>
@@ -113,9 +113,9 @@ public class UserScenarioReproductionTests {
       await Task.Delay(200);
       executionOrder.Add((Interlocked.Increment(ref orderCounter), "3. Perspective C processes Event B"));
 
-      // Simulate what PerspectiveWorker does - call MarkProcessed with the event ID
+      // Simulate what PerspectiveWorker does - call MarkProcessedByPerspective with the event ID
       // CRITICAL: This must use the SAME eventId that was tracked
-      singletonTracker.MarkProcessed([eventBId]);
+      singletonTracker.MarkProcessedByPerspective([eventBId], typeof(UserScenarioPerspectiveC).FullName!);
       executionOrder.Add((Interlocked.Increment(ref orderCounter), "3b. Perspective C called MarkProcessed"));
     });
 

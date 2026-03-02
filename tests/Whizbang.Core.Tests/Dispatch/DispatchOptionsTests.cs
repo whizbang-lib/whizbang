@@ -153,4 +153,112 @@ public class DispatchOptionsTests {
     // Assert
     await Assert.That(options.Timeout).IsNull();
   }
+
+  // ========================================
+  // WaitForPerspectives Tests
+  // ========================================
+
+  [Test]
+  public async Task Default_WaitForPerspectives_IsFalseAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+
+    // Assert - Default should be false (don't wait for perspectives)
+    await Assert.That(options.WaitForPerspectives).IsFalse();
+  }
+
+  [Test]
+  public async Task Default_PerspectiveWaitTimeout_Is30SecondsAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+
+    // Assert - Default timeout should be 30 seconds
+    await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(TimeSpan.FromSeconds(30));
+  }
+
+  [Test]
+  public async Task WithPerspectiveWait_SetsWaitForPerspectivesToTrueAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+
+    // Act
+    var result = options.WithPerspectiveWait();
+
+    // Assert
+    await Assert.That(options.WaitForPerspectives).IsTrue();
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task WithPerspectiveWait_WithTimeout_SetsTimeoutAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+    var customTimeout = TimeSpan.FromMinutes(2);
+
+    // Act
+    var result = options.WithPerspectiveWait(customTimeout);
+
+    // Assert
+    await Assert.That(options.WaitForPerspectives).IsTrue();
+    await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(customTimeout);
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task WithPerspectiveWait_NoTimeout_KeepsDefaultTimeoutAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+    var defaultTimeout = options.PerspectiveWaitTimeout;
+
+    // Act
+    options.WithPerspectiveWait();
+
+    // Assert - timeout should remain at default
+    await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(defaultTimeout);
+  }
+
+  [Test]
+  public async Task WaitForPerspectives_PropertySetter_WorksAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+
+    // Act
+    options.WaitForPerspectives = true;
+
+    // Assert
+    await Assert.That(options.WaitForPerspectives).IsTrue();
+  }
+
+  [Test]
+  public async Task PerspectiveWaitTimeout_PropertySetter_WorksAsync() {
+    // Arrange
+    var options = new DispatchOptions();
+    var timeout = TimeSpan.FromMinutes(5);
+
+    // Act
+    options.PerspectiveWaitTimeout = timeout;
+
+    // Assert
+    await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(timeout);
+  }
+
+  [Test]
+  public async Task FluentApi_CanChainWithPerspectiveWaitAsync() {
+    // Arrange
+    using var cts = new CancellationTokenSource();
+    var timeout = TimeSpan.FromMinutes(5);
+    var perspectiveTimeout = TimeSpan.FromMinutes(2);
+
+    // Act
+    var options = new DispatchOptions()
+      .WithCancellationToken(cts.Token)
+      .WithTimeout(timeout)
+      .WithPerspectiveWait(perspectiveTimeout);
+
+    // Assert
+    await Assert.That(options.CancellationToken).IsEqualTo(cts.Token);
+    await Assert.That(options.Timeout).IsEqualTo(timeout);
+    await Assert.That(options.WaitForPerspectives).IsTrue();
+    await Assert.That(options.PerspectiveWaitTimeout).IsEqualTo(perspectiveTimeout);
+  }
 }
