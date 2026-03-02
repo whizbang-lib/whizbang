@@ -523,6 +523,119 @@ public class ScopedLensFactoryImplTests {
       .Throws<ArgumentException>();
   }
 
+  // === GetEventStoreQuery Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetEventStoreQuery_None_ReturnsQueryAsync() {
+    // Arrange
+    var (factory, _) = _createFactoryWithEventStoreQuery();
+
+    // Act
+    var query = factory.GetEventStoreQuery(ScopeFilter.None);
+
+    // Assert
+    await Assert.That(query).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetEventStoreQuery_Tenant_AppliesFilterAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123");
+    var (factory, accessor) = _createFactoryWithEventStoreQuery();
+    accessor.Current = context;
+
+    // Act
+    var query = factory.GetEventStoreQuery(ScopeFilter.Tenant);
+
+    // Assert
+    await Assert.That(query).IsNotNull();
+    var filterable = query as TestFilterableEventStoreQuery;
+    await Assert.That(filterable!.AppliedFilter!.Value.TenantId).IsEqualTo("tenant-123");
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetEventStoreQuery_WithPermission_Granted_ReturnsQueryAsync() {
+    // Arrange
+    var context = _createScopeContext(
+      tenantId: "tenant-123",
+      permissions: [Permission.Read("events")]);
+    var (factory, accessor) = _createFactoryWithEventStoreQuery();
+    accessor.Current = context;
+
+    // Act
+    var query = factory.GetEventStoreQuery(ScopeFilter.Tenant, Permission.Read("events"));
+
+    // Assert
+    await Assert.That(query).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetEventStoreQuery_WithPermission_Denied_ThrowsAsync() {
+    // Arrange
+    var context = _createScopeContext(
+      tenantId: "tenant-123",
+      permissions: [Permission.Read("other")]);
+    var (factory, accessor) = _createFactoryWithEventStoreQuery();
+    accessor.Current = context;
+
+    // Act & Assert
+    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilter.Tenant, Permission.Write("events")))
+      .Throws<AccessDeniedException>();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetGlobalEventStoreQuery_UsesNoneFilterAsync() {
+    // Arrange
+    var (factory, _) = _createFactoryWithEventStoreQuery();
+
+    // Act
+    var query = factory.GetGlobalEventStoreQuery();
+
+    // Assert
+    var filterable = query as TestFilterableEventStoreQuery;
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.None);
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetTenantEventStoreQuery_UsesTenantFilterAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123");
+    var (factory, accessor) = _createFactoryWithEventStoreQuery();
+    accessor.Current = context;
+
+    // Act
+    var query = factory.GetTenantEventStoreQuery();
+
+    // Assert
+    var filterable = query as TestFilterableEventStoreQuery;
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.Tenant);
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetUserEventStoreQuery_UsesTenantAndUserFilterAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", userId: "user-456");
+    var (factory, accessor) = _createFactoryWithEventStoreQuery();
+    accessor.Current = context;
+
+    // Act
+    var query = factory.GetUserEventStoreQuery();
+
+    // Assert
+    var filterable = query as TestFilterableEventStoreQuery;
+    await Assert.That(filterable!.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.Tenant | ScopeFilter.User);
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetEventStoreQuery_Unregistered_ThrowsAsync() {
+    // Arrange - create factory WITHOUT registering IFilterableEventStoreQuery
+    var (factory, _) = _createFactory();
+
+    // Act & Assert
+    await Assert.That(() => factory.GetEventStoreQuery(ScopeFilter.None))
+      .ThrowsExactly<InvalidOperationException>();
+  }
+
   // === Helper Methods ===
 
   private static (ScopedLensFactory factory, ScopeContextAccessor accessor) _createFactory(
@@ -534,6 +647,31 @@ public class ScopedLensFactoryImplTests {
     services.AddSingleton<IScopeContextAccessor>(accessor);
     services.AddSingleton<ISystemEventEmitter, NullSystemEventEmitter>();
     services.AddScoped<ITestLensQuery, TestLensQuery>();
+
+    var lensOptions = new LensOptions();
+    configureOptions?.Invoke(lensOptions);
+    services.AddSingleton(lensOptions);
+
+    var provider = services.BuildServiceProvider();
+    var factory = new ScopedLensFactory(
+      provider,
+      accessor,
+      lensOptions,
+      provider.GetRequiredService<ISystemEventEmitter>());
+
+    return (factory, accessor);
+  }
+
+  private static (ScopedLensFactory factory, ScopeContextAccessor accessor) _createFactoryWithEventStoreQuery(
+      Action<LensOptions>? configureOptions = null) {
+
+    var services = new ServiceCollection();
+    var accessor = new ScopeContextAccessor();
+
+    services.AddSingleton<IScopeContextAccessor>(accessor);
+    services.AddSingleton<ISystemEventEmitter, NullSystemEventEmitter>();
+    services.AddScoped<ITestLensQuery, TestLensQuery>();
+    services.AddScoped<IFilterableEventStoreQuery, TestFilterableEventStoreQuery>();
 
     var lensOptions = new LensOptions();
     configureOptions?.Invoke(lensOptions);
@@ -614,4 +752,19 @@ public class ScopedLensFactoryImplTests {
   public interface IUserScoped;
   public interface IOrganizationScoped;
   public interface ICustomerScoped;
+
+  // Test implementation of IFilterableEventStoreQuery for EventStoreQuery tests
+  private sealed class TestFilterableEventStoreQuery : IFilterableEventStoreQuery {
+    public ScopeFilterInfo? AppliedFilter { get; private set; }
+
+    public void ApplyFilter(ScopeFilterInfo filterInfo) {
+      AppliedFilter = filterInfo;
+    }
+
+    public IQueryable<EventStoreRecord> Query => Array.Empty<EventStoreRecord>().AsQueryable();
+
+    public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Array.Empty<EventStoreRecord>().AsQueryable();
+
+    public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Array.Empty<EventStoreRecord>().AsQueryable();
+  }
 }
