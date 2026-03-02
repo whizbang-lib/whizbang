@@ -4,7 +4,7 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.SystemEvents;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for LocalOnly transport filtering.

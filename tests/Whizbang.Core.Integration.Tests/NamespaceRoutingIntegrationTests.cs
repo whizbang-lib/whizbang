@@ -6,10 +6,10 @@ using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
-using Whizbang.Core.Tests.Generated;
+using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for NamespaceRoutingStrategy verifying end-to-end topic routing.

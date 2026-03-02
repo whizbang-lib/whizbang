@@ -1,5 +1,6 @@
 using TUnit.Core;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Perspectives.Sync;
 
@@ -60,10 +61,9 @@ public class PerspectiveSyncSignalerTests {
 
     signaler.SignalCheckpointUpdated(perspectiveType, streamId, eventId);
 
-    // Wait with timeout for signal
-    var received = await Task.WhenAny(signalReceived.Task, Task.Delay(1000)) == signalReceived.Task;
+    // Wait for signal with proper timeout (throws TimeoutException if not received)
+    await signalReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    await Assert.That(received).IsTrue();
     await Assert.That(receivedSignal).IsNotNull();
     await Assert.That(receivedSignal!.Value.PerspectiveType).IsEqualTo(perspectiveType);
     await Assert.That(receivedSignal!.Value.StreamId).IsEqualTo(streamId);
@@ -81,9 +81,11 @@ public class PerspectiveSyncSignalerTests {
 
     signaler.SignalCheckpointUpdated(typeof(PerspectiveB), Guid.NewGuid(), Guid.NewGuid());
 
-    await Task.Delay(100); // Give time for potential (incorrect) notification
-
-    await Assert.That(receivedCount).IsEqualTo(0);
+    // Assert that no signal is received (more reliable than Task.Delay + assert)
+    await AsyncTestHelpers.AssertNeverAsync(
+      () => receivedCount > 0,
+      TimeSpan.FromMilliseconds(200),
+      failureMessage: "PerspectiveA subscriber should not receive signals for PerspectiveB");
   }
 
   [Test]
@@ -98,11 +100,9 @@ public class PerspectiveSyncSignalerTests {
 
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
 
-    var received1 = await Task.WhenAny(signal1Received.Task, Task.Delay(1000)) == signal1Received.Task;
-    var received2 = await Task.WhenAny(signal2Received.Task, Task.Delay(1000)) == signal2Received.Task;
-
-    await Assert.That(received1).IsTrue();
-    await Assert.That(received2).IsTrue();
+    // Wait for both signals with proper timeout
+    await signal1Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await signal2Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
   }
 
   // ==========================================================================
@@ -130,16 +130,24 @@ public class PerspectiveSyncSignalerTests {
       Interlocked.Increment(ref signalsReceived);
     });
 
-    // Send first signal
+    // Send first signal and wait for it to be processed
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
-    await Task.Delay(100);
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => signalsReceived >= 1,
+      TimeSpan.FromSeconds(5),
+      timeoutMessage: "First signal was not received");
 
     // Dispose subscription
     subscription.Dispose();
 
     // Send second signal
     signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
-    await Task.Delay(100);
+
+    // Assert that no additional signal is received after disposal
+    await AsyncTestHelpers.AssertNeverAsync(
+      () => signalsReceived > 1,
+      TimeSpan.FromMilliseconds(200),
+      failureMessage: "Signal received after subscription disposal");
 
     await Assert.That(signalsReceived).IsEqualTo(1);
   }
@@ -159,7 +167,12 @@ public class PerspectiveSyncSignalerTests {
     var received = false;
     using var subscription = signaler.Subscribe(typeof(TestPerspective), _ => received = true);
     signaler.SignalCheckpointUpdated(typeof(TestPerspective), Guid.NewGuid(), Guid.NewGuid());
-    await Task.Delay(50);
+
+    // Assert that no signal is received on disposed signaler
+    await AsyncTestHelpers.AssertNeverAsync(
+      () => received,
+      TimeSpan.FromMilliseconds(100),
+      failureMessage: "Signal received on disposed signaler");
     await Assert.That(received).IsFalse();
   }
 

@@ -4,10 +4,10 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Core.Tests.Generated;
+using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Integration;
+namespace Whizbang.Core.Integration.Tests;
 
 /// <summary>
 /// Integration tests for v0.1.0 Dispatcher and Receptor interactions.

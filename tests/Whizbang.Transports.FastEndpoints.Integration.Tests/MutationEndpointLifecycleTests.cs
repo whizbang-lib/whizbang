@@ -1,26 +1,26 @@
 using Whizbang.Core;
-using Whizbang.Transports.HotChocolate;
+using Whizbang.Transports.FastEndpoints;
 using Whizbang.Transports.Mutations;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Integration;
+namespace Whizbang.Transports.FastEndpoints.Integration.Tests;
 
 /// <summary>
-/// Integration tests for the full GraphQL mutation lifecycle.
-/// Tests the complete flow from mutation request to response including all hooks.
+/// Integration tests for the full mutation endpoint lifecycle.
+/// Tests the complete flow from request to response including all hooks.
 /// </summary>
 [Category("Integration")]
-[Category("GraphQL")]
+[Category("FastEndpoints")]
 [Category("Mutations")]
-public class GraphQLMutationLifecycleTests {
+public class MutationEndpointLifecycleTests {
   [Test]
   public async Task FullLifecycle_WithValidCommand_ExecutesAllHooksInOrderAsync() {
     // Arrange
     var executionOrder = new List<string>();
-    var mutation = new OrderTrackingGraphQLMutation(executionOrder);
+    var endpoint = new OrderTrackingMutationEndpoint(executionOrder);
     var command = new TrackingCommand { Value = "test" };
 
     // Act
-    var result = await mutation.TestExecuteAsync(command, CancellationToken.None);
+    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(executionOrder).Count().IsEqualTo(3);
@@ -32,14 +32,14 @@ public class GraphQLMutationLifecycleTests {
   [Test]
   public async Task FullLifecycle_WithValidation_CanRejectInBeforeHookAsync() {
     // Arrange
-    var mutation = new ValidatingGraphQLMutation { ShouldRejectValidation = true };
+    var endpoint = new ValidatingMutationEndpoint { ShouldRejectValidation = true };
     var command = new ValidatableCommand { Value = "invalid" };
 
     // Act & Assert
     var exception = await Assert.ThrowsAsync<ValidationException>(async () =>
-        await mutation.TestExecuteAsync(command, CancellationToken.None));
+        await endpoint.TestExecuteAsync(command, CancellationToken.None));
 
-    await Assert.That(mutation.DispatchWasCalled).IsFalse();
+    await Assert.That(endpoint.DispatchWasCalled).IsFalse();
     await Assert.That(exception).IsNotNull();
     await Assert.That(exception!.Message).Contains("Validation failed");
   }
@@ -48,11 +48,11 @@ public class GraphQLMutationLifecycleTests {
   public async Task FullLifecycle_WithNotification_SendsNotificationAfterSuccessAsync() {
     // Arrange
     var notifications = new List<string>();
-    var mutation = new NotifyingGraphQLMutation(notifications);
+    var endpoint = new NotifyingMutationEndpoint(notifications);
     var command = new NotifiableCommand { OrderId = Guid.NewGuid() };
 
     // Act
-    var result = await mutation.TestExecuteAsync(command, CancellationToken.None);
+    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(notifications).Count().IsEqualTo(1);
@@ -62,78 +62,78 @@ public class GraphQLMutationLifecycleTests {
   [Test]
   public async Task FullLifecycle_WithError_CallsErrorHookAndCanRecoverAsync() {
     // Arrange
-    var mutation = new RecoveringGraphQLMutation {
+    var endpoint = new RecoveringMutationEndpoint {
       ShouldThrowOnDispatch = true,
       RecoveryResult = new RecoveryResult { Recovered = true, Message = "Recovered successfully" }
     };
     var command = new RecoverableCommand();
 
     // Act
-    var result = await mutation.TestExecuteAsync(command, CancellationToken.None);
+    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Recovered).IsTrue();
     await Assert.That(result.Message).IsEqualTo("Recovered successfully");
-    await Assert.That(mutation.ErrorHandlerWasCalled).IsTrue();
+    await Assert.That(endpoint.ErrorHandlerWasCalled).IsTrue();
   }
 
   [Test]
   public async Task FullLifecycle_WithContextSharing_PassesDataBetweenHooksAsync() {
     // Arrange
-    var mutation = new ContextSharingGraphQLMutation();
-    var command = new ContextCommand { UserId = "user-456" };
+    var endpoint = new ContextSharingMutationEndpoint();
+    var command = new ContextCommand { UserId = "user-123" };
 
     // Act
-    var result = await mutation.TestExecuteAsync(command, CancellationToken.None);
+    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
-    await Assert.That(result.UserIdFromContext).IsEqualTo("user-456");
+    await Assert.That(result.UserIdFromContext).IsEqualTo("user-123");
     await Assert.That(result.TimestampSet).IsTrue();
   }
 
   [Test]
   public async Task FullLifecycle_WithCustomRequestMapping_MapsCorrectlyAsync() {
     // Arrange
-    var mutation = new MappingGraphQLMutation();
+    var endpoint = new MappingMutationEndpoint();
     var request = new CreateOrderRequest {
-      CustomerEmail = "graphql@example.com",
-      ProductId = "prod-789"
+      CustomerEmail = "test@example.com",
+      ProductId = "prod-456"
     };
 
     // Act
-    var result = await mutation.TestExecuteWithRequestAsync(request, CancellationToken.None);
+    var result = await endpoint.TestExecuteWithRequestAsync(request, CancellationToken.None);
 
     // Assert
     await Assert.That(result.OrderCreated).IsTrue();
-    await Assert.That(result.CustomerEmail).IsEqualTo("graphql@example.com");
-    await Assert.That(result.ProductId).IsEqualTo("prod-789");
+    await Assert.That(result.CustomerEmail).IsEqualTo("test@example.com");
+    await Assert.That(result.ProductId).IsEqualTo("prod-456");
   }
 
   [Test]
   public async Task FullLifecycle_WithCancellation_ThrowsBeforeDispatchAsync() {
     // Arrange
-    var mutation = new CancellationAwareGraphQLMutation();
+    var endpoint = new CancellationAwareMutationEndpoint();
     var command = new CancellableCommand();
     using var cts = new CancellationTokenSource();
     cts.Cancel();
 
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-        await mutation.TestExecuteAsync(command, cts.Token));
+        await endpoint.TestExecuteAsync(command, cts.Token));
 
-    await Assert.That(mutation.DispatchWasCalled).IsFalse();
+    await Assert.That(endpoint.DispatchWasCalled).IsFalse();
   }
 
   [Test]
   public async Task FullLifecycle_WithLogging_LogsAllStagesAsync() {
     // Arrange
     var logs = new List<string>();
-    var mutation = new LoggingGraphQLMutation(logs);
+    var endpoint = new LoggingMutationEndpoint(logs);
     var command = new LoggableCommand { Action = "CreateOrder" };
 
     // Act
-    await mutation.TestExecuteAsync(command, CancellationToken.None);
+    await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(logs).Count().IsGreaterThanOrEqualTo(3);
@@ -221,12 +221,12 @@ public class ValidationException : Exception {
 
 #endregion
 
-#region Test Mutations
+#region Test Endpoints
 
-public class OrderTrackingGraphQLMutation : GraphQLMutationBase<TrackingCommand, TrackingResult> {
+public class OrderTrackingMutationEndpoint : RestMutationEndpointBase<TrackingCommand, TrackingResult> {
   private readonly List<string> _executionOrder;
 
-  public OrderTrackingGraphQLMutation(List<string> executionOrder) {
+  public OrderTrackingMutationEndpoint(List<string> executionOrder) {
     _executionOrder = executionOrder;
   }
 
@@ -258,7 +258,7 @@ public class OrderTrackingGraphQLMutation : GraphQLMutationBase<TrackingCommand,
       => ExecuteAsync(cmd, ct);
 }
 
-public class ValidatingGraphQLMutation : GraphQLMutationBase<ValidatableCommand, ValidatableResult> {
+public class ValidatingMutationEndpoint : RestMutationEndpointBase<ValidatableCommand, ValidatableResult> {
   public bool ShouldRejectValidation { get; set; }
   public bool DispatchWasCalled { get; private set; }
 
@@ -283,10 +283,10 @@ public class ValidatingGraphQLMutation : GraphQLMutationBase<ValidatableCommand,
       => ExecuteAsync(cmd, ct);
 }
 
-public class NotifyingGraphQLMutation : GraphQLMutationBase<NotifiableCommand, NotifiableResult> {
+public class NotifyingMutationEndpoint : RestMutationEndpointBase<NotifiableCommand, NotifiableResult> {
   private readonly List<string> _notifications;
 
-  public NotifyingGraphQLMutation(List<string> notifications) {
+  public NotifyingMutationEndpoint(List<string> notifications) {
     _notifications = notifications;
   }
 
@@ -309,7 +309,7 @@ public class NotifyingGraphQLMutation : GraphQLMutationBase<NotifiableCommand, N
       => ExecuteAsync(cmd, ct);
 }
 
-public class RecoveringGraphQLMutation : GraphQLMutationBase<RecoverableCommand, RecoveryResult> {
+public class RecoveringMutationEndpoint : RestMutationEndpointBase<RecoverableCommand, RecoveryResult> {
   public bool ShouldThrowOnDispatch { get; set; }
   public RecoveryResult? RecoveryResult { get; set; }
   public bool ErrorHandlerWasCalled { get; private set; }
@@ -336,7 +336,7 @@ public class RecoveringGraphQLMutation : GraphQLMutationBase<RecoverableCommand,
       => ExecuteAsync(cmd, ct);
 }
 
-public class ContextSharingGraphQLMutation : GraphQLMutationBase<ContextCommand, ContextResult> {
+public class ContextSharingMutationEndpoint : RestMutationEndpointBase<ContextCommand, ContextResult> {
   private const string USERID_KEY = "UserId";
   private const string TIMESTAMP_KEY = "Timestamp";
 
@@ -379,7 +379,7 @@ public class ContextSharingGraphQLMutation : GraphQLMutationBase<ContextCommand,
   }
 }
 
-public class MappingGraphQLMutation : GraphQLMutationBase<CreateOrderCommand, CreateOrderResult> {
+public class MappingMutationEndpoint : RestMutationEndpointBase<CreateOrderCommand, CreateOrderResult> {
   protected override ValueTask<CreateOrderCommand> MapRequestToCommandAsync<TRequest>(
       TRequest request,
       CancellationToken ct) {
@@ -406,7 +406,7 @@ public class MappingGraphQLMutation : GraphQLMutationBase<CreateOrderCommand, Cr
       => ExecuteWithRequestAsync(request, ct);
 }
 
-public class CancellationAwareGraphQLMutation : GraphQLMutationBase<CancellableCommand, CancellableResult> {
+public class CancellationAwareMutationEndpoint : RestMutationEndpointBase<CancellableCommand, CancellableResult> {
   public bool DispatchWasCalled { get; private set; }
 
   protected override ValueTask<CancellableResult> DispatchCommandAsync(
@@ -420,10 +420,10 @@ public class CancellationAwareGraphQLMutation : GraphQLMutationBase<CancellableC
       => ExecuteAsync(cmd, ct);
 }
 
-public class LoggingGraphQLMutation : GraphQLMutationBase<LoggableCommand, LoggableResult> {
+public class LoggingMutationEndpoint : RestMutationEndpointBase<LoggableCommand, LoggableResult> {
   private readonly List<string> _logs;
 
-  public LoggingGraphQLMutation(List<string> logs) {
+  public LoggingMutationEndpoint(List<string> logs) {
     _logs = logs;
   }
 

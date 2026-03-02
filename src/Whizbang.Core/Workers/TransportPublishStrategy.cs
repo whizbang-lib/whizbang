@@ -162,7 +162,22 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
         $"Event-store-only messages should be handled by early return in PublishAsync. " +
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
-    return new TransportDestination(work.Destination);
+
+    // IMPORTANT: For events, set RoutingKey to the event's namespace path (e.g., "myapp.users.UserCreated")
+    // This is used as the Subject property in Azure Service Bus for SqlFilter matching.
+    // Without this, the Subject defaults to "message" and SqlFilter patterns like "[Subject] LIKE 'myapp.users.%'" won't match.
+    var eventTypeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? "";
+    var eventNamespace = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
+
+    // Build full routing key: namespace.typename (e.g., "myapp.users.events.usercreated")
+    var eventRoutingKey = string.IsNullOrEmpty(eventNamespace)
+      ? eventTypeName
+      : $"{eventNamespace}.{eventTypeName}";
+
+    return new TransportDestination(
+      Address: work.Destination,
+      RoutingKey: eventRoutingKey
+    );
   }
 
   /// <summary>

@@ -4,7 +4,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Transports.HotChocolate.Tests.Fixtures;
 
-namespace Whizbang.Transports.HotChocolate.Tests.Integration;
+namespace Whizbang.Transports.HotChocolate.Integration.Tests;
 
 /// <summary>
 /// Integration tests for scoped GraphQL queries.

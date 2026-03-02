@@ -64,7 +64,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// This achieves zero-reflection while keeping functional logic in the base class.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 public abstract class Dispatcher(
