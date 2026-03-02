@@ -3066,6 +3066,14 @@ public record FormField : ICommand {
 
     // Should NOT try to create factory for abstract base type
     await Assert.That(code).DoesNotContain("new global::TestApp.AbstractFieldSettings()");
+
+    // Should generate polymorphic factory for the abstract base type
+    // This is critical for deserialization - STJ needs JsonTypeInfo for the base type to dispatch to derived types
+    await Assert.That(code).Contains("CreatePolymorphic_TestApp_AbstractFieldSettings");
+
+    // Should register derived types in the polymorphic factory
+    await Assert.That(code).Contains("typeof(global::TestApp.TextFieldSettings)");
+    await Assert.That(code).Contains("typeof(global::TestApp.NumberFieldSettings)");
   }
 
   /// <summary>
