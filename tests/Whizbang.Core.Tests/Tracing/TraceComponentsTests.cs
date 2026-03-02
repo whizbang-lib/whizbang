@@ -208,15 +208,16 @@ public class TraceComponentsTests {
   }
 
   [Test]
-  public async Task Core_IncludesHandlersLifecycleDispatcherMessagesAsync() {
+  public async Task Core_IncludesHandlersDispatcherMessagesAsync() {
+    // Core intentionally excludes Lifecycle (see TraceComponents.cs comment: "excludes noisy Lifecycle spans")
     var combo = TraceComponents.Core;
 
     await Assert.That(combo.HasFlag(TraceComponents.Handlers)).IsTrue();
-    await Assert.That(combo.HasFlag(TraceComponents.Lifecycle)).IsTrue();
     await Assert.That(combo.HasFlag(TraceComponents.Dispatcher)).IsTrue();
     await Assert.That(combo.HasFlag(TraceComponents.Messages)).IsTrue();
 
-    // Should NOT include other components
+    // Should NOT include other components (including Lifecycle, which is excluded from Core)
+    await Assert.That(combo.HasFlag(TraceComponents.Lifecycle)).IsFalse();
     await Assert.That(combo.HasFlag(TraceComponents.Outbox)).IsFalse();
     await Assert.That(combo.HasFlag(TraceComponents.Workers)).IsFalse();
   }
