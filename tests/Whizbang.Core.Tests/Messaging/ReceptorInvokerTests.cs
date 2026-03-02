@@ -1592,4 +1592,167 @@ public class ReceptorInvokerTests {
   }
 
   #endregion
+
+  // ========================================
+  // ADDITIONAL COVERAGE TESTS
+  // ========================================
+
+  #region Additional Coverage Tests
+
+  /// <summary>
+  /// Verifies that trace parent context is extracted from envelope hops.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_EnvelopeWithTraceParent_ExtractsParentContextAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    // Create envelope with TraceParent in hops
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("trace-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          TraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        }
+      ]
+    };
+
+    // Act - should not throw and should use the trace parent
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(tracker.Invocations).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// Verifies that message context accessor is set with correct values.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_WithMessageContextAccessor_SetsMessageContextAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("context-test"),
+      Hops = []
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.MessageId).IsEqualTo(envelope.MessageId);
+  }
+
+  /// <summary>
+  /// Verifies that receptor exceptions propagate correctly.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_ReceptorThrows_PropagatesExceptionAsync() {
+    // Arrange
+    var registry = new ThrowingReceptorRegistry();
+    var invoker = new ReceptorInvoker(registry, _createServiceProvider());
+
+    var envelope = _wrapInEnvelope(new TestMessage("throw-test"));
+
+    // Act & Assert
+    await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline));
+  }
+
+  /// <summary>
+  /// Verifies that NullReceptorInvoker does nothing.
+  /// </summary>
+  [Test]
+  public async Task NullReceptorInvoker_InvokeAsync_DoesNothingAsync() {
+    // Arrange
+    var invoker = new NullReceptorInvoker();
+    var envelope = _wrapInEnvelope(new TestMessage("null-test"));
+
+    // Act - should not throw and complete successfully
+    var completed = false;
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+    completed = true;
+
+    // Assert - completed without throwing
+    await Assert.That(completed).IsTrue();
+  }
+
+  /// <summary>
+  /// Verifies constructor throws on null registry.
+  /// </summary>
+  [Test]
+  public async Task Constructor_NullRegistry_ThrowsArgumentNullExceptionAsync() {
+    // Act & Assert
+    await Assert.ThrowsAsync<ArgumentNullException>(() =>
+        Task.FromResult(new ReceptorInvoker(null!, _createServiceProvider())));
+  }
+
+  /// <summary>
+  /// Verifies constructor throws on null service provider.
+  /// </summary>
+  [Test]
+  public async Task Constructor_NullServiceProvider_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+
+    // Act & Assert
+    await Assert.ThrowsAsync<ArgumentNullException>(() =>
+        Task.FromResult(new ReceptorInvoker(registry, null!)));
+  }
+
+  /// <summary>
+  /// Test message context accessor that tracks when it was set.
+  /// </summary>
+  private sealed class TestMessageContextAccessor : IMessageContextAccessor {
+    public bool WasSet { get; private set; }
+    public IMessageContext? LastSetContext { get; private set; }
+
+    private IMessageContext? _current;
+    public IMessageContext? Current {
+      get => _current;
+      set {
+        WasSet = true;
+        LastSetContext = value;
+        _current = value;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Registry that throws an exception when receptor is invoked.
+  /// </summary>
+  private sealed class ThrowingReceptorRegistry : IReceptorRegistry {
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      if (messageType == typeof(TestMessage) && stage == LifecycleStage.PostInboxInline) {
+        return [new ReceptorInfo(
+            typeof(TestMessage),
+            "ThrowingReceptor",
+            (sp, msg, ct) => throw new InvalidOperationException("Test exception"))];
+      }
+      return [];
+    }
+  }
+
+  #endregion
 }
