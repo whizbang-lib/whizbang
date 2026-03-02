@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
@@ -60,13 +63,19 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
       return;
     }
 
+    // Extract parent context from envelope hops for trace correlation
+    // This ensures receptor spans are parented to the original request even on background threads
+    var parentContext = _extractParentContext(envelope.Hops);
+
     // Invoke all registered receptors with individual tracing
     var handlerIndex = 0;
     foreach (var handler in handlers) {
       // Create activity for each lifecycle receptor invocation
+      // Pass parentContext to ensure proper parenting when Activity.Current is null (background threads)
       using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
         $"LifecycleReceptor {messageType.Name}[{handlerIndex}]",
-        System.Diagnostics.ActivityKind.Internal);
+        ActivityKind.Internal,
+        parentContext: parentContext);
       receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
       receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
       receptorActivity?.SetTag("whizbang.receptor.index", handlerIndex);
@@ -86,5 +95,21 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
 
       handlerIndex++;
     }
+  }
+
+  /// <summary>
+  /// Extracts parent ActivityContext from message hops for trace correlation.
+  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
+  /// </summary>
+  private static ActivityContext _extractParentContext(IReadOnlyList<MessageHop> hops) {
+    var traceParent = hops
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      return parentContext;
+    }
+
+    return default;
   }
 }
