@@ -1,12 +1,16 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 
 #region NAMESPACE
@@ -42,18 +46,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly IEventStore _eventStore;
   private readonly IPerspectiveStore<__MODEL_TYPE_NAME__> _perspectiveStore;
   private readonly ILifecycleInvoker _lifecycleInvoker;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
   public __RUNNER_CLASS_NAME__(
       IServiceProvider serviceProvider,
       ILogger<__RUNNER_CLASS_NAME__> logger,
       IEventStore eventStore,
       IPerspectiveStore<__MODEL_TYPE_NAME__> perspectiveStore,
-      ILifecycleInvoker lifecycleInvoker) {
+      ILifecycleInvoker lifecycleInvoker,
+      IOptionsMonitor<TracingOptions>? tracingOptions = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
     _perspectiveStore = perspectiveStore ?? throw new ArgumentNullException(nameof(perspectiveStore));
     _lifecycleInvoker = lifecycleInvoker ?? throw new ArgumentNullException(nameof(lifecycleInvoker));
+    _tracingOptions = tracingOptions;
   }
 
   public async Task<PerspectiveCheckpointCompletion> RunAsync(
@@ -157,14 +164,35 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         );
       }
 
+      // Check if per-event tracing is enabled
+      var enableEventSpans = _tracingOptions?.CurrentValue.EnablePerspectiveEventSpans ?? false;
+      var appliedEventTypes = new System.Collections.Generic.List<string>();
+
       // Process all events in order
       foreach (var envelope in events) {
 
         // Extract event from envelope
         var @event = envelope.Payload;
+        var eventTypeName = @event.GetType().Name;
+
+        // Create per-event span if enabled
+        using var eventActivity = enableEventSpans
+          ? WhizbangActivitySource.Tracing.StartActivity(
+              $"Apply {eventTypeName}",
+              ActivityKind.Internal)
+          : null;
+        eventActivity?.SetTag("whizbang.perspective.event_type", @event.GetType().FullName);
+        eventActivity?.SetTag("whizbang.perspective.event_id", envelope.MessageId.Value.ToString());
+        eventActivity?.SetTag("whizbang.perspective.stream_id", streamId.ToString());
+
+        // Track event type for summary
+        appliedEventTypes.Add(eventTypeName);
 
         // Apply event to model using perspective's pure Apply method
         var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+
+        // Set span outcome
+        eventActivity?.SetTag("whizbang.perspective.action", action.ToString());
 
         // Handle action from Apply result
         switch (action) {
@@ -194,6 +222,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
         eventsProcessed++;
+      }
+
+      // Add summary tags to parent activity (Perspective RunAsync span from PerspectiveWorker)
+      // These tags show which events were processed even when per-event spans are disabled
+      if (eventsProcessed > 0) {
+        var currentActivity = Activity.Current;
+        if (currentActivity is not null) {
+          currentActivity.SetTag("whizbang.perspective.events_applied", eventsProcessed);
+          // Group event types with counts (e.g., "OrderCreated:3, OrderUpdated:2")
+          var eventTypeCounts = appliedEventTypes
+            .GroupBy(t => t)
+            .Select(g => $"{g.Key}:{g.Count()}")
+            .ToArray();
+          currentActivity.SetTag("whizbang.perspective.event_types", string.Join(", ", eventTypeCounts));
+        }
       }
 
       // Unit of Work: Save model + checkpoint ONCE at end

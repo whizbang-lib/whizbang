@@ -38,6 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
