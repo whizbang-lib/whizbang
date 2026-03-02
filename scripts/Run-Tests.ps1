@@ -298,6 +298,7 @@ if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey(
 
 # Derive settings from Mode
 $useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
+$useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format output for human-readable modes
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
@@ -1580,14 +1581,215 @@ try {
         }
 
         Write-Host ""
+    } elseif ($useVerboseLogging) {
+        # Verbose logging mode: Stream all output and capture errors for structured reporting at end
+        # Similar to AI mode but shows all output in real-time instead of sparse progress
+        $totalTests = 0
+        $totalPassed = 0
+        $totalFailed = 0
+        $totalSkipped = 0
+        $failedTests = @()
+        $testDetails = @{}
+        $buildErrors = @()
+        $projectErrors = @()
+        $infrastructureErrors = 0
+        $currentFailedTest = $null
+        $capturingStackTrace = $false
+        $stackTraceLines = @()
+        $startTime = Get-Date
+
+        # Start process with redirected output
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = "dotnet"
+        $psi.Arguments = $testArgs -join " "
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $repoRoot
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $psi
+
+        # Collect stderr asynchronously
+        $stderrBuilder = [System.Text.StringBuilder]::new()
+        $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            if ($EventArgs.Data) {
+                $stderrBuilder.AppendLine($EventArgs.Data) | Out-Null
+            }
+        }
+
+        $process.Start() | Out-Null
+        $process.BeginErrorReadLine()
+
+        $reader = $process.StandardOutput
+
+        Write-Host ""
+        Write-Host ">>> TEST OUTPUT >>>" -ForegroundColor Cyan
+        Write-Host ""
+
+        while (-not $reader.EndOfStream) {
+            $lineStr = $reader.ReadLine()
+            if ($null -eq $lineStr) { continue }
+
+            # Stream ALL output in verbose mode (this is the key difference from AI mode)
+            Write-Host $lineStr
+
+            # Capture test counts from TUnit summary format
+            if ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+                $totalPassed += [int]$matches[1]
+            }
+            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+                $totalFailed += [int]$matches[1]
+            }
+            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+                $totalSkipped += [int]$matches[1]
+            }
+
+            # Capture failed test names
+            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+                if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+                    $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                    $stackTraceLines = @()
+                }
+
+                $testName = $matches[1].Trim()
+                if ($testName -notmatch "executing|DbCommand|Executed") {
+                    $failedTests += $testName
+                    $currentFailedTest = $testName
+                    $testDetails[$testName] = @{
+                        "ErrorMessage" = ""
+                        "StackTrace" = ""
+                        "Exception" = ""
+                    }
+                    $capturingStackTrace = $false
+
+                    if ($FailFast -and -not $failFastTriggered) {
+                        $failFastTriggered = $true
+                        # Don't kill process in verbose mode - let it finish showing output
+                    }
+                }
+            }
+            elseif ($currentFailedTest) {
+                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                    $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
+                }
+                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                    $capturingStackTrace = $true
+                    $stackTraceLines += $lineStr.Trim()
+                }
+                elseif ($capturingStackTrace) {
+                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
+                        $stackTraceLines += $lineStr.Trim()
+                    }
+                    else {
+                        $capturingStackTrace = $false
+                        if ($stackTraceLines.Count -gt 0) {
+                            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                            $stackTraceLines = @()
+                        }
+                    }
+                }
+            }
+            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+                $projectName = $matches[1]
+                $errorCount = $matches[2]
+                $projectErrors += "$projectName failed with $errorCount error(s)"
+            }
+            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+                $infrastructureErrors += [int]$matches[1]
+            }
+            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
+                $buildErrors += $lineStr.Trim()
+            }
+        }
+
+        # Clean up
+        $reader.Dispose()
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        Remove-Job -Id $stderrEvent.Id -Force -ErrorAction SilentlyContinue
+
+        if (-not $process.HasExited) {
+            $process.WaitForExit(5000) | Out-Null
+        }
+        $processExitCode = $process.ExitCode
+        $process.Dispose()
+
+        if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+        }
+
+        $stderrContent = $stderrBuilder.ToString().Trim()
+
+        Write-Host ""
+        Write-Host "<<< END TEST OUTPUT <<<" -ForegroundColor Cyan
+
+        # Calculate elapsed time
+        $endTime = Get-Date
+        $totalElapsed = $endTime - $startTime
+        $elapsedString = if ($totalElapsed.TotalMinutes -ge 1) {
+            "{0:F0}m {1:F0}s" -f [Math]::Floor($totalElapsed.TotalMinutes), $totalElapsed.Seconds
+        } else {
+            "{0:F1}s" -f $totalElapsed.TotalSeconds
+        }
+
+        $totalTests = $totalPassed + $totalFailed + $totalSkipped
+
+        # Display structured summary
+        Write-Host ""
+        Write-Host "=====================================" -ForegroundColor Cyan
+        Write-Host "  TEST RESULTS SUMMARY" -ForegroundColor Cyan
+        Write-Host "=====================================" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "Duration: $elapsedString" -ForegroundColor White
+        Write-Host "Total Tests: $totalTests" -ForegroundColor White
+        Write-Host "Passed: $totalPassed" -ForegroundColor Green
+        Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
+        Write-Host "Skipped: $totalSkipped" -ForegroundColor Yellow
+
+        if ($buildErrors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "BUILD ERRORS ($($buildErrors.Count)):" -ForegroundColor Red
+            $buildErrors | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+
+        if ($projectErrors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "PROJECT ERRORS ($($projectErrors.Count)):" -ForegroundColor Red
+            $projectErrors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+
+        if ($failedTests.Count -gt 0) {
+            Write-Host ""
+            Write-Host "FAILED TESTS ($($failedTests.Count)):" -ForegroundColor Red
+            foreach ($testName in $failedTests) {
+                Write-Host ""
+                Write-Host "  ✗ $testName" -ForegroundColor Red
+                $details = $testDetails[$testName]
+                if ($details["Exception"]) {
+                    Write-Host "    Exception: $($details["Exception"])" -ForegroundColor Yellow
+                }
+                if ($details["ErrorMessage"]) {
+                    Write-Host "    Message: $($details["ErrorMessage"])" -ForegroundColor Gray
+                }
+            }
+        }
+
+        if ($stderrContent) {
+            Write-Host ""
+            Write-Host "STDERR:" -ForegroundColor Yellow
+            $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+        }
+
+        Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
         & dotnet @testArgs
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
-    if ($useAiOutput) {
-        # In AI mode, use the process exit code and check captured errors
+    if ($useAiOutput -or $useVerboseLogging) {
+        # In AI/Verbose mode, use the process exit code and check captured errors
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
         $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or $infrastructureErrors -gt 0
