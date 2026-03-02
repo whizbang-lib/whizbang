@@ -864,10 +864,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     // Build SQL filter expression
-    // "ns1.#,ns2.#" → "[Subject] LIKE 'ns1.%' OR [Subject] LIKE 'ns2.%'"
+    // "ns1.#,ns2.#" → "sys.Label LIKE 'ns1.%' OR sys.Label LIKE 'ns2.%'"
+    // NOTE: Azure Service Bus SqlFilter uses sys.Label for the Subject/Label property,
+    // NOT [Subject]. The [Subject] syntax doesn't work for SqlRuleFilter expressions.
+    // See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-sql-filter
     var likePatterns = routingPatterns
       .Select(p => p.Replace(".#", ".%").Replace(".*", ".%").Replace("#", "%").Replace("*", "%"))
-      .Select(p => $"[Subject] LIKE '{p}'");
+      .Select(p => $"sys.Label LIKE '{p}'");
 
     var sqlExpression = string.Join(" OR ", likePatterns);
 
