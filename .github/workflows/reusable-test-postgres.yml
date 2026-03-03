@@ -50,14 +50,15 @@ jobs:
         if: inputs.artifact-name != ''
         run: dotnet tool install --global dotnet-coverage
 
-      - name: Instrument src/ Assemblies for Coverage
+      # Instrument Whizbang DLLs in test output dirs (where tests load from)
+      - name: Instrument Whizbang Assemblies for Coverage
         if: inputs.artifact-name != ''
         run: |
           SESSION_ID="coverage-${{ github.run_id }}-postgres"
           echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
-          echo "=== Instrumenting src/ assemblies for coverage ==="
+          echo "=== Instrumenting Whizbang assemblies for coverage ==="
 
-          find src -path "*/bin/Release/net10.0/*.dll" -type f | while read dll; do
+          find . -path "*/bin/Release/net10.0/Whizbang.*.dll" -type f | while read dll; do
             if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]] || [[ "$dll" == *".g.dll" ]]; then
               continue
             fi
