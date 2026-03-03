@@ -35,8 +35,9 @@ public static class TestConstants {
   /// - 4 receptors from LifecycleContextTests/FireAtAttributeTests/LifecycleStageIsolationTests/LifecycleReceptorRegistryTests
   ///     (TestReceptorWithContext, TestReceptorWithFireAt, TestReceptorWithMultipleFireAt, InvocationTrackingReceptor,
   ///     TestReceptor, AnotherTestReceptor)
+  /// - 2 receptors from DispatcherOptionsAndRoutingTests.cs (TestCommandReceptor, TestCommandVoidReceptor)
   ///
-  /// Total: 57 receptors
+  /// Total: 59 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 57;
+  public const int EXPECTED_RECEPTOR_COUNT = 59;
 }
