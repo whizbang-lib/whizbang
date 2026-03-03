@@ -46,12 +46,14 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
+      # NOTE: We intentionally build during tests even when artifacts are downloaded
+      # because coverage collection requires source instrumentation during build.
       - name: Run Azure Service Bus Integration Tests
         # Uses WhizbangTestTags for precise project filtering
         # TEMPORARY: continue-on-error due to all tests being skipped for v0.8.5-beta.1
         # TUnit returns exit code 8 when all tests are skipped, which we treat as success
         continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus ${{ inputs.artifact-name != '' && '-NoBuild' || '' }}
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
 
       - name: Upload Coverage
         if: success()
