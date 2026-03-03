@@ -120,8 +120,9 @@ public class UserScenarioReproductionTests {
 
       // Simulate what PerspectiveWorker does - call MarkProcessedByPerspective with the event ID
       // CRITICAL: This must use the SAME eventId that was tracked
-      singletonTracker.MarkProcessedByPerspective([eventBId], typeof(UserScenarioPerspectiveC).FullName!);
+      // Record timestamp BEFORE marking to avoid race with fast awaiter detection
       markProcessedTime = DateTime.UtcNow;
+      singletonTracker.MarkProcessedByPerspective([eventBId], typeof(UserScenarioPerspectiveC).FullName!);
       markProcessedCompleted.SetResult();
     });
 
