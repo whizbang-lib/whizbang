@@ -30,14 +30,15 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherSecurityBuilderTests.cs (DispatcherSecurityBuilderTestCommandReceptor,
   ///     DispatcherSecurityBuilderVoidReceptor)
   /// - 2 receptors from DispatcherTagProcessingTests.cs (TestCommandReceptor, ThrowingReceptor)
-  /// - 7 receptors from VoidReceptorExamples.cs (LogUserActionReceptor, SendNotificationReceptor,
-  ///     UpdateCacheReceptor, ProcessPaymentReceptor, AuditOrderReceptor, AnalyticsOrderReceptor, EmailOrderReceptor)
   /// - 4 receptors from LifecycleContextTests/FireAtAttributeTests/LifecycleStageIsolationTests/LifecycleReceptorRegistryTests
   ///     (TestReceptorWithContext, TestReceptorWithFireAt, TestReceptorWithMultipleFireAt, InvocationTrackingReceptor,
   ///     TestReceptor, AnotherTestReceptor)
   /// - 2 receptors from DispatcherOptionsAndRoutingTests.cs (TestCommandReceptor, TestCommandVoidReceptor)
+  /// - 2 receptors from DispatcherLocalInvokeAndSyncTests.cs (CreateOrderReceptor, VoidCommandReceptor)
+  /// - 2 receptors from DispatcherLocalInvokeAndSyncCallbackTests.cs (CallbackTestCommandReceptor, CallbackTestCommandWithResultReceptor)
+  /// - 2 receptors from DispatcherLocalInvokeAndSyncTimingTests.cs (TimedCommandReceptor, TimedCommandWithResultReceptor)
   ///
-  /// Total: 59 receptors
+  /// Total: 63 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 59;
+  public const int EXPECTED_RECEPTOR_COUNT = 63;
 }
