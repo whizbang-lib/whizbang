@@ -344,9 +344,12 @@ public static class ServiceCollectionExtensions {
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
+        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
-            syncAwaiter);
+            syncAwaiter,
+            eventCompletionAwaiter,
+            scopedTracker);
       });
     } else {
       // Singleton lifetime
@@ -379,9 +382,12 @@ public static class ServiceCollectionExtensions {
 
         // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
         var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
+        var eventCompletionAwaiter = sp.GetService<IEventCompletionAwaiter>();
         return new Messaging.AppendAndWaitEventStoreDecorator(
             withSyncTracking,
-            syncAwaiter);
+            syncAwaiter,
+            eventCompletionAwaiter,
+            scopedEventTracker: null); // Scoped tracker not available in singleton
       });
     }
 

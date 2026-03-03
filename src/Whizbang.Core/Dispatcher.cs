@@ -3183,13 +3183,15 @@ public abstract class Dispatcher(
   public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
       TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
       CancellationToken cancellationToken = default)
       where TMessage : notnull {
     // Execute the handler
     var result = await LocalInvokeAsync<TMessage, TResult>(message);
 
     // Wait for all perspectives to process emitted events
-    var syncResult = await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, cancellationToken);
+    var syncResult = await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
 
     if (syncResult.Outcome == SyncOutcome.TimedOut) {
       throw new TimeoutException(
@@ -3208,51 +3210,223 @@ public abstract class Dispatcher(
   public async Task<SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
       CancellationToken cancellationToken = default)
       where TMessage : notnull {
     // Execute the handler
     await LocalInvokeAsync(message);
 
     // Wait for all perspectives to process emitted events
-    return await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, cancellationToken);
+    return await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class {
+    // Execute the handler
+    var result = await LocalInvokeAsync<TMessage, TResult>(message);
+
+    // Wait for the specific perspective to process emitted events
+    var syncResult = await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+        message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+
+    if (syncResult.Outcome == SyncOutcome.TimedOut) {
+      throw new TimeoutException(
+          $"Perspective {typeof(TPerspective).Name} did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+          $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
+    }
+
+    return result;
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class {
+    // Execute the handler
+    await LocalInvokeAsync(message);
+
+    // Wait for the specific perspective to process emitted events
+    return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+        message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
   }
 
   /// <summary>
   /// Waits for all perspectives to process events emitted in the current scope.
   /// </summary>
-  private async Task<SyncResult> _waitForAllPerspectivesAsync(TimeSpan timeout, CancellationToken cancellationToken) {
+  private async Task<SyncResult> _waitForAllPerspectivesAsync(
+      TimeSpan timeout,
+      Action<SyncWaitingContext>? onWaiting,
+      Action<SyncDecisionContext>? onDecisionMade,
+      CancellationToken cancellationToken) {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
 
     // Get tracked events from the scoped tracker
     var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
     if (scopedTracker is null) {
       // No tracker available - no events to wait for
-      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, noPendingResult, didWait: false);
+      return noPendingResult;
     }
 
     var trackedEvents = scopedTracker.GetEmittedEvents();
     if (trackedEvents.Count == 0) {
       // No events were emitted
-      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, noPendingResult, didWait: false);
+      return noPendingResult;
     }
 
-    // Extract event IDs
+    // Extract event IDs and stream IDs
     var eventIds = trackedEvents.Select(e => e.EventId).ToList();
+    var streamIds = trackedEvents.Select(e => e.StreamId).Distinct().ToList();
 
     // Wait for all perspectives to process
     if (_eventCompletionAwaiter is null) {
       // No awaiter registered - can't wait for perspectives
       // Return synced since we can't verify either way
-      return new SyncResult(SyncOutcome.Synced, eventIds.Count, stopwatch.Elapsed);
+      var syncedResult = new SyncResult(SyncOutcome.Synced, eventIds.Count, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, syncedResult, didWait: false);
+      return syncedResult;
     }
+
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType: null, eventIds.Count, streamIds, timeout, startedAt);
 
     var completed = await _eventCompletionAwaiter.WaitForEventsAsync(eventIds, timeout, cancellationToken);
 
     stopwatch.Stop();
-    return new SyncResult(
+    var result = new SyncResult(
         completed ? SyncOutcome.Synced : SyncOutcome.TimedOut,
         eventIds.Count,
         stopwatch.Elapsed);
+
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, result, didWait: true);
+    return result;
+  }
+
+  /// <summary>
+  /// Waits for a specific perspective to process events on the stream identified from the message.
+  /// </summary>
+  private async Task<SyncResult> _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan timeout,
+      Action<SyncWaitingContext>? onWaiting,
+      Action<SyncDecisionContext>? onDecisionMade,
+      CancellationToken cancellationToken)
+      where TMessage : notnull
+      where TPerspective : class {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
+    var perspectiveType = typeof(TPerspective);
+
+    // Extract stream ID from message
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, typeof(TMessage));
+    if (streamId is null) {
+      // No stream ID on message - no stream-specific events to wait for
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType, noPendingResult, didWait: false);
+      return noPendingResult;
+    }
+
+    // Create a scope to resolve scoped services
+    await using var scope = _internalServiceProvider.CreateAsyncScope();
+    var syncAwaiter = scope.ServiceProvider.GetService<IPerspectiveSyncAwaiter>();
+
+    if (syncAwaiter is null) {
+      // No perspective sync awaiter registered - can't wait for perspective
+      // Return synced since we can't verify either way
+      var syncedResult = new SyncResult(SyncOutcome.Synced, 1, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType, syncedResult, didWait: false);
+      return syncedResult;
+    }
+
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType, eventCount: 1, [streamId.Value], timeout, startedAt);
+
+    // Wait for the specific perspective to process events on this stream
+    var result = await syncAwaiter.WaitForStreamAsync(perspectiveType, streamId.Value, eventTypes: null, timeout, ct: cancellationToken);
+
+    stopwatch.Stop();
+    var finalResult = new SyncResult(result.Outcome, result.EventsAwaited, stopwatch.Elapsed);
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType, finalResult, didWait: true);
+    return finalResult;
+  }
+
+  /// <summary>
+  /// Invokes the onWaiting callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnWaiting(
+      Action<SyncWaitingContext>? onWaiting,
+      Type? perspectiveType,
+      int eventCount,
+      IReadOnlyList<Guid> streamIds,
+      TimeSpan timeout,
+      DateTimeOffset startedAt) {
+    if (onWaiting is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncWaitingContext {
+        PerspectiveType = perspectiveType,
+        EventCount = eventCount,
+        StreamIds = streamIds,
+        Timeout = timeout,
+        StartedAt = startedAt
+      };
+      onWaiting(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
+  }
+
+  /// <summary>
+  /// Invokes the onDecisionMade callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnDecisionMade(
+      Action<SyncDecisionContext>? onDecisionMade,
+      Type? perspectiveType,
+      SyncResult result,
+      bool didWait) {
+    if (onDecisionMade is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncDecisionContext {
+        PerspectiveType = perspectiveType,
+        Outcome = result.Outcome,
+        EventsAwaited = result.EventsAwaited,
+        ElapsedTime = result.ElapsedTime,
+        DidWait = didWait
+      };
+      onDecisionMade(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
   }
 
   // ========================================

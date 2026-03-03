@@ -28,17 +28,25 @@ public sealed class AppendAndWaitEventStoreDecorator : IEventStore {
 
   private readonly IEventStore _inner;
   private readonly IPerspectiveSyncAwaiter _syncAwaiter;
+  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter;
+  private readonly IScopedEventTracker? _scopedEventTracker;
 
   /// <summary>
   /// Initializes a new instance of <see cref="AppendAndWaitEventStoreDecorator"/>.
   /// </summary>
   /// <param name="inner">The underlying event store implementation.</param>
   /// <param name="syncAwaiter">The perspective sync awaiter for waiting on perspective processing.</param>
+  /// <param name="eventCompletionAwaiter">Optional event completion awaiter for waiting on all perspectives.</param>
+  /// <param name="scopedEventTracker">Optional scoped event tracker for tracking emitted events.</param>
   public AppendAndWaitEventStoreDecorator(
       IEventStore inner,
-      IPerspectiveSyncAwaiter syncAwaiter) {
+      IPerspectiveSyncAwaiter syncAwaiter,
+      IEventCompletionAwaiter? eventCompletionAwaiter = null,
+      IScopedEventTracker? scopedEventTracker = null) {
     _inner = inner ?? throw new ArgumentNullException(nameof(inner));
     _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
+    _eventCompletionAwaiter = eventCompletionAwaiter;
+    _scopedEventTracker = scopedEventTracker;
   }
 
   /// <inheritdoc />
@@ -46,23 +54,141 @@ public sealed class AppendAndWaitEventStoreDecorator : IEventStore {
       Guid streamId,
       TMessage message,
       TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
       CancellationToken cancellationToken = default)
       where TMessage : notnull
       where TPerspective : class {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
+    var perspectiveType = typeof(TPerspective);
+    var effectiveTimeout = timeout ?? _defaultTimeout;
+
     // Append the event to the store
     await _inner.AppendAsync(streamId, message, cancellationToken);
 
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType, eventCount: 1, [streamId], effectiveTimeout, startedAt);
+
     // Wait for the perspective to process the event
-    var effectiveTimeout = timeout ?? _defaultTimeout;
     var result = await _syncAwaiter.WaitForStreamAsync(
-        typeof(TPerspective),
+        perspectiveType,
         streamId,
         eventTypes: null,
         timeout: effectiveTimeout,
         eventIdToAwait: null,
         ct: cancellationToken);
 
+    stopwatch.Stop();
+    var finalResult = new SyncResult(result.Outcome, result.EventsAwaited, stopwatch.Elapsed);
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType, finalResult, didWait: true);
+    return finalResult;
+  }
+
+  /// <inheritdoc />
+  public async Task<SyncResult> AppendAndWaitAsync<TMessage>(
+      Guid streamId,
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
+    var effectiveTimeout = timeout ?? _defaultTimeout;
+
+    // Append the event to the store
+    await _inner.AppendAsync(streamId, message, cancellationToken);
+
+    // Get tracked events from scoped tracker
+    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+    if (scopedTracker is null || _eventCompletionAwaiter is null) {
+      // No tracker or awaiter - return synced (can't verify either way)
+      var syncedResult = new SyncResult(SyncOutcome.Synced, 1, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, syncedResult, didWait: false);
+      return syncedResult;
+    }
+
+    var trackedEvents = scopedTracker.GetEmittedEvents();
+    if (trackedEvents.Count == 0) {
+      // No events tracked - return NoPendingEvents
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, noPendingResult, didWait: false);
+      return noPendingResult;
+    }
+
+    var eventIds = trackedEvents.Select(e => e.EventId).ToList();
+    var streamIds = trackedEvents.Select(e => e.StreamId).Distinct().ToList();
+
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType: null, eventIds.Count, streamIds, effectiveTimeout, startedAt);
+
+    // Wait for all perspectives to process the events
+    var completed = await _eventCompletionAwaiter.WaitForEventsAsync(eventIds, effectiveTimeout, cancellationToken);
+
+    stopwatch.Stop();
+    var result = new SyncResult(
+        completed ? SyncOutcome.Synced : SyncOutcome.TimedOut,
+        eventIds.Count,
+        stopwatch.Elapsed);
+
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, result, didWait: true);
     return result;
+  }
+
+  /// <summary>
+  /// Invokes the onWaiting callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnWaiting(
+      Action<SyncWaitingContext>? onWaiting,
+      Type? perspectiveType,
+      int eventCount,
+      IReadOnlyList<Guid> streamIds,
+      TimeSpan timeout,
+      DateTimeOffset startedAt) {
+    if (onWaiting is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncWaitingContext {
+        PerspectiveType = perspectiveType,
+        EventCount = eventCount,
+        StreamIds = streamIds,
+        Timeout = timeout,
+        StartedAt = startedAt
+      };
+      onWaiting(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
+  }
+
+  /// <summary>
+  /// Invokes the onDecisionMade callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnDecisionMade(
+      Action<SyncDecisionContext>? onDecisionMade,
+      Type? perspectiveType,
+      SyncResult result,
+      bool didWait) {
+    if (onDecisionMade is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncDecisionContext {
+        PerspectiveType = perspectiveType,
+        Outcome = result.Outcome,
+        EventsAwaited = result.EventsAwaited,
+        ElapsedTime = result.ElapsedTime,
+        DidWait = didWait
+      };
+      onDecisionMade(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
   }
 
   /// <inheritdoc />
