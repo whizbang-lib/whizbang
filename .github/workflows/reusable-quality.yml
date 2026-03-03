@@ -102,7 +102,9 @@ jobs:
             "-filefilters:${FILE_FILTERS}"
 
           # Convert absolute paths to relative paths for SonarCloud
+          # Remove CI runner path AND deterministic build prefix (/_/)
           sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
+          sed -i 's|/_/||g' coverage/sonarqube/SonarQube.xml
 
           # Debug: show first few lines to verify paths
           echo "=== Merged coverage report (first 30 lines) ==="
