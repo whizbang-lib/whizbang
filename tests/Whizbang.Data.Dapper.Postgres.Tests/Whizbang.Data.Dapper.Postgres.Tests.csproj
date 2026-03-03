@@ -35,8 +35,9 @@
     <ProjectReference Include="../../src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
-    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
-    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+    <!-- PrivateAssets prevents TUnit from discovering tests in the referenced test projects -->
+    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" PrivateAssets="all" />
+    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

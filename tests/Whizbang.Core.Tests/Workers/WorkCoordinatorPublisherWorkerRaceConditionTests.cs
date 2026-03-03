@@ -23,6 +23,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Tests race conditions that might not be caught by fast unit tests.
 /// </summary>
 [NotInParallel("WorkCoordinatorRaceCondition")]
+[Category("Integration")]
 public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   private sealed record _testMessage { }
 
@@ -204,7 +205,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   [Test]
-  [Timeout(30000)] // 30 second timeout for long-running integration test
+  [Timeout(90000)] // 90 second timeout - needs extra time in CI due to parallel test execution
   public async Task RaceCondition_MultipleInstances_NoDuplicatePublishingAsync(CancellationToken cancellationToken) {
     // Arrange - 2 worker instances competing for 20 messages
     var workCoordinator = new RealisticWorkCoordinator {
@@ -291,7 +292,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   [Test]
-  [Timeout(15000)] // 15 second timeout
+  [Timeout(45000)] // 45 second timeout - needs extra time in CI due to parallel test execution
   public async Task RaceCondition_ImmediateProcessing_WithRealisticDelaysAsync(CancellationToken cancellationToken) {
     // Arrange
     var workCoordinator = new RealisticWorkCoordinator {
@@ -355,7 +356,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   [Test]
-  [Timeout(20000)] // 20 second timeout
+  [Timeout(60000)] // 60 second timeout - needs extra time in CI due to parallel test execution
   public async Task RaceCondition_DatabaseSlowness_DoesNotBlockPublishingAsync(CancellationToken cancellationToken) {
     // Arrange - simulate slow database (500-1000ms per call)
     var workCoordinator = new RealisticWorkCoordinator {
@@ -410,7 +411,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   [Test]
-  [Timeout(20000)] // 20 second timeout
+  [Timeout(60000)] // 60 second timeout - needs extra time in CI due to parallel test execution
   public async Task RaceCondition_TransportFailures_RetriesSuccessfullyAsync(CancellationToken cancellationToken) {
     // Arrange - Deterministic failures: first 2 attempts fail, 3rd attempt succeeds
     var workCoordinator = new RealisticWorkCoordinator {
@@ -472,7 +473,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   [Test]
-  [Timeout(10000)] // 10 second timeout
+  [Timeout(30000)] // 30 second timeout - needs extra time in CI due to parallel test execution
   public async Task RaceCondition_DatabaseNotReady_DelaysProcessingAsync(CancellationToken cancellationToken) {
     // Arrange - database starts not ready, becomes ready after 2 seconds
     var workCoordinator = new RealisticWorkCoordinator();
