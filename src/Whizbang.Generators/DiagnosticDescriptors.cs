@@ -738,4 +738,25 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A polymorphic base type was discovered through inheritance tracking. All derived types will be registered for JSON serialization."
   );
+
+  // ========================================
+  // MessageTag Attribute Parameter Diagnostics (WHIZ090-099)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ090: Error - Constructor parameter in MessageTagAttribute subclass does not match any property.
+  /// Whizbang's source generators extract attribute values using constructor parameter names.
+  /// Parameters must match property names (case-insensitive) for values to be extracted correctly.
+  /// </summary>
+  /// <docs>diagnostics/whiz090</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/MessageTagParameterAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor MessageTagParameterMismatch = new(
+      id: "WHIZ090",
+      title: "MessageTag Parameter Naming",
+      messageFormat: "Constructor parameter '{0}' in '{1}' does not match any property. Rename to '{2}' to match property '{3}'.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Whizbang's source generators extract attribute values using constructor parameter names. Parameters must match property names (case-insensitive) for values to be extracted correctly."
+  );
 }
