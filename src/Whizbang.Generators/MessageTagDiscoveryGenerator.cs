@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
@@ -7,6 +5,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -59,14 +58,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Extract attribute properties
-    var tag = _getAttributeValue<string>(tagAttribute, "Tag") ?? "";
-    var properties = _getAttributeArrayValue(tagAttribute, "Properties");
-    var includeEvent = _getAttributeValue<bool>(tagAttribute, "IncludeEvent");
-    var extraJson = _getAttributeValue<string>(tagAttribute, "ExtraJson");
+    // Extract attribute properties using shared utilities
+    var tag = AttributeUtilities.GetStringValue(tagAttribute, "Tag") ?? "";
+    var properties = AttributeUtilities.GetStringArrayValue(tagAttribute, "Properties");
+    var includeEvent = AttributeUtilities.GetBoolValue(tagAttribute, "IncludeEvent", false);
+    var extraJson = AttributeUtilities.GetStringValue(tagAttribute, "ExtraJson");
 
     // Skip types with Exclude = true (e.g., system events that shouldn't trigger tag hooks)
-    var exclude = _getAttributeValue<bool>(tagAttribute, "Exclude");
+    var exclude = AttributeUtilities.GetBoolValue(tagAttribute, "Exclude", false);
     if (exclude) {
       return null;
     }
@@ -111,36 +110,6 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return false;
-  }
-
-  private static T? _getAttributeValue<T>(AttributeData attribute, string propertyName) {
-    // Check named arguments
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (!namedArg.Equals(default(KeyValuePair<string, TypedConstant>))) {
-      if (namedArg.Value.Value is T value) {
-        return value;
-      }
-    }
-
-    return default;
-  }
-
-  private static string[]? _getAttributeArrayValue(AttributeData attribute, string propertyName) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (!namedArg.Equals(default(KeyValuePair<string, TypedConstant>))) {
-      if (namedArg.Value.Kind == TypedConstantKind.Array) {
-        return namedArg.Value.Values
-            .Select(v => v.Value?.ToString() ?? "")
-            .Where(s => !string.IsNullOrEmpty(s))
-            .ToArray();
-      }
-    }
-
-    return null;
   }
 
   private static void _generateRegistry(
