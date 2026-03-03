@@ -99,8 +99,15 @@ dataSourceBuilder.EnableDynamicJson();
 var dataSource = dataSourceBuilder.Build();
 builder.Services.AddSingleton(dataSource);
 
-builder.Services.AddDbContext<BffDbContext>(options =>
+// Use pooled DbContext factory for HotChocolate parallel resolver support
+// ILensQuery<T> uses transient registration with FactoryOwnedLensQuery pattern,
+// each injection gets its own DbContext from the pool (thread-safe for parallel resolvers)
+builder.Services.AddPooledDbContextFactory<BffDbContext>(options =>
   options.UseNpgsql(dataSource));
+
+// Keep scoped DbContext for mutations/receptors/direct DbContext injection (writing operations)
+builder.Services.AddScoped(sp =>
+  sp.GetRequiredService<IDbContextFactory<BffDbContext>>().CreateDbContext());
 
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
