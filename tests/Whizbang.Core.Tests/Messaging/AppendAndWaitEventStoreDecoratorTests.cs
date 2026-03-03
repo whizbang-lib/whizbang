@@ -151,7 +151,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
         streamId,
         message,
         TimeSpan.FromSeconds(5),
-        cts.Token);
+        cancellationToken: cts.Token);
 
     await Assert.That(awaiter.LastCancellationToken).IsEqualTo(cts.Token);
   }
@@ -174,7 +174,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
           streamId,
           message,
           TimeSpan.FromSeconds(5),
-          cts.Token);
+          cancellationToken: cts.Token);
     });
   }
 
