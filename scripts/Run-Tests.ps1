@@ -273,6 +273,7 @@ param(
 
     [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
+    [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -548,6 +549,11 @@ try {
         $testArgs += "--fail-fast"
     }
 
+    # Add no-build if requested (use pre-built artifacts)
+    if ($NoBuild) {
+        $testArgs += "--no-build"
+    }
+
     # Coverage mode: Run projects in parallel with unique output paths per project
     # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
@@ -650,23 +656,28 @@ try {
 
         # Pre-build: Build all test projects first to avoid race conditions in parallel execution
         # This ensures all dependencies are built before running tests in parallel with --no-build
-        $allProjectsToBuild = $unitTestProjects + $integrationTestProjects
-        Write-Host "Building $($allProjectsToBuild.Count) test projects..." -ForegroundColor Gray
-        $buildFailed = $false
-        foreach ($projectPath in $allProjectsToBuild) {
-            $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-            $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "Build failed for $projectName`:" -ForegroundColor Red
-                $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
-                $buildFailed = $true
-                break
+        # Skip if -NoBuild is specified (artifacts are pre-built, e.g., in CI)
+        if (-not $NoBuild) {
+            $allProjectsToBuild = $unitTestProjects + $integrationTestProjects
+            Write-Host "Building $($allProjectsToBuild.Count) test projects..." -ForegroundColor Gray
+            $buildFailed = $false
+            foreach ($projectPath in $allProjectsToBuild) {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "Build failed for $projectName`:" -ForegroundColor Red
+                    $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+                    $buildFailed = $true
+                    break
+                }
             }
+            if ($buildFailed) {
+                exit 1
+            }
+            Write-Host "Build succeeded." -ForegroundColor Gray
+        } else {
+            Write-Host "Skipping build (-NoBuild specified, using pre-built artifacts)..." -ForegroundColor Gray
         }
-        if ($buildFailed) {
-            exit 1
-        }
-        Write-Host "Build succeeded." -ForegroundColor Gray
 
         # Phase 1: Run unit tests in parallel
         if ($unitTestProjects.Count -gt 0) {
