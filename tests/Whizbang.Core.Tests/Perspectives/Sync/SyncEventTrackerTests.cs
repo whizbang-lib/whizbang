@@ -604,4 +604,287 @@ public class SyncEventTrackerTests {
     var result = await waitTask;
     await Assert.That(result).IsTrue();
   }
+
+  // ==========================================================================
+  // WaitForEventsAsync edge case tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForEventsAsync_WithNullEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForEventsAsync(null!, TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_WithEmptyEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForEventsAsync([], TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_WithAlreadyProcessedEvents_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+
+    // Event not tracked = already processed
+    var result = await tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_TimesOutWhenEventsNeverProcessedAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Don't mark as processed - should timeout
+    var result = await tracker.WaitForEventsAsync([eventId], TimeSpan.FromMilliseconds(100));
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_SignalsWhenEventProcessedDuringWaitAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Start waiting
+    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5));
+
+    // Mark processed
+    tracker.MarkProcessed([eventId]);
+
+    var result = await waitTask;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_CancelledDuringWaitAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    using var cts = new CancellationTokenSource();
+
+    // Start waiting
+    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+
+    // Cancel
+    cts.Cancel();
+
+    var result = await waitTask;
+    await Assert.That(result).IsFalse();
+  }
+
+  // ==========================================================================
+  // WaitForPerspectiveEventsAsync edge case tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithNullEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForPerspectiveEventsAsync(null!, "TestPerspective", TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithEmptyEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForPerspectiveEventsAsync([], "TestPerspective", TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_TimesOutWhenEventsNeverProcessedAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Don't mark as processed - should timeout
+    var result = await tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromMilliseconds(100));
+
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_CancelledDuringWaitAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    using var cts = new CancellationTokenSource();
+
+    // Start waiting
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cts.Token);
+
+    // Cancel
+    cts.Cancel();
+
+    var result = await waitTask;
+    await Assert.That(result).IsFalse();
+  }
+
+  // ==========================================================================
+  // WaitForAllPerspectivesAsync edge case tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_WithNullEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForAllPerspectivesAsync(null!, TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_WithEmptyEventIds_ReturnsTrueImmediatelyAsync() {
+    var tracker = new SyncEventTracker();
+
+    var result = await tracker.WaitForAllPerspectivesAsync([], TimeSpan.FromSeconds(5));
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_CancelledDuringWaitAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    using var cts = new CancellationTokenSource();
+
+    // Start waiting
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+
+    // Cancel
+    cts.Cancel();
+
+    var result = await waitTask;
+    await Assert.That(result).IsFalse();
+  }
+
+  // ==========================================================================
+  // Race condition coverage tests (double-check after registration)
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForEventsAsync_RaceConditionFix_SignalsWhenProcessedBeforeRegistrationCompleteAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Immediately mark processed (simulates race condition)
+    var markProcessedTask = Task.Run(async () => {
+      await Task.Yield();
+      tracker.MarkProcessed([eventId]);
+    });
+
+    // Wait should handle the race correctly
+    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5));
+
+    await markProcessedTask;
+    var result = await waitTask;
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_RaceConditionFix_SignalsWhenProcessedBeforeRegistrationCompleteAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Immediately mark processed (simulates race condition)
+    var markProcessedTask = Task.Run(async () => {
+      await Task.Yield();
+      tracker.MarkProcessedByPerspective([eventId], "TestPerspective");
+    });
+
+    // Wait should handle the race correctly
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5));
+
+    await markProcessedTask;
+    var result = await waitTask;
+
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_RaceConditionFix_SignalsWhenProcessedBeforeRegistrationCompleteAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "TestPerspective");
+
+    // Immediately mark processed (simulates race condition)
+    var markProcessedTask = Task.Run(async () => {
+      await Task.Yield();
+      tracker.MarkProcessedByPerspective([eventId], "TestPerspective");
+    });
+
+    // Wait should handle the race correctly
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5));
+
+    await markProcessedTask;
+    var result = await waitTask;
+
+    await Assert.That(result).IsTrue();
+  }
+
+  // ==========================================================================
+  // TrackEvent with same event for multiple perspectives
+  // ==========================================================================
+
+  [Test]
+  public async Task TrackEvent_SameEventIdForMultiplePerspectives_TracksEachSeparatelyAsync() {
+    var tracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    // Track same event for two perspectives
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveA");
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "PerspectiveB");
+
+    // GetAllTrackedEventIds should return the eventId once (distinct)
+    var allIds = tracker.GetAllTrackedEventIds();
+    await Assert.That(allIds.Count).IsEqualTo(1);
+    await Assert.That(allIds[0]).IsEqualTo(eventId);
+
+    // But GetPendingEvents should show it for each perspective
+    var pendingA = tracker.GetPendingEvents(streamId, "PerspectiveA");
+    var pendingB = tracker.GetPendingEvents(streamId, "PerspectiveB");
+
+    await Assert.That(pendingA.Count).IsEqualTo(1);
+    await Assert.That(pendingB.Count).IsEqualTo(1);
+  }
 }

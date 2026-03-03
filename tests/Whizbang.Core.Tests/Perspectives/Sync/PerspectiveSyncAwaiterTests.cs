@@ -1091,4 +1091,250 @@ public class PerspectiveSyncAwaiterTests {
     await Assert.That(capturedInquiry.EventIds).Contains(stringEventId);
     await Assert.That(capturedInquiry.EventIds).DoesNotContain(intEventId);
   }
+
+  // ==========================================================================
+  // WaitAsync - Non-debugger-aware timeout tests
+  // ==========================================================================
+
+  [Test]
+  public async Task PerspectiveSyncAwaiter_WaitAsync_WithDebuggerAwareTimeoutDisabled_UsesDirectComparisonAsync() {
+    // Arrange
+    var tracker = new ScopedEventTracker();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEmittedEvent(streamId, typeof(string), Guid.NewGuid());
+
+    // Create mock that always returns pending
+    var coordinator = new MockWorkCoordinator((_, _) => Task.FromResult(new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      SyncInquiryResults = [
+        new SyncInquiryResult {
+          InquiryId = Guid.NewGuid(),
+          PendingCount = 1  // Always pending
+        }
+      ]
+    }));
+
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+
+    // Disable debugger-aware timeout - uses direct elapsed comparison
+    var options = new PerspectiveSyncOptions {
+      Filter = new AllPendingFilter(),
+      Timeout = TimeSpan.FromMilliseconds(150),
+      DebuggerAwareTimeout = false // Disable debugger-aware timeout
+    };
+
+    // Act
+    var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
+
+    // Assert - should timeout using direct elapsed comparison
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+    await Assert.That(result.ElapsedTime.TotalMilliseconds).IsGreaterThanOrEqualTo(100);
+  }
+
+  // ==========================================================================
+  // IsCaughtUpAsync - Empty inquiries test
+  // ==========================================================================
+
+  [Test]
+  public async Task PerspectiveSyncAwaiter_IsCaughtUpAsync_WithEmptyInquiries_ReturnsTrueAsync() {
+    // Arrange - tracker with no events after filtering
+    var tracker = new ScopedEventTracker();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEmittedEvent(streamId, typeof(string), Guid.NewGuid());
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+
+    // Filter for int, but we only have string events
+    var options = SyncFilter.ForEventTypes<int>().Build();
+
+    // Act
+    var isCaughtUp = await awaiter.IsCaughtUpAsync(typeof(TestPerspective), options);
+
+    // Assert
+    await Assert.That(isCaughtUp).IsTrue();
+  }
+
+  // ==========================================================================
+  // WaitForStreamAsync - Singleton tracker tests
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForStreamAsync_WithSingletonTracker_UsesEventDrivenWaitingAsync() {
+    // Arrange
+    var singletonTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    // Track event in singleton tracker
+    singletonTracker.TrackEvent(typeof(string), eventId, streamId, perspectiveName);
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker: null, syncEventTracker: singletonTracker);
+
+    // Start waiting
+    var waitTask = awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: [typeof(string)],
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: null);
+
+    // Mark processed in singleton tracker
+    singletonTracker.MarkProcessedByPerspective([eventId], perspectiveName);
+
+    // Act
+    var result = await waitTask;
+
+    // Assert - should complete via event-driven waiting
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(result.EventsAwaited).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_WithSingletonTracker_TimesOutWhenNotProcessedAsync() {
+    // Arrange
+    var singletonTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    // Track event in singleton tracker
+    singletonTracker.TrackEvent(typeof(string), eventId, streamId, perspectiveName);
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker: null, syncEventTracker: singletonTracker);
+
+    // Act - Don't mark processed, should timeout
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: [typeof(string)],
+        timeout: TimeSpan.FromMilliseconds(150),
+        eventIdToAwait: null);
+
+    // Assert
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+  }
+
+  [Test]
+  public async Task WaitForStreamAsync_WithSingletonTracker_NoMatchingEvents_FallsBackToDatabaseAsync() {
+    // Arrange - Singleton tracker has no matching events
+    var singletonTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+
+    // Nothing tracked in singleton tracker
+
+    var coordinator = new MockWorkCoordinator((_, _) => Task.FromResult(new WorkBatch {
+      OutboxWork = [],
+      InboxWork = [],
+      PerspectiveWork = [],
+      SyncInquiryResults = [
+        new SyncInquiryResult {
+          InquiryId = Guid.NewGuid(),
+          StreamId = streamId,
+          PendingCount = 0 // Synced
+        }
+      ]
+    }));
+
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker: null, syncEventTracker: singletonTracker);
+
+    // Act
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: [typeof(string)],
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: null);
+
+    // Assert - should fall back to database and find nothing pending
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+  }
+
+  // ==========================================================================
+  // WaitForStreamAsync - Explicit eventIdToAwait with singleton tracker
+  // ==========================================================================
+
+  [Test]
+  public async Task WaitForStreamAsync_WithExplicitEventIdAndSingletonTracker_UsesExplicitIdAsync() {
+    // Arrange
+    var singletonTracker = new SyncEventTracker();
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var perspectiveName = typeof(TestPerspective).FullName!;
+
+    // Singleton tracker has different events - explicit ID should take priority
+    singletonTracker.TrackEvent(typeof(int), Guid.NewGuid(), streamId, perspectiveName);
+
+    SyncInquiry? capturedInquiry = null;
+    var coordinator = new MockWorkCoordinator((request, _) => {
+      capturedInquiry = request.PerspectiveSyncInquiries?.FirstOrDefault();
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [],
+        SyncInquiryResults = [
+          new SyncInquiryResult {
+            InquiryId = capturedInquiry?.InquiryId ?? Guid.NewGuid(),
+            StreamId = streamId,
+            PendingCount = 0,
+            ProcessedEventIds = [eventId]
+          }
+        ]
+      });
+    });
+
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker: null, syncEventTracker: singletonTracker);
+
+    // Act - Explicit eventIdToAwait should take priority over singleton tracker
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: null,
+        timeout: TimeSpan.FromSeconds(5),
+        eventIdToAwait: eventId);
+
+    // Assert
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(capturedInquiry).IsNotNull();
+    await Assert.That(capturedInquiry!.EventIds).Contains(eventId);
+  }
+
+  // ==========================================================================
+  // WaitAsync - Empty inquiries after filtering
+  // ==========================================================================
+
+  [Test]
+  public async Task PerspectiveSyncAwaiter_WaitAsync_WithEmptyInquiriesAfterFiltering_ReturnsNoPendingEventsAsync() {
+    // Arrange - events exist but filter excludes them all
+    var tracker = new ScopedEventTracker();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEmittedEvent(streamId, typeof(string), Guid.NewGuid());
+
+    var coordinator = new MockWorkCoordinator();
+    var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+
+    // Filter for int, but we only have string events
+    var options = SyncFilter.ForEventTypes<int>()
+        .WithTimeout(TimeSpan.FromSeconds(5))
+        .Build();
+
+    // Act
+    var result = await awaiter.WaitAsync(typeof(TestPerspective), options);
+
+    // Assert
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+    await Assert.That(result.EventsAwaited).IsEqualTo(0);
+  }
 }
