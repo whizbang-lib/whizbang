@@ -48,7 +48,7 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests
         # Uses WhizbangTestTags for precise project filtering
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres ${{ inputs.artifact-name != '' && '-NoBuild' || '' }}
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 

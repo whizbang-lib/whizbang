@@ -51,7 +51,7 @@ jobs:
         # TEMPORARY: continue-on-error due to all tests being skipped for v0.8.5-beta.1
         # TUnit returns exit code 8 when all tests are skipped, which we treat as success
         continue-on-error: true
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus ${{ inputs.artifact-name != '' && '-NoBuild' || '' }}
 
       - name: Upload Coverage
         if: success()
