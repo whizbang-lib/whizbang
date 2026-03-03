@@ -3,8 +3,8 @@ name: InMemory Integration Tests (Reusable)
 on:
   workflow_call:
     inputs:
-      artifact-name:
-        description: 'Build artifact to download (skips build if provided)'
+      coverage-artifact-name:
+        description: 'Coverage-instrumented build artifact (enables -NoBuild with coverage)'
         type: string
         required: false
 
@@ -23,14 +23,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Download Build Artifacts
-        if: inputs.artifact-name != ''
+      - name: Download Coverage-Instrumented Artifacts
+        if: inputs.coverage-artifact-name != ''
         uses: actions/download-artifact@v6
         with:
-          name: ${{ inputs.artifact-name }}
+          name: ${{ inputs.coverage-artifact-name }}
 
       - name: Cache NuGet packages
-        if: inputs.artifact-name == ''
+        if: inputs.coverage-artifact-name == ''
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -39,23 +39,54 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
-        if: inputs.artifact-name == ''
+        if: inputs.coverage-artifact-name == ''
         run: dotnet restore
 
       - name: Build Solution
-        if: inputs.artifact-name == ''
+        if: inputs.coverage-artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
-      # NOTE: We intentionally build during tests even when artifacts are downloaded
-      # because coverage collection requires source instrumentation during build.
-      - name: Run InMemory Integration Tests
-        # Uses WhizbangTestTags for precise project filtering
+      - name: Install dotnet-coverage
+        if: inputs.coverage-artifact-name != ''
+        run: dotnet tool install --global dotnet-coverage
+
+      - name: Start Coverage Collection Server
+        if: inputs.coverage-artifact-name != ''
+        run: |
+          SESSION_ID="coverage-${{ github.run_id }}"
+          echo "Starting coverage collection server with session: $SESSION_ID"
+          dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
+            -f cobertura -o TestResults/inmemory.cobertura.xml
+
+      - name: Run InMemory Integration Tests (with pre-instrumented coverage)
+        if: inputs.coverage-artifact-name != ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag InMemory -NoBuild
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'false'
+
+      - name: Run InMemory Integration Tests (with dynamic coverage)
+        if: inputs.coverage-artifact-name == ''
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
-      - name: Upload Coverage
-        if: success()
+      - name: Shutdown Coverage Collection
+        if: inputs.coverage-artifact-name != ''
+        run: |
+          SESSION_ID="coverage-${{ github.run_id }}"
+          echo "Shutting down coverage collection session: $SESSION_ID"
+          dotnet-coverage shutdown "$SESSION_ID" || true
+
+      - name: Upload Coverage (pre-instrumented)
+        if: success() && inputs.coverage-artifact-name != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-inmemory
+          path: TestResults/*.cobertura.xml
+          retention-days: 1
+
+      - name: Upload Coverage (dynamic)
+        if: success() && inputs.coverage-artifact-name == ''
         uses: actions/upload-artifact@v6
         with:
           name: coverage-inmemory

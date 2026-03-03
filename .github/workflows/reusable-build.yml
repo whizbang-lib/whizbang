@@ -50,3 +50,64 @@ jobs:
             !**/obj/Release/**/refint/**
           retention-days: 1
           compression-level: 6
+
+  build-coverage:
+    name: Build (Coverage Instrumented)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Clean Solution
+        run: dotnet clean --configuration Release
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Install dotnet-coverage
+        run: dotnet tool install --global dotnet-coverage
+
+      - name: Instrument src/ Assemblies for Coverage
+        run: |
+          # Find all src/ DLLs (excluding test/sample/benchmark projects)
+          # and instrument them for static coverage collection
+          echo "=== Instrumenting src/ assemblies for coverage ==="
+
+          # Get unique session ID for this run
+          SESSION_ID="coverage-${{ github.run_id }}"
+          echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+
+          # Find and instrument all src/ Release DLLs
+          find src -path "*/bin/Release/net10.0/*.dll" -type f | while read dll; do
+            # Skip generated and ref assemblies
+            if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]]; then
+              continue
+            fi
+
+            echo "Instrumenting: $dll"
+            dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" || echo "Warning: Could not instrument $dll"
+          done
+
+          echo "=== Instrumentation complete ==="
+
+      - name: Upload Coverage-Instrumented Artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: build-coverage-${{ github.run_id }}
+          path: |
+            **/bin/Release
+            **/obj/Release
+            !**/obj/Release/**/ref/**
+            !**/obj/Release/**/refint/**
+          retention-days: 1
+          compression-level: 6
