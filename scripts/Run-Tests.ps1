@@ -548,15 +548,13 @@ try {
         $testArgs += "--fail-fast"
     }
 
-    # Coverage mode: Run per-project instead of --test-modules for accurate coverage collection
-    # The --test-modules approach doesn't collect coverage correctly (31% vs 80%+)
+    # Coverage mode: Run projects in parallel with unique output paths per project
+    # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
-        # Run tests per-project for proper coverage collection
-        # This is slower but gives accurate coverage results
         if (-not $useAiOutput) {
-            Write-Host "Coverage mode: Running tests per-project for accurate coverage collection" -ForegroundColor Yellow
+            Write-Host "Coverage mode: Parallel execution with unique output paths" -ForegroundColor Yellow
         } else {
-            Write-Host "Coverage mode: Per-project execution" -ForegroundColor Gray
+            Write-Host "Coverage mode: Parallel execution (max $MaxParallel)" -ForegroundColor Gray
         }
 
         # Discover test projects
@@ -609,90 +607,143 @@ try {
             exit 1
         }
 
+        # Separate unit tests (parallel) from integration tests (sequential due to shared containers)
+        $integrationPattern = "Integration\.Tests|IntegrationTests|Postgres\.Tests|Dapper\.Postgres"
+        $unitTestProjects = @($testProjectPaths | Where-Object { $_ -notmatch $integrationPattern })
+        $integrationTestProjects = @($testProjectPaths | Where-Object { $_ -match $integrationPattern })
+
         if (-not $useAiOutput) {
-            Write-Host "Discovered $($testProjectPaths.Count) test projects" -ForegroundColor Gray
+            Write-Host "Discovered $($unitTestProjects.Count) unit test projects (parallel)" -ForegroundColor Gray
+            Write-Host "Discovered $($integrationTestProjects.Count) integration test projects (sequential)" -ForegroundColor Gray
+        } else {
+            Write-Host "Unit tests: $($unitTestProjects.Count) (parallel), Integration tests: $($integrationTestProjects.Count) (sequential)" -ForegroundColor Gray
         }
 
-        # Run each project with coverage
-        $allPassed = $true
-        $totalProjectsPassed = 0
-        $totalProjectsFailed = 0
-        $failedProjects = @()  # Track which projects failed for reporting
-        $failFastTriggered = $false  # Initialize for finally block
+        # Helper function to run a single test project with coverage
+        function Invoke-TestWithCoverage {
+            param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
+
+            $projName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+            $projDir = [System.IO.Path]::GetDirectoryName($ProjectPath)
+
+            # On Linux/macOS, set execute permission
+            if ($IsLinux -or $IsMacOS) {
+                $testExe = Join-Path $projDir "bin" $Config "net10.0" $projName
+                if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+            }
+
+            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+            if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
+            if ($FailFastEnabled) { $args += "--fail-fast" }
+
+            $output = & dotnet @args 2>&1
+            return [PSCustomObject]@{
+                ProjectName = $projName
+                ExitCode = $LASTEXITCODE
+                Output = ($output | Select-Object -Last 30) -join "`n"
+            }
+        }
+
+        $results = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
+        $failFastTriggered = $false
         $startTime = Get-Date
 
-        foreach ($projectPath in $testProjectPaths) {
+        # Pre-build: Build all test projects first to avoid race conditions in parallel execution
+        # This ensures all dependencies are built before running tests in parallel with --no-build
+        $allProjectsToBuild = $unitTestProjects + $integrationTestProjects
+        Write-Host "Building $($allProjectsToBuild.Count) test projects..." -ForegroundColor Gray
+        $buildFailed = $false
+        foreach ($projectPath in $allProjectsToBuild) {
             $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-
-            if (-not $useAiOutput) {
-                Write-Host ""
-                Write-Host "Running: $projectName" -ForegroundColor Cyan
-            } else {
-                Write-Host "Testing: $projectName" -ForegroundColor Gray
+            $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Build failed for $projectName`:" -ForegroundColor Red
+                $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+                $buildFailed = $true
+                break
             }
+        }
+        if ($buildFailed) {
+            exit 1
+        }
+        Write-Host "Build succeeded." -ForegroundColor Gray
 
-            # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
-            # TUnit/MTP tests run directly via dotnet run on the test project
-            $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+        # Phase 1: Run unit tests in parallel
+        if ($unitTestProjects.Count -gt 0) {
+            Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
 
-            # On Linux/macOS, set execute permission on test executable (lost during artifact extraction)
-            if ($IsLinux -or $IsMacOS) {
-                $testExe = Join-Path $projectDir "bin" $Configuration "net10.0" $projectName
-                if (Test-Path $testExe) {
-                    chmod +x $testExe 2>$null
+            $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                $projectPath = $_
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+                $config = $using:Configuration
+                $testFilter = $using:TestFilter
+                $failFast = $using:FailFast
+                $resultsBag = $using:results
+
+                if ($IsLinux -or $IsMacOS) {
+                    $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                    if (Test-Path $testExe) { chmod +x $testExe 2>$null }
                 }
+
+                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+                if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
+                if ($failFast) { $projectArgs += "--fail-fast" }
+
+                $output = & dotnet @projectArgs 2>&1
+                $resultsBag.Add([PSCustomObject]@{
+                    ProjectName = $projectName
+                    ExitCode = $LASTEXITCODE
+                    Output = ($output | Select-Object -Last 30) -join "`n"
+                })
             }
+        }
 
-            $projectArgs = @(
-                "run"
-                "--project"
-                $projectPath  # PowerShell handles spacing properly, no extra quotes needed
-                "--configuration"
-                $Configuration
-                "--"  # Separator for test runner args
-                "--coverage"
-                "--coverage-output-format"
-                "cobertura"
-            )
+        # Phase 2: Run integration tests sequentially (shared container resources)
+        if ($integrationTestProjects.Count -gt 0 -and -not $failFastTriggered) {
+            Write-Host "Running $($integrationTestProjects.Count) integration test projects sequentially..." -ForegroundColor Cyan
 
-            if ($TestFilter) {
-                $projectArgs += "--treenode-filter"
-                $projectArgs += "/*/*/*/*$TestFilter*"
-            }
+            foreach ($projectPath in $integrationTestProjects) {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                Write-Host "  Testing: $projectName" -ForegroundColor Gray
 
-            if ($FailFast) {
-                $projectArgs += "--fail-fast"
-            }
+                $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
+                $results.Add($result)
 
-            $projectResult = & dotnet @projectArgs 2>&1
-
-            if ($LASTEXITCODE -eq 0) {
-                $totalProjectsPassed++
-                if ($useAiOutput) {
-                    Write-Host "  ✓ $projectName passed" -ForegroundColor Green
-                }
-            } else {
-                $totalProjectsFailed++
-                $failedProjects += $projectName
-                $allPassed = $false
-                if ($useAiOutput) {
-                    Write-Host "  ✗ $projectName failed" -ForegroundColor Red
-                    # Show last 30 lines of output to help diagnose failures
-                    Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
-                    $projectResult | Select-Object -Last 30 | ForEach-Object {
-                        Write-Host "    $_" -ForegroundColor Gray
-                    }
-                    Write-Host "    --- End output ---" -ForegroundColor DarkGray
-                } else {
-                    Write-Host "  ✗ FAILED" -ForegroundColor Red
-                }
-                if ($FailFast) {
-                    Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+                if ($result.ExitCode -ne 0 -and $FailFast) {
                     $failFastTriggered = $true
+                    Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
                     break
                 }
             }
         }
+
+        # Aggregate results
+        $totalProjectsPassed = 0
+        $totalProjectsFailed = 0
+        $failedProjects = @()
+
+        foreach ($result in $results) {
+            if ($result.ExitCode -eq 0) {
+                $totalProjectsPassed++
+                if ($useAiOutput) {
+                    Write-Host "  ✓ $($result.ProjectName) passed" -ForegroundColor Green
+                }
+            } else {
+                $totalProjectsFailed++
+                $failedProjects += $result.ProjectName
+                if ($useAiOutput) {
+                    Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
+                    Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
+                    $result.Output -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                    Write-Host "    --- End output ---" -ForegroundColor DarkGray
+                } else {
+                    Write-Host "  ✗ $($result.ProjectName) FAILED" -ForegroundColor Red
+                }
+            }
+        }
+
+        $allPassed = $totalProjectsFailed -eq 0
 
         $endTime = Get-Date
         $elapsed = $endTime - $startTime
