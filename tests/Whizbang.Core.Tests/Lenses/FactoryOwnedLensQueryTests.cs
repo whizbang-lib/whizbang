@@ -263,6 +263,10 @@ public class FactoryOwnedLensQueryTests {
       throw new InvalidOperationException($"No query registered for type {typeof(TModel).Name}");
     }
 
+    public void Dispose() {
+      DisposeCallCount++;
+    }
+
     public ValueTask DisposeAsync() {
       DisposeCallCount++;
       return ValueTask.CompletedTask;

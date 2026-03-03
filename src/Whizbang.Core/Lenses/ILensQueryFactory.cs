@@ -18,7 +18,7 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
-public interface ILensQueryFactory : IAsyncDisposable {
+public interface ILensQueryFactory : IAsyncDisposable, IDisposable {
   /// <summary>
   /// Gets an ILensQuery for the specified model type, sharing this factory's DbContext.
   /// Multiple calls return queries that share the same DbContext (for joins).

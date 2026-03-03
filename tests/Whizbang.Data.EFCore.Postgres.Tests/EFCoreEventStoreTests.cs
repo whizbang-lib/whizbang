@@ -573,10 +573,11 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Tests that GetEventsBetweenPolymorphicAsync throws when event type is not in provided list.
+  /// Tests that GetEventsBetweenPolymorphicAsync skips events whose type is not in provided list.
+  /// This is by design - a perspective doesn't need all events from a stream.
   /// </summary>
   [Test]
-  public async Task GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync() {
+  public async Task GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsUnknownEventsAsync() {
     // Arrange
     await using var context = CreateDbContext();
     var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
@@ -599,22 +600,21 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     };
     await eventStore.AppendAsync(streamId, shipped);
 
-    // Act & Assert - Query with only OrderCreatedEvent type (missing OrderShippedEvent)
+    // Act - Query with only OrderCreatedEvent type (missing OrderShippedEvent)
     var eventTypes = new List<Type> { typeof(OrderCreatedEvent) };
 
-    // Should throw InvalidOperationException for unknown event type
-    var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => {
-      await eventStore.GetEventsBetweenPolymorphicAsync(
-        streamId,
-        afterEventId: null,
-        upToEventId: shipped.MessageId.Value,
-        eventTypes,
-        CancellationToken.None
-      );
-    });
+    var result = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: null,
+      upToEventId: shipped.MessageId.Value,
+      eventTypes,
+      CancellationToken.None
+    );
 
-    // Verify exception message contains expected text
-    await Assert.That(exception!.Message).Contains("Unknown event type");
+    // Assert - Should only return the OrderCreatedEvent, skipping the OrderShippedEvent
+    await Assert.That(result).Count().IsEqualTo(1);
+    await Assert.That(result[0].Payload).IsTypeOf<OrderCreatedEvent>();
+    await Assert.That(result[0].MessageId).IsEqualTo(created.MessageId);
   }
 
   private static MessageHop CreateTestHop() => new() {

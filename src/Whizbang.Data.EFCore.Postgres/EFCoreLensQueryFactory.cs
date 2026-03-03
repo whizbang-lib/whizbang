@@ -55,6 +55,18 @@ public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
     return new EFCorePostgresLensQuery<TModel>(_context, tableName);
   }
 
+  /// <summary>
+  /// Disposes the DbContext synchronously. Required for DI container compatibility.
+  /// Prefer <see cref="DisposeAsync"/> when possible.
+  /// Safe to call multiple times.
+  /// </summary>
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+  }
+
   /// <inheritdoc/>
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
