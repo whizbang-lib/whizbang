@@ -94,7 +94,8 @@ jobs:
           # - Sample applications (have different coverage expectations)
           # - Benchmarks (not meant for unit test coverage)
           # - Tools (not part of main library)
-          FILE_FILTERS="-*.g.cs;-*/.whizbang-generated/*;-*/samples/**;-*/benchmarks/**;-*/tools/**"
+          # Note: Use **/ for recursive matching in ReportGenerator
+          FILE_FILTERS="-*.g.cs;-**/.whizbang-generated/*;-**/samples/**;-**/benchmarks/**;-**/tools/**"
 
           # Generate merged report in SonarQube format
           reportgenerator \
@@ -122,6 +123,14 @@ jobs:
           # Parse coverage from TextSummary report
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
           echo "Line coverage: ${COVERAGE}%"
+
+          # Fail if coverage could not be parsed
+          if [ -z "$COVERAGE" ]; then
+            echo "::error::Failed to parse coverage percentage from Summary.txt"
+            echo "Summary.txt contents:"
+            cat coverage/summary/Summary.txt
+            exit 1
+          fi
 
           # Check against threshold (80%)
           THRESHOLD=80
