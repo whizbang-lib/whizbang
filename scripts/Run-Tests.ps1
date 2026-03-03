@@ -734,12 +734,13 @@ try {
                 $failedProjects += $result.ProjectName
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
-                    Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
-                    $result.Output -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-                    Write-Host "    --- End output ---" -ForegroundColor DarkGray
                 } else {
                     Write-Host "  ✗ $($result.ProjectName) FAILED" -ForegroundColor Red
                 }
+                # Always show output for failed projects (both AI and verbose modes)
+                Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
+                $result.Output -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                Write-Host "    --- End output ---" -ForegroundColor DarkGray
             }
         }
 
