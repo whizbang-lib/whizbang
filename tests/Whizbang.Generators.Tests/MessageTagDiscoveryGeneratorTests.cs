@@ -494,4 +494,198 @@ public class MessageTagDiscoveryGeneratorTests {
     // Should use typeof() for type comparison only
     await Assert.That(code).Contains("typeof(");
   }
+
+  // ============================================================================
+  // Step 4: Constructor Argument Extraction Tests
+  // ============================================================================
+
+  /// <summary>
+  /// Test that generator extracts tag value from constructor arguments.
+  /// Uses a custom attribute with constructor parameter to verify AttributeUtilities
+  /// correctly reads constructor arguments (not just named arguments).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithConstructorArgument_ExtractsTagAsync() {
+    // Arrange - Define custom attribute with constructor parameter
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            /// <summary>
+            /// Custom tag attribute with constructor parameter for tag.
+            /// </summary>
+            public class TenantTagAttribute : MessageTagAttribute {
+              public TenantTagAttribute(string tag) {
+                Tag = tag;
+              }
+            }
+
+            [TenantTag("tenants")]
+            public record TenantCreatedEvent(Guid TenantId, string Name);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TenantCreatedEvent");
+    // CRITICAL: Tag must be "tenants" (from constructor), not empty string
+    await Assert.That(code).Contains("tenants");
+  }
+
+  /// <summary>
+  /// Test that generator handles mixed syntax with both constructor and named arguments.
+  /// Named arguments should take precedence when both are present.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithMixedSyntax_ExtractsAllValuesAsync() {
+    // Arrange - Define custom attribute with constructor AND named property support
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            /// <summary>
+            /// Custom tag attribute with constructor and settable properties.
+            /// </summary>
+            public class DomainTagAttribute : MessageTagAttribute {
+              public DomainTagAttribute(string tag) {
+                Tag = tag;
+              }
+
+              // Allow override via named argument (set removes required)
+              public new string Tag { get; set; }
+            }
+
+            // Constructor only: Tag = "orders"
+            [DomainTag("orders")]
+            public record OrderPlacedEvent(Guid OrderId);
+
+            // Mixed: Constructor = "ignored", Named = "inventory" (named wins)
+            [DomainTag("ignored", Tag = "inventory")]
+            public record InventoryUpdatedEvent(Guid ProductId, int Quantity);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both events should be registered
+    await Assert.That(code!).Contains("OrderPlacedEvent");
+    await Assert.That(code).Contains("InventoryUpdatedEvent");
+
+    // Constructor argument should be extracted
+    await Assert.That(code).Contains("orders");
+
+    // Named argument should take precedence over constructor
+    await Assert.That(code).Contains("inventory");
+    // "ignored" should NOT appear because named argument overrides it
+    await Assert.That(code.Contains("ignored")).IsFalse();
+  }
+
+  /// <summary>
+  /// Test that generator handles Properties array passed via constructor.
+  /// Verifies GetStringArrayValue correctly reads constructor arguments.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithPropertiesInConstructor_ExtractsPropertiesAsync() {
+    // Arrange - Define custom attribute with properties in constructor
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            /// <summary>
+            /// Custom tag attribute with properties array in constructor.
+            /// </summary>
+            public class SelectiveTagAttribute : MessageTagAttribute {
+              public SelectiveTagAttribute(string tag, string[] properties) {
+                Tag = tag;
+                Properties = properties;
+              }
+            }
+
+            [SelectiveTag("users", new[] { "UserId", "Email" })]
+            public record UserRegisteredEvent(Guid UserId, string Email, string PasswordHash);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("UserRegisteredEvent");
+    await Assert.That(code).Contains("users");
+
+    // Should extract specified properties from constructor array
+    await Assert.That(code).Contains("UserId");
+    await Assert.That(code).Contains("Email");
+
+    // Should NOT extract PasswordHash (not in properties array)
+    // The payload builder should only include specified properties
+    await Assert.That(code).Contains("Properties = new[]");
+  }
+
+  /// <summary>
+  /// Test that generator handles IncludeEvent boolean via constructor argument.
+  /// Verifies GetBoolValue correctly reads constructor arguments.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithBoolInConstructor_ExtractsValueAsync() {
+    // Arrange - Define custom attribute with bool in constructor
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            /// <summary>
+            /// Custom tag attribute with includeEvent in constructor.
+            /// </summary>
+            public class FullEventTagAttribute : MessageTagAttribute {
+              public FullEventTagAttribute(string tag, bool includeEvent) {
+                Tag = tag;
+                IncludeEvent = includeEvent;
+              }
+            }
+
+            [FullEventTag("payments", true)]
+            public record PaymentProcessedEvent(Guid PaymentId, decimal Amount);
+
+            [FullEventTag("refunds", false)]
+            public record RefundIssuedEvent(Guid RefundId, decimal Amount);
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both events should be registered
+    await Assert.That(code!).Contains("PaymentProcessedEvent");
+    await Assert.That(code).Contains("RefundIssuedEvent");
+
+    // PaymentProcessedEvent should have __event in payload (IncludeEvent = true)
+    // The generated code will have IncludeEvent = true for PaymentProcessedEvent
+    await Assert.That(code).Contains("IncludeEvent = true");
+
+    // Should also have IncludeEvent = false for RefundIssuedEvent
+    await Assert.That(code).Contains("IncludeEvent = false");
+  }
 }
