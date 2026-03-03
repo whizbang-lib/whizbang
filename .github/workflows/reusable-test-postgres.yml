@@ -46,9 +46,11 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
+      # NOTE: We intentionally build during tests even when artifacts are downloaded
+      # because coverage collection requires source instrumentation during build.
       - name: Run PostgreSQL Integration Tests
         # Uses WhizbangTestTags for precise project filtering
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres ${{ inputs.artifact-name != '' && '-NoBuild' || '' }}
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 

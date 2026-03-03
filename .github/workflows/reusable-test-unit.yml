@@ -46,8 +46,12 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
+      # NOTE: We intentionally build during tests even when artifacts are downloaded
+      # because coverage collection requires source instrumentation during build.
+      # Using -NoBuild with coverage causes only test/sample code to be instrumented,
+      # missing src/ coverage entirely (36% instead of 81%+).
       - name: Run Unit Tests
-        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release ${{ inputs.artifact-name != '' && '-NoBuild' || '' }}
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
 
       - name: Upload Coverage
         if: success()

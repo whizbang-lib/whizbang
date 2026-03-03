@@ -129,9 +129,8 @@ jobs:
             exit 1
           fi
 
-          # Check against threshold (temporarily set to 30% for debugging)
-          # TODO: Restore to 80% once coverage issue is resolved
-          THRESHOLD=30
+          # Check against threshold
+          THRESHOLD=80
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "::error::Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
