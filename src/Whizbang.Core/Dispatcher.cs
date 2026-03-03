@@ -3170,6 +3170,92 @@ public abstract class Dispatcher(
   }
 
   // ========================================
+  // LOCAL INVOKE AND SYNC - Wait for All Perspectives
+  // ========================================
+
+  private static readonly TimeSpan _defaultSyncTimeout = TimeSpan.FromSeconds(30);
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    // Execute the handler
+    var result = await LocalInvokeAsync<TMessage, TResult>(message);
+
+    // Wait for all perspectives to process emitted events
+    var syncResult = await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, cancellationToken);
+
+    if (syncResult.Outcome == SyncOutcome.TimedOut) {
+      throw new TimeoutException(
+          $"Perspectives did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+          $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
+    }
+
+    return result;
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<SyncResult> LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    // Execute the handler
+    await LocalInvokeAsync(message);
+
+    // Wait for all perspectives to process emitted events
+    return await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, cancellationToken);
+  }
+
+  /// <summary>
+  /// Waits for all perspectives to process events emitted in the current scope.
+  /// </summary>
+  private async Task<SyncResult> _waitForAllPerspectivesAsync(TimeSpan timeout, CancellationToken cancellationToken) {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+    // Get tracked events from the scoped tracker
+    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+    if (scopedTracker is null) {
+      // No tracker available - no events to wait for
+      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+    }
+
+    var trackedEvents = scopedTracker.GetEmittedEvents();
+    if (trackedEvents.Count == 0) {
+      // No events were emitted
+      return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+    }
+
+    // Extract event IDs
+    var eventIds = trackedEvents.Select(e => e.EventId).ToList();
+
+    // Wait for all perspectives to process
+    if (_eventCompletionAwaiter is null) {
+      // No awaiter registered - can't wait for perspectives
+      // Return synced since we can't verify either way
+      return new SyncResult(SyncOutcome.Synced, eventIds.Count, stopwatch.Elapsed);
+    }
+
+    var completed = await _eventCompletionAwaiter.WaitForEventsAsync(eventIds, timeout, cancellationToken);
+
+    stopwatch.Stop();
+    return new SyncResult(
+        completed ? SyncOutcome.Synced : SyncOutcome.TimedOut,
+        eventIds.Count,
+        stopwatch.Elapsed);
+  }
+
+  // ========================================
   // BATCH OPERATIONS
   // ========================================
 

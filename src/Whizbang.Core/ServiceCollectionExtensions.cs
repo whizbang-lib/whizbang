@@ -278,15 +278,18 @@ public static class ServiceCollectionExtensions {
   }
 
   /// <summary>
-  /// Decorates an existing <see cref="IEventStore"/> registration with sync tracking.
+  /// Decorates an existing <see cref="IEventStore"/> registration with Whizbang decorators.
   /// </summary>
   /// <param name="services">The service collection.</param>
   /// <returns>The service collection for chaining.</returns>
   /// <remarks>
   /// <para>
-  /// This method uses the decorator pattern to wrap an existing IEventStore
-  /// with the <see cref="Messaging.SyncTrackingEventStoreDecorator"/>. The decorator tracks
-  /// emitted events for perspective synchronization.
+  /// This method uses the decorator pattern to wrap an existing IEventStore with:
+  /// <list type="number">
+  /// <item><see cref="Messaging.SecurityContextEventStoreDecorator"/> - propagates security context</item>
+  /// <item><see cref="Messaging.SyncTrackingEventStoreDecorator"/> - tracks events for sync</item>
+  /// <item><see cref="Messaging.AppendAndWaitEventStoreDecorator"/> - enables AppendAndWaitAsync</item>
+  /// </list>
   /// </para>
   /// <para>
   /// Call this method AFTER registering your IEventStore implementation.
@@ -319,19 +322,31 @@ public static class ServiceCollectionExtensions {
             new InnerEventStoreHolder(ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType)));
       }
 
-      // Register the decorator
+      // Register the decorator stack
       services.AddScoped<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
+
+        // Layer 1: SecurityContext (innermost - propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
+            (Messaging.IEventStore)holder.Instance);
+
+        // Layer 2: SyncTracking (tracks events for perspective sync)
         var scopedTracker = sp.GetService<IScopedEventTracker>();
         var envelopeRegistry = sp.GetService<Observability.IEnvelopeRegistry>();
         var syncEventTracker = sp.GetService<ISyncEventTracker>();
         var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
-        return new Messaging.SyncTrackingEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance,
+        var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
+            withSecurityContext,
             scopedTracker,
             envelopeRegistry,
             syncEventTracker,
             typeRegistry);
+
+        // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
+        var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
+        return new Messaging.AppendAndWaitEventStoreDecorator(
+            withSyncTracking,
+            syncAwaiter);
       });
     } else {
       // Singleton lifetime
@@ -344,17 +359,29 @@ public static class ServiceCollectionExtensions {
             ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType)));
       }
 
-      // Register the decorator
+      // Register the decorator stack
       services.AddSingleton<Messaging.IEventStore>(sp => {
         var holder = sp.GetRequiredService<InnerEventStoreHolder>();
+
+        // Layer 1: SecurityContext (innermost - propagates security context)
+        var withSecurityContext = new Messaging.SecurityContextEventStoreDecorator(
+            (Messaging.IEventStore)holder.Instance);
+
+        // Layer 2: SyncTracking (tracks events for perspective sync)
         var syncEventTracker = sp.GetService<ISyncEventTracker>();
         var typeRegistry = sp.GetService<ITrackedEventTypeRegistry>();
-        return new Messaging.SyncTrackingEventStoreDecorator(
-            (Messaging.IEventStore)holder.Instance,
+        var withSyncTracking = new Messaging.SyncTrackingEventStoreDecorator(
+            withSecurityContext,
             tracker: null, // Scoped tracker not available in singleton
             envelopeRegistry: null,
             syncEventTracker,
             typeRegistry);
+
+        // Layer 3: AppendAndWait (outermost - enables AppendAndWaitAsync)
+        var syncAwaiter = sp.GetRequiredService<IPerspectiveSyncAwaiter>();
+        return new Messaging.AppendAndWaitEventStoreDecorator(
+            withSyncTracking,
+            syncAwaiter);
       });
     }
 

@@ -36,7 +36,7 @@ public static class TestConstants {
   ///     (TestReceptorWithContext, TestReceptorWithFireAt, TestReceptorWithMultipleFireAt, InvocationTrackingReceptor,
   ///     TestReceptor, AnotherTestReceptor)
   ///
-  /// Total: 55 receptors
+  /// Total: 57 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 55;
+  public const int EXPECTED_RECEPTOR_COUNT = 57;
 }

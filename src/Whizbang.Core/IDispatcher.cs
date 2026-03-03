@@ -328,6 +328,87 @@ public interface IDispatcher {
   Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
 
   // ========================================
+  // LOCAL INVOKE AND SYNC - Wait for All Perspectives
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process and waits for ALL perspectives to fully process
+  /// any events emitted during the invocation before returning the result.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method combines <see cref="LocalInvokeAsync{TMessage,TResult}(TMessage)"/> with
+  /// automatic synchronization. After the handler completes, it waits for all registered
+  /// perspectives to process any events that were tracked during the invocation.
+  /// </para>
+  /// <para>
+  /// <strong>Use this when:</strong>
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><description>You need to query read models immediately after a command</description></item>
+  ///   <item><description>Building synchronous-feeling APIs over event sourcing</description></item>
+  ///   <item><description>API endpoints that must return consistent data after mutations</description></item>
+  /// </list>
+  /// <para>
+  /// <strong>Example:</strong>
+  /// </para>
+  /// <code>
+  /// // In a GraphQL mutation or API controller
+  /// var result = await dispatcher.LocalInvokeAndSyncAsync&lt;CreateOrder, OrderResult&gt;(
+  ///     new CreateOrder { CustomerId = id, Items = items },
+  ///     timeout: TimeSpan.FromSeconds(10));
+  ///
+  /// // All perspectives have now processed the events - safe to query read models
+  /// return result.OrderId;
+  /// </code>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <typeparam name="TResult">The expected business result type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for perspectives to sync. Defaults to 30 seconds.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>The typed business result from the receptor.</returns>
+  /// <exception cref="TimeoutException">
+  /// Thrown when perspectives don't complete processing within the timeout period.
+  /// Note: The handler has already completed successfully; only perspective sync timed out.
+  /// </exception>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new NotSupportedException("LocalInvokeAndSyncAsync requires a Dispatcher implementation with IEventCompletionAwaiter support.");
+
+  /// <summary>
+  /// Invokes a void receptor in-process and waits for ALL perspectives to fully process
+  /// any events emitted during the invocation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method combines <see cref="LocalInvokeAsync{TMessage}(TMessage)"/> with
+  /// automatic synchronization. After the handler completes, it waits for all registered
+  /// perspectives to process any events that were tracked during the invocation.
+  /// </para>
+  /// <para>
+  /// Returns a <see cref="Perspectives.Sync.SyncResult"/> indicating whether all perspectives
+  /// completed processing within the timeout.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for perspectives to sync. Defaults to 30 seconds.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new NotSupportedException("LocalInvokeAndSyncAsync requires a Dispatcher implementation with IEventCompletionAwaiter support.");
+
+  // ========================================
   // BATCH OPERATIONS
   // ========================================
 

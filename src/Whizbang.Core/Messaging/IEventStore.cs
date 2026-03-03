@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Messaging;
 
@@ -173,4 +174,28 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Appends an event and waits for the specified perspective type to process it.
+  /// This is the synchronous verification pattern for request-response over event sourcing.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type</typeparam>
+  /// <typeparam name="TPerspective">The perspective type to wait for</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID)</param>
+  /// <param name="message">The message payload to append</param>
+  /// <param name="timeout">Optional timeout for waiting. Defaults to 30 seconds if not specified.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
+  /// <docs>core-concepts/event-store#append-and-wait</docs>
+  /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
+  Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
+      Guid streamId,
+      TMessage message,
+      TimeSpan? timeout = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class
+      => throw new NotSupportedException(
+          "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
+          "Ensure AddWhizbang() is called and perspective sync is enabled.");
 }
