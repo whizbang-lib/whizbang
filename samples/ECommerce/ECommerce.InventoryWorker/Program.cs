@@ -24,8 +24,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-var postgresConnection = builder.Configuration.GetConnectionString("inventorydb")
-    ?? throw new InvalidOperationException("PostgreSQL connection string 'inventorydb' not found");
+// Note: PostgreSQL connection string "inventorydb" is resolved by .WithEFCore<InventoryDbContext>().WithDriver.Postgres
 
 #if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
@@ -55,23 +54,11 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-// Create JsonSerializerOptions from global registry (MUST be registered before data source)
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-
-// Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-// IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-// This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
-var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-dataSourceBuilder.EnableDynamicJson();
-var dataSource = dataSourceBuilder.Build();
-builder.Services.AddSingleton(dataSource);
-
-builder.Services.AddDbContext<InventoryDbContext>(options =>
-  options.UseNpgsql(dataSource));
-
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
+// - NpgsqlDataSource with JSON serialization configured
+// - Pooled DbContext factory (HotChocolate parallel resolver safe)
+// - Scoped DbContext for mutations/receptors
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
 // Source generator discovers ProductDto, InventoryLevelDto from perspective implementations

@@ -7,7 +7,7 @@ namespace Whizbang.Core.Lenses;
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
-public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDisposable
+public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDisposable, IDisposable
     where TModel : class {
   private readonly ILensQueryFactory _factory;
   private readonly ILensQuery<TModel> _inner;
@@ -31,7 +31,19 @@ public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDi
       _inner.GetByIdAsync(id, cancellationToken);
 
   /// <summary>
-  /// Disposes the factory, which releases the underlying DbContext.
+  /// Disposes the factory synchronously. Required for DI container compatibility.
+  /// Prefer <see cref="DisposeAsync"/> when possible.
+  /// Safe to call multiple times.
+  /// </summary>
+  public void Dispose() {
+    if (!_disposed) {
+      _factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+      _disposed = true;
+    }
+  }
+
+  /// <summary>
+  /// Disposes the factory asynchronously, which releases the underlying DbContext.
   /// Safe to call multiple times.
   /// </summary>
   public async ValueTask DisposeAsync() {
