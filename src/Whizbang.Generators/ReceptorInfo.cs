@@ -15,6 +15,7 @@ namespace Whizbang.Generators;
 /// <param name="DefaultRouting">Default dispatch routing from [DefaultRouting] attribute on the receptor class. Null if no attribute.</param>
 /// <param name="SyncAttributes">Perspective sync attributes from [AwaitPerspectiveSync] attributes. Empty if no attributes.</param>
 /// <param name="HasTraceAttribute">True if receptor class has [WhizbangTrace] attribute for explicit tracing.</param>
+/// <param name="IsMessageAnEvent">True if the message type implements IEvent. Used to determine if perspective sync should be generated.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -24,7 +25,8 @@ public sealed record ReceptorInfo(
     bool IsSync = false,
     string? DefaultRouting = null,
     SyncAttributeInfo[]? SyncAttributes = null,
-    bool HasTraceAttribute = false
+    bool HasTraceAttribute = false,
+    bool IsMessageAnEvent = false
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.
