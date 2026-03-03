@@ -3,8 +3,8 @@ name: PostgreSQL Integration Tests (Reusable)
 on:
   workflow_call:
     inputs:
-      coverage-artifact-name:
-        description: 'Coverage-instrumented build artifact (enables -NoBuild with coverage)'
+      artifact-name:
+        description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
         required: false
 
@@ -23,14 +23,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Download Coverage-Instrumented Artifacts
-        if: inputs.coverage-artifact-name != ''
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
         uses: actions/download-artifact@v6
         with:
-          name: ${{ inputs.coverage-artifact-name }}
+          name: ${{ inputs.artifact-name }}
 
       - name: Cache NuGet packages
-        if: inputs.coverage-artifact-name == ''
+        if: inputs.artifact-name == ''
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -39,46 +39,64 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
-        if: inputs.coverage-artifact-name == ''
+        if: inputs.artifact-name == ''
         run: dotnet restore
 
       - name: Build Solution
-        if: inputs.coverage-artifact-name == ''
+        if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Install dotnet-coverage
-        if: inputs.coverage-artifact-name != ''
+        if: inputs.artifact-name != ''
         run: dotnet tool install --global dotnet-coverage
 
-      - name: Start Coverage Collection Server
-        if: inputs.coverage-artifact-name != ''
+      - name: Instrument src/ Assemblies for Coverage
+        if: inputs.artifact-name != ''
         run: |
-          SESSION_ID="coverage-${{ github.run_id }}"
+          SESSION_ID="coverage-${{ github.run_id }}-postgres"
+          echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+          echo "=== Instrumenting src/ assemblies for coverage ==="
+
+          find src -path "*/bin/Release/net10.0/*.dll" -type f | while read dll; do
+            if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]] || [[ "$dll" == *".g.dll" ]]; then
+              continue
+            fi
+            echo "Instrumenting: $dll"
+            dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" || echo "Warning: Could not instrument $dll"
+          done
+
+          echo "=== Instrumentation complete ==="
+
+      - name: Start Coverage Collection Server
+        if: inputs.artifact-name != ''
+        run: |
           echo "Starting coverage collection server with session: $SESSION_ID"
+          mkdir -p TestResults
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
             -f cobertura -o TestResults/postgres.cobertura.xml
 
-      - name: Run PostgreSQL Integration Tests (with pre-instrumented coverage)
-        if: inputs.coverage-artifact-name != ''
+      - name: Run PostgreSQL Integration Tests (with pre-built coverage)
+        if: inputs.artifact-name != ''
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Postgres -NoBuild
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run PostgreSQL Integration Tests (with dynamic coverage)
-        if: inputs.coverage-artifact-name == ''
+        if: inputs.artifact-name == ''
         run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Shutdown Coverage Collection
-        if: inputs.coverage-artifact-name != ''
+        if: inputs.artifact-name != ''
         run: |
-          SESSION_ID="coverage-${{ github.run_id }}"
           echo "Shutting down coverage collection session: $SESSION_ID"
           dotnet-coverage shutdown "$SESSION_ID" || true
+          echo "=== Coverage file contents ==="
+          ls -la TestResults/ || true
 
-      - name: Upload Coverage (pre-instrumented)
-        if: success() && inputs.coverage-artifact-name != ''
+      - name: Upload Coverage (pre-built)
+        if: success() && inputs.artifact-name != ''
         uses: actions/upload-artifact@v6
         with:
           name: coverage-postgres
@@ -86,7 +104,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Coverage (dynamic)
-        if: success() && inputs.coverage-artifact-name == ''
+        if: success() && inputs.artifact-name == ''
         uses: actions/upload-artifact@v6
         with:
           name: coverage-postgres
