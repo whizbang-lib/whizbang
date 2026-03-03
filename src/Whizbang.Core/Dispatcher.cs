@@ -198,6 +198,12 @@ public abstract class Dispatcher(
       object message,
       Type messageType,
       CancellationToken ct = default) {
+    // Perspectives only process events, not commands or other message types.
+    // Waiting for perspective sync on a non-event would wait forever and timeout.
+    if (message is not IEvent) {
+      return;
+    }
+
     // Short-circuit if no receptor registry available
     if (_receptorRegistry is null) {
       return;

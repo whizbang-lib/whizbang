@@ -39,6 +39,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
   private const string SYNC_RECEPTOR_INTERFACE_NAME = "Whizbang.Core.ISyncReceptor";
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string IEVENT_INTERFACE_NAME = "Whizbang.Core.IEvent";
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
@@ -146,15 +147,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
       // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
+      var messageTypeSymbol = receptorInterface.TypeArguments[0];
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute
+          HasTraceAttribute: hasTraceAttribute,
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
       );
     }
 
@@ -164,15 +167,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
       // Found IReceptor<TMessage> - void async receptor with no response
+      var messageTypeSymbol = voidReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: voidReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: false,
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute
+          HasTraceAttribute: hasTraceAttribute,
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
       );
     }
 
@@ -185,15 +190,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
       // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
+      var messageTypeSymbol = syncReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: syncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute
+          HasTraceAttribute: hasTraceAttribute,
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
       );
     }
 
@@ -203,20 +210,33 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     if (voidSyncReceptorInterface is not null && voidSyncReceptorInterface.TypeArguments.Length == 1) {
       // Found ISyncReceptor<TMessage> - void sync receptor with no response
+      var messageTypeSymbol = voidSyncReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: voidSyncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: true,
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
-          HasTraceAttribute: hasTraceAttribute
+          HasTraceAttribute: hasTraceAttribute,
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
       );
     }
 
     // No receptor interface found
     return null;
+  }
+
+  /// <summary>
+  /// Checks if a type symbol implements the IEvent interface.
+  /// Used to determine if perspective sync should be generated for a receptor's message type.
+  /// </summary>
+  /// <param name="typeSymbol">The type symbol to check.</param>
+  /// <returns>True if the type implements IEvent, false otherwise.</returns>
+  private static bool _implementsIEvent(ITypeSymbol typeSymbol) {
+    return typeSymbol.AllInterfaces.Any(i =>
+        i.ToDisplayString() == IEVENT_INTERFACE_NAME);
   }
 
   /// <summary>
@@ -383,14 +403,21 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates C# code for sync await operations to be inserted into invoker delegates.
   /// Called by SendAsync-generated invokers BEFORE calling the receptor.
-  /// Returns empty string if no sync attributes, otherwise returns the await code block.
+  /// Returns empty string if no sync attributes or message is not an IEvent.
   /// </summary>
   /// <param name="syncAttributes">The sync attributes from the receptor.</param>
   /// <param name="messageType">The fully qualified message type.</param>
+  /// <param name="isMessageAnEvent">True if the message type implements IEvent.</param>
   /// <returns>Generated sync await code, or empty string.</returns>
-  private static string _generateSyncAwaitCode(SyncAttributeInfo[]? syncAttributes, string messageType) {
+  private static string _generateSyncAwaitCode(SyncAttributeInfo[]? syncAttributes, string messageType, bool isMessageAnEvent) {
     if (syncAttributes is null || syncAttributes.Length == 0) {
       return "// No [AwaitPerspectiveSync] attributes - skip sync checking";
+    }
+
+    // Perspectives only process events, not commands or other message types.
+    // Waiting for perspective sync on a non-event would wait forever and timeout.
+    if (!isMessageAnEvent) {
+      return "// [AwaitPerspectiveSync] ignored - message is not an IEvent (perspectives only process events)";
     }
 
     var sb = new StringBuilder();
@@ -1015,7 +1042,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
 
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
@@ -1042,7 +1069,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
 
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
@@ -1157,7 +1184,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var firstReceptor = receptorList[0];
 
       // Generate sync await code for this receptor's [AwaitPerspectiveSync] attributes
-      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType);
+      var syncAwaitCode = _generateSyncAwaitCode(firstReceptor.SyncAttributes, messageType, firstReceptor.IsMessageAnEvent);
 
       // Replace placeholders with actual types
       var generatedCode = anySendNonVoidSnippet
