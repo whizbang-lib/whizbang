@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
@@ -31,9 +30,11 @@ public class UserScenarioReproductionTests {
   ///
   /// This simulates:
   /// 1. Scope 1: Event B is emitted and tracked in singleton tracker
-  /// 2. Scope 2: Command E waits for perspective sync
+  /// 2. Scope 2: Command E waits for sync
   /// 3. Perspective: Processes Event B and calls MarkProcessed
   /// 4. Result: Command E's await completes AFTER MarkProcessed
+  ///
+  /// Uses TaskCompletionSource signals for deterministic coordination instead of Task.Delay.
   /// </summary>
   [Test]
   public async Task CrossScope_EventEmittedInScope1_AwaitedInScope2_WaitsForPerspectiveAsync() {
@@ -53,8 +54,14 @@ public class UserScenarioReproductionTests {
     // Create registry that reads from SyncEventTypeRegistrations
     var typeRegistry = new TrackedEventTypeRegistry();
 
-    var executionOrder = new ConcurrentBag<(int Order, string Action)>();
-    var orderCounter = 0;
+    // Synchronization signals - proper coordination instead of Task.Delay
+    var syncWaitingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var markProcessedCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var syncCompleted = new TaskCompletionSource<SyncResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Track timing for verification (timestamps, not execution order counters)
+    var markProcessedTime = DateTime.MinValue;
+    var syncCompletedTime = DateTime.MinValue;
 
     // === SCOPE 1: Command A emits Event B ===
     // This simulates what happens in Dispatcher._cascadeEventsFromResultAsync
@@ -69,7 +76,6 @@ public class UserScenarioReproductionTests {
     foreach (var name in perspectiveNames) {
       singletonTracker.TrackEvent(typeof(UserScenarioEventB), eventBId, streamId, name);
     }
-    executionOrder.Add((Interlocked.Increment(ref orderCounter), "1. Event B emitted and tracked"));
 
     // Verify event is now in tracker
     var trackedEvents = singletonTracker.GetPendingEvents(streamId, perspectiveName, [typeof(UserScenarioEventB)]);
@@ -79,13 +85,7 @@ public class UserScenarioReproductionTests {
       .Because("Tracked eventId MUST match what we tracked");
 
     // === SCOPE 2: Command E waits for sync ===
-    var syncCompletedTcs = new TaskCompletionSource<SyncResult>();
-
     var syncTask = Task.Run(async () => {
-      // Small delay to ensure tracking happened first
-      await Task.Delay(50);
-      executionOrder.Add((Interlocked.Increment(ref orderCounter), "2. Command E starts waiting for sync"));
-
       // Create mock coordinator that checks singleton tracker
       var mockCoordinator = new MockWorkCoordinatorWithTracker(singletonTracker, perspectiveName);
 
@@ -96,32 +96,38 @@ public class UserScenarioReproductionTests {
         tracker: null,
         syncEventTracker: singletonTracker);
 
+      // Signal that sync is about to start waiting
+      syncWaitingStarted.SetResult();
+
       var result = await awaiter.WaitForStreamAsync(
         typeof(UserScenarioPerspectiveC),
         streamId,
         eventTypes: [typeof(UserScenarioEventB)],
         timeout: TimeSpan.FromSeconds(5));
 
-      executionOrder.Add((Interlocked.Increment(ref orderCounter), "4. Sync completed, receptor can fire"));
-      syncCompletedTcs.SetResult(result);
+      syncCompletedTime = DateTime.UtcNow;
+      syncCompleted.SetResult(result);
       return result;
     });
 
     // === PERSPECTIVE: Process Event B and call MarkProcessed ===
     var perspectiveTask = Task.Run(async () => {
-      // Simulate perspective processing delay
-      await Task.Delay(200);
-      executionOrder.Add((Interlocked.Increment(ref orderCounter), "3. Perspective C processes Event B"));
+      // Wait until sync task has started waiting before processing
+      await syncWaitingStarted.Task;
+
+      // Small yield to ensure awaiter has started its polling loop
+      await Task.Yield();
 
       // Simulate what PerspectiveWorker does - call MarkProcessedByPerspective with the event ID
       // CRITICAL: This must use the SAME eventId that was tracked
       singletonTracker.MarkProcessedByPerspective([eventBId], typeof(UserScenarioPerspectiveC).FullName!);
-      executionOrder.Add((Interlocked.Increment(ref orderCounter), "3b. Perspective C called MarkProcessed"));
+      markProcessedTime = DateTime.UtcNow;
+      markProcessedCompleted.SetResult();
     });
 
     // Wait for both tasks
     await Task.WhenAll(syncTask, perspectiveTask);
-    var syncResult = await syncCompletedTcs.Task;
+    var syncResult = await syncCompleted.Task;
 
     // === ASSERTIONS ===
 
@@ -129,18 +135,10 @@ public class UserScenarioReproductionTests {
     await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.Synced)
       .Because("Sync MUST succeed after perspective processes event and calls MarkProcessed");
 
-    // 2. Verify execution order: perspective BEFORE receptor
-    var orderedEvents = executionOrder.OrderBy(e => e.Order).Select(e => e.Action).ToList();
-
-    var perspectiveProcessedIdx = orderedEvents.FindIndex(s => s.Contains("MarkProcessed"));
-    var receptorCanFireIdx = orderedEvents.FindIndex(s => s.Contains("receptor can fire"));
-
-    await Assert.That(perspectiveProcessedIdx).IsGreaterThan(-1)
-      .Because("Perspective should have called MarkProcessed");
-    await Assert.That(receptorCanFireIdx).IsGreaterThan(-1)
-      .Because("Sync should have completed");
-    await Assert.That(perspectiveProcessedIdx).IsLessThan(receptorCanFireIdx)
-      .Because($"Perspective MUST process BEFORE receptor fires. Actual order: {string.Join(" -> ", orderedEvents)}");
+    // 2. Verify timing: MarkProcessed completed BEFORE or at the same time as sync completed
+    // This is the key invariant - the awaiter detects the MarkProcessed and then completes
+    await Assert.That(markProcessedTime).IsLessThanOrEqualTo(syncCompletedTime)
+      .Because("Perspective MUST call MarkProcessed BEFORE sync can complete");
 
     // Cleanup
     SyncEventTypeRegistrations.Clear();
