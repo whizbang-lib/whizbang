@@ -16,6 +16,7 @@ namespace Whizbang.Generators;
 [Generator]
 public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
@@ -84,22 +85,26 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Extract perspective interfaces
     var singleStreamInterfaces = _extractSingleStreamInterfaces(classSymbol);
+    var withActionsInterfaces = _extractWithActionsInterfaces(classSymbol);
     var globalInterfaces = _extractGlobalInterfaces(classSymbol);
 
-    if (singleStreamInterfaces.Count == 0 && globalInterfaces.Count == 0) {
+    if (singleStreamInterfaces.Count == 0 && withActionsInterfaces.Count == 0 && globalInterfaces.Count == 0) {
       return null;
     }
 
-    // Extract model type
-    var modelType = _extractModelType(singleStreamInterfaces, globalInterfaces);
+    // Combine single-stream and with-actions interfaces (both use same model/event pattern)
+    var combinedSingleStreamInterfaces = singleStreamInterfaces.Concat(withActionsInterfaces).ToList();
+
+    // Extract model type (from combined single-stream interfaces)
+    var modelType = _extractModelType(combinedSingleStreamInterfaces, globalInterfaces);
     if (modelType is null) {
       return null;
     }
 
     var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Extract event types from all interfaces
-    var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(singleStreamInterfaces, globalInterfaces);
+    // Extract event types from all interfaces (using combined interfaces)
+    var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(combinedSingleStreamInterfaces, globalInterfaces);
 
     if (eventTypes.Count == 0) {
       return null;
@@ -414,6 +419,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
+        })
+        .ToList();
+  }
+
+  /// <summary>
+  /// Extracts IPerspectiveWithActionsFor interfaces from a class symbol.
+  /// These interfaces return ApplyResult&lt;TModel&gt; instead of TModel, supporting Delete/Purge operations.
+  /// </summary>
+  private static List<INamedTypeSymbol> _extractWithActionsInterfaces(INamedTypeSymbol classSymbol) {
+    return classSymbol.AllInterfaces
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          // Match IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
+                 && i.TypeArguments.Length >= 2;
         })
         .ToList();
   }

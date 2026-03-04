@@ -37,8 +37,9 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherLocalInvokeAndSyncTests.cs (CreateOrderReceptor, VoidCommandReceptor)
   /// - 2 receptors from DispatcherLocalInvokeAndSyncCallbackTests.cs (CallbackTestCommandReceptor, CallbackTestCommandWithResultReceptor)
   /// - 2 receptors from DispatcherLocalInvokeAndSyncTimingTests.cs (TimedCommandReceptor, TimedCommandWithResultReceptor)
+  /// - 6 receptors from new test files added during cascade security context implementation
   ///
-  /// Total: 63 receptors
+  /// Total: 71 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 63;
+  public const int EXPECTED_RECEPTOR_COUNT = 71;
 }
