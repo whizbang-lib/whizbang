@@ -16,11 +16,6 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests the process_work_batch PostgreSQL function and lease-based work coordination.
 /// Uses UUIDv7 for all message IDs to ensure proper time-ordered database indexing.
 /// </summary>
-/// <remarks>
-/// Uses NotInParallel to avoid database connection pool exhaustion and transient
-/// TaskCanceledException errors when many parallel tests compete for PostgreSQL connections.
-/// </remarks>
-[NotInParallel("PostgresWorkCoordinator")]
 public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _sut = null!;
   private Guid _instanceId;
@@ -710,7 +705,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", actualStreamId);
+      command.Parameters.AddWithValue("streamId", (Guid)actualStreamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -800,7 +795,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", actualStreamId);
+      command.Parameters.AddWithValue("streamId", (Guid)actualStreamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -890,8 +885,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
       // Get the calculated partition number
       await using var dbContext = CreateDbContext();
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var record = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == messageId);
+        .FirstOrDefaultAsync(r => r.MessageId == (Guid)messageId);
       messages.Add((messageId, record!.PartitionNumber!.Value));
     }
 
@@ -993,8 +989,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         streamId: streamId);
 
       await using var dbContext = CreateDbContext();
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var record = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == messageId);
+        .FirstOrDefaultAsync(r => r.MessageId == (Guid)messageId);
       messages.Add((messageId, record!.PartitionNumber!.Value));
     }
 
@@ -1542,8 +1539,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Manually set instance 1's heartbeat to be stale (older than threshold)
     await using (var dbContext = CreateDbContext()) {
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var instance = await dbContext.Set<ServiceInstanceRecord>()
-        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+        .FirstOrDefaultAsync(i => i.InstanceId == (Guid)staleInstanceId);
       instance!.LastHeartbeatAt = DateTimeOffset.UtcNow.AddMinutes(-15); // Beyond 10-minute threshold
       await dbContext.SaveChangesAsync();
     }
@@ -1572,13 +1570,14 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Assert - Stale instance should be deleted
     await using (var dbContext = CreateDbContext()) {
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var staleInstance = await dbContext.Set<ServiceInstanceRecord>()
-        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+        .FirstOrDefaultAsync(i => i.InstanceId == (Guid)staleInstanceId);
       await Assert.That(staleInstance).IsNull()
         .Because("Stale instances should be cleaned up when heartbeat exceeds threshold");
 
       var activeInstance = await dbContext.Set<ServiceInstanceRecord>()
-        .FirstOrDefaultAsync(i => i.InstanceId == activeInstanceId);
+        .FirstOrDefaultAsync(i => i.InstanceId == (Guid)activeInstanceId);
       await Assert.That(activeInstance).IsNotNull()
         .Because("Active instances should remain");
     }
@@ -1606,7 +1605,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         "UPDATE wh_service_instances SET last_heartbeat_at = @staleTime WHERE instance_id = @instanceId",
         connection);
       command.Parameters.AddWithValue("staleTime", DateTimeOffset.UtcNow.AddMinutes(-15));
-      command.Parameters.AddWithValue("instanceId", crashedInstanceId);
+      command.Parameters.AddWithValue("instanceId", (Guid)crashedInstanceId);
       await command.ExecuteNonQueryAsync();
     }
 
@@ -1826,8 +1825,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Make instance 1 stale
     await using (var dbContext = CreateDbContext()) {
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var instance = await dbContext.Set<ServiceInstanceRecord>()
-        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+        .FirstOrDefaultAsync(i => i.InstanceId == (Guid)staleInstanceId);
       instance!.LastHeartbeatAt = DateTimeOffset.UtcNow.AddMinutes(-15);
       await dbContext.SaveChangesAsync();
     }
@@ -1845,8 +1845,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Assert - Stale instance's partitions should be released (CASCADE DELETE)
     await using (var dbContext = CreateDbContext()) {
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var staleInstance = await dbContext.Set<ServiceInstanceRecord>()
-        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+        .FirstOrDefaultAsync(i => i.InstanceId == (Guid)staleInstanceId);
       await Assert.That(staleInstance).IsNull()
         .Because("Stale instance should be deleted");
 
@@ -1856,7 +1857,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         await using var command = new Npgsql.NpgsqlCommand(
           "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
           connection);
-        command.Parameters.AddWithValue("instanceId", staleInstanceId);
+        command.Parameters.AddWithValue("instanceId", (Guid)staleInstanceId);
         var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
         await Assert.That(count).IsEqualTo(0)
           .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
@@ -2035,7 +2036,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES (@messageId, NOW())",
         connection);
-      command.Parameters.AddWithValue("messageId", messageId);
+      command.Parameters.AddWithValue("messageId", (Guid)messageId);
       await command.ExecuteNonQueryAsync();
     }
 
@@ -2063,8 +2064,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify message NOT in inbox (deduplication prevented insert)
     await using (var dbContext = CreateDbContext()) {
+      // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
       var inboxRecord = await dbContext.Set<InboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == messageId);
+        .FirstOrDefaultAsync(r => r.MessageId == (Guid)messageId);
       await Assert.That(inboxRecord).IsNull()
         .Because("Duplicate message should not be inserted into inbox");
 
@@ -2074,7 +2076,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT COUNT(*) FROM wh_message_deduplication WHERE message_id = @messageId",
         connection);
-      command.Parameters.AddWithValue("messageId", messageId);
+      command.Parameters.AddWithValue("messageId", (Guid)messageId);
       var count = (long)(await command.ExecuteScalarAsync() ?? 0);
       await Assert.That(count).IsEqualTo(1)
         .Because("Deduplication table should still have single entry");
@@ -2109,11 +2111,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
 
     // Assert - Both messages accepted (no deduplication for outbox)
+    // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
     await using (var dbContext = CreateDbContext()) {
       var outboxRecord1 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == message1Id);
+        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message1Id);
       var outboxRecord2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == message2Id);
+        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message2Id);
 
       await Assert.That(outboxRecord1).IsNotNull()
         .Because("Outbox does not deduplicate - application's responsibility");
@@ -2203,11 +2206,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       .Because("Failed message should be scheduled for retry (not immediately claimable)");
 
     // Verify that M2 and M3 DO have their leases cleared (Status=0 worked)
+    // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
     await using (var dbContext = CreateDbContext()) {
       var message2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == message2Id);
+        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message2Id);
       var message3 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == message3Id);
+        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message3Id);
 
       await Assert.That(message2?.InstanceId).IsNull()
         .Because("Status=0 completion should clear instance_id");
@@ -2307,7 +2311,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         await using var command = new Npgsql.NpgsqlCommand(
           "SELECT compute_partition(@streamId::uuid, 10000)",
           connection);
-        command.Parameters.AddWithValue("streamId", streamId);
+        command.Parameters.AddWithValue("streamId", (Guid)streamId);
         partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
       }
 
@@ -2386,7 +2390,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", streamId);
+      command.Parameters.AddWithValue("streamId", (Guid)streamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -2452,7 +2456,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       await using var command = new Npgsql.NpgsqlCommand(
         "SELECT compute_partition(@streamId::uuid, 10000)",
         connection);
-      command.Parameters.AddWithValue("streamId", streamId);
+      command.Parameters.AddWithValue("streamId", (Guid)streamId);
       partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
@@ -2495,19 +2499,19 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
   /// <summary>
   /// Minimal reproduction test for event storage issue.
-  /// Tests that events with [StreamKey] are properly stored in wh_event_store.
+  /// Tests that events with [StreamId] are properly stored in wh_event_store.
   /// </summary>
   [Test]
-  public async Task ProcessWorkBatchAsync_EventWithStreamKey_StoresInEventStoreAsync() {
+  public async Task ProcessWorkBatchAsync_EventWithStreamId_StoresInEventStoreAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
-    // Create a simple test event with StreamKey
+    // Create a simple test event with StreamId
     var testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
     var productId = _idProvider.NewGuid();
     var messageId = _idProvider.NewGuid();
 
-    // Simulate event payload with StreamKey (ProductId)
+    // Simulate event payload with StreamId (ProductId)
     var eventPayload = $$"""
     {
       "ProductId": "{{productId}}",
@@ -2534,7 +2538,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         JsonContextRegistry.CreateCombinedOptions()
       )!,
       EnvelopeType = envelopeType,
-      StreamId = productId,  // This should be extracted from [StreamKey] attribute
+      StreamId = productId,  // This should be extracted from [StreamId] attribute
       IsEvent = true,        // Mark as event
       MessageType = testEventType,
       Metadata = new EnvelopeMetadata {
@@ -2579,7 +2583,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
       var eventIdParam = countCmd.CreateParameter();
       eventIdParam.ParameterName = "@eventId";
-      eventIdParam.Value = messageId;
+      // Note: Cast TrackedGuid to Guid for ADO.NET parameter (implicit conversion doesn't apply to object assignment)
+      eventIdParam.Value = (Guid)messageId;
       countCmd.Parameters.Add(eventIdParam);
 
       var eventStoreCount = (long)(await countCmd.ExecuteScalarAsync() ?? 0L);
@@ -2596,7 +2601,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
       var eventIdParam2 = selectCmd.CreateParameter();
       eventIdParam2.ParameterName = "@eventId";
-      eventIdParam2.Value = messageId;
+      // Note: Cast TrackedGuid to Guid for ADO.NET parameter (implicit conversion doesn't apply to object assignment)
+      eventIdParam2.Value = (Guid)messageId;
       selectCmd.Parameters.Add(eventIdParam2);
 
       using var reader = await selectCmd.ExecuteReaderAsync();
@@ -2610,7 +2616,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         var storedEventType = reader.GetString(reader.GetOrdinal("event_type"));
 
         await Assert.That(storedStreamId).IsEqualTo(productId)
-          .Because("Stream ID should match the ProductId from [StreamKey]");
+          .Because("Stream ID should match the ProductId from [StreamId]");
         await Assert.That(storedEventType).IsEqualTo(testEventType);
       }
     } finally {

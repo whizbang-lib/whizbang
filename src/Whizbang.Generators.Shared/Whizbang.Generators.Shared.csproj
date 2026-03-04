@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsPackable>true</IsPackable>
+    <IsPackable>false</IsPackable>
     <Description>Shared utilities and helpers for Whizbang source generators including template loading, code generation, and diagnostic infrastructure.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -20,7 +20,8 @@
 
     <!-- Suppress code analysis rules for source generator helper library -->
     <!-- CA1716: "Shared" is VB.NET keyword but this is C#-only project, no interop concerns -->
-    <NoWarn>$(NoWarn);CA1716</NoWarn>
+    <!-- CA1707: MSBuild property constants use ALL_CAPS with underscores per .editorconfig convention -->
+    <NoWarn>$(NoWarn);CA1716;CA1707</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -35,6 +36,9 @@
 
     <!-- Logging abstractions for ILogger interface (diagnostics) -->
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+
+    <!-- JSON serialization for schema hashing (supports netstandard2.0) -->
+    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
 </Project>

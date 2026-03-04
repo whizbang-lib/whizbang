@@ -201,15 +201,25 @@ gh workflow run release.yml -f release_type=patch  # 0.0.x
 gh workflow run release.yml -f release_type=auto -f dry_run=true
 ```
 
+### Versioning Philosophy
+
+**All 0.x.x releases are pre-releases working toward v1.0.0.**
+
+- Library versions: `0.5.1-alpha.177`, `0.6.0-beta.1`, etc.
+- Documentation: Single `v1.0.0/` folder (no separate v0.1.0, v0.2.0 docs)
+- `<docs>` tags in code: Always versionless (e.g., `<docs>core-concepts/dispatcher</docs>`)
+
+When v1.0.0 is released, the library version will match the documentation version.
+
 ### GitFlow Branch Versioning
 
 | Branch | Version Format | Example |
 |--------|---------------|---------|
-| `main` | Stable release | `0.2.0` |
-| `develop` | Alpha pre-release | `0.3.0-alpha.1` |
-| `release/*` | Beta pre-release | `0.2.0-beta.1` |
-| `feature/*` | Feature pre-release | `0.3.0-feat-xyz.1` |
-| `hotfix/*` | Hotfix pre-release | `0.2.1-hotfix.1` |
+| `main` | Stable release | `1.0.0` (future) |
+| `develop` | Alpha pre-release | `0.6.0-alpha.1` |
+| `release/*` | Beta pre-release | `0.6.0-beta.1` |
+| `feature/*` | Feature pre-release | `0.6.0-feat-xyz.1` |
+| `hotfix/*` | Hotfix pre-release | `0.5.2-hotfix.1` |
 
 ### Conventional Commits for Version Bumps
 

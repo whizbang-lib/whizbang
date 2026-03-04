@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -5,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -52,28 +54,28 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
     var exception = await Assert.That(async () => await dispatcher.SendAsync(unknownCommand))
-        .ThrowsExactly<HandlerNotFoundException>();
+        .ThrowsExactly<ReceptorNotFoundException>();
 
     await Assert.That(exception?.Message).Contains("UnknownCommand");
     await Assert.That(exception?.MessageType).IsEqualTo(typeof(UnknownCommand));
   }
 
   [Test]
-  public async Task LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
     var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<UnknownCommand, object>(unknownCommand))
-        .ThrowsExactly<HandlerNotFoundException>();
+        .ThrowsExactly<ReceptorNotFoundException>();
 
     await Assert.That(exception?.Message).Contains("UnknownCommand");
   }
@@ -242,6 +244,66 @@ public class DispatcherTests {
     await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
   }
 
+  // ========================================
+  // ACTIVITY TRACING TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
+    // Arrange - Set up listener for Whizbang.Execution source
+    var capturedActivities = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Execution",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStarted = activity => {
+        if (activity.OperationName.StartsWith("Dispatch ", StringComparison.Ordinal)) {
+          capturedActivities.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - Verify dispatch activity was created
+    await Assert.That(capturedActivities.Count).IsGreaterThanOrEqualTo(1);
+    var dispatchActivity = capturedActivities.First(a => a.OperationName.Contains("CreateOrder"));
+    await Assert.That(dispatchActivity.OperationName).IsEqualTo("Dispatch CreateOrder");
+    await Assert.That(dispatchActivity.GetTagItem("whizbang.message.type")).IsNotNull();
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
+    // Arrange - Set up listener for Whizbang.Execution source
+    var capturedActivities = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = s => s.Name == "Whizbang.Execution",
+      Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+      ActivityStarted = activity => {
+        if (activity.OperationName.StartsWith("Dispatch ", StringComparison.Ordinal)) {
+          capturedActivities.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    await dispatcher.LocalInvokeAsync<OrderCreated>(command);
+
+    // Assert - Verify dispatch activity was created
+    await Assert.That(capturedActivities.Count).IsGreaterThanOrEqualTo(1);
+    var dispatchActivity = capturedActivities.First(a => a.OperationName.Contains("CreateOrder"));
+    await Assert.That(dispatchActivity.OperationName).IsEqualTo("Dispatch CreateOrder");
+    await Assert.That(dispatchActivity.GetTagItem("whizbang.message.type")).IsNotNull();
+  }
+
   // Helper method to create dispatcher
   // Will be implemented to return InMemoryDispatcher
   private static IDispatcher _createDispatcher() {
@@ -397,14 +459,14 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync() {
+  public async Task LocalInvokeAsync_VoidReceptor_NoReceptor_ShouldThrowReceptorNotFoundExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new UnknownCommand();
 
     // Act & Assert
     await Assert.That(async () => await dispatcher.LocalInvokeAsync(command))
-      .ThrowsExactly<HandlerNotFoundException>();
+      .ThrowsExactly<ReceptorNotFoundException>();
   }
 
   [Test]
@@ -771,14 +833,18 @@ public class DispatcherTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+  public async Task LocalInvokeAsync_WithReceptorInvoker_DoesNotDoubleInvokeReceptorAsync() {
     // Arrange
+    // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
+    // because the dispatcher already invokes receptors directly via generated delegates.
+    // IReceptorInvoker is used by TransportConsumerWorker (PostInbox) and
+    // WorkCoordinatorPublisherWorker (PreOutbox) - NOT by Dispatcher.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
-    var lifecycleInvoker = new MockLifecycleInvoker();
-    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var receptorInvoker = new MockReceptorInvoker();
+    services.AddSingleton<IReceptorInvoker>(receptorInvoker);
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
     services.AddWhizbangDispatcher();
@@ -790,22 +856,23 @@ public class DispatcherTests {
     // Act
     var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command);
 
-    // Assert - Lifecycle was invoked
+    // Assert - Dispatcher does NOT call IReceptorInvoker (to avoid double invocation)
     await Assert.That(result).IsNotNull();
-    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
-    await Assert.That(lifecycleInvoker.LastStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    await Assert.That(receptorInvoker.InvokeCount).IsEqualTo(0);
   }
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+  public async Task SendAsync_WithReceptorInvoker_DoesNotDoubleInvokeReceptorAsync() {
     // Arrange
+    // NOTE: Dispatcher does NOT call IReceptorInvoker.InvokeAsync for LocalImmediateInline
+    // because the dispatcher already invokes receptors directly via generated delegates.
     var services = new ServiceCollection();
     services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
       new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
-    var lifecycleInvoker = new MockLifecycleInvoker();
-    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var receptorInvoker = new MockReceptorInvoker();
+    services.AddSingleton<IReceptorInvoker>(receptorInvoker);
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
     services.AddWhizbangDispatcher();
@@ -817,9 +884,9 @@ public class DispatcherTests {
     // Act
     var receipt = await dispatcher.SendAsync(command);
 
-    // Assert - Lifecycle was invoked
+    // Assert - Dispatcher does NOT call IReceptorInvoker (to avoid double invocation)
     await Assert.That(receipt).IsNotNull();
-    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(receptorInvoker.InvokeCount).IsEqualTo(0);
   }
 
   // ========================================
@@ -1010,12 +1077,12 @@ public class DispatcherTests {
       .Throws<OperationCanceledException>();
   }
 
-  // Mock lifecycle invoker for testing
-  private sealed class MockLifecycleInvoker : ILifecycleInvoker {
+  // Mock receptor invoker for testing
+  private sealed class MockReceptorInvoker : IReceptorInvoker {
     public int InvokeCount { get; private set; }
     public LifecycleStage? LastStage { get; private set; }
 
-    public ValueTask InvokeAsync(object message, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       InvokeCount++;
       LastStage = stage;
       return ValueTask.CompletedTask;

@@ -7,10 +7,18 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -56,36 +64,110 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// This achieves zero-reflection while keeping functional logic in the base class.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
+/// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
   JsonSerializerOptions? jsonOptions = null,
-  Routing.ITopicRegistry? topicRegistry = null,
-  Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
-  IAggregateIdExtractor? aggregateIdExtractor = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
+  ITopicRegistry? topicRegistry = null,
+  ITopicRoutingStrategy? topicRoutingStrategy = null,
+  IReceptorInvoker? receptorInvoker = null,
   IEnvelopeSerializer? envelopeSerializer = null,
-  IEnvelopeRegistry? envelopeRegistry = null
+  IEnvelopeRegistry? envelopeRegistry = null,
+  IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
+  IStreamIdExtractor? streamIdExtractor = null,
+  IReceptorRegistry? receptorRegistry = null,
+  IScopedEventTracker? scopedEventTracker = null,
+  ISyncEventTracker? syncEventTracker = null,
+  ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITraceStore? _traceStore = traceStore;
-  private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
-  private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
-  private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly ITopicRegistry? _topicRegistry = topicRegistry;
+  private readonly ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? PassthroughRoutingStrategy.Instance;
+  // NOTE: receptorInvoker parameter retained for API compatibility but not used
+  // IReceptorInvoker is now scoped and resolved by workers, not the Dispatcher
+  private readonly IReceptorRegistry? _receptorRegistry = receptorRegistry ?? serviceProvider.GetService<IReceptorRegistry>();
+  private readonly IStreamIdExtractor? _streamIdExtractor = streamIdExtractor ?? serviceProvider.GetService<IStreamIdExtractor>();
+  // Scoped event tracker for perspective sync - tracks events cascaded within this scope
+  // NOTE: For singleton Dispatcher, this field will be null. Instead, use ScopedEventTrackerAccessor
+  // which provides access to the current scope's tracker via AsyncLocal.
+  // When both the field and accessor are null, event tracking for cascade is disabled.
+  private readonly IScopedEventTracker? _scopedEventTracker = scopedEventTracker;
+  // Singleton event tracker for cross-scope perspective sync - tracks events for cross-request awaiting
+  // CRITICAL: This enables Route.Local() events to be tracked for sync BEFORE they hit the database
+  private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker ?? serviceProvider.GetService<ISyncEventTracker>();
+  // Registry of event types that should be tracked for perspective sync
+  private readonly ITrackedEventTypeRegistry? _trackedEventTypeRegistry = trackedEventTypeRegistry ?? serviceProvider.GetService<ITrackedEventTypeRegistry>();
+  // Lifecycle invoker for runtime-registered receptors (test infrastructure, observers)
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker ?? serviceProvider.GetService<ILifecycleInvoker>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry ?? serviceProvider.GetService<IEnvelopeRegistry>();
+  // Outbox routing strategy for determining actual transport destinations (inbox for commands, namespace for events)
+  private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
+  // Owned domains for routing decisions - resolved from RoutingOptions if available
+  private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
+  // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
+  private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+  // Core options for tag processing configuration
+  private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
+  // Message tag processor - invoked after successful receptor completion
+  private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+  // Tracing options for component-level control (Lifecycle, Handlers, etc.)
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
+  // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
+  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = serviceProvider.GetService<IEventCompletionAwaiter>();
+  // Security context accessor is resolved lazily from scope - it's a scoped service
+  // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
-  // Unused parameter retained for backward compatibility with generated code
+  // Unused parameters retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
+  private readonly IReceptorInvoker? __ = receptorInvoker;
+
+  // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
+  private ILogger? _cascadeLogger;
+#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
+  private ILogger CascadeLogger => _cascadeLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+#pragma warning restore IDE1006
+
+  /// <summary>
+  /// Resolves owned domains from RoutingOptions in DI container.
+  /// </summary>
+  private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
+    var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
+    return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+  }
+
+  /// <summary>
+  /// Extracts security context from the ambient scope if propagation is enabled.
+  /// Returns null if no context is available or propagation is disabled.
+  /// </summary>
+  /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
+  private static SecurityContext? _getSecurityContextForPropagation() {
+    // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
+    if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
+      return null;
+    }
+
+    if (!ctx.ShouldPropagate) {
+      return null;
+    }
+
+    return new SecurityContext {
+      UserId = ctx.Scope.UserId,
+      TenantId = ctx.Scope.TenantId
+    };
+  }
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -94,6 +176,150 @@ public abstract class Dispatcher(
 #pragma warning disable IDE1006 // CA1707 takes precedence - protected properties should not have underscores
   protected IServiceProvider ServiceProvider => _internalServiceProvider;
 #pragma warning restore IDE1006
+
+  /// <summary>
+  /// Gets the service provider for extension methods (security context, etc.).
+  /// Internal access for DispatcherSecurityExtensions.
+  /// </summary>
+  internal IServiceProvider InternalServiceProvider => _internalServiceProvider;
+
+  // ========================================
+  // PERSPECTIVE SYNC AWAIT HELPER
+  // ========================================
+
+  /// <summary>
+  /// Awaits perspective sync if the receptor has [AwaitPerspectiveSync] attributes.
+  /// Called before invoking receptors locally to ensure perspective has processed events.
+  /// This enables cross-scope sync where one handler emits events and another handler
+  /// waits for the perspective to process them before firing.
+  /// </summary>
+  /// <docs>core-concepts/perspectives/perspective-sync#dispatcher-integration</docs>
+  private async ValueTask _awaitPerspectiveSyncIfNeededAsync(
+      object message,
+      Type messageType,
+      CancellationToken ct = default) {
+    // Perspectives only process events, not commands or other message types.
+    // Waiting for perspective sync on a non-event would wait forever and timeout.
+    if (message is not IEvent) {
+      return;
+    }
+
+    // Short-circuit if no receptor registry available
+    if (_receptorRegistry is null) {
+      return;
+    }
+
+    // Get receptors for LocalImmediateInline stage (local dispatch stage)
+    var receptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline);
+
+    // Check if any receptor has sync attributes
+    var syncReceptor = receptors.FirstOrDefault(r => r.SyncAttributes is { Count: > 0 });
+    if (syncReceptor?.SyncAttributes is null) {
+      return;
+    }
+
+    // Extract stream ID from message
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+    if (streamId is null) {
+      // No stream ID - can't do stream-based sync
+      return;
+    }
+
+    // Create a scope to resolve scoped services (IPerspectiveSyncAwaiter)
+    await using var scope = _scopeFactory.CreateAsyncScope();
+    var syncAwaiter = scope.ServiceProvider.GetService<IPerspectiveSyncAwaiter>();
+    if (syncAwaiter is null) {
+      return;
+    }
+
+    // Await sync for each attribute
+    foreach (var syncAttr in syncReceptor.SyncAttributes) {
+      var timeout = TimeSpan.FromMilliseconds(syncAttr.EffectiveTimeoutMs);
+      var eventTypes = syncAttr.EventTypes?.ToArray();
+
+      // Note: No eventIdToAwait here because we're in the originating scope
+      // The singleton tracker should have the events from this scope
+      var syncResult = await syncAwaiter.WaitForStreamAsync(
+          syncAttr.PerspectiveType,
+          streamId.Value,
+          eventTypes,
+          timeout,
+          eventIdToAwait: null,
+          ct);
+
+      // Create and set SyncContext for receptor access via AsyncLocal
+      var syncContext = new SyncContext {
+        StreamId = streamId.Value,
+        PerspectiveType = syncAttr.PerspectiveType,
+        Outcome = syncResult.Outcome,
+        EventsAwaited = syncResult.EventsAwaited,
+        ElapsedTime = syncResult.ElapsedTime,
+        FailureReason = syncResult.Outcome == SyncOutcome.TimedOut ? "Timeout exceeded" : null
+      };
+      SyncContextAccessor.CurrentContext = syncContext;
+
+      // If FireBehavior is FireOnSuccess and we timed out, throw an exception
+      if (syncAttr.FireBehavior == SyncFireBehavior.FireOnSuccess && syncResult.Outcome == SyncOutcome.TimedOut) {
+        throw new PerspectiveSyncTimeoutException(
+            syncAttr.PerspectiveType,
+            timeout,
+            $"Perspective sync timed out waiting for {syncAttr.PerspectiveType.Name} before invoking receptor {syncReceptor.ReceptorId}");
+      }
+      // FireBehavior.FireAlways continues regardless of timeout
+    }
+  }
+
+  /// <summary>
+  /// Waits for all perspectives to process cascaded events when WaitForPerspectives is enabled.
+  /// Called at the end of LocalInvokeAsync methods that accept DispatchOptions.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method uses <see cref="IEventCompletionAwaiter"/> to wait for ALL perspectives
+  /// to process the events that were cascaded during the receptor invocation.
+  /// </para>
+  /// <para>
+  /// Events are tracked via <see cref="IScopedEventTracker"/> or <see cref="ScopedEventTrackerAccessor"/>.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/perspectives/event-completion#dispatcher-integration</docs>
+  private async ValueTask _waitForPerspectivesIfNeededAsync(DispatchOptions options) {
+    // Short-circuit if not waiting for perspectives
+    if (!options.WaitForPerspectives) {
+      return;
+    }
+
+    // Short-circuit if no event completion awaiter available
+    if (_eventCompletionAwaiter is null) {
+      return;
+    }
+
+    // Get the scoped event tracker (field or from AsyncLocal accessor)
+    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+    if (scopedTracker is null) {
+      return;
+    }
+
+    // Get the event IDs that were emitted
+    var emittedEvents = scopedTracker.GetEmittedEvents();
+    if (emittedEvents.Count == 0) {
+      return;
+    }
+
+    var eventIds = emittedEvents.Select(e => e.EventId).Distinct().ToList();
+
+    // Wait for all perspectives to process these events
+    var success = await _eventCompletionAwaiter.WaitForEventsAsync(
+        eventIds,
+        options.PerspectiveWaitTimeout,
+        options.CancellationToken);
+
+    if (!success) {
+      throw new PerspectiveSyncTimeoutException(
+          $"Timed out waiting for {eventIds.Count} events to be processed by all perspectives. " +
+          $"Timeout: {options.PerspectiveWaitTimeout.TotalMilliseconds}ms");
+    }
+  }
 
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment
@@ -150,6 +376,16 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
+    // We extract the inner message and use that for receptor dispatch
+    if (message is IRouted routed) {
+      // RoutedNone (Route.None()) has no inner value to dispatch
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
@@ -173,28 +409,86 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+      // This enables cross-scope sync where one handler emits events and another waits
+      await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-      await _cascadeEventsFromResultAsync(result);
+      // Pass messageType so we can look up receptor's [DefaultRouting] attribute
+      await _cascadeEventsFromResultAsync(result, messageType);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
+      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        }
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
     }
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
@@ -202,7 +496,8 @@ public abstract class Dispatcher(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -251,6 +546,14 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
     var invoker = GetReceptorInvoker<object>(message, messageType);
 
@@ -266,30 +569,37 @@ public abstract class Dispatcher(
       }
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
 
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
-      }
+      // Start dispatch activity to serve as parent for handler traces
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+
+      var result = await invoker(message);
+      await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     var destination = messageType.Name;
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -335,28 +645,85 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
+
+      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+      await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
+      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
+        }
       }
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
     }
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
@@ -364,7 +731,8 @@ public abstract class Dispatcher(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -403,30 +771,84 @@ public abstract class Dispatcher(
       }
 
       options.CancellationToken.ThrowIfCancellationRequested();
-      var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
 
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+      await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+
+      var result = await invoker(message);
+      await _cascadeEventsFromResultAsync(result, messageType);
+
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
+
+      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
+      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.ImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
+        }
+      }
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
+        if (_lifecycleInvoker is not null) {
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.LocalImmediateInline,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = null
+          };
+          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
+        }
       }
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
 
     var destination = messageType.Name;
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
       context.CorrelationId,
-      context.CausationId
+      context.CausationId,
+      streamId
     );
   }
 
@@ -507,29 +929,90 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed - users can call LocalInvokeAsync(Route.Local(event))
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
 
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
     if (asyncInvoker != null) {
-      // OPTIMIZATION: Skip envelope creation when trace store is null
-      // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _lifecycleInvoker != null) {
-        return _localInvokeWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
-      }
-
-      // Fast path with cascade support for receptor tuple/array returns
-      // Invoke using delegate, then extract and publish any IEvent instances
-      return _localInvokeWithCascadeAsync(asyncInvoker, message);
+      // Use wrapper that catches InvalidCastException and falls back to RPC extraction
+      // This handles the case where receptor returns a complex type (tuple, etc.)
+      // but caller requests a specific type from within that complex type
+      return _localInvokeWithCastFallbackAsync(asyncInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Fallback to sync receptor
     var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
-      return _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+      return _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
     }
 
-    throw new HandlerNotFoundException(messageType);
+    // RPC extraction fallback: receptor returns complex type containing TResult
+    // Extract TResult from the result and cascade remaining values
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
+    }
+
+    throw new ReceptorNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Wrapper that tries the typed invoker first, but falls back to RPC extraction
+  /// on InvalidCastException. This handles the case where the receptor returns a
+  /// complex type (tuple, array, etc.) but the caller requests a specific type.
+  /// </summary>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async ValueTask<TResult> _localInvokeWithCastFallbackAsync<TResult>(
+    ReceptorInvoker<TResult> asyncInvoker,
+    object message,
+    Type messageType,
+    IMessageContext context,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    try {
+      // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+      await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _receptorRegistry != null) {
+        return await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
+
+      // Fast path with cascade support for receptor tuple/array returns
+      // Invoke using delegate, then extract and publish any IEvent instances
+      return await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
+    } catch (InvalidCastException) {
+      // The typed invoker failed because the receptor returns a complex type
+      // containing TResult, not TResult directly. Fall back to RPC extraction.
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = messageType.Name;
+        var resultTypeName = typeof(TResult).Name;
+        CascadeLogger.LogDebug("[RPC] InvalidCastException caught, falling back to RPC extraction for {MessageType} -> {ResultType}",
+          msgTypeName, resultTypeName);
+      }
+#pragma warning restore CA1848
+
+      var anyInvoker = GetReceptorInvokerAny(message, messageType);
+      if (anyInvoker != null) {
+        return await _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
+      }
+
+      // If no invoker found at all, re-throw the original exception
+      throw;
+    }
   }
 
   /// <summary>
@@ -540,27 +1023,53 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
   private ValueTask<TResult> _localInvokeSyncWithCascadeAsync<TResult>(
     SyncReceptorInvoker<TResult> syncInvoker,
-    object message
+    object message,
+    Type messageType
   ) {
     // Invoke synchronously
     var result = syncInvoker(message);
 
     // Auto-cascade any events (still async for publishing)
-    var cascadeTask = _cascadeEventsFromResultAsync(result);
+    var cascadeTask = _cascadeEventsFromResultAsync(result, messageType);
+
+    // Unwrap Routed<T> from result if receptor returned a wrapped value
+    // This enables receptors to return Route.Local(event) for cascade control
+    // while callers still receive the unwrapped event type
+    TResult? finalResult = result;
+    if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+      finalResult = unwrappedResult;
+    }
+
     if (!cascadeTask.IsCompletedSuccessfully) {
-      return _awaitCascadeAndReturnResultAsync(cascadeTask, result);
+      return _awaitCascadeAndReturnResultAsync(cascadeTask, finalResult, message, messageType);
+    }
+
+    // Process tags after successful receptor completion (sync path)
+    var tagTask = _processTagsIfEnabledAsync(message, messageType);
+    if (!tagTask.IsCompletedSuccessfully) {
+      return _awaitTagProcessingAndReturnResultAsync(tagTask, finalResult);
     }
 
     // Return pre-completed ValueTask (zero allocation)
-    return new ValueTask<TResult>(result);
+    return new ValueTask<TResult>(finalResult);
   }
 
   /// <summary>
-  /// Helper method to await cascade task and return result.
+  /// Helper method to await cascade task, process tags, and return result.
   /// This is a separate method to avoid state machine overhead in the fast path.
   /// </summary>
-  private static async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result) {
+  private async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result, object message, Type messageType) {
     await cascadeTask;
+    await _processTagsIfEnabledAsync(message, messageType);
+    return result;
+  }
+
+  /// <summary>
+  /// Helper method to await tag processing task and return result.
+  /// This is a separate method to avoid state machine overhead in the fast path.
+  /// </summary>
+  private static async ValueTask<TResult> _awaitTagProcessingAndReturnResultAsync<TResult>(ValueTask tagTask, TResult result) {
+    await tagTask;
     return result;
   }
 
@@ -571,11 +1080,208 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithCascadeAsync<TResult>(
     ReceptorInvoker<TResult> invoker,
-    object message
+    object message,
+    Type messageType
   ) {
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
     var result = await invoker(message);
-    await _cascadeEventsFromResultAsync(result);
+    await _cascadeEventsFromResultAsync(result, messageType);
+
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(message, messageType);
+
+    // Unwrap Routed<T> from result if receptor returned a wrapped value
+    // This enables receptors to return Route.Local(event) for cascade control
+    // while callers still receive the unwrapped event type
+    if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+      return unwrappedResult;
+    }
+
     return result;
+  }
+
+  /// <summary>
+  /// RPC extraction path for LocalInvokeAsync when receptor returns a complex type containing TResult.
+  /// Extracts TResult from the result and cascades all remaining values.
+  /// </summary>
+  /// <typeparam name="TResult">The type requested by the RPC caller.</typeparam>
+  /// <param name="invoker">The type-erased receptor invoker.</param>
+  /// <param name="message">The message to dispatch.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <returns>The extracted TResult value.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when TResult cannot be extracted from the receptor result.</exception>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async ValueTask<TResult> _localInvokeWithRpcExtractionAsync<TResult>(
+    Func<object, ValueTask<object?>> invoker,
+    object message,
+    Type messageType
+  ) {
+    // Start dispatch activity to serve as parent for handler traces
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var msgTypeName = messageType.Name;
+      var resultTypeName = typeof(TResult).Name;
+      CascadeLogger.LogDebug("[RPC] RpcExtraction: Invoking receptor for {MessageType}, extracting {ResultType}",
+        msgTypeName, resultTypeName);
+    }
+
+    // 1. Invoke receptor to get full result
+    var fullResult = await invoker(message);
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var resultTypeName = fullResult?.GetType().Name ?? "null";
+      var isNull = fullResult == null;
+      CascadeLogger.LogDebug("[RPC] RpcExtraction: Receptor returned {ResultType}, IsNull={IsNull}",
+        resultTypeName, isNull);
+    }
+
+    // 2. Extract the requested TResult from the result
+    if (!Internal.ResponseExtractor.TryExtractResponse<TResult>(fullResult, out var response)) {
+      throw new InvalidOperationException(
+        $"Could not extract {typeof(TResult).Name} from receptor result of type {fullResult?.GetType().Name ?? "null"}. " +
+        $"The receptor for {messageType.Name} does not return a value of type {typeof(TResult).Name}.");
+    }
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var resultTypeName = typeof(TResult).Name;
+      CascadeLogger.LogDebug("[RPC] RpcExtraction: Successfully extracted {ResultType}", resultTypeName);
+    }
+
+    // 3. Cascade remaining messages (excluding the extracted response)
+    await _cascadeEventsExcludingResponseAsync(fullResult, response, messageType);
+
+    // 4. Return the extracted response
+    return response!;
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Cascades events from a result, excluding the RPC response that was returned to the caller.
+  /// Uses ReferenceEquals to identify the exact instance to exclude.
+  /// </summary>
+  /// <typeparam name="TResult">The type of the extracted RPC response.</typeparam>
+  /// <param name="result">The full receptor result containing multiple values.</param>
+  /// <param name="extractedResponse">The value that was extracted and returned to the RPC caller.</param>
+  /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
+  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  private async Task _cascadeEventsExcludingResponseAsync<TResult>(
+    object? result,
+    TResult? extractedResponse,
+    Type? originalMessageType = null
+  ) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var resultTypeName = result?.GetType().Name ?? "null";
+      var extractedTypeName = typeof(TResult).Name;
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ResultType={ResultType}, ExtractedType={ExtractedType}",
+        resultTypeName, extractedTypeName);
+    }
+
+    // Fast path: Skip if result is null
+    if (result == null) {
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Result is null, skipping cascade");
+      return;
+    }
+
+    // Look up receptor default routing from [DefaultRouting] attribute on the receptor
+    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+        ? GetReceptorDefaultRouting(originalMessageType)
+        : null;
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
+    }
+
+    // Use MessageExtractor to find all IMessage instances with routing info
+    var extractedCount = 0;
+    var skippedCount = 0;
+    foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+      // Skip the extracted response - it goes to RPC caller, not cascade
+      // Use !Equals(default) instead of != null to handle value types correctly
+      if (!EqualityComparer<TResult>.Default.Equals(extractedResponse, default) && ReferenceEquals(msg, extractedResponse)) {
+        skippedCount++;
+        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Skipping extracted response (ReferenceEquals match)");
+        continue;
+      }
+
+      extractedCount++;
+      var msgType = msg.GetType();
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = msgType.Name;
+        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascading message {Count}: Type={MessageType}, Mode={Mode}",
+          extractedCount, msgTypeName, mode);
+      }
+
+      // Local dispatch: Invoke in-process receptors
+      if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = msgType.Name;
+          CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Dispatching locally for {MessageType}", msgTypeName);
+        }
+        var publisher = GetUntypedReceptorPublisher(msgType);
+        if (publisher != null) {
+          await publisher(msg);
+        }
+      }
+
+      // Outbox dispatch: Write to outbox for cross-service delivery
+      if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = msgType.Name;
+          CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
+        }
+        await CascadeToOutboxAsync(msg, msgType);
+      }
+    }
+
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascaded {CascadeCount} messages, skipped {SkipCount} (RPC response)",
+        extractedCount, skippedCount);
+    }
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Void path cascade support for non-void receptors.
+  /// When void LocalInvokeAsync is called but a non-void receptor is found,
+  /// invoke it and cascade any events from the result.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithAnyInvokerAndCascadeAsync(
+    Func<object, ValueTask<object?>> invoker,
+    object message,
+    Type messageType
+  ) {
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var msgTypeName = messageType.Name;
+      CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Invoking receptor for {MessageType}", msgTypeName);
+    }
+    var result = await invoker(message);
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var resultTypeName = result?.GetType().Name ?? "null";
+      var isNull = result == null;
+      CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Receptor returned {ResultType}, IsNull={IsNull}", resultTypeName, isNull);
+    }
+    if (result != null) {
+      await _cascadeEventsFromResultAsync(result, messageType);
+    } else {
+      CascadeLogger.LogWarning("[CASCADE] VoidWithAnyInvoker: Receptor returned null, no cascade will occur");
+    }
+
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(message, messageType);
+#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -584,37 +1290,51 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithTracingAsync<TResult>(
     object message,
+    Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
   ) {
+    // Note: Sync check already done in _localInvokeWithCastFallbackAsync which is the only caller
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1 // Local dispatch is always first attempt
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
+
+      // Unwrap Routed<T> from result if receptor returned a wrapped value
+      // This enables receptors to return Route.Local(event) for cascade control
+      // while callers still receive the unwrapped event type
+      if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+        return unwrappedResult;
       }
 
       return result;
@@ -642,20 +1362,34 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
-    var messageType = typeof(TMessage);
+    // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
+    // We need to use runtime type to get the actual inner message type
+    object actualMessage = message;
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      actualMessage = routed.Value;
+    }
+
+    var messageType = actualMessage.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
+
+    // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
+    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
+      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
-      return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+    if (_traceStore != null || _receptorRegistry != null || hasSyncAttributes) {
+      return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Fast path with cascade support for receptor tuple/array returns
     // Invoke using delegate, then extract and publish any IEvent instances
-    return _localInvokeWithCascadeAsync(invoker, message);
+    return _localInvokeWithCascadeAsync(invoker, actualMessage, messageType);
   }
 
   /// <summary>
@@ -663,37 +1397,64 @@ public abstract class Dispatcher(
   /// Uses async/await to store envelope before invoking receptor.
   /// Preserves type information to create correctly-typed MessageEnvelope.
   /// </summary>
+  /// <param name="message">Original message for envelope creation (may be Routed&lt;T&gt;)</param>
+  /// <param name="actualMessage">Unwrapped message for invoker (always the inner message type)</param>
+  /// <param name="messageType">Type of actualMessage for cascading</param>
   private async ValueTask<TResult> _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(
     TMessage message,
+    object actualMessage,
+    Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
   ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
+
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-      // Invoke using delegate - zero reflection, strongly typed
-      var result = await invoker(message!);
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
+
+      // Invoke using delegate with unwrapped message - zero reflection, strongly typed
+      var result = await invoker(actualMessage);
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null
-        };
-        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(actualMessage, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
+
+      // Unwrap Routed<T> from result if receptor returned a wrapped value
+      // This enables receptors to return Route.Local(event) for cascade control
+      // while callers still receive the unwrapped event type
+      if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+        return unwrappedResult;
       }
 
       return result;
@@ -777,18 +1538,29 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
+
+    // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
+    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
+      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
 
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
     if (asyncInvoker != null) {
-      // OPTIMIZATION: Skip envelope creation when trace store is null
-      // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null) {
-        return _localInvokeVoidWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      // If sync attributes exist or tracing is enabled, go through async path
+      if (_traceStore != null || hasSyncAttributes) {
+        return _localInvokeVoidWithSyncAndTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      // FAST PATH: Zero allocation when no tracing
+      // FAST PATH: Zero allocation when no tracing and no sync attributes
       // Invoke using delegate - zero reflection, strongly typed
       // Avoid async/await state machine allocation by returning task directly
       return asyncInvoker(message);
@@ -797,12 +1569,23 @@ public abstract class Dispatcher(
     // Fallback to void sync receptor
     var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
+      // If sync attributes exist, must go through async path for sync check
+      if (hasSyncAttributes) {
+        return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, message, messageType);
+      }
       // Invoke synchronously - returns pre-completed ValueTask
       syncInvoker(message);
       return ValueTask.CompletedTask;
     }
 
-    throw new HandlerNotFoundException(messageType);
+    // Fallback to any receptor (void or non-void) for cascade support
+    // This enables void LocalInvokeAsync to cascade events from non-void receptors
+    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+    }
+
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -817,12 +1600,22 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
+    var messageType = message.GetType();
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
     _envelopeRegistry?.Register(envelope);
     try {
-      await _traceStore!.StoreAsync(envelope);
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       await invoker(message);
@@ -830,6 +1623,67 @@ public abstract class Dispatcher(
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
     }
+  }
+
+  /// <summary>
+  /// Async path for void LocalInvoke with sync check and optional tracing.
+  /// Called when receptor has [AwaitPerspectiveSync] attributes or tracing is enabled.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithSyncAndTracingAsync(
+    object message,
+    Type messageType,
+    IMessageContext context,
+    VoidReceptorInvoker invoker,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message);
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
+    }
+  }
+
+  /// <summary>
+  /// Async path for void sync LocalInvoke with sync check.
+  /// Called when sync receptor has [AwaitPerspectiveSync] attributes.
+  /// </summary>
+  private async ValueTask _localInvokeVoidSyncWithSyncCheckAsync(
+    VoidSyncReceptorInvoker invoker,
+    object message,
+    Type messageType
+  ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
+    // Start dispatch activity to serve as parent for handler traces
+    // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+    using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+
+    // Invoke synchronously
+    invoker(message);
   }
 
   /// <summary>
@@ -850,32 +1704,56 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
-    var messageType = typeof(TMessage);
+    // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
+    // We need to use runtime type to get the actual inner message type
+    object actualMessage = message;
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      actualMessage = routed.Value;
+    }
+
+    var messageType = actualMessage.GetType();
+
+    // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
+    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
+      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
 
     // Try async receptor first (async takes precedence)
-    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
-      // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
-      // This achieves zero allocation for high-throughput scenarios
-      if (_traceStore != null || _lifecycleInvoker != null) {
-        return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      // If sync attributes exist or tracing/lifecycle is enabled, go through async path
+      if (_traceStore != null || _receptorRegistry != null || hasSyncAttributes) {
+        return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
+      // FAST PATH: Zero allocation when no tracing, no lifecycle invoker, and no sync attributes
       // Invoke using delegate - zero reflection, strongly typed
       // Avoid async/await state machine allocation by returning task directly
-      return asyncInvoker(message);
+      return asyncInvoker(actualMessage);
     }
 
     // Fallback to void sync receptor
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    var syncInvoker = GetVoidSyncReceptorInvoker(actualMessage, messageType);
     if (syncInvoker != null) {
+      // If sync attributes exist, must go through async path for sync check
+      if (hasSyncAttributes) {
+        return _localInvokeVoidSyncWithSyncCheckAsync(syncInvoker, actualMessage, messageType);
+      }
       // Invoke synchronously - returns pre-completed ValueTask
-      syncInvoker(message);
+      syncInvoker(actualMessage);
       return ValueTask.CompletedTask;
     }
 
-    throw new HandlerNotFoundException(messageType);
+    // Fallback to any receptor (void or non-void) for cascade support
+    // This enables void LocalInvokeAsync to cascade events from non-void receptors
+    var anyInvoker = GetReceptorInvokerAny(actualMessage, messageType);
+    if (anyInvoker != null) {
+      return _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, actualMessage, messageType);
+    }
+
+    throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>
@@ -883,14 +1761,21 @@ public abstract class Dispatcher(
   /// Uses async/await to store envelope before invoking receptor.
   /// Preserves type information to create correctly-typed MessageEnvelope.
   /// </summary>
+  /// <param name="message">Original message for envelope creation (may be Routed&lt;T&gt;)</param>
+  /// <param name="actualMessage">Unwrapped message for invoker (always the inner message type)</param>
   private async ValueTask _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(
     TMessage message,
+    object actualMessage,
+    Type messageType,
     IMessageContext context,
     VoidReceptorInvoker invoker,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
   ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(actualMessage, messageType);
+
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
     // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
@@ -900,19 +1785,17 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope);
       }
 
-      // Invoke using delegate - zero reflection, strongly typed
-      await invoker(message!);
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
-      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null
-        };
-        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-      }
+      // Invoke using delegate with unwrapped message - zero reflection, strongly typed
+      await invoker(actualMessage);
+
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -963,24 +1846,44 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
+    TResult result;
+
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
-      if (_traceStore != null || _lifecycleInvoker != null) {
-        return await _localInvokeWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      if (_traceStore != null || _receptorRegistry != null) {
+        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      } else {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        result = await _localInvokeWithCascadeAsync(asyncInvoker, message, messageType);
       }
-      options.CancellationToken.ThrowIfCancellationRequested();
-      return await _localInvokeWithCascadeAsync(asyncInvoker, message);
+    } else {
+      var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+      if (syncInvoker != null) {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        result = await _localInvokeSyncWithCascadeAsync(syncInvoker, message, messageType);
+      } else {
+        throw new ReceptorNotFoundException(messageType);
+      }
     }
 
-    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
-    if (syncInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      return await _localInvokeSyncWithCascadeAsync(syncInvoker, message);
-    }
+    // Wait for all perspectives to process cascaded events if requested
+    await _waitForPerspectivesIfNeededAsync(options);
 
-    throw new HandlerNotFoundException(messageType);
+    return result;
   }
 
   /// <summary>
@@ -997,27 +1900,50 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
     var messageType = message.GetType();
     var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
 
     if (asyncInvoker != null) {
       if (_traceStore != null) {
-        await _localInvokeVoidWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
-        return;
+        await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      } else {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        await asyncInvoker(message);
       }
-      options.CancellationToken.ThrowIfCancellationRequested();
-      await asyncInvoker(message);
-      return;
+    } else {
+      var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+      if (syncInvoker != null) {
+        options.CancellationToken.ThrowIfCancellationRequested();
+        // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+        await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+        syncInvoker(message);
+      } else {
+        // Fallback: Try to find any receptor (including those that return values)
+        // This allows void LocalInvokeAsync to call receptors that return events for cascading
+        var anyInvoker = GetReceptorInvokerAny(message, messageType);
+        if (anyInvoker != null) {
+          options.CancellationToken.ThrowIfCancellationRequested();
+          // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+          await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+          await _localInvokeVoidWithAnyInvokerAndCascadeAsync(anyInvoker, message, messageType);
+        } else {
+          throw new ReceptorNotFoundException(messageType);
+        }
+      }
     }
 
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
-    if (syncInvoker != null) {
-      options.CancellationToken.ThrowIfCancellationRequested();
-      syncInvoker(message);
-      return;
-    }
-
-    throw new HandlerNotFoundException(messageType);
+    // Wait for all perspectives to process cascaded events if requested
+    await _waitForPerspectivesIfNeededAsync(options);
   }
 
   /// <summary>
@@ -1025,6 +1951,7 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask<TResult> _localInvokeWithTracingAndOptionsAsync<TResult>(
     object message,
+    Type messageType,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     DispatchOptions options,
@@ -1032,6 +1959,9 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
@@ -1039,20 +1969,27 @@ public abstract class Dispatcher(
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
 
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result);
+      await _cascadeEventsFromResultAsync(result, messageType);
 
-      if (_lifecycleInvoker is not null) {
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.ImmediateAsync,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+      // Process tags after successful receptor completion
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
+
+      // Unwrap Routed<T> from result if receptor returned a wrapped value
+      // This enables receptors to return Route.Local(event) for cascade control
+      // while callers still receive the unwrapped event type
+      if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+        return unwrappedResult;
       }
 
       return result;
@@ -1066,6 +2003,7 @@ public abstract class Dispatcher(
   /// </summary>
   private async ValueTask _localInvokeVoidWithTracingAndOptionsAsync(
     object message,
+    Type messageType,
     IMessageContext context,
     VoidReceptorInvoker invoker,
     DispatchOptions options,
@@ -1073,12 +2011,22 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
         await _traceStore.StoreAsync(envelope, options.CancellationToken);
       }
+
+      // Start dispatch activity to serve as parent for handler traces
+      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
@@ -1116,7 +2064,9 @@ public abstract class Dispatcher(
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Metadata = hopMetadata
+      Metadata = hopMetadata,
+      SecurityContext = _getSecurityContextForPropagation(),
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
     envelope.AddHop(hop);
@@ -1155,7 +2105,9 @@ public abstract class Dispatcher(
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
-      Metadata = hopMetadata
+      Metadata = hopMetadata,
+      SecurityContext = _getSecurityContextForPropagation(),
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
     envelope.AddHop(hop);
@@ -1167,34 +2119,274 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
-  /// Extracts IEvent instances from receptor return values and publishes them.
-  /// Supports tuples, arrays, and nested structures via EventExtractor.
-  /// This enables the clean pattern: return (result, @event) - where @event is auto-published.
+  /// Extracts IMessage instances from receptor return values and dispatches them based on routing.
+  /// Supports tuples, arrays, nested structures, and Routed&lt;T&gt; wrappers via MessageExtractor.
+  /// This enables the clean pattern: return (result, Route.Local(@event)) - where @event is dispatched locally.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Uses the AOT-compatible GetUntypedReceptorPublisher method which is implemented by
   /// source-generated code. The generated code knows all event types at compile time and
   /// returns type-erased delegates that cast internally.
+  /// </para>
+  /// <para>
+  /// Routing behavior based on DispatchMode:
+  /// <list type="bullet">
+  ///   <item>Local: Invoke in-process receptors only via GetUntypedReceptorPublisher</item>
+  ///   <item>Outbox: Write to outbox for cross-service delivery via _cascadeToOutboxAsync</item>
+  ///   <item>Both: Both local dispatch AND outbox write</item>
+  ///   <item>Default (unwrapped): Outbox only (system default)</item>
+  /// </list>
+  /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
+  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result) {
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var resultTypeName = result?.GetType().Name ?? "null";
+      var origMsgTypeName = originalMessageType?.Name ?? "null";
+      CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ResultType={ResultType}, OriginalMessageType={OriginalMessageType}",
+        resultTypeName, origMsgTypeName);
+    }
+
     // Fast path: Skip if result is null
     if (result == null) {
+      CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: Result is null, skipping cascade");
       return;
     }
 
-    // Use EventExtractor to find all IEvent instances in the result
-    // This handles tuples, arrays, nested structures, etc. using ITuple interface (AOT-safe)
-    foreach (var evt in Internal.EventExtractor.ExtractEvents(result)) {
-      // Get an untyped publisher for the concrete event type (AOT-compatible)
-      // The generated code returns a delegate that casts the object to the correct type internally
-      var eventType = evt.GetType();
-      var publisher = GetUntypedReceptorPublisher(eventType);
-      if (publisher != null) {
-        await publisher(evt);
+    // Look up receptor default routing from [DefaultRouting] attribute on the receptor
+    // This is done via the generated GetReceptorDefaultRouting method
+    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+        ? GetReceptorDefaultRouting(originalMessageType)
+        : null;
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
+    }
+
+    // Use MessageExtractor to find all IMessage instances with routing info
+    // This handles tuples, arrays, nested structures, Routed<T> wrappers, etc. using ITuple interface (AOT-safe)
+    var extractedCount = 0;
+    foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
+      extractedCount++;
+      var messageType = msg.GetType();
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = messageType.Name;
+        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted message {Count}: Type={MessageType}, Mode={Mode}",
+          extractedCount, msgTypeName, mode);
+      }
+
+      // Generate eventId for tracking and storage consistency
+      // CRITICAL: This SAME eventId must be used for both tracking (singleton tracker)
+      // AND storage (outbox/event store) so that MarkProcessed can find the tracked event
+      Guid? eventId = null;
+      if (msg is IEvent) {
+        eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
+        var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
+
+        // Auto-generate StreamId if empty and message supports it (prevents Guid.Empty pollution)
+        // Controlled by WhizbangOptions.AutoGenerateStreamIds (default: true)
+        if (_whizbangOptions.AutoGenerateStreamIds && streamId == Guid.Empty && msg is IHasStreamId hasStreamId) {
+          streamId = ValueObjects.TrackedGuid.NewMedo();
+          hasStreamId.StreamId = streamId;
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (was Guid.Empty)",
+              streamId, messageType.Name);
+          }
+        }
+
+        // Track in scoped tracker (same request scope)
+        // Use accessor to get current scope's tracker (works with singleton Dispatcher)
+        var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+        if (scopedTracker is not null) {
+          scopedTracker.TrackEmittedEvent(streamId, messageType, eventId.Value);
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[SYNC_DEBUG] Tracked in SCOPED tracker: StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
+              streamId, messageType.Name, eventId.Value);
+          }
+        } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          CascadeLogger.LogDebug("[SYNC_DEBUG] SCOPED tracker is NULL - event not tracked for same-scope sync: EventType={EventType}, EventId={EventId}",
+            messageType.Name, eventId.Value);
+        }
+
+        // CRITICAL: Also track in singleton tracker for cross-scope sync
+        // This enables Request 2 to wait for events emitted by Request 1
+        if (_syncEventTracker is not null && _trackedEventTypeRegistry is not null) {
+          var perspectiveNames = _trackedEventTypeRegistry.GetPerspectiveNames(messageType);
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[SYNC_DEBUG] SINGLETON tracker check: EventType={EventType}, PerspectiveCount={Count}, Perspectives=[{Perspectives}]",
+              messageType.FullName, perspectiveNames.Count, string.Join(", ", perspectiveNames));
+          }
+          foreach (var perspectiveName in perspectiveNames) {
+            _syncEventTracker.TrackEvent(messageType, eventId.Value, streamId, perspectiveName);
+            if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+              CascadeLogger.LogDebug("[SYNC_DEBUG] Tracked in SINGLETON tracker: StreamId={StreamId}, EventType={EventType}, EventId={EventId}, Perspective={Perspective}",
+                streamId, messageType.Name, eventId.Value, perspectiveName);
+            }
+          }
+        } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          CascadeLogger.LogDebug("[SYNC_DEBUG] SINGLETON tracker DISABLED - _syncEventTracker={HasTracker}, _trackedEventTypeRegistry={HasRegistry}",
+            _syncEventTracker is not null, _trackedEventTypeRegistry is not null);
+        }
+
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var eventTypeName = messageType.Name;
+          CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Tracked event for sync - StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
+            streamId, eventTypeName, eventId.Value);
+        }
+      }
+
+      // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
+      // Check for LocalDispatch flag specifically, not the composite Local mode
+      if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = messageType.Name;
+          CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", msgTypeName);
+        }
+        var publisher = GetUntypedReceptorPublisher(messageType);
+        if (publisher != null) {
+          // Establish message context for cascade: propagates UserId from parent scope
+          Security.SecurityContextHelper.EstablishMessageContextForCascade();
+          await publisher(msg);
+        }
+      }
+
+      // Event store only: Store to event store without transport (for Local, EventStoreOnly)
+      // When EventStore is set but Outbox is NOT set, store with null destination
+      // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
+      if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        if (msg is IEvent) {
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            var msgTypeName = messageType.Name;
+            CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
+          }
+          await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: null, eventId: eventId);
+        }
+      }
+
+      // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
+      // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
+      if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = messageType.Name;
+          CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
+        }
+        await CascadeToOutboxAsync(msg, messageType, sourceEnvelope: null, eventId: eventId);
       }
     }
+
+    if (extractedCount == 0) {
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        var resultTypeName = result.GetType().Name;
+        CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: No messages extracted from result type {ResultType}. " +
+          "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
+          resultTypeName);
+      }
+    } else {
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted {Count} messages total", extractedCount);
+      }
+    }
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Processes tags for a successfully handled message if tag processing is enabled.
+  /// Called after cascade to invoke registered tag hooks.
+  /// </summary>
+  /// <param name="message">The message that was processed.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <param name="ct">Cancellation token.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// Tag processing is skipped if:
+  /// - EnableTagProcessing is false in WhizbangCoreOptions
+  /// - TagProcessingMode is set to AsLifecycleStage (processed during lifecycle instead)
+  /// - No IMessageTagProcessor is registered
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/message-tags#processing</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
+  private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
+    // Skip if tag processing is disabled
+    if (!_coreOptions.EnableTagProcessing) {
+      return;
+    }
+
+    // Skip immediate processing if using lifecycle stage mode
+    if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
+      return;
+    }
+
+    // Skip if no processor is registered
+    if (_messageTagProcessor is null) {
+      return;
+    }
+
+    // Pass scope as null for now - scope extraction can be enhanced in future phases
+    // The processor can access ambient scope via ScopeContextAccessor if needed
+    await _messageTagProcessor.ProcessTagsAsync(message, messageType, scope: null, ct);
+  }
+
+  /// <summary>
+  /// Publishes a cascaded message to the outbox for cross-service delivery.
+  /// Uses source-generated type-switch dispatch for AOT compatibility.
+  /// </summary>
+  /// <param name="message">The message to cascade to outbox.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// This base implementation is a no-op. The source generator creates an override
+  /// with a type-switched dispatch table that calls PublishToOutboxAsync for each
+  /// known event type. This avoids reflection and maintains AOT compatibility.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
+  protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+    // Base implementation is a no-op.
+    // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync.
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogWarning("[CASCADE] CascadeToOutboxAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
+      "This means the generated dispatcher does NOT have an override for this message type. " +
+      "The message will NOT be written to the outbox!", messageType.Name);
+#pragma warning restore CA1848
+    return Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Cascades a message to the event store only (no transport).
+  /// Uses destination=null to store events and create perspective events, but skip transport publishing.
+  /// </summary>
+  /// <param name="message">The message to cascade.</param>
+  /// <param name="messageType">The runtime type of the message.</param>
+  /// <remarks>
+  /// <para>
+  /// This base implementation is a no-op. The source generator creates an override
+  /// with a type-switched dispatch table that calls PublishToOutboxAsync with eventStoreOnly=true.
+  /// This avoids reflection and maintains AOT compatibility.
+  /// </para>
+  /// <para>
+  /// Called by CascadeMessageAsync when DispatchMode.EventStore flag is set without DispatchMode.Outbox.
+  /// Events are stored to wh_event_store and perspective events are created, but transport is skipped.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
+  protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+    // Base implementation is a no-op.
+    // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync(eventStoreOnly: true).
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    CascadeLogger.LogWarning("[CASCADE] CascadeToEventStoreOnlyAsync: BASE IMPLEMENTATION CALLED for {MessageType}. " +
+      "This means the generated dispatcher does NOT have an override for this message type. " +
+      "The event will NOT be written to the event store!", messageType.Name);
+#pragma warning restore CA1848
+    return Task.CompletedTask;
   }
 
   /// <summary>
@@ -1207,7 +2399,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task PublishAsync<TEvent>(TEvent eventData) {
+  public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
     // S2955 suppressed: TEvent is constrained to IEvent in practice (always reference types)
     // Adding where TEvent : class would be a breaking API change
 #pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
@@ -1229,7 +2421,19 @@ public abstract class Dispatcher(
 
     // Publish event for cross-service delivery if work coordinator strategy is available
     // process_work_batch will store events to wh_event_store and create perspective events atomically
-    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
+    await PublishToOutboxAsync(eventData, eventType, messageId);
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+    // Return delivery receipt with stream ID
+    var destination = eventType.Name;
+    return DeliveryReceipt.Delivered(
+      messageId,
+      destination,
+      correlationId: null,
+      causationId: null,
+      streamId: streamId);
   }
 
   /// <summary>
@@ -1241,7 +2445,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+  public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
 #pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
     if (eventData == null) {
       throw new ArgumentNullException(nameof(eventData));
@@ -1257,7 +2461,143 @@ public abstract class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
     await publisher(eventData);
 
-    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
+    await PublishToOutboxAsync(eventData, eventType, messageId);
+
+    // Extract stream ID from [StreamId] attribute for delivery receipt
+    var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
+
+    // Return delivery receipt with stream ID
+    var destination = eventType.Name;
+    return DeliveryReceipt.Delivered(
+      messageId,
+      destination,
+      correlationId: null,
+      causationId: null,
+      streamId: streamId);
+  }
+
+  /// <summary>
+  /// Cascades a message with explicit routing mode.
+  /// Called by IEventCascader after resolving routing from wrappers and attributes.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+    cancellationToken.ThrowIfCancellationRequested();
+
+    var messageType = message.GetType();
+
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var msgTypeName = messageType.Name;
+      CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Message={MessageType}, Mode={Mode}", msgTypeName, mode);
+    }
+#pragma warning restore CA1848
+
+    // Generate eventId for tracking and storage consistency
+    // CRITICAL: This SAME eventId must be used for both tracking (singleton tracker)
+    // AND storage (outbox/event store) so that MarkProcessed can find the tracked event
+    Guid? eventId = null;
+
+    // Track event for perspective sync - enables cross-scope sync via singleton tracker
+    // CRITICAL: This is the primary path for receptor event cascading via DispatcherEventCascader
+    if (message is IEvent) {
+      eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
+
+      // Auto-generate StreamId if empty and message supports it (prevents Guid.Empty pollution)
+      // Controlled by WhizbangOptions.AutoGenerateStreamIds (default: true)
+      if (_whizbangOptions.AutoGenerateStreamIds && streamId == Guid.Empty && message is IHasStreamId hasStreamId) {
+        streamId = ValueObjects.TrackedGuid.NewMedo();
+        hasStreamId.StreamId = streamId;
+#pragma warning disable CA1848
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (was Guid.Empty)",
+            streamId, messageType.Name);
+        }
+#pragma warning restore CA1848
+      }
+
+      // Track in scoped tracker (same request scope)
+      _scopedEventTracker?.TrackEmittedEvent(streamId, messageType, eventId.Value);
+
+      // CRITICAL: Also track in singleton tracker for cross-scope sync
+      // This enables Request 2 to wait for events emitted by Request 1
+      if (_syncEventTracker is not null && _trackedEventTypeRegistry is not null) {
+        var perspectiveNames = _trackedEventTypeRegistry.GetPerspectiveNames(messageType);
+#pragma warning disable CA1848
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync SINGLETON tracker check: EventType={EventType}, PerspectiveCount={Count}, Perspectives=[{Perspectives}]",
+            messageType.FullName, perspectiveNames.Count, string.Join(", ", perspectiveNames));
+        }
+#pragma warning restore CA1848
+        foreach (var perspectiveName in perspectiveNames) {
+          _syncEventTracker.TrackEvent(messageType, eventId.Value, streamId, perspectiveName);
+#pragma warning disable CA1848
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync tracked in SINGLETON: StreamId={StreamId}, EventType={EventType}, EventId={EventId}, Perspective={Perspective}",
+              streamId, messageType.Name, eventId.Value, perspectiveName);
+          }
+#pragma warning restore CA1848
+        }
+      } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+#pragma warning disable CA1848
+        CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync SINGLETON tracker DISABLED - _syncEventTracker={HasTracker}, _trackedEventTypeRegistry={HasRegistry}",
+          _syncEventTracker is not null, _trackedEventTypeRegistry is not null);
+#pragma warning restore CA1848
+      }
+
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var eventTypeName = messageType.Name;
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Tracked event for sync - StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
+          streamId, eventTypeName, eventId.Value);
+      }
+#pragma warning restore CA1848
+    }
+
+    // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
+    if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = messageType.Name;
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Dispatching locally for {MessageType}", msgTypeName);
+      }
+#pragma warning restore CA1848
+      var publisher = GetUntypedReceptorPublisher(messageType);
+      if (publisher != null) {
+        await publisher(message);
+      }
+    }
+
+    // Event store only: Store to event store without transport (for Local, EventStoreOnly)
+    // Uses destination=null to store event and create perspective events, but skip transport.
+    // This path is NOT taken if Outbox flag is also set (Outbox handles event storage via transport).
+    // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
+    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+      // Only events are stored (commands are silently skipped, consistent with current behavior)
+      if (message is IEvent) {
+#pragma warning disable CA1848
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = messageType.Name;
+          CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
+        }
+#pragma warning restore CA1848
+        await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+      }
+    }
+
+    // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
+    // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
+    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+#pragma warning disable CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = messageType.Name;
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
+      }
+#pragma warning restore CA1848
+      await CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+    }
   }
 
   /// <summary>
@@ -1266,19 +2606,65 @@ public abstract class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task _publishToOutboxViaScopeAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId) {
+  /// <typeparam name="TEvent">The type of event to publish.</typeparam>
+  /// <param name="eventData">The event data to publish.</param>
+  /// <param name="eventType">The runtime type of the event.</param>
+  /// <param name="messageId">The unique message ID for this event.</param>
+  /// <param name="eventStoreOnly">
+  /// When true, event is stored in event store only (no transport).
+  /// Destination is set to null, which bypasses transport publishing.
+  /// </param>
+  /// <remarks>
+  /// <para>
+  /// Protected to allow generated dispatcher to call this method from CascadeToOutboxAsync override.
+  /// </para>
+  /// <para>
+  /// Security context inheritance: The new envelope's initial hop inherits SecurityContext from
+  /// the sourceEnvelope when ambient context (ScopeContextAccessor.CurrentContext) is unavailable.
+  /// This ensures cascaded events carry the security context from their originating command.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
+  protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      var eventTypeName = eventType.Name;
+      CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called for {EventType}, MessageId={MessageId}", eventTypeName, messageId);
+    }
+#pragma warning restore CA1848
+
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var strategyTypeName = strategy?.GetType().Name ?? "null";
+        CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Strategy resolved: {StrategyType}", strategyTypeName);
+      }
+#pragma warning restore CA1848
 
       // If no strategy is registered, skip outbox routing (local-only event)
       if (strategy == null) {
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        if (logger != null && logger.IsEnabled(LogLevel.Warning)) {
+          var eventTypeName = eventType.Name;
+          logger.LogWarning(
+            "IWorkCoordinatorStrategy not registered - event will not be published to outbox for cross-service delivery. " +
+            "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+            "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. EventType: {EventType}",
+            eventTypeName);
+        }
+#pragma warning restore CA1848
         return;
       }
 
       // Resolve destination topic using registry and routing strategy
-      var destination = _resolveEventTopic(eventType);
+      // When eventStoreOnly is true, use null destination to bypass transport
+      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
 
       // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
@@ -1291,25 +2677,61 @@ public abstract class Dispatcher(
       var hopMetadata = _createHopMetadata(eventData!, eventType);
 
       // Add hop indicating message is being stored to outbox
+      // When destination is null (event-store-only), use "(event-store)" as topic indicator
+      // SecurityContext: First try ambient context, then inherit from source envelope
+      var propagatedSecurityContext = _getSecurityContextForPropagation();
+      var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
+      var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
+
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
-        Topic = destination,
+        Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
-        Metadata = hopMetadata
+        Metadata = hopMetadata,
+        SecurityContext = finalSecurityContext,
+        TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       envelope.AddHop(hop);
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Destination={Destination}", destination);
+        CascadeLogger.LogDebug("[TRACE] PublishToOutboxAsync: TraceParent={TraceParent}, HasActivity={HasActivity}",
+          hop.TraceParent ?? "(null)", System.Diagnostics.Activity.Current is not null);
+      }
+#pragma warning restore CA1848
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var newMsgId = newOutboxMessage.MessageId;
+        var newMsgType = newOutboxMessage.MessageType;
+        CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Created NewOutboxMessage, MessageId={MessageId}, Type={Type}",
+          newMsgId, newMsgType);
+      }
+#pragma warning restore CA1848
 
       // Queue event for batched processing
       strategy.QueueOutboxMessage(newOutboxMessage);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called QueueOutboxMessage");
+      }
+#pragma warning restore CA1848
 
       // Flush strategy to execute the batch
-      await strategy.FlushAsync(WorkBatchFlags.None);
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var outboxCount = workBatch.OutboxWork.Count;
+        var inboxCount = workBatch.InboxWork.Count;
+        CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: FlushAsync returned OutboxWork={OutboxCount}, InboxWork={InboxCount}",
+          outboxCount, inboxCount);
+      }
+#pragma warning restore CA1848
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
     } finally {
@@ -1323,6 +2745,119 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
+  /// Publishes an event to the outbox using its runtime type for serialization.
+  /// This non-generic overload is used when the compile-time type is an interface (IEvent, ICommand)
+  /// but the runtime type is a concrete class. Using the runtime type ensures proper JSON serialization.
+  /// </summary>
+  /// <param name="eventData">The event to publish (runtime type used for serialization)</param>
+  /// <param name="eventType">The runtime type of the event</param>
+  /// <param name="messageId">The message ID for tracking</param>
+  /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
+  /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
+  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
+    // Create scope to resolve scoped IWorkCoordinatorStrategy
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+
+      // If no strategy is registered, skip outbox routing (local-only event)
+      if (strategy == null) {
+        return;
+      }
+
+      // Resolve destination topic using registry and routing strategy
+      string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+
+      // Serialize the message directly using the runtime type via JsonContextRegistry
+      // This avoids creating MessageEnvelope<IEvent> which can't be serialized
+      var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
+      var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
+      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions);
+      if (jsonTypeInfo == null) {
+        throw new InvalidOperationException(
+          $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
+      }
+
+      var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
+
+      // Create the JsonElement envelope directly
+      var jsonEnvelope = new MessageEnvelope<JsonElement> {
+        MessageId = messageId,
+        Payload = payloadJson,
+        Hops = []
+      };
+
+      // Extract aggregate ID and add to hop metadata
+      var hopMetadata = _createHopMetadata(eventData, eventType);
+
+      // Add hop indicating message is being stored to outbox
+      var hop = new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = _instanceProvider.ToInfo(),
+        Topic = destination ?? "(event-store)",
+        Timestamp = DateTimeOffset.UtcNow,
+        Metadata = hopMetadata,
+        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext(),
+        TraceParent = System.Diagnostics.Activity.Current?.Id
+      };
+      jsonEnvelope.AddHop(hop);
+
+      // Extract stream ID
+      var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
+        ?? _extractStreamIdFromMetadata(hopMetadata)
+        ?? messageId.Value;
+
+      // Create OutboxMessage with all required fields
+      var newOutboxMessage = new OutboxMessage {
+        MessageId = jsonEnvelope.MessageId.Value,
+        Destination = destination,
+        Envelope = jsonEnvelope,
+        Metadata = new EnvelopeMetadata {
+          MessageId = jsonEnvelope.MessageId,
+          Hops = jsonEnvelope.Hops.ToList()
+        },
+        EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+        StreamId = streamId,
+        IsEvent = eventData is IEvent,
+        MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+      };
+
+      // Queue event for batched processing
+      strategy.QueueOutboxMessage(newOutboxMessage);
+
+      // Flush strategy to execute the batch
+      await strategy.FlushAsync(WorkBatchFlags.None);
+    } finally {
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Extracts stream ID from hop metadata (aggregate ID stored as JsonElement).
+  /// </summary>
+  private static Guid? _extractStreamIdFromMetadata(Dictionary<string, JsonElement>? metadata) {
+    if (metadata == null) {
+      return null;
+    }
+
+    // Try both AggregateId (generated key) and aggregateId (legacy key)
+    if (metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement)) {
+      if (aggIdElement.ValueKind == JsonValueKind.String) {
+        if (Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
+          return guidValue;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
   /// Resolves the Service Bus topic for an event type using the topic registry and routing strategy.
   /// First attempts registry lookup (source-generated or configured), then falls back to convention.
   /// Finally applies routing strategy for transformations (e.g., pool suffix, tenant prefix).
@@ -1331,6 +2866,15 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
   private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+    // PRIORITY: Use outbox routing strategy if configured (routes events to namespace topics)
+    // This ensures events are stored with their ACTUAL destination in the outbox,
+    // providing proper durability guarantees
+    if (_outboxRoutingStrategy != null) {
+      var destination = _outboxRoutingStrategy.GetDestination(eventType, _ownedDomains, MessageKind.Event);
+      return destination.Address;
+    }
+
+    // FALLBACK: Convention-based routing (for backwards compatibility)
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(eventType);
 
@@ -1367,6 +2911,15 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved destination name</returns>
   private string _resolveCommandDestination(Type commandType, IReadOnlyDictionary<string, object>? context = null) {
+    // PRIORITY: Use outbox routing strategy if configured (routes commands to inbox)
+    // This ensures commands are stored with their ACTUAL destination in the outbox,
+    // providing proper durability guarantees
+    if (_outboxRoutingStrategy != null) {
+      var destination = _outboxRoutingStrategy.GetDestination(commandType, _ownedDomains, MessageKind.Command);
+      return destination.Address;
+    }
+
+    // FALLBACK: Convention-based routing (for backwards compatibility)
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(commandType);
 
@@ -1412,7 +2965,16 @@ public abstract class Dispatcher(
 
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
-        throw new HandlerNotFoundException(messageType);
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        logger?.LogWarning(
+          "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
+          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
+          messageType.Name);
+#pragma warning restore CA1848
+        throw new ReceptorNotFoundException(messageType);
       }
 
       // Resolve destination using registry and routing strategy
@@ -1420,6 +2982,19 @@ public abstract class Dispatcher(
 
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+      // Start dispatch activity to serve as parent for handler traces (on receiving end)
+      // The activity context will be propagated through the outbox message
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
@@ -1433,12 +3008,16 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
+      // Extract stream ID from [StreamId] attribute for delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
+
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
         envelope.MessageId,
         destination,
         context.CorrelationId,
-        context.CausationId
+        context.CausationId,
+        streamId
       );
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
@@ -1472,7 +3051,16 @@ public abstract class Dispatcher(
 
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
-        throw new HandlerNotFoundException(messageType);
+        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
+        var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
+        logger?.LogWarning(
+          "IWorkCoordinatorStrategy not registered - cannot send command to outbox and no local handler found. " +
+          "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
+          "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. MessageType: {MessageType}",
+          messageType.Name);
+#pragma warning restore CA1848
+        throw new ReceptorNotFoundException(messageType);
       }
 
       // Resolve destination using registry and routing strategy
@@ -1482,6 +3070,19 @@ public abstract class Dispatcher(
       // WARN: This creates MessageEnvelope<object> - type information is lost
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+      // Start dispatch activity to serve as parent for handler traces (on receiving end)
+      // The activity context will be propagated through the outbox message
+      var parentActivity = Activity.Current;
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
+      if (dispatchActivity != null) {
+        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
+        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
+        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+      }
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
@@ -1495,12 +3096,16 @@ public abstract class Dispatcher(
       // For interval strategy, this happens on timer
       await strategy.FlushAsync(WorkBatchFlags.None);
 
+      // Extract stream ID from [StreamId] attribute for delivery receipt
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
       // Return delivery receipt with Accepted status (message queued)
       return DeliveryReceipt.Accepted(
         envelope.MessageId,
         destination,
         context.CorrelationId,
-        context.CausationId
+        context.CausationId,
+        streamId
       );
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
@@ -1542,12 +3147,16 @@ public abstract class Dispatcher(
 
         strategy.QueueOutboxMessage(newOutboxMessage);
 
+        // Extract stream ID from [StreamId] attribute for delivery receipt
+        var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+
         // Create receipt for this message
         receipts.Add(DeliveryReceipt.Accepted(
           envelope.MessageId,
           destination,
           context.CorrelationId,
-          context.CausationId
+          context.CausationId,
+          streamId
         ));
       }
 
@@ -1564,6 +3173,266 @@ public abstract class Dispatcher(
     }
 
     return receipts;
+  }
+
+  // ========================================
+  // LOCAL INVOKE AND SYNC - Wait for All Perspectives
+  // ========================================
+
+  private static readonly TimeSpan _defaultSyncTimeout = TimeSpan.FromSeconds(30);
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    // Execute the handler
+    var result = await LocalInvokeAsync<TMessage, TResult>(message);
+
+    // Wait for all perspectives to process emitted events
+    var syncResult = await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+
+    if (syncResult.Outcome == SyncOutcome.TimedOut) {
+      throw new TimeoutException(
+          $"Perspectives did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+          $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
+    }
+
+    return result;
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<SyncResult> LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull {
+    // Execute the handler
+    await LocalInvokeAsync(message);
+
+    // Wait for all perspectives to process emitted events
+    return await _waitForAllPerspectivesAsync(timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class {
+    // Execute the handler
+    var result = await LocalInvokeAsync<TMessage, TResult>(message);
+
+    // Wait for the specific perspective to process emitted events
+    var syncResult = await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+        message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+
+    if (syncResult.Outcome == SyncOutcome.TimedOut) {
+      throw new TimeoutException(
+          $"Perspective {typeof(TPerspective).Name} did not complete processing within {timeout ?? _defaultSyncTimeout}. " +
+          $"Handler completed successfully but {syncResult.EventsAwaited} event(s) are still being processed.");
+    }
+
+    return result;
+  }
+
+  /// <inheritdoc />
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class {
+    // Execute the handler
+    await LocalInvokeAsync(message);
+
+    // Wait for the specific perspective to process emitted events
+    return await _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+        message, timeout ?? _defaultSyncTimeout, onWaiting, onDecisionMade, cancellationToken);
+  }
+
+  /// <summary>
+  /// Waits for all perspectives to process events emitted in the current scope.
+  /// </summary>
+  private async Task<SyncResult> _waitForAllPerspectivesAsync(
+      TimeSpan timeout,
+      Action<SyncWaitingContext>? onWaiting,
+      Action<SyncDecisionContext>? onDecisionMade,
+      CancellationToken cancellationToken) {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
+
+    // Get tracked events from the scoped tracker
+    var scopedTracker = _scopedEventTracker ?? ScopedEventTrackerAccessor.CurrentTracker;
+    if (scopedTracker is null) {
+      // No tracker available - no events to wait for
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, noPendingResult, didWait: false);
+      return noPendingResult;
+    }
+
+    var trackedEvents = scopedTracker.GetEmittedEvents();
+    if (trackedEvents.Count == 0) {
+      // No events were emitted
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, noPendingResult, didWait: false);
+      return noPendingResult;
+    }
+
+    // Extract event IDs and stream IDs
+    var eventIds = trackedEvents.Select(e => e.EventId).ToList();
+    var streamIds = trackedEvents.Select(e => e.StreamId).Distinct().ToList();
+
+    // Wait for all perspectives to process
+    if (_eventCompletionAwaiter is null) {
+      // No awaiter registered - can't wait for perspectives
+      // Return synced since we can't verify either way
+      var syncedResult = new SyncResult(SyncOutcome.Synced, eventIds.Count, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, syncedResult, didWait: false);
+      return syncedResult;
+    }
+
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType: null, eventIds.Count, streamIds, timeout, startedAt);
+
+    var completed = await _eventCompletionAwaiter.WaitForEventsAsync(eventIds, timeout, cancellationToken);
+
+    stopwatch.Stop();
+    var result = new SyncResult(
+        completed ? SyncOutcome.Synced : SyncOutcome.TimedOut,
+        eventIds.Count,
+        stopwatch.Elapsed);
+
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType: null, result, didWait: true);
+    return result;
+  }
+
+  /// <summary>
+  /// Waits for a specific perspective to process events on the stream identified from the message.
+  /// </summary>
+  private async Task<SyncResult> _waitForSpecificPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan timeout,
+      Action<SyncWaitingContext>? onWaiting,
+      Action<SyncDecisionContext>? onDecisionMade,
+      CancellationToken cancellationToken)
+      where TMessage : notnull
+      where TPerspective : class {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    var startedAt = DateTimeOffset.UtcNow;
+    var perspectiveType = typeof(TPerspective);
+
+    // Extract stream ID from message
+    var streamId = _streamIdExtractor?.ExtractStreamId(message, typeof(TMessage));
+    if (streamId is null) {
+      // No stream ID on message - no stream-specific events to wait for
+      var noPendingResult = new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType, noPendingResult, didWait: false);
+      return noPendingResult;
+    }
+
+    // Create a scope to resolve scoped services
+    await using var scope = _internalServiceProvider.CreateAsyncScope();
+    var syncAwaiter = scope.ServiceProvider.GetService<IPerspectiveSyncAwaiter>();
+
+    if (syncAwaiter is null) {
+      // No perspective sync awaiter registered - can't wait for perspective
+      // Return synced since we can't verify either way
+      var syncedResult = new SyncResult(SyncOutcome.Synced, 1, stopwatch.Elapsed);
+      _invokeOnDecisionMade(onDecisionMade, perspectiveType, syncedResult, didWait: false);
+      return syncedResult;
+    }
+
+    // Invoke onWaiting before starting the wait
+    _invokeOnWaiting(onWaiting, perspectiveType, eventCount: 1, [streamId.Value], timeout, startedAt);
+
+    // Wait for the specific perspective to process events on this stream
+    var result = await syncAwaiter.WaitForStreamAsync(perspectiveType, streamId.Value, eventTypes: null, timeout, ct: cancellationToken);
+
+    stopwatch.Stop();
+    var finalResult = new SyncResult(result.Outcome, result.EventsAwaited, stopwatch.Elapsed);
+    _invokeOnDecisionMade(onDecisionMade, perspectiveType, finalResult, didWait: true);
+    return finalResult;
+  }
+
+  /// <summary>
+  /// Invokes the onWaiting callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnWaiting(
+      Action<SyncWaitingContext>? onWaiting,
+      Type? perspectiveType,
+      int eventCount,
+      IReadOnlyList<Guid> streamIds,
+      TimeSpan timeout,
+      DateTimeOffset startedAt) {
+    if (onWaiting is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncWaitingContext {
+        PerspectiveType = perspectiveType,
+        EventCount = eventCount,
+        StreamIds = streamIds,
+        Timeout = timeout,
+        StartedAt = startedAt
+      };
+      onWaiting(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
+  }
+
+  /// <summary>
+  /// Invokes the onDecisionMade callback safely, swallowing any exceptions.
+  /// </summary>
+  private static void _invokeOnDecisionMade(
+      Action<SyncDecisionContext>? onDecisionMade,
+      Type? perspectiveType,
+      SyncResult result,
+      bool didWait) {
+    if (onDecisionMade is null) {
+      return;
+    }
+
+    try {
+      var context = new SyncDecisionContext {
+        PerspectiveType = perspectiveType,
+        Outcome = result.Outcome,
+        EventsAwaited = result.EventsAwaited,
+        ElapsedTime = result.ElapsedTime,
+        DidWait = didWait
+      };
+      onDecisionMade(context);
+    } catch {
+      // Swallow exceptions - one bad callback shouldn't break sync
+    }
   }
 
   // ========================================
@@ -1698,7 +3567,7 @@ public abstract class Dispatcher(
     IMessageEnvelope<TMessage> envelope,
     TMessage payload,
     Type payloadType,
-    string destination
+    string? destination
   ) {
     // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
     if (typeof(TMessage) == typeof(JsonElement)) {
@@ -1770,16 +3639,16 @@ public abstract class Dispatcher(
 
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// Tries to get stream ID from first hop metadata, falls back to message ID.
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Check first hop for aggregate ID or stream key
+    // Check first hop for stream ID (stored as "AggregateId" for backward compatibility)
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
-        aggregateIdElem.ValueKind == JsonValueKind.String) {
-      var aggregateIdStr = aggregateIdElem.GetString();
-      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+        streamIdElem.ValueKind == JsonValueKind.String) {
+      var streamIdStr = streamIdElem.GetString();
+      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
+        return parsedStreamId;
       }
     }
 
@@ -1788,27 +3657,28 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
-  /// Creates hop metadata with AggregateId extracted from the message.
-  /// Returns null if no aggregate ID extractor is configured or no ID found.
+  /// Creates hop metadata with StreamId extracted from the message using [StreamId] attribute.
+  /// Returns null if no stream ID extractor is configured or no ID found.
   /// </summary>
   private Dictionary<string, JsonElement>? _createHopMetadata(object message, Type messageType) {
-    if (_aggregateIdExtractor == null) {
+    if (_streamIdExtractor == null) {
       return null;
     }
 
-    var aggregateId = _aggregateIdExtractor.ExtractAggregateId(message, messageType);
-    if (aggregateId == null) {
+    var streamId = _streamIdExtractor.ExtractStreamId(message, messageType);
+    if (streamId == null) {
       return null;
     }
 
-    // Create JsonElement for aggregate ID (AOT-safe approach using JsonDocument.Parse)
+    // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
     // Wrap GUID string in quotes for valid JSON string value
-    var jsonString = $"\"{aggregateId.Value}\"";
+    // Note: Key is "AggregateId" for backward compatibility with existing envelopes
+    var jsonString = $"\"{streamId.Value}\"";
     using var doc = JsonDocument.Parse(jsonString);
-    var aggregateIdElement = doc.RootElement.Clone(); // Clone to survive disposal
+    var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
 
     return new Dictionary<string, JsonElement> {
-      ["AggregateId"] = aggregateIdElement
+      ["AggregateId"] = streamIdElement
     };
   }
 
@@ -1859,4 +3729,33 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
   protected abstract VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a type-erased delegate for invoking ANY receptor.
+  /// This enables void LocalInvokeAsync paths to cascade events from non-void receptors.
+  /// Returns a delegate that invokes the receptor and returns the result as object? (null for void).
+  /// Returns null if no receptor (void or non-void) is registered for the message type.
+  /// </summary>
+  /// <remarks>
+  /// Priority order:
+  /// 1. Non-void async receptor (IReceptor&lt;TMessage, TResponse&gt;)
+  /// 2. Non-void sync receptor (ISyncReceptor&lt;TMessage, TResponse&gt;)
+  /// 3. Void async receptor (IReceptor&lt;TMessage&gt;)
+  /// 4. Void sync receptor (ISyncReceptor&lt;TMessage&gt;)
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#void-cascade</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherVoidCascadeTests.cs</tests>
+  protected abstract Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns the default dispatch routing for a message type
+  /// based on the [DefaultRouting] attribute on the receptor class that handles the message.
+  /// Used by cascade to apply receptor-level routing policy to all returned messages.
+  /// Returns null if no receptor with [DefaultRouting] is registered for the message type.
+  /// </summary>
+  /// <param name="messageType">The runtime type of the message</param>
+  /// <returns>The default dispatch mode from the receptor's [DefaultRouting] attribute, or null</returns>
+  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
+  protected abstract Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType);
 }

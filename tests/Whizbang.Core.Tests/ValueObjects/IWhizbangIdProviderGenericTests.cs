@@ -1,4 +1,5 @@
 using Whizbang.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.ValueObjects;
 
@@ -69,6 +70,7 @@ public class IWhizbangIdProviderGenericTests {
       _guid = guid;
     }
 
-    public Guid NewGuid() => _guid;
+    public TrackedGuid NewGuid() =>
+        TrackedGuid.FromIntercepted(_guid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
   }
 }

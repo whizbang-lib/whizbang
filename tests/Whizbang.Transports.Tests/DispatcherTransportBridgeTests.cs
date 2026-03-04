@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -410,7 +411,7 @@ public class DispatcherTransportBridgeTests {
   }
 
   public record TestResult : IEvent {
-    [StreamKey]
+    [StreamId]
     public int Result { get; init; }
   }
 
@@ -454,6 +455,15 @@ public class DispatcherTransportBridgeTests {
     }
 
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      // Return null to use default cascade behavior (no receptor-level routing override)
       return null;
     }
   }

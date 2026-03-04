@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
     <RootNamespace>Whizbang.Data.Tests</RootNamespace>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
     <NoWarn>$(NoWarn);CA1707</NoWarn>
@@ -23,8 +25,10 @@
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
-    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+    <!-- PrivateAssets prevents TUnit from discovering tests in the referenced test project -->
+    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" PrivateAssets="all" />
+    <!-- PrivateAssets prevents TUnit from discovering tests in the referenced test project -->
+    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

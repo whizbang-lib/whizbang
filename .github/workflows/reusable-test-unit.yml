@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       artifact-name:
-        description: 'Build artifact to download (skips build if provided)'
+        description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
         required: false
 
@@ -46,11 +46,66 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
-      - name: Run Unit Tests
-        run: pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
+      - name: Install dotnet-coverage
+        if: inputs.artifact-name != ''
+        run: dotnet tool install --global dotnet-coverage
 
-      - name: Upload Coverage
-        if: success()
+      # When using pre-built artifacts, instrument Whizbang DLLs in this job
+      # Must instrument in test output dirs (where tests load from), not just src/
+      - name: Instrument Whizbang Assemblies for Coverage
+        if: inputs.artifact-name != ''
+        run: |
+          SESSION_ID="coverage-${{ github.run_id }}-unit"
+          echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+          echo "=== Instrumenting Whizbang assemblies for coverage ==="
+
+          # Find all Whizbang DLLs in bin/Release (including test output dirs)
+          # Tests load DLLs from their own output, not from src/
+          find . -path "*/bin/Release/net10.0/Whizbang.*.dll" -type f | while read dll; do
+            # Skip generated, resources, and ref assemblies
+            if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]] || [[ "$dll" == *".g.dll" ]]; then
+              continue
+            fi
+            echo "Instrumenting: $dll"
+            dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" || echo "Warning: Could not instrument $dll"
+          done
+
+          echo "=== Instrumentation complete ==="
+
+      - name: Start Coverage Collection Server
+        if: inputs.artifact-name != ''
+        run: |
+          echo "Starting coverage collection server with session: $SESSION_ID"
+          mkdir -p TestResults
+          dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
+            -f cobertura -o TestResults/unit.cobertura.xml
+
+      - name: Run Unit Tests (with pre-built coverage)
+        if: inputs.artifact-name != ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Configuration Release -NoBuild
+
+      - name: Run Unit Tests (with dynamic coverage)
+        if: inputs.artifact-name == ''
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
+
+      - name: Shutdown Coverage Collection
+        if: inputs.artifact-name != ''
+        run: |
+          echo "Shutting down coverage collection session: $SESSION_ID"
+          dotnet-coverage shutdown "$SESSION_ID" || true
+          echo "=== Coverage file contents ==="
+          ls -la TestResults/ || true
+
+      - name: Upload Coverage (pre-built)
+        if: success() && inputs.artifact-name != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-unit
+          path: TestResults/*.cobertura.xml
+          retention-days: 1
+
+      - name: Upload Coverage (dynamic)
+        if: success() && inputs.artifact-name == ''
         uses: actions/upload-artifact@v6
         with:
           name: coverage-unit

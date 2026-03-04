@@ -9,28 +9,28 @@ using Whizbang.Core;
 namespace Whizbang.Core.Tests;
 
 /// <summary>
-/// Tests for <see cref="StreamKeyAttribute"/> attribute.
+/// Tests for <see cref="StreamIdAttribute"/> attribute.
 /// Validates attribute behavior, attribute usage configuration, and targeting rules.
 /// </summary>
 [Category("Core")]
 [Category("Attributes")]
-[Category("StreamKey")]
-public class StreamKeyAttributeTests {
+[Category("StreamId")]
+public class StreamIdAttributeTests {
 
   [Test]
-  public async Task StreamKeyAttribute_DefaultConstructor_CreatesInstanceAsync() {
+  public async Task StreamIdAttribute_DefaultConstructor_CreatesInstanceAsync() {
     // Arrange & Act
-    var attribute = new StreamKeyAttribute();
+    var attribute = new StreamIdAttribute();
 
     // Assert
     await Assert.That(attribute).IsNotNull();
-    await Assert.That(attribute).IsTypeOf<StreamKeyAttribute>();
+    await Assert.That(attribute).IsTypeOf<StreamIdAttribute>();
   }
 
   [Test]
-  public async Task StreamKeyAttribute_AttributeUsage_AllowsPropertyTargetAsync() {
+  public async Task StreamIdAttribute_AttributeUsage_AllowsPropertyTargetAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(StreamKeyAttribute)
+    var attributeUsage = typeof(StreamIdAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -41,9 +41,9 @@ public class StreamKeyAttributeTests {
   }
 
   [Test]
-  public async Task StreamKeyAttribute_AttributeUsage_AllowsParameterTargetAsync() {
+  public async Task StreamIdAttribute_AttributeUsage_AllowsParameterTargetAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(StreamKeyAttribute)
+    var attributeUsage = typeof(StreamIdAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -54,9 +54,9 @@ public class StreamKeyAttributeTests {
   }
 
   [Test]
-  public async Task StreamKeyAttribute_AttributeUsage_DoesNotAllowMultipleAsync() {
+  public async Task StreamIdAttribute_AttributeUsage_DoesNotAllowMultipleAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(StreamKeyAttribute)
+    var attributeUsage = typeof(StreamIdAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -67,9 +67,9 @@ public class StreamKeyAttributeTests {
   }
 
   [Test]
-  public async Task StreamKeyAttribute_AttributeUsage_IsInheritedAsync() {
+  public async Task StreamIdAttribute_AttributeUsage_IsInheritedAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(StreamKeyAttribute)
+    var attributeUsage = typeof(StreamIdAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();

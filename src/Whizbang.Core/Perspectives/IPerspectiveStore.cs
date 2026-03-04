@@ -39,6 +39,22 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Insert or update a read model with physical field values.
+  /// Creates new row if id doesn't exist, updates if it does.
+  /// Physical field values are applied to shadow properties or split columns.
+  /// Used for [PhysicalField] and [VectorField] properties that are stored outside JSONB.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) to store model for</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="physicalFieldValues">Dictionary mapping column names to values for physical fields</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Get a read model by partition key (for multi-stream/global perspectives).
   /// Returns null if the model doesn't exist yet.
   /// </summary>

@@ -6,6 +6,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -39,11 +41,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -78,11 +81,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -125,11 +129,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -170,11 +175,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -216,11 +222,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -263,11 +270,12 @@ public class TransportConsumerWorkerTests {
     var worker = new TransportConsumerWorker(
       transport,
       options,
+      new SubscriptionResilienceOptions(),
       scopeFactory,
       jsonOptions,
       orderedProcessor,
-      lifecycleInvoker: null,
       lifecycleMessageDeserializer: null,
+      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -342,6 +350,10 @@ internal class FakeSubscription : ISubscription {
   public bool IsDisposed { get; private set; }
   public int PauseCallCount { get; private set; }
   public int ResumeCallCount { get; private set; }
+
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
 
   public Task PauseAsync() {
     PauseCallCount++;
@@ -432,7 +444,7 @@ internal class FakeDispatcher : IDispatcher {
   ) =>
     throw new NotImplementedException();
 
-  public Task PublishAsync<TEvent>(TEvent eventData) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) =>
     throw new NotImplementedException();
 
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, Whizbang.Core.Dispatch.DispatchOptions options) where TMessage : notnull {
@@ -463,7 +475,7 @@ internal class FakeDispatcher : IDispatcher {
   public ValueTask LocalInvokeAsync(object message, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
-  public Task PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, Whizbang.Core.Dispatch.DispatchOptions options) =>
     throw new NotImplementedException();
 
   public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
@@ -474,6 +486,12 @@ internal class FakeDispatcher : IDispatcher {
 
   public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
     throw new NotImplementedException();
+
+  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 }
 
 internal class FakeDeliveryReceipt : IDeliveryReceipt {
@@ -484,6 +502,7 @@ internal class FakeDeliveryReceipt : IDeliveryReceipt {
   public string Destination => "test-destination";
   public DeliveryStatus Status => DeliveryStatus.Delivered;
   public IReadOnlyDictionary<string, JsonElement> Metadata => new Dictionary<string, JsonElement>();
+  public Guid? StreamId => null;
 }
 
 internal class FakeMessageEnvelope : IMessageEnvelope {
@@ -514,6 +533,7 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public CorrelationId? GetCorrelationId() => _hops[0].CorrelationId;
   public MessageId? GetCausationId() => _hops[0].CausationId;
   public JsonElement? GetMetadata(string key) => null;
+  public SecurityContext? GetCurrentSecurityContext() => null;
 }
 
 internal class DelayedReadinessCheck : ITransportReadinessCheck {

@@ -637,14 +637,14 @@ public class LifecycleInvocationHelperTests {
       }
     }
 
-    public ValueTask InvokeAsync(object message, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+    public ValueTask InvokeAsync(IMessageEnvelope envelope, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
       if (ThrowOnAsyncStage && stage.ToString().EndsWith("Async", StringComparison.Ordinal)) {
         throw new InvalidOperationException("Test exception in async stage");
       }
 
       lock (_lock) {
         _invocations.Add(new LifecycleInvocation {
-          Message = message,
+          Message = envelope.Payload,
           Stage = stage,
           Context = context as LifecycleExecutionContext
         });

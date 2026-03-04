@@ -13,7 +13,7 @@ public record ProductDto {
   /// <summary>
   /// Unique product identifier
   /// </summary>
-  [StreamKey]
+  [StreamId]
   public Guid ProductId { get; init; }
 
   /// <summary>

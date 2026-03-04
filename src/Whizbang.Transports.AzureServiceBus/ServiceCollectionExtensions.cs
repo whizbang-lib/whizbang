@@ -1,7 +1,10 @@
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus;
 
@@ -46,22 +49,40 @@ public static class ServiceCollectionExtensions {
     // ONLY if not already registered (allows tests to provide shared client)
     var existingRegistration = services.Any(sd => sd.ServiceType == typeof(Azure.Messaging.ServiceBus.ServiceBusClient));
     if (!existingRegistration) {
-      Console.WriteLine("[AddAzureServiceBusTransport] No existing ServiceBusClient found, creating new one");
       services.AddSingleton(sp => {
-        var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
-        logger?.LogInformation("Creating new ServiceBusClient from connection string");
-        return new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
+        var logger = sp.GetService<ILogger<AzureServiceBusConnectionRetry>>();
+        if (logger?.IsEnabled(LogLevel.Information) == true) {
+          var initialAttempts = options.InitialRetryAttempts;
+          var retryIndefinitely = options.RetryIndefinitely;
+          logger.LogInformation("Creating Azure Service Bus client with retry (initial {InitialAttempts} attempts, then indefinitely={RetryIndefinitely})", initialAttempts, retryIndefinitely);
+        }
+
+        var connectionRetry = new AzureServiceBusConnectionRetry(options, logger);
+        return connectionRetry.CreateClientWithRetryAsync(connectionString).GetAwaiter().GetResult();
       });
-    } else {
-      Console.WriteLine("[AddAzureServiceBusTransport] Found existing ServiceBusClient registration, reusing it");
     }
 
-    // Register transport as singleton, injecting shared client
+    // Auto-register admin client when AutoProvisionInfrastructure is enabled
+    // This allows the transport to auto-create topics and subscriptions
+    if (options.AutoProvisionInfrastructure) {
+      var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
+      if (!hasAdminClient) {
+        services.AddSingleton<IServiceBusAdminClient>(sp => {
+          var adminClient = new ServiceBusAdministrationClient(connectionString);
+          return new ServiceBusAdminClientWrapper(adminClient);
+        });
+      }
+    }
+
+    // Register transport as singleton, injecting shared client and optional admin client
     services.AddSingleton<ITransport>(sp => {
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
       var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
 
-      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger);
+      // Get admin client if available (for auto-provisioning)
+      var adminClient = sp.GetService<IServiceBusAdminClient>();
+
+      var transport = new AzureServiceBusTransport(client, jsonOptions, options, logger, adminClient);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
@@ -74,6 +95,67 @@ public static class ServiceCollectionExtensions {
       }
 
       return transport;
+    });
+
+    // Register transport readiness check
+    services.AddSingleton<ITransportReadinessCheck>(sp => {
+      var transport = sp.GetRequiredService<ITransport>();
+      var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
+      var logger = sp.GetRequiredService<ILogger<ServiceBusReadinessCheck>>();
+      return new ServiceBusReadinessCheck(transport, client, logger);
+    });
+
+    // Register message publish strategy
+    // Commands are AUTOMATICALLY routed to shared inbox topic
+    // If IOutboxRoutingStrategy is configured (via WithRouting), use its inbox topic
+    services.AddSingleton<IMessagePublishStrategy>(sp => {
+      var transport = sp.GetRequiredService<ITransport>();
+      var readinessCheck = sp.GetRequiredService<ITransportReadinessCheck>();
+
+      // Try to get inbox topic from registered outbox routing strategy
+      // WithRouting() registers IOutboxRoutingStrategy directly
+      var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+      if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
+        // Use the configured inbox topic from outbox strategy
+        return new TransportPublishStrategy(transport, readinessCheck, sharedStrategy.InboxTopic);
+      }
+
+      // Fall back to default inbox topic
+      return new TransportPublishStrategy(transport, readinessCheck);
+    });
+
+    return services;
+  }
+
+  /// <summary>
+  /// Registers infrastructure provisioner for automatic domain topic creation.
+  /// This requires a ServiceBusAdministrationClient which needs Manage permissions.
+  /// </summary>
+  /// <param name="services">The service collection to register with.</param>
+  /// <param name="connectionString">The Azure Service Bus connection string with Manage permissions.</param>
+  /// <returns>The service collection for chaining.</returns>
+  /// <remarks>
+  /// This is separate from AddAzureServiceBusTransport because topic provisioning
+  /// requires elevated permissions (Manage) that may not be available in all environments.
+  /// In production, topics are often pre-provisioned via infrastructure-as-code.
+  /// </remarks>
+  public static IServiceCollection AddAzureServiceBusProvisioner(
+    this IServiceCollection services,
+    string connectionString
+  ) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+    // Register admin client wrapper
+    services.AddSingleton<IServiceBusAdminClient>(sp => {
+      var adminClient = new ServiceBusAdministrationClient(connectionString);
+      return new ServiceBusAdminClientWrapper(adminClient);
+    });
+
+    // Register infrastructure provisioner
+    services.AddSingleton<IInfrastructureProvisioner>(sp => {
+      var adminClient = sp.GetRequiredService<IServiceBusAdminClient>();
+      var logger = sp.GetRequiredService<ILogger<ServiceBusInfrastructureProvisioner>>();
+      return new ServiceBusInfrastructureProvisioner(adminClient, logger);
     });
 
     return services;

@@ -87,7 +87,6 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
 
       // Register generated services (from ECommerce.Contracts)
       services.AddReceptors();
-      services.AddWhizbangAggregateIdExtractor();
       services.AddWhizbangDispatcher();
 
       // Add NullLogger for all logger dependencies

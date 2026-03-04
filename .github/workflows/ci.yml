@@ -27,6 +27,7 @@ jobs:
     needs: build
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
+      # Use pre-built artifacts with in-job instrumentation for coverage
       artifact-name: build-${{ github.run_id }}
 
   postgres-integration:

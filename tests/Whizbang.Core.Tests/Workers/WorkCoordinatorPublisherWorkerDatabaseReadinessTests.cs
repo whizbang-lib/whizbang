@@ -12,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -53,11 +54,17 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     var worker = services.GetRequiredService<IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);  // Allow time for polling
+
+    // Assert - ProcessWorkBatchAsync should NOT be called when database not ready
+    await AsyncTestHelpers.AssertNeverAsync(
+      () => testWorkCoordinator.CallCount > 0,
+      TimeSpan.FromMilliseconds(500),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      failureMessage: "ProcessWorkBatchAsync should be skipped when database not ready");
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - ProcessWorkBatchAsync should NOT be called
     await Assert.That(testWorkCoordinator.CallCount).IsEqualTo(0)
       .Because("ProcessWorkBatchAsync should be skipped when database not ready");
 
@@ -87,7 +94,14 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     var worker = services.GetRequiredService<IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+
+    // Wait for ProcessWorkBatchAsync to be called
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => testWorkCoordinator.CallCount >= 1,
+      TimeSpan.FromSeconds(5),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      timeoutMessage: "ProcessWorkBatchAsync should be called when database is ready");
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -116,7 +130,14 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(500);  // Allow multiple polling cycles
+
+    // Wait for consecutive checks counter to increment
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => worker.ConsecutiveDatabaseNotReadyChecks >= 1,
+      TimeSpan.FromSeconds(5),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      timeoutMessage: "Consecutive not-ready checks should be tracked");
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -144,22 +165,25 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     );
 
     // Act - Run long enough to exceed threshold (10 consecutive checks)
-    // Increased wait time for systems under load
     var worker = services.GetRequiredService<IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(2500);  // Allow sufficient time for multiple polls under load
+
+    // Wait for the specific "Database not ready for X consecutive polling cycles" warning
+    // This only happens after the threshold (10 consecutive checks) is exceeded
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => testLogger.GetLogsContaining("Database not ready for").Count >= 1,
+      TimeSpan.FromSeconds(15),
+      pollInterval: TimeSpan.FromMilliseconds(100),
+      timeoutMessage: "After 10 consecutive not-ready checks, 'Database not ready for' warning should be logged");
+
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - LogWarning should be emitted after 10 consecutive not-ready
-    var warningLogs = testLogger.GetLogsAtLevel(LogLevel.Warning);
-    await Assert.That(warningLogs.Count).IsGreaterThanOrEqualTo(1)
-      .Because("After 10 consecutive not-ready checks, a warning should be logged");
-
+    // Assert - LogWarning should mention consecutive polling cycles
     var dbWarnings = testLogger.GetLogsContaining("Database not ready for");
     await Assert.That(dbWarnings.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Warning should mention database readiness issue");
+      .Because("Warning should mention database readiness issue with consecutive count");
   }
 
   [Test]
@@ -182,12 +206,21 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Wait for some not-ready checks
-    await Task.Delay(300);
+    // Wait for some not-ready checks to accumulate
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => worker.ConsecutiveDatabaseNotReadyChecks >= 1,
+      TimeSpan.FromSeconds(5),
+      pollInterval: TimeSpan.FromMilliseconds(50));
 
     // Act - Database becomes ready
     databaseReadinessCheck.IsReadyResult = true;
-    await Task.Delay(300);
+
+    // Wait for counter to reset
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => worker.ConsecutiveDatabaseNotReadyChecks == 0,
+      TimeSpan.FromSeconds(5),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      timeoutMessage: "Consecutive counter should reset when database becomes ready");
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
@@ -221,14 +254,22 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     await worker.StartAsync(cts.Token);
 
     // Database not ready - ProcessWorkBatchAsync skipped
-    await Task.Delay(300);
-    await Assert.That(publishStrategy.PublishedWork).IsEmpty()
-      .Because("No work should be published when database not ready");
+    await AsyncTestHelpers.AssertNeverAsync(
+      () => publishStrategy.PublishedWork.Count > 0,
+      TimeSpan.FromMilliseconds(500),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      failureMessage: "No work should be published when database not ready");
 
     // Act - Database becomes ready
     databaseReadinessCheck.IsReadyResult = true;
     testWorkCoordinator.WorkToReturn = [_createTestOutboxWork(messageId)];
-    await Task.Delay(300);
+
+    // Wait for work to be published
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => publishStrategy.PublishedWork.Count >= 1,
+      TimeSpan.FromSeconds(5),
+      pollInterval: TimeSpan.FromMilliseconds(50),
+      timeoutMessage: "Work should be published once database becomes ready");
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);

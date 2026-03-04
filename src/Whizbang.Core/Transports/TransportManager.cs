@@ -205,7 +205,8 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
           Metadata = new Dictionary<string, JsonElement> {
             ["CorrelationId"] = JsonElementHelper.FromString(context.CorrelationId.ToString()),
             ["CausationId"] = JsonElementHelper.FromString(context.CausationId.ToString())
-          }
+          },
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };

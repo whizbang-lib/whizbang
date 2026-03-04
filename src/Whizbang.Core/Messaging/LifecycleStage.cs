@@ -1,11 +1,20 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Defines the 18 lifecycle stages where receptors can execute.
+/// Defines the 20 lifecycle stages where receptors can execute.
 /// Controls timing of receptor execution relative to database operations and message processing.
 /// Stages fall into pairs: Async (non-blocking) and Inline (blocks per unit of work).
 /// </summary>
+/// <remarks>
+/// <para>There are two mutually exclusive message paths:</para>
+/// <list type="bullet">
+/// <item><description><strong>Local Path</strong>: LocalImmediate stages (mediator pattern, no persistence)</description></item>
+/// <item><description><strong>Distributed Path</strong>: PreOutbox (sender) + PostInbox (receiver) stages</description></item>
+/// </list>
+/// <para>Receptors without [FireAt] fire at default stages for the current path.</para>
+/// </remarks>
 /// <docs>core-concepts/lifecycle-stages</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/LocalImmediateLifecycleStageTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
@@ -17,6 +26,32 @@ public enum LifecycleStage {
   /// Best for: Most receptors, fire-and-forget patterns.
   /// </summary>
   ImmediateAsync,
+
+  /// <summary>
+  /// Executed during local dispatch when no transport is involved (mediator pattern).
+  /// Async processing, does not block dispatch return.
+  /// NO persistence - messages are processed in-memory only.
+  /// Best for: In-process commands, domain events within a bounded context.
+  /// </summary>
+  /// <remarks>
+  /// LocalImmediate stages are mutually exclusive with distributed (Outbox/Inbox) stages.
+  /// When a message is dispatched locally, it fires at LocalImmediate stages.
+  /// When a message is dispatched via transport, it fires at PreOutbox (sender) and PostInbox (receiver).
+  /// </remarks>
+  LocalImmediateAsync,
+
+  /// <summary>
+  /// Executed during local dispatch when no transport is involved (mediator pattern).
+  /// Blocks dispatch until receptor completes.
+  /// NO persistence - messages are processed in-memory only.
+  /// Best for: In-process commands requiring synchronous handling, validation.
+  /// </summary>
+  /// <remarks>
+  /// LocalImmediate stages are mutually exclusive with distributed (Outbox/Inbox) stages.
+  /// When a message is dispatched locally, it fires at LocalImmediate stages.
+  /// When a message is dispatched via transport, it fires at PreOutbox (sender) and PostInbox (receiver).
+  /// </remarks>
+  LocalImmediateInline,
 
   /// <summary>
   /// Executed before process_work_batch call.

@@ -10,6 +10,9 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsRoslynComponent>true</IsRoslynComponent>
 
+    <!-- Suppress RS2008: Analyzer release tracking - not needed for internal analyzers -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+
     <!-- Enable viewing generated files (for debugging) -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
@@ -43,6 +46,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <!-- JSON serialization for schema hashing (ILMerged from Shared) -->
+    <PackageReference Include="System.Text.Json" PrivateAssets="all" />
     <!-- ILRepack to merge Shared DLL into generator DLL -->
     <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
   </ItemGroup>

@@ -157,7 +157,10 @@ public class RabbitMQTransportTests {
 
     await transport.InitializeAsync();
 
-    var destination = new TransportDestination("test-exchange", "test-queue");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("test-exchange", "#", metadata);
 
     // Act
     var subscription = await transport.SubscribeAsync(
@@ -193,7 +196,10 @@ public class RabbitMQTransportTests {
 
     await transport.InitializeAsync();
 
-    var destination = new TransportDestination("test-exchange", "test-queue");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("test-exchange", "#", metadata);
 
     // Act
     var subscription = await transport.SubscribeAsync(
@@ -226,7 +232,10 @@ public class RabbitMQTransportTests {
 
     await transport.InitializeAsync();
 
-    var destination = new TransportDestination("test-exchange", "test-queue");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await Task.CompletedTask,
       destination
@@ -260,7 +269,10 @@ public class RabbitMQTransportTests {
 
     await transport.InitializeAsync();
 
-    var destination = new TransportDestination("test-exchange", "test-queue");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await Task.CompletedTask,
       destination
@@ -296,7 +308,10 @@ public class RabbitMQTransportTests {
 
     await transport.InitializeAsync();
 
-    var destination = new TransportDestination("test-exchange", "test-queue");
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"test-subscriber\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("test-exchange", "#", metadata);
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await Task.CompletedTask,
       destination
@@ -312,6 +327,195 @@ public class RabbitMQTransportTests {
     await Assert.That(fakeChannel.BasicCancelAsyncCalled).IsTrue();
     await Assert.That(fakeChannel.IsDisposed).IsTrue();
   }
+
+  #region Deterministic Queue Naming Tests
+
+  [Test]
+  public async Task SubscribeAsync_WithSubscriberNameMetadata_UsesDeterministicQueueNameAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    // Create metadata with SubscriberName
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"order-service\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("inbox", "#", metadata);
+
+    // Act
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Assert - Queue name should be "{SubscriberName}-{exchangeName}"
+    await Assert.That(fakeChannel.LastDeclaredQueueName).IsEqualTo("order-service-inbox");
+  }
+
+  [Test]
+  public async Task SubscribeAsync_WithoutSubscriberName_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    // No metadata - SubscriberName not provided
+    var destination = new TransportDestination("inbox");
+
+    // Act & Assert - Should throw because SubscriberName is required
+    await Assert.That(async () => await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    )).Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task SubscribeAsync_WithDefaultQueueNameOption_UsesOptionOverMetadataAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions {
+      DefaultQueueName = "explicit-queue-name"
+    };
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    // Has SubscriberName but should be ignored when DefaultQueueName is set
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"order-service\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("inbox", "#", metadata);
+
+    // Act
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Assert - DefaultQueueName takes precedence
+    await Assert.That(fakeChannel.LastDeclaredQueueName).IsEqualTo("explicit-queue-name");
+  }
+
+  [Test]
+  public async Task SubscribeAsync_MultipleCallsWithSameSubscriberName_UseSameQueueNameAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("events.inventory", "#", metadata);
+
+    // Act - Subscribe twice (simulating two service instances)
+    var subscription1 = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    var firstQueueName = fakeChannel.LastDeclaredQueueName;
+
+    var subscription2 = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Assert - Both should use the same deterministic queue name
+    await Assert.That(fakeChannel.LastDeclaredQueueName).IsEqualTo(firstQueueName);
+    await Assert.That(firstQueueName).IsEqualTo("inventory-worker-events.inventory");
+  }
+
+  [Test]
+  public async Task SubscribeAsync_WithEmptySubscriberName_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    // Empty SubscriberName should be treated as missing
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse("\"  \"").RootElement.Clone()
+    };
+    var destination = new TransportDestination("inbox", "#", metadata);
+
+    // Act & Assert - Should throw because SubscriberName is effectively missing
+    await Assert.That(async () => await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    )).Throws<InvalidOperationException>();
+  }
+
+  #endregion
 
   // Helper to create a test envelope
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {

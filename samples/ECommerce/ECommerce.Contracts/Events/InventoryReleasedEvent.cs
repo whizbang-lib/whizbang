@@ -7,8 +7,7 @@ namespace ECommerce.Contracts.Events;
 /// </summary>
 public record InventoryReleasedEvent : IEvent {
   public required string OrderId { get; init; }
-  [AggregateId]
-  [StreamKey]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public int Quantity { get; init; }
   public DateTime ReleasedAt { get; init; }

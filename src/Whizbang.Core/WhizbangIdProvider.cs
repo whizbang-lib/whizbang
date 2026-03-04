@@ -1,3 +1,5 @@
+using Whizbang.Core.ValueObjects;
+
 namespace Whizbang.Core;
 
 /// <summary>
@@ -59,11 +61,11 @@ public static class WhizbangIdProvider {
   }
 
   /// <summary>
-  /// Generates a new globally unique identifier using the configured provider.
+  /// Generates a new globally unique identifier with tracking metadata using the configured provider.
   /// This method is called by generated WhizbangId types.
   /// </summary>
-  /// <returns>A new Guid value from the configured provider.</returns>
+  /// <returns>A TrackedGuid from the configured provider with creation metadata.</returns>
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithDefaultProvider_ShouldReturnUuidV7Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithCustomProvider_ShouldReturnCustomGuidAsync</tests>
-  public static Guid NewGuid() => _provider.NewGuid();
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithCustomProvider_ShouldReturnCustomTrackedGuidAsync</tests>
+  public static TrackedGuid NewGuid() => _provider.NewGuid();
 }

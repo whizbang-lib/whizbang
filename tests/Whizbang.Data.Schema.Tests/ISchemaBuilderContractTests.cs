@@ -168,6 +168,8 @@ public abstract class ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("wh_message_deduplication");
     await Assert.That(sql).Contains("wh_receptor_processing");
     await Assert.That(sql).Contains("wh_perspective_checkpoints");
+    await Assert.That(sql).Contains("wh_message_associations");
+    await Assert.That(sql).Contains("wh_perspective_registry");
     await Assert.That(sql).Contains("wh_request_response");
     await Assert.That(sql).Contains("wh_sequences");
   }

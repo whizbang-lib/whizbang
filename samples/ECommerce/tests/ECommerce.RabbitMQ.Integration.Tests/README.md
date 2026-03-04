@@ -59,7 +59,7 @@ This test project contains end-to-end integration tests for the ECommerce sample
 
 ```bash
 # From repository root
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode IntegrationsOnly
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode Integration
 
 # Or directly via dotnet test
 dotnet test samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/
@@ -82,7 +82,7 @@ pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -TestFilt
 
 ```bash
 # Run all integration tests (both transports)
-pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly
+pwsh scripts/Run-Tests.ps1 -Mode Integration
 
 # Or with AI-optimized output
 pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations
@@ -101,10 +101,10 @@ The RabbitMQ integration tests leverage TUnit's per-class fixtures with TestCont
 
 ```bash
 # Run with 4 concurrent test classes (for resource-constrained environments)
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode IntegrationsOnly -MaxParallel 4
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode Integration -MaxParallel 4
 
 # Run with maximum parallelism (all CPU cores)
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode IntegrationsOnly -MaxParallel 0
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "RabbitMQ.Integration.Tests" -Mode Integration -MaxParallel 0
 ```
 
 ## Performance Comparison

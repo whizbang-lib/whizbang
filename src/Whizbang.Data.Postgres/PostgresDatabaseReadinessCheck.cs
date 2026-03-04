@@ -38,6 +38,7 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
   /// Returns true if:
   /// - Database connection can be established
   /// - Required Whizbang tables exist (inbox, outbox, eventstore)
+  /// - Required Whizbang functions exist (process_work_batch, etc.)
   /// </summary>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>True if database is ready, false otherwise</returns>
@@ -47,6 +48,7 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_ReturnsConsistentResultAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_ChecksAllRequiredTables_VerifiesInboxOutboxEventStoreAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithMissingFunctions_ReturnsFalseAsync</tests>
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     try {
       // Test database connectivity and table presence
@@ -60,8 +62,8 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
         WHERE table_schema = 'public'
           AND table_name IN ('wh_inbox', 'wh_outbox', 'wh_event_store')";
 
-      await using var command = new NpgsqlCommand(checkTablesSql, connection);
-      var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+      await using var tableCommand = new NpgsqlCommand(checkTablesSql, connection);
+      var tableCount = Convert.ToInt32(await tableCommand.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
 
       if (tableCount < 3) {
         _logger.LogWarning(
@@ -71,7 +73,27 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
         return false;
       }
 
-      _logger.LogDebug("PostgreSQL database ready: All required tables present");
+      // Check for required Whizbang functions (installed by migrations)
+      // process_work_batch is the critical function used by workers
+      // Functions are installed in 'public' schema (via __SCHEMA__ placeholder replacement)
+      const string checkFunctionsSql = @"
+        SELECT COUNT(*)
+        FROM information_schema.routines
+        WHERE routine_schema = 'public'
+          AND routine_name = 'process_work_batch'
+          AND routine_type = 'FUNCTION'";
+
+      await using var functionCommand = new NpgsqlCommand(checkFunctionsSql, connection);
+      var functionCount = Convert.ToInt32(await functionCommand.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+
+      if (functionCount < 1) {
+        _logger.LogWarning(
+          "PostgreSQL database not ready: Required function 'task.process_work_batch' not found. Schema migrations may still be running."
+        );
+        return false;
+      }
+
+      _logger.LogDebug("PostgreSQL database ready: All required tables and functions present");
       return true;
     } catch (OperationCanceledException) {
       // Propagate cancellation

@@ -2,14 +2,19 @@ using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Lenses;
 using ECommerce.InventoryWorker.Lenses;
+using ECommerce.InventoryWorker.Perspectives;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives.Sync;
 
 namespace ECommerce.InventoryWorker.Receptors;
 
 /// <summary>
-/// Handles RestockInventoryCommand and publishes InventoryRestockedEvent
+/// Handles RestockInventoryCommand and publishes InventoryRestockedEvent.
+/// Uses [AwaitPerspectiveSync] to ensure the product exists in the perspective
+/// (ProductCreatedEvent has been processed) before restocking.
 /// </summary>
+[AwaitPerspectiveSync(typeof(InventoryLevelsPerspective), EventTypes = [typeof(ProductCreatedEvent)])]
 public class RestockInventoryReceptor(
   IDispatcher dispatcher,
   IInventoryLens inventoryLens,

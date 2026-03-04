@@ -1,3 +1,4 @@
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents;
@@ -105,6 +106,32 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
   public TLens GetMyOrSharedLens<TLens>() where TLens : ILensQuery =>
     GetLens<TLens>(ScopeFilter.Tenant | ScopeFilter.User | ScopeFilter.Principal);
 
+  // === Event Store Query Methods ===
+
+  /// <inheritdoc/>
+  public IEventStoreQuery GetEventStoreQuery(ScopeFilter filters) {
+    var filterInfo = _buildFilterInfo(filters);
+    return _resolveEventStoreQueryWithFilter(filterInfo);
+  }
+
+  /// <inheritdoc/>
+  public IEventStoreQuery GetEventStoreQuery(ScopeFilter filters, Permission requiredPermission) {
+    _checkPermission(requiredPermission, "EventStoreQuery");
+    return GetEventStoreQuery(filters);
+  }
+
+  /// <inheritdoc/>
+  public IEventStoreQuery GetGlobalEventStoreQuery() =>
+    GetEventStoreQuery(ScopeFilter.None);
+
+  /// <inheritdoc/>
+  public IEventStoreQuery GetTenantEventStoreQuery() =>
+    GetEventStoreQuery(ScopeFilter.Tenant);
+
+  /// <inheritdoc/>
+  public IEventStoreQuery GetUserEventStoreQuery() =>
+    GetEventStoreQuery(ScopeFilter.Tenant | ScopeFilter.User);
+
   // === Private Helper Methods ===
 
   private ScopeFilterInfo _buildFilterInfo(ScopeFilter filters) {
@@ -133,6 +160,19 @@ public sealed class ScopedLensFactory : IScopedLensFactory {
     }
 
     return (TLens)lens;
+  }
+
+  private IEventStoreQuery _resolveEventStoreQueryWithFilter(ScopeFilterInfo filterInfo) {
+    var query = _serviceProvider.GetService(typeof(IFilterableEventStoreQuery))
+      ?? throw new InvalidOperationException(
+        "IFilterableEventStoreQuery is not registered in the service provider. " +
+        "Ensure Whizbang infrastructure is properly configured.");
+
+    // Apply the filter to the query
+    var filterable = (IFilterableEventStoreQuery)query;
+    filterable.ApplyFilter(filterInfo);
+
+    return filterable;
   }
 
   private void _checkPermission(Permission requiredPermission, string resourceType) {

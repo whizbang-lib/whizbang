@@ -8,6 +8,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.BFF.API.Tests.GraphQL;
@@ -42,8 +43,8 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       var receipts = new List<IDeliveryReceipt>();
       foreach (var message in messages) {
@@ -59,6 +60,8 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 
   /// <summary>
@@ -210,8 +213,8 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       throw new InvalidOperationException("Dispatcher failure");
     }
@@ -222,5 +225,7 @@ public class SeedMutationsTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   }
 }

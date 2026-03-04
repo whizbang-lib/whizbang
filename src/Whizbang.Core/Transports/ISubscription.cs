@@ -4,6 +4,26 @@ using System.Threading.Tasks;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// Event args for subscription disconnection events.
+/// </summary>
+public class SubscriptionDisconnectedEventArgs : EventArgs {
+  /// <summary>
+  /// Gets the exception that caused the disconnection, if any.
+  /// </summary>
+  public Exception? Exception { get; init; }
+
+  /// <summary>
+  /// Gets the reason for disconnection.
+  /// </summary>
+  public string Reason { get; init; } = "Unknown";
+
+  /// <summary>
+  /// Gets whether the disconnection was initiated by the application (e.g., during shutdown).
+  /// </summary>
+  public bool IsApplicationInitiated { get; init; }
+}
+
+/// <summary>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
@@ -16,6 +36,11 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 /// <docs>components/transports</docs>
 public interface ISubscription : IDisposable {
+  /// <summary>
+  /// Event raised when the subscription is disconnected unexpectedly.
+  /// Subscribers can use this to trigger immediate reconnection attempts.
+  /// </summary>
+  event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
   /// <summary>
   /// Gets whether the subscription is currently active.
   /// When paused, the subscription will not receive new messages.

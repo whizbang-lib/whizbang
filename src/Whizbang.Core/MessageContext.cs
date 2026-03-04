@@ -30,6 +30,9 @@ public class MessageContext : IMessageContext {
   /// <inheritdoc />
   public string? UserId { get; init; }
 
+  /// <inheritdoc />
+  public string? TenantId { get; init; }
+
   private readonly Dictionary<string, object> _metadata = [];
 
   /// <inheritdoc />

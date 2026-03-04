@@ -34,7 +34,7 @@ public class MessageHopTests {
     await Assert.That(hop.ServiceInstance.HostName).IsNotEqualTo(string.Empty);
     await Assert.That(hop.Timestamp).IsNotEqualTo(default);
     await Assert.That(hop.Topic).IsEqualTo(string.Empty);
-    await Assert.That(hop.StreamKey).IsEqualTo(string.Empty);
+    await Assert.That(hop.StreamId).IsEqualTo(string.Empty);
     await Assert.That(hop.ExecutionStrategy).IsEqualTo(string.Empty);
   }
 
@@ -73,7 +73,7 @@ public class MessageHopTests {
       },
       Timestamp = timestamp,
       Topic = "TestTopic",
-      StreamKey = "TestStream",
+      StreamId = "TestStream",
       PartitionIndex = 3,
       SequenceNumber = 42,
       ExecutionStrategy = "SerialExecutor",
@@ -88,7 +88,7 @@ public class MessageHopTests {
     await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("TestMachine");
     await Assert.That(hop.Timestamp).IsEqualTo(timestamp);
     await Assert.That(hop.Topic).IsEqualTo("TestTopic");
-    await Assert.That(hop.StreamKey).IsEqualTo("TestStream");
+    await Assert.That(hop.StreamId).IsEqualTo("TestStream");
     await Assert.That(hop.PartitionIndex).IsEqualTo(3);
     await Assert.That(hop.SequenceNumber).IsEqualTo(42L);
     await Assert.That(hop.ExecutionStrategy).IsEqualTo("SerialExecutor");

@@ -49,4 +49,32 @@ internal static class JsonElementHelper {
   public static JsonElement FromBoolean(bool value) {
     return JsonDocument.Parse(value ? "true" : "false").RootElement.Clone();
   }
+
+  /// <summary>
+  /// Creates a JsonElement array from a sequence of strings (AOT-compatible).
+  /// </summary>
+  public static JsonElement FromStringArray(IEnumerable<string> values) {
+    ArgumentNullException.ThrowIfNull(values);
+
+    // Build JSON array manually for AOT compatibility
+    var escapedValues = values.Select(v => {
+      if (v == null) {
+        return "null";
+      }
+
+      var escaped = v
+        .Replace("\\", "\\\\")
+        .Replace("\"", "\\\"")
+        .Replace("\n", "\\n")
+        .Replace("\r", "\\r")
+        .Replace("\t", "\\t")
+        .Replace("\b", "\\b")
+        .Replace("\f", "\\f");
+
+      return $"\"{escaped}\"";
+    });
+
+    var json = $"[{string.Join(",", escapedValues)}]";
+    return JsonDocument.Parse(json).RootElement.Clone();
+  }
 }

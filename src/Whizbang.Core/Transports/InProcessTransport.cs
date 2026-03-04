@@ -170,6 +170,18 @@ public class InProcessTransport : ITransport {
     private readonly Action _onDispose = onDispose;
     private bool _isDisposed;
 
+    private EventHandler<SubscriptionDisconnectedEventArgs>? _onDisconnectedHandler;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// In-process transport never disconnects unexpectedly, so this event is never raised.
+    /// It exists only to satisfy the ISubscription interface. Handlers are tracked but never invoked.
+    /// </remarks>
+    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected {
+      add => _onDisconnectedHandler += value;
+      remove => _onDisconnectedHandler -= value;
+    }
+
     /// <summary>
     /// Gets whether this subscription is actively receiving messages.
     /// </summary>

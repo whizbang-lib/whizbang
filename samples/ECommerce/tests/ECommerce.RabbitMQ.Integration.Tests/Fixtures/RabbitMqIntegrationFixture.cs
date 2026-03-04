@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
@@ -7,7 +8,9 @@ using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
@@ -15,6 +18,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Resilience;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -212,6 +216,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost() {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = _inventoryPostgresConnection
+    });
+
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
       new TestServiceInstanceProvider(Uuid7.NewUuid7().ToGuid(), "InventoryWorker"));
@@ -243,6 +253,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(inventoryDataSource);
     });
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
@@ -255,11 +270,15 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    builder.Services.AddWhizbangAggregateIdExtractor();
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    // and test events don't have TenantId/UserId in their hops
+    builder.Services.Replace(ServiceDescriptor.Singleton(new Whizbang.Core.Security.MessageSecurityOptions { AllowAnonymous = true }));
 
     // Register perspective runners
     ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
@@ -323,18 +342,22 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"products-{_testId}",
-      RoutingKey: $"inventory-products-queue-{_testId}"
+      RoutingKey: $"inventory-products-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
+      }
     ));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
         consumerOptions,
+        new SubscriptionResilienceOptions(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetService<ILifecycleInvoker>(),
-        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -350,6 +373,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   private IHost _createBffHost() {
     var builder = Host.CreateApplicationBuilder();
+
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = _bffPostgresConnection
+    });
 
     // Register service instance provider (unique instance ID per test)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp =>
@@ -387,6 +416,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
@@ -402,6 +436,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    // and test events don't have TenantId/UserId in their hops
+    builder.Services.Replace(ServiceDescriptor.Singleton(new Whizbang.Core.Security.MessageSecurityOptions { AllowAnonymous = true }));
 
     // Register TopicRegistry
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
@@ -467,22 +506,29 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"products-{_testId}",
-      RoutingKey: $"bff-products-queue-{_testId}"
+      RoutingKey: $"bff-products-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
     ));
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: $"inventory-{_testId}",
-      RoutingKey: $"bff-inventory-queue-{_testId}"
+      RoutingKey: $"bff-inventory-queue-{_testId}",
+      Metadata: new Dictionary<string, JsonElement> {
+        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
+      }
     ));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
         sp.GetRequiredService<ITransport>(),
         consumerOptions,
+        new SubscriptionResilienceOptions(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetService<ILifecycleInvoker>(),
-        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -541,12 +587,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
 
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         dbContext,
-        schema: "inventory",
-        serviceName: "ECommerce.InventoryWorker",
-        logger: logger,
-        cancellationToken: ct
+        "inventory",
+        "ECommerce.InventoryWorker",
+        logger,
+        ct
       );
 
       Console.WriteLine("[RabbitMqFixture] InventoryWorker message associations registered (inventory schema)");
@@ -557,12 +603,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
 
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         dbContext,
-        schema: "bff",
-        serviceName: "ECommerce.BFF.API",
-        logger: logger,
-        cancellationToken: ct
+        "bff",
+        "ECommerce.BFF.API",
+        logger,
+        ct
       );
 
       Console.WriteLine("[RabbitMqFixture] BFF message associations registered (bff schema)");

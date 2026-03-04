@@ -91,7 +91,6 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
     services.AddScoped<ECommerce.BFF.API.Lenses.IInventoryLevelsLens, ECommerce.BFF.API.Lenses.InventoryLevelsLens>();
 
     // Register aggregate ID extractor
-    services.AddWhizbangAggregateIdExtractor();
 
     // Add simple mock for SignalR hub context
     services.AddSingleton<IHubContext<ProductInventoryHub>>(new TestHubContext());

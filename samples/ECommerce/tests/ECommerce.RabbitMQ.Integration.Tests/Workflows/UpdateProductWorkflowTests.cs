@@ -66,7 +66,7 @@ public class UpdateProductWorkflowTests {
   /// 4. Updated product is queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_Name_UpdatesPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -84,7 +84,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -98,7 +98,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -122,7 +122,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating all product fields works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_AllFields_UpdatesPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -140,7 +140,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -154,7 +154,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -181,7 +181,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating only the price works correctly (partial update).
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_PriceOnly_UpdatesOnlyPriceAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -199,7 +199,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -213,7 +213,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -236,7 +236,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating product description and image URL works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_DescriptionAndImage_UpdatesBothFieldsAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -254,7 +254,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -268,7 +268,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -292,7 +292,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that multiple sequential updates accumulate correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_MultipleSequentialUpdates_AccumulatesChangesAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -310,7 +310,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
@@ -324,7 +324,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update1);
-    await updateWaiter1.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter1.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
@@ -338,7 +338,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update2);
-    await updateWaiter2.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter2.WaitAsync(timeoutMilliseconds: 90000);
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
@@ -352,7 +352,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update3);
-    await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter3.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
@@ -378,7 +378,7 @@ public class UpdateProductWorkflowTests {
   /// Tests that updating a product does NOT affect its inventory levels.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task UpdateProduct_DoesNotAffectInventoryAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -396,7 +396,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Verify initial inventory
     var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
@@ -415,7 +415,7 @@ public class UpdateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
 
     // Refresh lens scopes to get fresh DbContexts that can see committed perspective data

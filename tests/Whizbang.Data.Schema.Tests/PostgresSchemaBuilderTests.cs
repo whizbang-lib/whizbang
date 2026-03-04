@@ -337,4 +337,137 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     // Assert
     await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS custom_event_sequence");
   }
+
+  // =============================================================================
+  // Schema Quoting Tests - Ensures PostgreSQL reserved keywords are properly quoted
+  // =============================================================================
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithReservedKeywordSchema_QuotesSchemaNameAsync() {
+    // Arrange
+    // "user" is a PostgreSQL reserved keyword that causes syntax errors if unquoted
+    var config = new SchemaConfiguration(SchemaName: "user");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert - Schema should be quoted with double quotes to handle reserved keywords
+    await Assert.That(sql).Contains("CREATE SCHEMA IF NOT EXISTS \"user\"");
+    await Assert.That(sql).Contains("\"user\".wh_inbox");
+    await Assert.That(sql).Contains("\"user\".wh_outbox");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithSelectSchema_QuotesSchemaNameAsync() {
+    // Arrange
+    // "select" is another PostgreSQL reserved keyword
+    var config = new SchemaConfiguration(SchemaName: "select");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert
+    await Assert.That(sql).Contains("CREATE SCHEMA IF NOT EXISTS \"select\"");
+    await Assert.That(sql).Contains("\"select\".wh_event_store");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithTableSchema_QuotesSchemaNameAsync() {
+    // Arrange
+    // "table" is a PostgreSQL reserved keyword
+    var config = new SchemaConfiguration(SchemaName: "table");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert
+    await Assert.That(sql).Contains("CREATE SCHEMA IF NOT EXISTS \"table\"");
+  }
+
+  [Test]
+  public async Task BuildCreateTable_WithReservedKeywordSchema_QuotesSchemaInTableNameAsync() {
+    // Arrange
+    var table = new TableDefinition(
+      Name: "test_table",
+      Columns: ImmutableArray.Create(
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
+      )
+    );
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, "wh_", "user");
+
+    // Assert - Schema should be quoted
+    await Assert.That(sql).Contains("\"user\".wh_test_table");
+  }
+
+  [Test]
+  public async Task BuildCreateIndex_WithReservedKeywordSchema_QuotesSchemaInTableNameAsync() {
+    // Arrange
+    var index = new IndexDefinition(
+      Name: "idx_test",
+      Columns: ImmutableArray.Create("email")
+    );
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, "users", "wh_", "user");
+
+    // Assert - Schema should be quoted in the ON clause
+    await Assert.That(sql).Contains("ON \"user\".wh_users");
+  }
+
+  [Test]
+  public async Task BuildCreateSequence_WithReservedKeywordSchema_QuotesSchemaNameAsync() {
+    // Arrange
+    var sequence = new SequenceDefinition("event_sequence");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, "wh_", "user");
+
+    // Assert - Schema should be quoted
+    await Assert.That(sql).Contains("\"user\".wh_event_sequence");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithNormalSchema_StillQuotesSchemaNameAsync() {
+    // Arrange
+    // Even non-reserved schema names should be quoted for consistency
+    var config = new SchemaConfiguration(SchemaName: "inventory");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert - All schema names should be quoted for safety
+    await Assert.That(sql).Contains("CREATE SCHEMA IF NOT EXISTS \"inventory\"");
+    await Assert.That(sql).Contains("\"inventory\".wh_inbox");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithPublicSchema_OmitsSchemaQualificationAsync() {
+    // Arrange
+    // public schema is the default and doesn't need explicit qualification
+    var config = new SchemaConfiguration(SchemaName: "public");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert - public schema shouldn't create a separate CREATE SCHEMA statement
+    // and table names shouldn't be prefixed with "public."
+    await Assert.That(sql).DoesNotContain("public.wh_inbox");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_WithEmptySchema_OmitsSchemaQualificationAsync() {
+    // Arrange
+    var config = new SchemaConfiguration(SchemaName: "");
+
+    // Act
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
+
+    // Assert - Empty schema should not add schema qualification
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
+    await Assert.That(sql).DoesNotContain("\"\".wh_inbox");
+  }
+
 }

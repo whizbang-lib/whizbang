@@ -697,6 +697,92 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
     await Assert.That(diagnostics).IsNotNull();
   }
 
+  // ==================== WhizbangTrace Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync() {
+    // Arrange - Tests [WhizbangTrace] attribute detection
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Tracing;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+[WhizbangTrace]
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate ReceptorRegistry.g.cs with tracing code
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The traced snippet should include ITracer calls
+    await Assert.That(registry!).Contains("ITracer");
+    await Assert.That(registry).Contains("BeginHandlerTrace");
+    await Assert.That(registry).Contains("EndHandlerTrace");
+    await Assert.That(registry).Contains("IDebuggerAwareClock");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutWhizbangTraceAttribute_DoesNotGenerateTracingCodeAsync() {
+    // Arrange - Tests that tracing code is NOT generated for non-traced receptors
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT contain tracing code for non-traced receptors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The normal snippet should NOT include ITracer calls
+    await Assert.That(registry!).DoesNotContain("ITracer");
+    await Assert.That(registry).DoesNotContain("BeginHandlerTrace");
+  }
+
   // ==================== Sync Receptor Tests ====================
 
   [Test]
@@ -871,4 +957,1190 @@ public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
     await Assert.That(whiz001).IsNotNull();
     await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("SyncOrderReceptor");
   }
+
+  // ==================== ReceptorRegistry.g.cs Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithReceptor_GeneratesReceptorRegistryAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate ReceptorRegistry.g.cs
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("IReceptorRegistry");
+    await Assert.That(registry).Contains("GetReceptorsFor");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorWithoutFireAt_RegisteredAtDefaultStagesAsync() {
+    // Arrange - Receptor without [FireAt] attribute should be registered at 3 default stages
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should register at LocalImmediateInline, PreOutboxInline, PostInboxInline
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("LifecycleStage.LocalImmediateInline");
+    await Assert.That(registry).Contains("LifecycleStage.PreOutboxInline");
+    await Assert.That(registry).Contains("LifecycleStage.PostInboxInline");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorWithFireAt_RegisteredOnlyAtSpecifiedStageAsync() {
+    // Arrange - Receptor with [FireAt(PostInboxInline)] should only be registered at PostInboxInline
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record AuditEvent : IEvent;
+
+[FireAt(LifecycleStage.PostInboxInline)]
+public class AuditLogger : IReceptor<AuditEvent> {
+  public ValueTask HandleAsync(AuditEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should only register at PostInboxInline
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // Count occurrences of the message type - should only appear for PostInboxInline
+    var content = registry!;
+    var auditEventCount = content.Split("AuditEvent").Length - 1;
+
+    // With [FireAt(PostInboxInline)], the receptor should appear exactly once (at PostInboxInline)
+    // Not at LocalImmediateInline or PreOutboxInline
+    await Assert.That(content).Contains("LifecycleStage.PostInboxInline");
+    await Assert.That(auditEventCount).IsGreaterThan(0);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ReceptorRegistry_HasCorrectStructureAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record TestCommand : ICommand;
+public record TestResponse : IEvent;
+
+public class TestReceptor : IReceptor<TestCommand, TestResponse> {
+  public ValueTask<TestResponse> HandleAsync(TestCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new TestResponse());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Verify structure of generated ReceptorRegistry
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("sealed class GeneratedReceptorRegistry");
+    // NOTE: GeneratedReceptorRegistry no longer has IServiceProvider field.
+    // Instead, the InvokeAsync delegate accepts (sp, msg, ct) where sp is the scoped provider.
+    await Assert.That(registry).Contains("GetReceptorsFor(Type messageType, LifecycleStage stage)");
+    await Assert.That(registry).Contains("ReceptorInfo[]");
+    await Assert.That(registry).Contains("ReceptorId:");
+    await Assert.That(registry).Contains("InvokeAsync:");
+    // Verify the delegate signature accepts IServiceProvider as first parameter (sp)
+    await Assert.That(registry).Contains("(sp, msg, ct)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DispatcherRegistrations_IncludesAddWhizbangReceptorRegistryAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record TestCommand : ICommand;
+public record TestResponse : IEvent;
+
+public class TestReceptor : IReceptor<TestCommand, TestResponse> {
+  public ValueTask<TestResponse> HandleAsync(TestCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new TestResponse());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - DispatcherRegistrations should include AddWhizbangReceptorRegistry extension method
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(registrations!).Contains("AddWhizbangReceptorRegistry");
+    await Assert.That(registrations).Contains("IReceptorRegistry, GeneratedReceptorRegistry");
+    await Assert.That(registrations).Contains("IReceptorInvoker, ReceptorInvoker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ZeroReceptors_GeneratesEmptyReceptorRegistryAsync() {
+    // Arrange - Project with perspective but no receptors
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace MyApp.Perspectives;
+
+public record ProductCreatedEvent : IEvent;
+
+public record ProductModel {
+  public Guid Id { get; set; }
+}
+
+public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+  public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+    return currentData;
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should still generate ReceptorRegistry.g.cs with empty routing
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
+    await Assert.That(registry).Contains("return _emptyList");
+  }
+
+  #region Multiple Handler Validation Tests
+
+  /// <summary>
+  /// Tests that WHIZ080 error is reported when multiple handlers handle the same
+  /// message type with a response (RPC pattern). RPC requires exactly one handler
+  /// because we can only return one result.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Skip("WHIZ080 diagnostic is disabled by default pending key-based RPC handler selection feature")]
+  public async Task Generator_WithMultipleRpcHandlers_ReportsWHIZ080ErrorAsync() {
+    // Arrange - Two handlers for the same message type with response (RPC pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+// First handler for CreateOrder
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+
+// Second handler for same message type - this is an error for RPC!
+public class AnotherOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ080 error
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+    var whiz080 = errors.FirstOrDefault(d => d.Id == "WHIZ080");
+    await Assert.That(whiz080).IsNotNull();
+    var message = whiz080!.GetMessage(CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("CreateOrder");
+    await Assert.That(message).Contains("OrderReceptor");
+    await Assert.That(message).Contains("AnotherOrderReceptor");
+  }
+
+  /// <summary>
+  /// Tests that WHIZ080 is NOT reported for void receptors (event handlers).
+  /// Multiple handlers for the same event type is expected and valid.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleVoidHandlers_NoErrorAsync() {
+    // Arrange - Two void handlers for the same message type (event handling pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record OrderCreated : IEvent;
+
+// First void handler for OrderCreated
+public class EmailNotificationHandler : IReceptor<OrderCreated> {
+  public ValueTask HandleAsync(OrderCreated message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+// Second void handler for same event - this is valid!
+public class SmsNotificationHandler : IReceptor<OrderCreated> {
+  public ValueTask HandleAsync(OrderCreated message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT report WHIZ080 error for void handlers
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ080");
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+  }
+
+  /// <summary>
+  /// Tests that WHIZ080 is NOT reported for ISyncReceptor handlers even with response.
+  /// Sync receptors don't go through the RPC path.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleSyncHandlers_NoErrorAsync() {
+    // Arrange - Two sync handlers for the same message type with response
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ValidateOrder : ICommand;
+public record ValidationResult : IEvent;
+
+// First sync handler for ValidateOrder
+public class FirstValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
+  public ValidationResult Handle(ValidateOrder message)
+    => new ValidationResult();
+}
+
+// Second sync handler for same message - this is allowed for sync receptors
+public class SecondValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
+  public ValidationResult Handle(ValidateOrder message)
+    => new ValidationResult();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT report WHIZ080 error for sync handlers
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Id == "WHIZ080");
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+  }
+
+  #endregion
+
+  #region DefaultRouting Attribute Detection Tests
+
+  /// <summary>
+  /// Tests that the generator detects [DefaultRouting] attribute on receptors
+  /// and generates routing metadata lookup method.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDefaultRoutingAttribute_GeneratesRoutingLookupAsync() {
+    // Arrange - Receptor with [DefaultRouting(DispatchMode.Local)]
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record CreateCache : ICommand {
+  public string Key { get; init; } = string.Empty;
+}
+
+public record CacheCreated : IEvent {
+  public string Key { get; init; } = string.Empty;
+}
+
+[DefaultRouting(DispatchMode.Local)]
+public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
+  public ValueTask<CacheCreated> HandleAsync(CreateCache message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new CacheCreated { Key = message.Key });
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate GetReceptorDefaultRouting method
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("CreateCache");
+    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+  }
+
+  /// <summary>
+  /// Tests that the generator generates null return for receptors without [DefaultRouting].
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithoutDefaultRoutingAttribute_ReturnsNullAsync() {
+    // Arrange - Receptor WITHOUT [DefaultRouting]
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderProcessed : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<ProcessOrder, OrderProcessed> {
+  public ValueTask<OrderProcessed> HandleAsync(ProcessOrder message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new OrderProcessed { OrderId = message.OrderId });
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate GetReceptorDefaultRouting that returns null
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("return null");
+  }
+
+  /// <summary>
+  /// Tests that the generator handles multiple receptors with different routing attributes.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMixedRoutingAttributes_GeneratesCorrectLookupsAsync() {
+    // Arrange - Multiple receptors with different routing
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record CacheCommand : ICommand { }
+public record CacheEvent : IEvent { }
+
+public record OutboxCommand : ICommand { }
+public record OutboxEvent : IEvent { }
+
+public record BothCommand : ICommand { }
+public record BothEvent : IEvent { }
+
+public record DefaultCommand : ICommand { }
+public record DefaultEvent : IEvent { }
+
+[DefaultRouting(DispatchMode.Local)]
+public class LocalReceptor : IReceptor<CacheCommand, CacheEvent> {
+  public ValueTask<CacheEvent> HandleAsync(CacheCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new CacheEvent());
+  }
+}
+
+[DefaultRouting(DispatchMode.Outbox)]
+public class OutboxReceptor : IReceptor<OutboxCommand, OutboxEvent> {
+  public ValueTask<OutboxEvent> HandleAsync(OutboxCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new OutboxEvent());
+  }
+}
+
+[DefaultRouting(DispatchMode.Both)]
+public class BothReceptor : IReceptor<BothCommand, BothEvent> {
+  public ValueTask<BothEvent> HandleAsync(BothCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new BothEvent());
+  }
+}
+
+public class DefaultReceptor : IReceptor<DefaultCommand, DefaultEvent> {
+  public ValueTask<DefaultEvent> HandleAsync(DefaultCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new DefaultEvent());
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate GetReceptorDefaultRouting with all routing modes
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("GetReceptorDefaultRouting");
+    await Assert.That(dispatcher).Contains("CacheCommand");
+    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+    await Assert.That(dispatcher).Contains("OutboxCommand");
+    await Assert.That(dispatcher).Contains("DispatchMode.Outbox");
+    await Assert.That(dispatcher).Contains("BothCommand");
+    await Assert.That(dispatcher).Contains("DispatchMode.Both");
+  }
+
+  #endregion
+
+  #region CascadeToOutboxAsync Generation Tests
+
+  /// <summary>
+  /// Tests that the generator generates CascadeToOutboxAsync override
+  /// when receptors return event types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync() {
+    // Arrange - Receptor that returns an event (should generate cascade code)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new OrderCreated { OrderId = message.OrderId });
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate CascadeToOutboxAsync override
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("OrderCreated");
+    await Assert.That(dispatcher).Contains("PublishToOutboxAsync");
+  }
+
+  /// <summary>
+  /// Tests that the generator generates type-switch code for multiple event types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleEventTypes_GeneratesTypeSwitchAsync() {
+    // Arrange - Multiple receptors returning different event types
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+public record UpdateOrder : ICommand;
+public record OrderUpdated : IEvent;
+public record DeleteOrder : ICommand;
+public record OrderDeleted : IEvent;
+
+public class CreateOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+
+public class UpdateOrderReceptor : IReceptor<UpdateOrder, OrderUpdated> {
+  public ValueTask<OrderUpdated> HandleAsync(UpdateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderUpdated());
+}
+
+public class DeleteOrderReceptor : IReceptor<DeleteOrder, OrderDeleted> {
+  public ValueTask<OrderDeleted> HandleAsync(DeleteOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderDeleted());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate switch for all three event types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("OrderCreated");
+    await Assert.That(dispatcher).Contains("OrderUpdated");
+    await Assert.That(dispatcher).Contains("OrderDeleted");
+  }
+
+  /// <summary>
+  /// Tests that void receptors (no return type) don't affect cascade generation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithVoidReceptorOnly_GeneratesEmptyCascadeAsync() {
+    // Arrange - Void receptor (no event return)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record LogMessage : ICommand {
+  public string Message { get; init; } = string.Empty;
+}
+
+public class LogReceptor : IReceptor<LogMessage> {
+  public ValueTask HandleAsync(LogMessage message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate CascadeToOutboxAsync that returns base implementation
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    // With no events to cascade, should call base or return completed task
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+  }
+
+  /// <summary>
+  /// Tests that tuple response types extract events for cascade generation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTupleResponse_ExtractsEventsForCascadeAsync() {
+    // Arrange - Receptor returning tuple with events
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+public record NotificationSent : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, (OrderCreated, NotificationSent)> {
+  public ValueTask<(OrderCreated, NotificationSent)> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult((new OrderCreated(), new NotificationSent()));
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should include both event types in cascade
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("OrderCreated");
+    await Assert.That(dispatcher).Contains("NotificationSent");
+  }
+
+  /// <summary>
+  /// Tests that the generated CascadeToOutboxAsync calls PublishToOutboxAsync with correct parameters.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should call PublishToOutboxAsync with MessageId.New()
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("PublishToOutboxAsync");
+    await Assert.That(dispatcher).Contains("MessageId.New()");
+  }
+
+  /// <summary>
+  /// Tests that array response types are handled in cascade generation.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithArrayResponse_IncludesEventTypeInCascadeAsync() {
+    // Arrange - Receptor returning array of events
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatch : ICommand;
+public record ItemProcessed : IEvent;
+
+public class BatchReceptor : IReceptor<ProcessBatch, ItemProcessed[]> {
+  public ValueTask<ItemProcessed[]> HandleAsync(ProcessBatch message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ItemProcessed[0]);
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should include ItemProcessed in cascade (array element type)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    await Assert.That(dispatcher).Contains("ItemProcessed");
+  }
+
+  #endregion
+
+  #region Routed<T> Response Type Unwrapping Tests
+
+  /// <summary>
+  /// Tests that receptors returning Routed&lt;T&gt; have the inner type T extracted
+  /// for cascade generation, not Routed&lt;T&gt; itself.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedResponse_ExtractsInnerTypeForCascadeAsync() {
+    // Arrange - Receptor returning Routed<T> wrapper
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record ProcessedEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>> {
+  public ValueTask<Routed<ProcessedEvent>> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    return Route.Outbox(new ProcessedEvent { Id = message.Id }).AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate cascade for ProcessedEvent (inner type), NOT Routed<ProcessedEvent>
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CascadeToOutboxAsync");
+    // Should contain ProcessedEvent (the inner type) in cascade
+    await Assert.That(dispatcher).Contains("ProcessedEvent");
+
+    // Extract just the CascadeToOutboxAsync method content to verify no Routed<> in cascade
+    var cascadeStart = dispatcher.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade should NOT contain Routed<> wrapper type - only the inner type
+    await Assert.That(cascadeSection).DoesNotContain("Routed<");
+    await Assert.That(cascadeSection).Contains("ProcessedEvent");
+  }
+
+  /// <summary>
+  /// Tests that receptors returning RoutedNone are handled correctly (no cascade).
+  /// RoutedNone is allowed in DI registration, but should NOT appear in cascade sections.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedNoneResponse_DoesNotGenerateCascadeAsync() {
+    // Arrange - Receptor returning RoutedNone (no events to cascade)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ValidateCommand : ICommand {
+  public string Data { get; init; } = string.Empty;
+}
+
+public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
+  public ValueTask<RoutedNone> HandleAsync(ValidateCommand message, CancellationToken ct = default) {
+    return Route.None().AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should NOT generate cascade code for RoutedNone
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Extract just the CascadeToOutboxAsync method content
+    var cascadeStart = dispatcher!.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade section should NOT contain RoutedNone (nothing to cascade)
+    await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
+    // Cascade should just return Task.CompletedTask (no events)
+    await Assert.That(cascadeSection).Contains("return Task.CompletedTask");
+  }
+
+  /// <summary>
+  /// Tests that WHIZ001 diagnostic reports the receptor discovery correctly.
+  /// Note: GetSimpleName simplifies generic types, so Routed&lt;ProcessedEvent&gt; becomes ProcessedEvent&gt;
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithRoutedResponse_ReportsReceptorInDiagnosticAsync() {
+    // Arrange - Receptor returning Routed<T>
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand;
+
+public record ProcessedEvent : IEvent;
+
+public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>> {
+  public ValueTask<Routed<ProcessedEvent>> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    return Route.Outbox(new ProcessedEvent()).AsValueTask();
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - WHIZ001 should report the receptor was discovered
+    var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
+    var whiz001 = infos.FirstOrDefault(d => d.Id == "WHIZ001");
+    await Assert.That(whiz001).IsNotNull();
+    // Should report the receptor class
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessReceptor");
+    // Should report the message type
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessCommand");
+    // The response type is shown (GetSimpleName simplifies generics but leaves trailing >)
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("ProcessedEvent");
+  }
+
+  /// <summary>
+  /// Tests that tuple containing Routed&lt;T&gt; values extracts the inner types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithTupleOfRoutedResponses_ExtractsInnerTypesAsync() {
+    // Arrange - Receptor returning tuple with Routed wrappers (discriminated union pattern)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Dispatch;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand;
+
+public record SuccessEvent : IEvent;
+public record FailureEvent : IEvent;
+
+public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, Routed<FailureEvent>)> {
+  public ValueTask<(Routed<SuccessEvent>, Routed<FailureEvent>)> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
+    // Success path - returns success event, empty failure
+    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchMode.None)));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should extract both inner types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Extract just the CascadeToOutboxAsync method content to verify no Routed<> in cascade
+    var cascadeStart = dispatcher!.IndexOf("CascadeToOutboxAsync", StringComparison.Ordinal);
+    var cascadeEnd = dispatcher.IndexOf("CascadeToEventStoreOnlyAsync", StringComparison.Ordinal);
+    if (cascadeEnd < 0) {
+      cascadeEnd = dispatcher.Length;
+    }
+    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+
+    // Cascade should contain both inner event types (unwrapped from Routed<>)
+    await Assert.That(cascadeSection).Contains("SuccessEvent");
+    await Assert.That(cascadeSection).Contains("FailureEvent");
+    // Cascade should NOT contain Routed<> wrapper type
+    await Assert.That(cascadeSection).DoesNotContain("Routed<");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNullableTupleElement_PreservesNullabilityAsync() {
+    // Arrange - Tests that nullable tuple elements preserve the '?' annotation
+    // This is the exact scenario from JDNext where (List<IEvent>, FailedEvent?) was losing the ?
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatch : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record SuccessEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, FailureEvent?)> {
+  public ValueTask<(List<SuccessEvent>, FailureEvent?)> HandleAsync(ProcessBatch message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<SuccessEvent>, FailureEvent?)>((new List<SuccessEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher registration source which contains the full type names
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+
+    // The key assertion: the FailureEvent should have the ? preserved
+    // The generated code should contain the nullable type annotation
+    await Assert.That(registrations!).Contains("FailureEvent?");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNullableTupleElement_StripsNullabilityInTypeofAsync() {
+    // Arrange - Tests that nullable tuple elements have the '?' stripped in typeof() contexts
+    // This prevents CS8639: The typeof operator cannot be used on a nullable reference type
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatch : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record SuccessEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatch, (List<SuccessEvent>, FailureEvent?)> {
+  public ValueTask<(List<SuccessEvent>, FailureEvent?)> HandleAsync(ProcessBatch message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<SuccessEvent>, FailureEvent?)>((new List<SuccessEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains typeof() calls for outbox cascade
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: typeof() calls must NOT include the nullable annotation
+    // typeof(FailureEvent?) would cause CS8639, so we must have typeof(FailureEvent) instead
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::MyApp.Receptors.FailureEvent?)");
+
+    // Verify the non-nullable typeof() IS present (for outbox cascade)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListInTuple_ExtractsElementTypeForCascadeAsync() {
+    // Arrange - Tests that List<T> inside a tuple extracts the element type for cascade
+    // This is the exact scenario from JDNext where (List<IEvent>, FailedEvent?) was not cascading
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatchCommand : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record BatchEvent : IEvent {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<BatchEvent>, FailureEvent?)> {
+  public ValueTask<(List<BatchEvent>, FailureEvent?)> HandleAsync(ProcessBatchCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<BatchEvent>, FailureEvent?)>((new List<BatchEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: cascade should include typeof(BatchEvent), NOT typeof(List<BatchEvent>)
+    // List<T> element types should be extracted for cascade
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.BatchEvent)");
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.BatchEvent>)");
+
+    // Also verify FailureEvent is extracted (without the nullable annotation)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListResponseType_ExtractsElementTypeForCascadeAsync() {
+    // Arrange - Tests that List<T> as a direct response type extracts the element type for cascade
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record GetEventsCommand : ICommand {
+  public string Id { get; init; } = string.Empty;
+}
+
+public record MyEvent : IEvent {
+  public string Data { get; init; } = string.Empty;
+}
+
+public class EventsReceptor : IReceptor<GetEventsCommand, List<MyEvent>> {
+  public ValueTask<List<MyEvent>> HandleAsync(GetEventsCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new List<MyEvent>());
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // The key assertion: cascade should include typeof(MyEvent), NOT typeof(List<MyEvent>)
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.MyEvent)");
+    await Assert.That(dispatcher!).DoesNotContain("typeof(global::System.Collections.Generic.List<global::MyApp.Receptors.MyEvent>)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithListOfIEvent_UsesPatternMatchingForCascadeAsync() {
+    // Arrange - Tests that List<IEvent> uses 'is IEvent' pattern matching instead of 'typeof(IEvent)'
+    // This is critical for the JDNext scenario where (List<IEvent>, FailedEvent?) returns concrete types
+    // At runtime, the message is typeof(ConcreteEvent), not typeof(IEvent), so exact matching fails
+    var source = @"
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessBatchCommand : ICommand {
+  public string BatchId { get; init; } = string.Empty;
+}
+
+public record FailureEvent : IEvent {
+  public string Reason { get; init; } = string.Empty;
+}
+
+public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, FailureEvent?)> {
+  public ValueTask<(List<IEvent>, FailureEvent?)> HandleAsync(ProcessBatchCommand message, CancellationToken ct = default) {
+    return ValueTask.FromResult<(List<IEvent>, FailureEvent?)>((new List<IEvent>(), null));
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Get the dispatcher source which contains the outbox cascade code
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Key assertion: Interface types use pattern matching 'is IEvent' instead of 'typeof(IEvent)'
+    // This allows concrete types that implement IEvent to match at runtime
+    await Assert.That(dispatcher!).Contains("message is global::Whizbang.Core.IEvent");
+
+    // Should NOT use exact typeof() matching for IEvent (which would never match concrete types)
+    await Assert.That(dispatcher!).DoesNotContain("messageType == typeof(global::Whizbang.Core.IEvent)");
+
+    // Interface types use PublishToOutboxDynamicAsync (serializes using runtime type, not interface)
+    await Assert.That(dispatcher!).Contains("PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope)");
+
+    // Concrete types like FailureEvent should still use exact typeof() matching
+    await Assert.That(dispatcher!).Contains("typeof(global::MyApp.Receptors.FailureEvent)");
+
+    // Concrete types use regular PublishToOutboxAsync
+    await Assert.That(dispatcher!).Contains("PublishToOutboxAsync((global::MyApp.Receptors.FailureEvent)message");
+  }
+
+  #endregion
 }

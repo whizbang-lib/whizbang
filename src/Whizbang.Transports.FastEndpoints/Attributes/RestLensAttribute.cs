@@ -5,7 +5,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// The source generator discovers this attribute and generates REST endpoint classes
 /// with filtering, sorting, and paging support via query parameters.
 /// </summary>
-/// <docs>v0.1.0/rest/lens-integration</docs>
+/// <docs>rest/lens-integration</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/RestLensAttributeTests.cs</tests>
 /// <example>
 /// // Simple REST endpoint

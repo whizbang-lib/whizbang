@@ -18,7 +18,7 @@ The `Test-All.ps1` script's `-TestFilter` parameter was not working correctly. W
 
 **Command**:
 ```powershell
-pwsh scripts/Test-All.ps1 -AiMode -TestFilter "ProcessWorkBatchAsync"
+pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync"
 ```
 
 **Results**:
@@ -108,13 +108,13 @@ if ($TestFilter) {
 pwsh scripts/Test-All.ps1
 
 # Run only tests with "ProcessWorkBatchAsync" in name
-pwsh scripts/Test-All.ps1 -TestFilter "ProcessWorkBatchAsync"
+pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync"
 
 # Run EFCore.Postgres tests with "ProcessWorkBatchAsync" in name
-pwsh scripts/Test-All.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
 
-# AI mode with filtering
-pwsh scripts/Test-All.ps1 -AiMode -TestFilter "NoWork"
+# With specific test filter
+pwsh scripts/Run-Tests.ps1 -TestFilter "NoWork"
 ```
 
 ---

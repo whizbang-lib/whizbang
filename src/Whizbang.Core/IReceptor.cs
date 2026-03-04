@@ -9,7 +9,7 @@ namespace Whizbang.Core;
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
 /// <docs>core-concepts/receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 public interface IReceptor<in TMessage, TResponse> {
   /// <summary>
   /// Handles a message, applies business logic, and returns a response.

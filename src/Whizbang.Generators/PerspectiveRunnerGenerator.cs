@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
@@ -19,30 +20,55 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Reuse the same discovery logic as PerspectiveDiscoveryGenerator
-    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
+    // Extract perspective info or warning for models missing StreamId
+    var perspectiveResults = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractPerspectiveOrWarning(ctx, ct)
+    ).Where(static result => result is not null);
 
     // Combine with compilation to get assembly name
-    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+    var compilationAndResults = context.CompilationProvider.Combine(perspectiveResults.Collect());
 
     context.RegisterSourceOutput(
-        compilationAndPerspectives,
+        compilationAndResults,
         static (ctx, data) => {
           var compilation = data.Left;
-          var perspectives = data.Right;
-          _generatePerspectiveRunners(ctx, compilation, perspectives!);
+          var results = data.Right;
+
+          // Report warnings for perspectives missing StreamId on model
+          foreach (var result in results) {
+            if (result!.Warning is { } warning) {
+              ctx.ReportDiagnostic(Diagnostic.Create(
+                  DiagnosticDescriptors.PerspectiveModelMissingStreamId,
+                  Location.Create(
+                      warning.FilePath,
+                      default,
+                      new Microsoft.CodeAnalysis.Text.LinePositionSpan(
+                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column),
+                          new Microsoft.CodeAnalysis.Text.LinePosition(warning.Line, warning.Column))),
+                  warning.PerspectiveName,
+                  warning.ModelName
+              ));
+            }
+          }
+
+          // Generate runners for valid perspectives only
+          var validPerspectives = results
+              .Where(r => r!.Info is not null)
+              .Select(r => r!.Info!)
+              .ToImmutableArray();
+
+          _generatePerspectiveRunners(ctx, compilation, validPerspectives);
         }
     );
   }
 
   /// <summary>
-  /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
+  /// Extracts perspective information or warning from a class declaration.
+  /// Returns null if the class doesn't implement IPerspectiveFor or IGlobalPerspectiveFor.
+  /// Returns a warning if the model is missing [StreamId] attribute.
   /// </summary>
-  private static PerspectiveInfo? _extractPerspectiveInfo(
+  private static PerspectiveOrWarning? _extractPerspectiveOrWarning(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -79,15 +105,26 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find StreamKey property on model
-    var streamKeyPropertyName = _findModelStreamKeyProperty(modelType);
+    // Find StreamId property on model
+    var streamKeyPropertyName = _findModelStreamIdProperty(modelType);
     if (streamKeyPropertyName is null) {
-      // Cannot generate runner without StreamKey - skip silently
-      return null;
+      // Return warning instead of silently skipping (WHIZ033)
+      var location = classDeclaration.GetLocation();
+      var lineSpan = location.GetLineSpan();
+      return new PerspectiveOrWarning(
+          Info: null,
+          Warning: new PerspectiveMissingStreamIdWarning(
+              PerspectiveName: classSymbol.Name,
+              ModelName: modelType.Name,
+              FilePath: lineSpan.Path,
+              Line: lineSpan.StartLinePosition.Line,
+              Column: lineSpan.StartLinePosition.Character
+          )
+      );
     }
 
-    // Extract StreamKey properties from event types
-    var eventStreamKeys = _extractEventStreamKeysFromTypes(eventTypes, eventTypeSymbols);
+    // Extract StreamId properties from event types
+    var eventStreamIds = _extractEventStreamIdsFromTypes(eventTypes, eventTypeSymbols);
 
     // Build type arguments and message type names
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
@@ -99,29 +136,44 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
 
-    return new PerspectiveInfo(
-        ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        InterfaceTypeArguments: typeArguments,
-        EventTypes: eventTypes.ToArray(),
-        MessageTypeNames: messageTypeNames,
-        StreamKeyPropertyName: streamKeyPropertyName,
-        EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
-        MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
-        EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
+    // Compute nested-aware simple name for unique hintNames
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
+
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
+    // Discover physical fields (including vector fields) on model properties
+    var physicalFields = _discoverPhysicalFields(modelType);
+
+    return new PerspectiveOrWarning(
+        Info: new PerspectiveInfo(
+            ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            SimpleName: simpleName,
+            ClrTypeName: clrTypeName,
+            InterfaceTypeArguments: typeArguments,
+            EventTypes: eventTypes.ToArray(),
+            MessageTypeNames: messageTypeNames,
+            StreamIdPropertyName: streamKeyPropertyName,
+            EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
+            MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
+            EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
+            PhysicalFields: physicalFields.Length > 0 ? physicalFields : null
+        ),
+        Warning: null
     );
   }
 
   /// <summary>
-  /// Extracts the StreamKey property name from an event type.
-  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type.
+  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
   /// </summary>
-  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
     foreach (var member in eventTypeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        var hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           return property.Name;
         }
       }
@@ -145,14 +197,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
       var runnerSource = _generateRunnerSource(compilation, perspective);
-      var runnerName = _getRunnerName(perspective.ClassName);
+      var runnerName = _getRunnerName(perspective.SimpleName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
       // Report diagnostic
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveRunnerGenerated,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          perspective.SimpleName,
           runnerName
       ));
     }
@@ -172,12 +224,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "PerspectiveRunnerTemplate.cs"
     );
 
-    var runnerName = _getRunnerName(perspective.ClassName);
-    var perspectiveSimpleName = _getSimpleName(perspective.ClassName);
+    var runnerName = _getRunnerName(perspective.SimpleName);
+    var perspectiveSimpleName = perspective.SimpleName;
 
     // Model type is always the first type argument
     var modelTypeName = perspective.InterfaceTypeArguments[0];
-    var modelSimpleName = _getSimpleName(modelTypeName);
+    var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
     var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
@@ -186,7 +238,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
       var isMustExist = mustExistEvents.Contains(eventType);
-      var eventSimpleName = _getSimpleName(eventType);
+      var eventSimpleName = TypeNameUtilities.GetSimpleName(eventType);
 
       // Get return type for this event, default to Model
       var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
@@ -248,19 +300,22 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
-    // Generate ExtractStreamId methods (one per event type with StreamKey)
+    // Generate ExtractStreamId methods (one per event type with StreamId)
     var extractStreamIdMethods = new StringBuilder();
-    if (perspective.EventStreamKeys != null) {
-      foreach (var eventStreamKey in perspective.EventStreamKeys) {
+    if (perspective.EventStreamIds != null) {
+      foreach (var eventStreamId in perspective.EventStreamIds) {
         extractStreamIdMethods.AppendLine($"  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {_getSimpleName(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
         extractStreamIdMethods.AppendLine($"  /// </summary>");
-        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
-        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
+        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
+        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
         extractStreamIdMethods.AppendLine($"  }}");
         extractStreamIdMethods.AppendLine();
       }
     }
+
+    // Generate upsert call - either simple UpsertAsync or UpsertWithPhysicalFieldsAsync
+    var upsertCode = _generateUpsertCode(perspective);
 
     // Replace template markers
     var result = template;
@@ -269,14 +324,66 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "UPSERT_CALL", upsertCode);
 
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
-    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamKeyPropertyName!);
+    result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamIdPropertyName!);
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates the upsert code for the SaveModelAndCheckpointAsync method.
+  /// Uses UpsertWithPhysicalFieldsAsync when physical fields exist, UpsertAsync otherwise.
+  /// </summary>
+  private static string _generateUpsertCode(PerspectiveInfo perspective) {
+    var sb = new StringBuilder();
+
+    if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
+      // No physical fields - use simple UpsertAsync
+      sb.AppendLine("    // Upsert model (insert or update)");
+      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+      sb.AppendLine("    await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("        streamId,");
+      sb.AppendLine("        model,");
+      sb.AppendLine("        cancellationToken");
+      sb.AppendLine("    );");
+    } else {
+      // Has physical fields - extract values and use UpsertWithPhysicalFieldsAsync
+      sb.AppendLine("    // Extract physical field values from model (including vector fields)");
+      sb.AppendLine("    // Vector fields are converted from float[] to Pgvector.Vector for EF Core compatibility");
+      sb.AppendLine("    var physicalFieldValues = new System.Collections.Generic.Dictionary<string, object?>");
+      sb.AppendLine("    {");
+
+      for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
+        var field = perspective.PhysicalFields[i];
+        var comma = i < perspective.PhysicalFields.Length - 1 ? "," : "";
+
+        // Vector fields need conversion from float[] to Pgvector.Vector
+        // This is done at compile time to maintain AOT compatibility (no reflection)
+        if (field.IsVectorField) {
+          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} != null ? new Pgvector.Vector(model.{field.PropertyName}) : null }}{comma}");
+        } else {
+          sb.AppendLine($"      {{ \"{field.ColumnName}\", model.{field.PropertyName} }}{comma}");
+        }
+      }
+
+      sb.AppendLine("    };");
+      sb.AppendLine();
+      sb.AppendLine("    // Upsert model with physical field values (insert or update)");
+      sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
+      sb.AppendLine("    await _perspectiveStore.UpsertWithPhysicalFieldsAsync(");
+      sb.AppendLine("        streamId,");
+      sb.AppendLine("        model,");
+      sb.AppendLine("        physicalFieldValues,");
+      sb.AppendLine("        cancellationToken");
+      sb.AppendLine("    );");
+    }
+
+    return sb.ToString().TrimEnd('\r', '\n');
   }
 
   // ========================================
@@ -290,11 +397,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
+          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();
@@ -307,9 +411,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+          // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
         })
         .ToList();
@@ -362,15 +465,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Finds the property with [StreamKey] attribute on a model type.
+  /// Finds the property with [StreamId] attribute on a model type.
   /// </summary>
-  private static string? _findModelStreamKeyProperty(ITypeSymbol modelType) {
+  private static string? _findModelStreamIdProperty(ITypeSymbol modelType) {
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        var hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           return property.Name;
         }
       }
@@ -379,23 +482,23 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts StreamKey properties from event types.
+  /// Extracts StreamId properties from event types.
   /// </summary>
-  private static List<EventStreamKeyInfo> _extractEventStreamKeysFromTypes(List<string> eventTypes, List<ITypeSymbol> eventTypeSymbols) {
-    var eventStreamKeys = new List<EventStreamKeyInfo>();
+  private static List<EventStreamIdInfo> _extractEventStreamIdsFromTypes(List<string> eventTypes, List<ITypeSymbol> eventTypeSymbols) {
+    var eventStreamIds = new List<EventStreamIdInfo>();
     for (int i = 0; i < eventTypes.Count; i++) {
       var eventTypeName = eventTypes[i];
       var eventTypeSymbol = eventTypeSymbols[i];
 
-      var eventStreamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
-      if (eventStreamKeyProp != null) {
-        eventStreamKeys.Add(new EventStreamKeyInfo(
+      var eventStreamIdProp = _extractStreamIdProperty(eventTypeSymbol);
+      if (eventStreamIdProp != null) {
+        eventStreamIds.Add(new EventStreamIdInfo(
             EventTypeName: eventTypeName,
-            StreamKeyPropertyName: eventStreamKeyProp
+            StreamIdPropertyName: eventStreamIdProp
         ));
       }
     }
-    return eventStreamKeys;
+    return eventStreamIds;
   }
 
   /// <summary>
@@ -505,20 +608,61 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Gets the runner class name from a perspective class name.
-  /// E.g., "MyApp.OrderPerspective" -> "OrderPerspectiveRunner"
+  /// Gets the runner class name from a perspective simple name.
+  /// E.g., "OrderPerspective" -> "OrderPerspectiveRunner"
+  /// E.g., "DraftJobStatus.Projection" -> "DraftJobStatusProjectionRunner"
   /// </summary>
-  private static string _getRunnerName(string perspectiveClassName) {
-    var simpleName = _getSimpleName(perspectiveClassName);
-    return $"{simpleName}Runner";
+  private static string _getRunnerName(string simpleName) {
+    // Remove dots from nested type names to create valid C# identifier
+    return $"{simpleName.Replace(".", "")}Runner";
   }
 
   /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
+  /// Discovers physical fields (marked with [PhysicalField] or [VectorField]) on model properties.
+  /// These fields need to be extracted and passed to UpsertWithPhysicalFieldsAsync.
   /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
+  private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
+    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+
+    var physicalFields = new List<PhysicalFieldInfoCompact>();
+
+    foreach (var member in modelType.GetMembers()) {
+      if (member is not IPropertySymbol property || property.IsStatic) {
+        continue;
+      }
+
+      string? columnName = null;
+      bool isVectorField = false;
+
+      foreach (var attribute in property.GetAttributes()) {
+        var attrClassName = attribute.AttributeClass?.ToDisplayString();
+
+        if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE || attrClassName == VECTOR_FIELD_ATTRIBUTE) {
+          isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
+
+          // Extract ColumnName from named argument if provided
+          foreach (var namedArg in attribute.NamedArguments) {
+            if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
+              columnName = cn;
+              break;
+            }
+          }
+
+          // Default column name is snake_case of property name
+          columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
+
+          physicalFields.Add(new PhysicalFieldInfoCompact(
+              PropertyName: property.Name,
+              ColumnName: columnName,
+              IsVectorField: isVectorField
+          ));
+          break;  // Only one attribute per property
+        }
+      }
+    }
+
+    return physicalFields.ToArray();
   }
+
 }

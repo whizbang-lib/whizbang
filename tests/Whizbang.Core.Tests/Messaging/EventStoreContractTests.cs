@@ -11,12 +11,11 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Test event with AggregateId for stream ID inference.
+/// Test event with StreamId for stream ID inference.
 /// </summary>
 public record TestEvent : IEvent {
-  [StreamKey]
-  [AggregateId]
-  public required Guid AggregateId { get; init; }
+  [StreamId]
+  public required Guid StreamId { get; init; }
   public required string Payload { get; init; }
 }
 
@@ -413,7 +412,7 @@ public abstract class EventStoreContractTests {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent {
-        AggregateId = aggregateId,
+        StreamId = aggregateId,
         Payload = payload
       },
       Hops = []

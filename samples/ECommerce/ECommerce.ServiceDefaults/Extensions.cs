@@ -58,7 +58,12 @@ public static class Extensions {
 #pragma warning disable S125 // Commented code provides configuration example for users
                   //.AddGrpcClientInstrumentation()
 #pragma warning restore S125
-                  .AddHttpClientInstrumentation();
+                  .AddHttpClientInstrumentation()
+                  // Whizbang ActivitySources for distributed tracing
+                  .AddSource("Whizbang.Execution")   // Dispatch activities (parent spans)
+                  .AddSource("Whizbang.Tracing")     // Handler traces (child spans for [WhizbangTrace])
+                  .AddSource("Whizbang.Transport")   // Transport operations
+                  .AddSource("Whizbang.Hosting");    // Hosting/infrastructure operations
         });
 
     builder._addOpenTelemetryExporters();

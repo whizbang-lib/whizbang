@@ -13,6 +13,7 @@ public static class EventTypeMatchingHelper {
   /// Normalizes an assembly-qualified type name by removing version, culture, and public key token information.
   /// Handles both simple types and nested generic types (e.g., MessageEnvelope`1[[PayloadType, Assembly]]).
   /// This ensures consistent type name matching across different contexts (e.g., event matching, routing, serialization).
+  /// Note: Nested type names retain the CLR format with + separator (e.g., "Outer+Nested").
   /// </summary>
   /// <param name="assemblyQualifiedTypeName">The assembly-qualified type name to normalize</param>
   /// <returns>Normalized type name with version information stripped</returns>
@@ -24,6 +25,10 @@ public static class EventTypeMatchingHelper {
   /// Generic type:
   /// Input:  "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp, Version=1.0.0.0, Culture=neutral]], Whizbang.Core, Version=1.0.0.0"
   /// Output: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
+  ///
+  /// Nested type (CLR format with + preserved):
+  /// Input:  "MyApp.AuthContracts+LoginCommand, MyApp, Version=1.0.0.0"
+  /// Output: "MyApp.AuthContracts+LoginCommand, MyApp"
   /// </example>
   public static string NormalizeTypeName(string assemblyQualifiedTypeName) {
     if (string.IsNullOrEmpty(assemblyQualifiedTypeName)) {
@@ -37,15 +42,15 @@ public static class EventTypeMatchingHelper {
     // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
     // This works for both simple types and nested generic types
     // Timeout added to prevent ReDoS attacks (S6444)
-    var result = System.Text.RegularExpressions.Regex.Replace(
+    // Strip version, culture, and public key token info but preserve nested type separators (+)
+    // MessageJsonContextGenerator now uses CLR format (+ for nested types) matching Type.FullName
+    return System.Text.RegularExpressions.Regex.Replace(
       assemblyQualifiedTypeName,
       @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
       "",
       System.Text.RegularExpressions.RegexOptions.None,
       TimeSpan.FromSeconds(1)
     );
-
-    return result;
   }
 
   /// <summary>

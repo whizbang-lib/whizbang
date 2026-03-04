@@ -28,13 +28,17 @@
     Show detailed test output for each project
 
 .PARAMETER Mode
-    Test execution mode (default: Ai)
-    - Ai: AI-optimized sparse output + exclude integration tests (fast, token-efficient)
-    - Ci: Full output + exclude integration tests (for CI/CD pipelines)
-    - Full: Full output + include all tests (comprehensive validation)
-    - AiFull: AI-optimized output + include all tests (comprehensive but token-efficient)
-    - IntegrationsOnly: Full output + only integration tests
-    - AiIntegrations: AI-optimized output + only integration tests
+    Test execution mode (default: All)
+
+    Verbose modes (full output):
+    - All: ALL tests (default)
+    - Unit: unit tests only
+    - Integration: integration tests only
+
+    AI modes (sparse output, token-efficient):
+    - Ai: ALL tests
+    - AiUnit: unit tests only (fast)
+    - AiIntegrations: integration tests only
 
 .PARAMETER ProgressInterval
     Progress update interval in seconds for AI modes (default: 60)
@@ -51,6 +55,14 @@
     Timeout in seconds to detect hung tests (default: 180). If no output is received for this
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
     Set to 0 to disable hang detection.
+
+.PARAMETER Cleanup
+    Clean up ALL test containers after tests complete, including shared containers
+    (whizbang-test-postgres, whizbang-test-rabbitmq). Default: $true.
+    Use -Cleanup:$false to preserve shared containers for faster subsequent runs.
+
+.PARAMETER CleanupOnly
+    Only clean up test containers without running any tests. Useful for freeing resources.
 
 .PARAMETER ExcludeIntegration
     DEPRECATED: Use -Mode instead. Exclude integration tests from the run.
@@ -79,28 +91,28 @@
     Runs all tests with detailed output
 
 .EXAMPLE
+    ./Run-Tests.ps1
+    Runs ALL tests with verbose output (default mode)
+
+.EXAMPLE
     ./Run-Tests.ps1 -Mode Ai
-    Runs tests with AI-optimized output, excluding integration tests (default mode)
+    Runs ALL tests with AI-optimized sparse output
 
 .EXAMPLE
-    ./Run-Tests.ps1 -Mode Ci
-    Runs tests with full output, excluding integration tests (for CI/CD)
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode Full
-    Runs ALL tests including integration tests with full output (5-10+ minutes)
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode AiFull
-    Runs ALL tests including integration tests with AI-optimized output
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode IntegrationsOnly
-    Runs ONLY integration tests with full output
+    ./Run-Tests.ps1 -Mode AiUnit
+    Runs unit tests only with AI-optimized output (fast)
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode AiIntegrations
-    Runs ONLY integration tests with AI-optimized output
+    Runs integration tests only with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Unit
+    Runs unit tests only with full verbose output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Integration
+    Runs integration tests only with full verbose output
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai -ProgressInterval 30
@@ -115,7 +127,7 @@
     Runs tests and stops immediately on first failure
 
 .EXAMPLE
-    ./Run-Tests.ps1 -Mode AiFull -FailFast
+    ./Run-Tests.ps1 -Mode Ai -FailFast
     Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
@@ -140,6 +152,18 @@
 .EXAMPLE
     ./Run-Tests.ps1 -TestFilter "/*/Whizbang.Core.Tests/*/*"
     Runs all tests in the Whizbang.Core.Tests assembly
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag AzureServiceBus
+    Runs only test projects tagged with "AzureServiceBus"
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag Docker
+    Runs all test projects that require Docker (tagged with "Docker")
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag Messaging -Mode AiIntegrations
+    Runs all messaging transport integration tests with AI output
 
 .NOTES
     TUnit TreeNode Filter Syntax:
@@ -215,8 +239,8 @@ param(
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
 
-    [ValidateSet("Ai", "Ci", "Full", "AiFull", "IntegrationsOnly", "AiIntegrations")]
-    [string]$Mode = "Ai",  # Test execution mode: Ai (default), Ci, Full, AiFull, IntegrationsOnly, AiIntegrations
+    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$Mode = "All",  # Test execution mode: All (verbose), Ai (sparse), AiUnit, AiIntegrations, Unit, Integration
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
@@ -228,6 +252,28 @@ param(
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
     [string]$ExcludeProjectFilter = "",  # Exclude projects matching this pattern (regex)
+
+    [ArgumentCompleter({
+        param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+        # Get all unique tags from test projects
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $tags = @()
+        Get-ChildItem -Path "$repoRoot/tests", "$repoRoot/samples" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
+                if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                    $tags += $matches[1] -split ';'
+                }
+            }
+        $tags | Sort-Object -Unique | Where-Object { $_ -like "*$wordToComplete*" } | ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    })]
+    [string]$Tag = "",  # Filter by WhizbangTestTags (e.g., "AzureServiceBus", "Docker", "Messaging")
+
+    [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
+    [switch]$CleanupOnly,  # Only clean up containers, don't run tests
+    [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -241,20 +287,68 @@ Set-StrictMode -Version Latest
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
     Write-Warning "Parameters -AiMode and -ExcludeIntegration are deprecated. Use -Mode instead."
     if ($AiMode -and $PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
-        $Mode = "AiFull"
-    } elseif ($useAiOutput) {
-        $Mode = "Ai"
+        $Mode = "Ai"  # AI mode with all tests
+    } elseif ($AiMode) {
+        $Mode = "AiUnit"  # AI mode with unit tests only
     } elseif ($PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
-        $Mode = "Full"
+        $Mode = "Ai"  # All tests (was Full)
     } else {
-        $Mode = "Ci"
+        $Mode = "Unit"  # Verbose unit tests only
     }
 }
 
 # Derive settings from Mode
-$useAiOutput = $Mode -in @("Ai", "AiFull", "AiIntegrations")
-$includeIntegrationTests = $Mode -in @("Full", "AiFull", "IntegrationsOnly", "AiIntegrations")
-$onlyIntegrationTests = $Mode -in @("IntegrationsOnly", "AiIntegrations")
+$useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
+$useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format output for human-readable modes
+$includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
+$onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
+
+# Handle -CleanupOnly: just clean up containers and exit
+if ($CleanupOnly) {
+    Write-Host "Cleaning up ALL test containers..." -ForegroundColor Yellow
+
+    # Stop and remove all test containers including shared ones
+    $allTestContainers = @(
+        "whizbang-test-postgres",
+        "whizbang-test-rabbitmq"
+    )
+
+    foreach ($name in $allTestContainers) {
+        $container = docker ps -a --filter "name=$name" --format "{{.ID}}" 2>$null
+        if ($container) {
+            Write-Host "  Stopping $name..." -ForegroundColor Gray
+            docker stop $container 2>&1 | Out-Null
+            docker rm $container 2>&1 | Out-Null
+        }
+    }
+
+    # Clean up ServiceBus emulator containers
+    $serviceBusContainers = docker ps -a --filter "name=servicebus-emulator" --format "{{.ID}}" 2>$null
+    if ($serviceBusContainers) {
+        Write-Host "  Stopping ServiceBus emulator containers..." -ForegroundColor Gray
+        $serviceBusContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Clean up SQL Server containers for ServiceBus
+    $mssqlContainers = docker ps -a --filter "name=mssql-servicebus" --format "{{.ID}}" 2>$null
+    if ($mssqlContainers) {
+        Write-Host "  Stopping SQL Server containers..." -ForegroundColor Gray
+        $mssqlContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Clean up Testcontainers ryuk
+    $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}" 2>$null
+    if ($ryukContainers) {
+        $ryukContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Prune unused networks and volumes
+    docker network prune -f 2>&1 | Out-Null
+    docker volume prune -f 2>&1 | Out-Null
+
+    Write-Host "Container cleanup complete." -ForegroundColor Green
+    exit 0
+}
 
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -349,8 +443,9 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         $ryukContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
 
-    # Prune stale Docker networks (non-interactive)
+    # Prune stale Docker networks and volumes (non-interactive)
     docker network prune -f 2>&1 | Out-Null
+    docker volume prune -f 2>&1 | Out-Null
 
     if (-not $useAiOutput) {
         Write-Host "Container cleanup complete." -ForegroundColor Green
@@ -375,7 +470,7 @@ try {
         if ($onlyIntegrationTests) {
             Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
         } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded (use -Mode Full or -Mode AiFull to include)" -ForegroundColor Yellow
+            Write-Host "Integration Tests: Excluded (use -Mode Ai or -Mode Full to include)" -ForegroundColor Yellow
         }
         if ($ProjectFilter) {
             Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
@@ -388,6 +483,9 @@ try {
         }
         if ($Coverage) {
             Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
+        }
+        if ($Tag) {
+            Write-Host "Tag Filter: $Tag" -ForegroundColor Yellow
         }
         Write-Host ""
     } else {
@@ -422,6 +520,12 @@ try {
         if ($Coverage) {
             Write-Host "Coverage: Enabled" -ForegroundColor Gray
         }
+        if ($Tag) {
+            Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
+        }
+
+        # Flush output immediately so background processes show header right away
+        [Console]::Out.Flush()
     }
 
     # Build the dotnet test command
@@ -445,15 +549,18 @@ try {
         $testArgs += "--fail-fast"
     }
 
-    # Coverage mode: Run per-project instead of --test-modules for accurate coverage collection
-    # The --test-modules approach doesn't collect coverage correctly (31% vs 80%+)
+    # Add no-build if requested (use pre-built artifacts)
+    if ($NoBuild) {
+        $testArgs += "--no-build"
+    }
+
+    # Coverage mode: Run projects in parallel with unique output paths per project
+    # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
-        # Run tests per-project for proper coverage collection
-        # This is slower but gives accurate coverage results
         if (-not $useAiOutput) {
-            Write-Host "Coverage mode: Running tests per-project for accurate coverage collection" -ForegroundColor Yellow
+            Write-Host "Coverage mode: Parallel execution with unique output paths" -ForegroundColor Yellow
         } else {
-            Write-Host "Coverage mode: Per-project execution" -ForegroundColor Gray
+            Write-Host "Coverage mode: Parallel execution (max $MaxParallel)" -ForegroundColor Gray
         }
 
         # Discover test projects
@@ -486,85 +593,169 @@ try {
             $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter })
         }
 
+        # Apply Tag filter if specified (coverage mode)
+        if ($Tag) {
+            $testProjectPaths = @($testProjectPaths | Where-Object {
+                $csprojPath = $_
+                $tags = @()
+                if (Test-Path $csprojPath) {
+                    $content = Get-Content $csprojPath -Raw
+                    if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                        $tags = $matches[1] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+                    }
+                }
+                $tags -contains $Tag
+            })
+        }
+
         if ($testProjectPaths.Count -eq 0) {
             Write-Warning "No test projects found matching filters."
             exit 1
         }
 
+        # Separate unit tests (parallel) from integration tests (sequential due to shared containers)
+        $integrationPattern = "Integration\.Tests|IntegrationTests|Postgres\.Tests|Dapper\.Postgres"
+        $unitTestProjects = @($testProjectPaths | Where-Object { $_ -notmatch $integrationPattern })
+        $integrationTestProjects = @($testProjectPaths | Where-Object { $_ -match $integrationPattern })
+
         if (-not $useAiOutput) {
-            Write-Host "Discovered $($testProjectPaths.Count) test projects" -ForegroundColor Gray
+            Write-Host "Discovered $($unitTestProjects.Count) unit test projects (parallel)" -ForegroundColor Gray
+            Write-Host "Discovered $($integrationTestProjects.Count) integration test projects (sequential)" -ForegroundColor Gray
+        } else {
+            Write-Host "Unit tests: $($unitTestProjects.Count) (parallel), Integration tests: $($integrationTestProjects.Count) (sequential)" -ForegroundColor Gray
         }
 
-        # Run each project with coverage
-        $allPassed = $true
-        $totalProjectsPassed = 0
-        $totalProjectsFailed = 0
-        $failFastTriggered = $false  # Initialize for finally block
+        # Helper function to run a single test project with coverage
+        function Invoke-TestWithCoverage {
+            param([string]$ProjectPath, [string]$Config, [string]$Filter, [bool]$FailFastEnabled)
+
+            $projName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+            $projDir = [System.IO.Path]::GetDirectoryName($ProjectPath)
+
+            # On Linux/macOS, set execute permission
+            if ($IsLinux -or $IsMacOS) {
+                $testExe = Join-Path $projDir "bin" $Config "net10.0" $projName
+                if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+            }
+
+            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+            if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
+            if ($FailFastEnabled) { $args += "--fail-fast" }
+
+            $output = & dotnet @args 2>&1
+            return [PSCustomObject]@{
+                ProjectName = $projName
+                ExitCode = $LASTEXITCODE
+                Output = ($output | Select-Object -Last 30) -join "`n"
+            }
+        }
+
+        $results = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
+        $failFastTriggered = $false
         $startTime = Get-Date
 
-        foreach ($projectPath in $testProjectPaths) {
-            $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
-
-            if (-not $useAiOutput) {
-                Write-Host ""
-                Write-Host "Running: $projectName" -ForegroundColor Cyan
-            } else {
-                Write-Host "Testing: $projectName" -ForegroundColor Gray
-            }
-
-            # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
-            # TUnit/MTP tests run directly via dotnet run on the test project
-            $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
-
-            # On Linux/macOS, set execute permission on test executable (lost during artifact extraction)
-            if ($IsLinux -or $IsMacOS) {
-                $testExe = Join-Path $projectDir "bin" $Configuration "net10.0" $projectName
-                if (Test-Path $testExe) {
-                    chmod +x $testExe 2>$null
+        # Pre-build: Build all test projects first to avoid race conditions in parallel execution
+        # This ensures all dependencies are built before running tests in parallel with --no-build
+        # Skip if -NoBuild is specified (artifacts are pre-built, e.g., in CI)
+        if (-not $NoBuild) {
+            $allProjectsToBuild = $unitTestProjects + $integrationTestProjects
+            Write-Host "Building $($allProjectsToBuild.Count) test projects..." -ForegroundColor Gray
+            $buildFailed = $false
+            foreach ($projectPath in $allProjectsToBuild) {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                $buildOutput = & dotnet build $projectPath --configuration $Configuration 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "Build failed for $projectName`:" -ForegroundColor Red
+                    $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+                    $buildFailed = $true
+                    break
                 }
             }
-
-            $projectArgs = @(
-                "run"
-                "--project"
-                $projectPath  # PowerShell handles spacing properly, no extra quotes needed
-                "--configuration"
-                $Configuration
-                "--"  # Separator for test runner args
-                "--coverage"
-                "--coverage-output-format"
-                "cobertura"
-            )
-
-            if ($TestFilter) {
-                $projectArgs += "--treenode-filter"
-                $projectArgs += "/*/*/*/*$TestFilter*"
+            if ($buildFailed) {
+                exit 1
             }
+            Write-Host "Build succeeded." -ForegroundColor Gray
+        } else {
+            Write-Host "Skipping build (-NoBuild specified, using pre-built artifacts)..." -ForegroundColor Gray
+        }
 
-            if ($FailFast) {
-                $projectArgs += "--fail-fast"
+        # Phase 1: Run unit tests in parallel
+        if ($unitTestProjects.Count -gt 0) {
+            Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
+
+            $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
+                $projectPath = $_
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+                $config = $using:Configuration
+                $testFilter = $using:TestFilter
+                $failFast = $using:FailFast
+                $resultsBag = $using:results
+
+                if ($IsLinux -or $IsMacOS) {
+                    $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
+                    if (Test-Path $testExe) { chmod +x $testExe 2>$null }
+                }
+
+                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+                if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
+                if ($failFast) { $projectArgs += "--fail-fast" }
+
+                $output = & dotnet @projectArgs 2>&1
+                $resultsBag.Add([PSCustomObject]@{
+                    ProjectName = $projectName
+                    ExitCode = $LASTEXITCODE
+                    Output = ($output | Select-Object -Last 30) -join "`n"
+                })
             }
+        }
 
-            $projectResult = & dotnet @projectArgs
+        # Phase 2: Run integration tests sequentially (shared container resources)
+        if ($integrationTestProjects.Count -gt 0 -and -not $failFastTriggered) {
+            Write-Host "Running $($integrationTestProjects.Count) integration test projects sequentially..." -ForegroundColor Cyan
 
-            if ($LASTEXITCODE -eq 0) {
-                $totalProjectsPassed++
-                if ($useAiOutput) {
-                    Write-Host "  ✓ $projectName passed" -ForegroundColor Green
-                }
-            } else {
-                $totalProjectsFailed++
-                $allPassed = $false
-                if ($useAiOutput) {
-                    Write-Host "  ✗ $projectName failed" -ForegroundColor Red
-                }
-                if ($FailFast) {
-                    Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+            foreach ($projectPath in $integrationTestProjects) {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+                Write-Host "  Testing: $projectName" -ForegroundColor Gray
+
+                $result = Invoke-TestWithCoverage -ProjectPath $projectPath -Config $Configuration -Filter $TestFilter -FailFastEnabled $FailFast
+                $results.Add($result)
+
+                if ($result.ExitCode -ne 0 -and $FailFast) {
                     $failFastTriggered = $true
+                    Write-Host "  Stopping due to -FailFast" -ForegroundColor Red
                     break
                 }
             }
         }
+
+        # Aggregate results
+        $totalProjectsPassed = 0
+        $totalProjectsFailed = 0
+        $failedProjects = @()
+
+        foreach ($result in $results) {
+            if ($result.ExitCode -eq 0) {
+                $totalProjectsPassed++
+                if ($useAiOutput) {
+                    Write-Host "  ✓ $($result.ProjectName) passed" -ForegroundColor Green
+                }
+            } else {
+                $totalProjectsFailed++
+                $failedProjects += $result.ProjectName
+                if ($useAiOutput) {
+                    Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
+                } else {
+                    Write-Host "  ✗ $($result.ProjectName) FAILED" -ForegroundColor Red
+                }
+                # Always show output for failed projects (both AI and verbose modes)
+                Write-Host "    --- Output (last 30 lines) ---" -ForegroundColor DarkGray
+                $result.Output -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+                Write-Host "    --- End output ---" -ForegroundColor DarkGray
+            }
+        }
+
+        $allPassed = $totalProjectsFailed -eq 0
 
         $endTime = Get-Date
         $elapsed = $endTime - $startTime
@@ -579,6 +770,15 @@ try {
         Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
         Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
         Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
+
+        # List failed projects for easy identification
+        if ($failedProjects.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Failed Projects:" -ForegroundColor Red
+            foreach ($failedProject in $failedProjects) {
+                Write-Host "  - $failedProject" -ForegroundColor Red
+            }
+        }
         Write-Host ""
 
         if ($allPassed) {
@@ -590,17 +790,118 @@ try {
         }
     }
 
-    # Pattern for identifying tests that require external infrastructure (Docker):
-    # - Integration tests: *Integration.Tests.dll or *IntegrationTests.dll
-    # - Infrastructure tests: *Postgres*.Tests.dll (require PostgreSQL via Testcontainers)
-    # Excludes AppHost projects which are Aspire hosts, not test projects
-    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$|Postgres\.Tests\.dll$"
-    $excludePattern = "AppHost"
+    # Test type discovery using WhizbangTestType MSBuild property
+    # Projects set <WhizbangTestType>Unit</WhizbangTestType> or <WhizbangTestType>Integration</WhizbangTestType>
+    # This replaces regex pattern matching for more explicit control
+    $excludePattern = "AppHost|TestUtilities"
 
-    # Helper function to test if a DLL name is an integration test
+    # Cache for project test types (project path -> Unit|Integration)
+    $script:projectTestTypeCache = @{}
+
+    # Helper function to get WhizbangTestType from a .csproj file
+    function Get-ProjectTestType {
+        param([string]$CsprojPath)
+
+        # Check cache first
+        if ($script:projectTestTypeCache.ContainsKey($CsprojPath)) {
+            return $script:projectTestTypeCache[$CsprojPath]
+        }
+
+        $testType = $null
+        if (Test-Path $CsprojPath) {
+            $content = Get-Content $CsprojPath -Raw
+            if ($content -match '<WhizbangTestType>(\w+)</WhizbangTestType>') {
+                $testType = $matches[1]
+            }
+        }
+
+        $script:projectTestTypeCache[$CsprojPath] = $testType
+        return $testType
+    }
+
+    # Cache for project tags (project path -> array of tags)
+    $script:projectTagsCache = @{}
+
+    # Helper function to get WhizbangTestTags from a .csproj file
+    function Get-ProjectTags {
+        param([string]$CsprojPath)
+
+        # Check cache first
+        if ($script:projectTagsCache.ContainsKey($CsprojPath)) {
+            return $script:projectTagsCache[$CsprojPath]
+        }
+
+        $tags = @()
+        if (Test-Path $CsprojPath) {
+            $content = Get-Content $CsprojPath -Raw
+            if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                $tags = $matches[1] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+            }
+        }
+
+        $script:projectTagsCache[$CsprojPath] = $tags
+        return $tags
+    }
+
+    # Helper function to test if a DLL has a specific tag
+    function Test-HasTag {
+        param(
+            [System.IO.FileInfo]$DllFile,
+            [string]$TagToMatch
+        )
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $tags = Get-ProjectTags $csprojPath
+        return $tags -contains $TagToMatch
+    }
+
+    # Helper function to find the .csproj for a DLL
+    function Get-CsprojForDll {
+        param([System.IO.FileInfo]$DllFile)
+
+        $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $csprojPath = Join-Path $projectDir "$dllName.csproj"
+
+        if (Test-Path $csprojPath) {
+            return $csprojPath
+        }
+        return $null
+    }
+
+    # Helper function to test if a DLL is an integration test (based on WhizbangTestType property)
     function Test-IsIntegrationTest {
-        param([string]$DllName)
-        return ($DllName -match $integrationTestPattern) -and ($DllName -notmatch $excludePattern)
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $testType -eq "Integration"
+    }
+
+    # Helper function to test if a DLL is a unit test (based on WhizbangTestType property)
+    function Test-IsUnitTest {
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $testType -eq "Unit"
+    }
+
+    # Helper function to test if a DLL has a valid test type defined
+    function Test-HasTestType {
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $null -ne $testType
     }
 
     # Helper function to ensure build exists for dynamic DLL discovery
@@ -637,7 +938,44 @@ try {
 
     # Use --test-modules with explicit DLL discovery for project filtering
     # This allows us to properly exclude AppHost projects which aren't test projects
-    if ($ProjectFilter) {
+    # Tag filtering applies to all discovery modes
+    if ($Tag) {
+        Ensure-BuildExists
+        # Find all test DLLs and filter by tag
+        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.Name -notmatch $excludePattern } |
+            Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { Test-HasTag $_ $Tag })
+
+        # Apply project filter if also specified
+        if ($ProjectFilter) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { $_.Name -match $ProjectFilter })
+        }
+
+        # Apply test type filtering based on mode
+        if ($onlyIntegrationTests) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsIntegrationTest $_ })
+        } elseif (-not $includeIntegrationTests) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ })
+        } else {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) })
+        }
+
+        if ($tagFilteredDlls.Count -gt 0) {
+            $dllPaths = $tagFilteredDlls | ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) }
+            $testArgs += "--test-modules"
+            $testArgs += ($dllPaths -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test projects found with tag '$Tag'. Check that projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
+            exit 1
+        }
+    } elseif ($ProjectFilter) {
         Ensure-BuildExists
         # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
         $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
@@ -659,59 +997,55 @@ try {
             exit 1
         }
     } elseif ($onlyIntegrationTests) {
-        # Run ONLY integration tests
+        # Run ONLY integration tests (WhizbangTestType=Integration)
         Ensure-BuildExists
-        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
-        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+        # Filter by WhizbangTestType property in .csproj files
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
-            Where-Object { Test-IsIntegrationTest $_.Name } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { Test-IsIntegrationTest $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($integrationDlls.Count -gt 0) {
             $testArgs += "--test-modules"
-            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
             $testArgs += ($integrationDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($integrationDlls.Count) integration test projects" -ForegroundColor Gray
+                Write-Host "Discovered $($integrationDlls.Count) integration test projects (WhizbangTestType=Integration)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No integration test DLLs found after build. Check that integration test projects exist."
+            Write-Warning "No integration test projects found. Check that projects have <WhizbangTestType>Integration</WhizbangTestType>."
             exit 1
         }
     } elseif (-not $includeIntegrationTests) {
-        # Exclude integration tests - find all *.Tests.dll and filter out integration tests
-        # This ensures all test projects are discovered while excluding slow integration tests
+        # Run only unit tests (WhizbangTestType=Unit)
         Ensure-BuildExists
-        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
-        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        # Filter by WhizbangTestType property - only include Unit tests
+        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
+            Where-Object { Test-IsUnitTest $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
-        if ($allTestDlls.Count -gt 0) {
+        if ($unitTestDlls.Count -gt 0) {
             $testArgs += "--test-modules"
-            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
-            $testArgs += ($allTestDlls -join ";")
+            $testArgs += ($unitTestDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($allTestDlls.Count) test projects (excluding integration tests)" -ForegroundColor Gray
+                Write-Host "Discovered $($unitTestDlls.Count) unit test projects (WhizbangTestType=Unit)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            Write-Warning "No unit test projects found. Check that projects have <WhizbangTestType>Unit</WhizbangTestType>."
             exit 1
         }
     } else {
-        # Include ALL test projects (including integration tests)
-        # Use explicit DLL discovery instead of --solution to avoid picking up library projects like Whizbang.Testing
+        # Include ALL test projects (Unit + Integration, excludes Benchmark)
         Ensure-BuildExists
-        # CRITICAL: Filter using Test-IsPrimaryTestDll to exclude copied DLLs from other projects' bin folders
+        # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($allTestDlls.Count -gt 0) {
@@ -719,10 +1053,10 @@ try {
             $testArgs += ($allTestDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($allTestDlls.Count) test projects (including integration tests)" -ForegroundColor Gray
+                Write-Host "Discovered $($allTestDlls.Count) test projects (Unit + Integration)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            Write-Warning "No test projects found. Check that projects have <WhizbangTestType>Unit|Integration</WhizbangTestType>."
             exit 1
         }
     }
@@ -748,6 +1082,8 @@ try {
     } else {
         Write-Host "Starting test execution..." -ForegroundColor Gray
         Write-Host ""
+        # Flush output immediately so background processes show status right away
+        [Console]::Out.Flush()
     }
 
     # Process output based on mode
@@ -1308,14 +1644,215 @@ try {
         }
 
         Write-Host ""
+    } elseif ($useVerboseLogging) {
+        # Verbose logging mode: Stream all output and capture errors for structured reporting at end
+        # Similar to AI mode but shows all output in real-time instead of sparse progress
+        $totalTests = 0
+        $totalPassed = 0
+        $totalFailed = 0
+        $totalSkipped = 0
+        $failedTests = @()
+        $testDetails = @{}
+        $buildErrors = @()
+        $projectErrors = @()
+        $infrastructureErrors = 0
+        $currentFailedTest = $null
+        $capturingStackTrace = $false
+        $stackTraceLines = @()
+        $startTime = Get-Date
+
+        # Start process with redirected output
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = "dotnet"
+        $psi.Arguments = $testArgs -join " "
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $repoRoot
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $psi
+
+        # Collect stderr asynchronously
+        $stderrBuilder = [System.Text.StringBuilder]::new()
+        $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            if ($EventArgs.Data) {
+                $stderrBuilder.AppendLine($EventArgs.Data) | Out-Null
+            }
+        }
+
+        $process.Start() | Out-Null
+        $process.BeginErrorReadLine()
+
+        $reader = $process.StandardOutput
+
+        Write-Host ""
+        Write-Host ">>> TEST OUTPUT >>>" -ForegroundColor Cyan
+        Write-Host ""
+
+        while (-not $reader.EndOfStream) {
+            $lineStr = $reader.ReadLine()
+            if ($null -eq $lineStr) { continue }
+
+            # Stream ALL output in verbose mode (this is the key difference from AI mode)
+            Write-Host $lineStr
+
+            # Capture test counts from TUnit summary format
+            if ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+                $totalPassed += [int]$matches[1]
+            }
+            elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
+                $totalFailed += [int]$matches[1]
+            }
+            elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
+                $totalSkipped += [int]$matches[1]
+            }
+
+            # Capture failed test names
+            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+                if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+                    $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                    $stackTraceLines = @()
+                }
+
+                $testName = $matches[1].Trim()
+                if ($testName -notmatch "executing|DbCommand|Executed") {
+                    $failedTests += $testName
+                    $currentFailedTest = $testName
+                    $testDetails[$testName] = @{
+                        "ErrorMessage" = ""
+                        "StackTrace" = ""
+                        "Exception" = ""
+                    }
+                    $capturingStackTrace = $false
+
+                    if ($FailFast -and -not $failFastTriggered) {
+                        $failFastTriggered = $true
+                        # Don't kill process in verbose mode - let it finish showing output
+                    }
+                }
+            }
+            elseif ($currentFailedTest) {
+                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                    $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
+                }
+                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                    $capturingStackTrace = $true
+                    $stackTraceLines += $lineStr.Trim()
+                }
+                elseif ($capturingStackTrace) {
+                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
+                        $stackTraceLines += $lineStr.Trim()
+                    }
+                    else {
+                        $capturingStackTrace = $false
+                        if ($stackTraceLines.Count -gt 0) {
+                            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                            $stackTraceLines = @()
+                        }
+                    }
+                }
+            }
+            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+                $projectName = $matches[1]
+                $errorCount = $matches[2]
+                $projectErrors += "$projectName failed with $errorCount error(s)"
+            }
+            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+                $infrastructureErrors += [int]$matches[1]
+            }
+            elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
+                $buildErrors += $lineStr.Trim()
+            }
+        }
+
+        # Clean up
+        $reader.Dispose()
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        Remove-Job -Id $stderrEvent.Id -Force -ErrorAction SilentlyContinue
+
+        if (-not $process.HasExited) {
+            $process.WaitForExit(5000) | Out-Null
+        }
+        $processExitCode = $process.ExitCode
+        $process.Dispose()
+
+        if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+        }
+
+        $stderrContent = $stderrBuilder.ToString().Trim()
+
+        Write-Host ""
+        Write-Host "<<< END TEST OUTPUT <<<" -ForegroundColor Cyan
+
+        # Calculate elapsed time
+        $endTime = Get-Date
+        $totalElapsed = $endTime - $startTime
+        $elapsedString = if ($totalElapsed.TotalMinutes -ge 1) {
+            "{0:F0}m {1:F0}s" -f [Math]::Floor($totalElapsed.TotalMinutes), $totalElapsed.Seconds
+        } else {
+            "{0:F1}s" -f $totalElapsed.TotalSeconds
+        }
+
+        $totalTests = $totalPassed + $totalFailed + $totalSkipped
+
+        # Display structured summary
+        Write-Host ""
+        Write-Host "=====================================" -ForegroundColor Cyan
+        Write-Host "  TEST RESULTS SUMMARY" -ForegroundColor Cyan
+        Write-Host "=====================================" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "Duration: $elapsedString" -ForegroundColor White
+        Write-Host "Total Tests: $totalTests" -ForegroundColor White
+        Write-Host "Passed: $totalPassed" -ForegroundColor Green
+        Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
+        Write-Host "Skipped: $totalSkipped" -ForegroundColor Yellow
+
+        if ($buildErrors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "BUILD ERRORS ($($buildErrors.Count)):" -ForegroundColor Red
+            $buildErrors | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+
+        if ($projectErrors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "PROJECT ERRORS ($($projectErrors.Count)):" -ForegroundColor Red
+            $projectErrors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+
+        if ($failedTests.Count -gt 0) {
+            Write-Host ""
+            Write-Host "FAILED TESTS ($($failedTests.Count)):" -ForegroundColor Red
+            foreach ($testName in $failedTests) {
+                Write-Host ""
+                Write-Host "  ✗ $testName" -ForegroundColor Red
+                $details = $testDetails[$testName]
+                if ($details["Exception"]) {
+                    Write-Host "    Exception: $($details["Exception"])" -ForegroundColor Yellow
+                }
+                if ($details["ErrorMessage"]) {
+                    Write-Host "    Message: $($details["ErrorMessage"])" -ForegroundColor Gray
+                }
+            }
+        }
+
+        if ($stderrContent) {
+            Write-Host ""
+            Write-Host "STDERR:" -ForegroundColor Yellow
+            $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+        }
+
+        Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
         & dotnet @testArgs
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
-    if ($useAiOutput) {
-        # In AI mode, use the process exit code and check captured errors
+    if ($useAiOutput -or $useVerboseLogging) {
+        # In AI/Verbose mode, use the process exit code and check captured errors
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
         $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or $infrastructureErrors -gt 0
@@ -1348,17 +1885,15 @@ try {
 } finally {
     # Clean up test containers after test run completes (especially important after fail-fast)
     # This ensures containers don't hang around after abrupt test termination
-    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered) {
+    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered -or $Cleanup) {
         if (-not $useAiOutput) {
             Write-Host ""
             Write-Host "Cleaning up test containers..." -ForegroundColor Yellow
         }
 
         # Stop and remove all testcontainers (postgres, servicebus, etc.)
-        # NOTE: We preserve whizbang-test-rabbitmq as it's designed to persist across runs
         # Use image-based filtering to catch containers that may have random names
         $testImages = @(
-            "postgres:*",
             "mcr.microsoft.com/azure-messaging/servicebus-emulator:*",
             "mcr.microsoft.com/mssql/server:*",
             "testcontainers/ryuk:*"
@@ -1374,18 +1909,56 @@ try {
             }
         }
 
-        # Clean up RabbitMQ containers by image, but preserve the shared one
-        $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
-        if ($rabbitContainers) {
-            $rabbitContainers | ForEach-Object {
-                docker stop $_ 2>&1 | Out-Null
-                docker rm $_ 2>&1 | Out-Null
+        # Clean up postgres containers - include shared container if $Cleanup is true
+        if ($Cleanup) {
+            $postgresContainers = docker ps -a --filter "ancestor=postgres" --format "{{.ID}}" 2>$null
+            if ($postgresContainers) {
+                $postgresContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+            # Also catch pgvector images
+            $pgvectorContainers = docker ps -a --filter "ancestor=pgvector/pgvector" --format "{{.ID}}" 2>$null
+            if ($pgvectorContainers) {
+                $pgvectorContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        } else {
+            # Preserve whizbang-test-postgres
+            $postgresContainers = docker ps -a --filter "ancestor=postgres" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" } | ForEach-Object { ($_ -split " ")[0] }
+            if ($postgresContainers) {
+                $postgresContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        # Clean up RabbitMQ containers - include shared container if $Cleanup is true
+        if ($Cleanup) {
+            $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}}" 2>$null
+            if ($rabbitContainers) {
+                $rabbitContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        } else {
+            # Preserve whizbang-test-rabbitmq
+            $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+            if ($rabbitContainers) {
+                $rabbitContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
             }
         }
 
         # Also clean up by name pattern for any containers that might have escaped image filtering
-        # NOTE: Exclude whizbang-test-rabbitmq from rabbitmq cleanup
-        $namePatterns = @("postgres", "servicebus-emulator", "mssql-servicebus")
+        $namePatterns = @("servicebus-emulator", "mssql-servicebus")
         foreach ($pattern in $namePatterns) {
             $containers = docker ps -a --filter "name=$pattern" --format "{{.ID}}" 2>$null
             if ($containers) {
@@ -1396,13 +1969,18 @@ try {
             }
         }
 
-        # Clean up other rabbitmq containers but preserve the shared one
-        $otherRabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
-        if ($otherRabbitContainers) {
-            $otherRabbitContainers | ForEach-Object {
-                docker stop $_ 2>&1 | Out-Null
-                docker rm $_ 2>&1 | Out-Null
+        # Clean up by name for postgres/rabbitmq based on $Cleanup flag
+        if ($Cleanup) {
+            $sharedContainers = docker ps -a --filter "name=whizbang-test" --format "{{.ID}}" 2>$null
+            if ($sharedContainers) {
+                $sharedContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
             }
+
+            # Prune unused volumes (only when doing full cleanup)
+            docker volume prune -f 2>&1 | Out-Null
         }
 
         if (-not $useAiOutput) {

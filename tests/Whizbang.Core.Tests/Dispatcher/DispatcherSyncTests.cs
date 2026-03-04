@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tests.Common;
@@ -15,13 +16,18 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// </summary>
 /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
 [Category("Dispatcher")]
+[NotInParallel]
 public class DispatcherSyncTests : DiagnosticTestBase {
   protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
   // Test Messages - unique names to avoid conflicts with other tests
   public record DispatcherSyncCreateOrderCommand(Guid CustomerId, decimal Amount);
   public record DispatcherSyncOrderCreatedResult(Guid OrderId);
-  public record DispatcherSyncOrderCreatedEvent([property: StreamKey] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
+
+  // Event uses [DefaultRouting(Local)] for local cascade test verification.
+  // (System default is Outbox for cross-service delivery)
+  [DefaultRouting(DispatchMode.Local)]
+  public record DispatcherSyncOrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId, decimal Amount) : IEvent;
   public record DispatcherSyncLogCommand(string Message);
 
   /// <summary>
@@ -283,6 +289,16 @@ public class DispatcherSyncTests : DiagnosticTestBase {
         var method = receptorType.GetMethod("Handle");
         method!.Invoke(receptor, [msg]);
       };
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      // Not used in sync tests - return null
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      // Return null to use default cascade behavior (no receptor-level routing override)
+      return null;
     }
   }
 }

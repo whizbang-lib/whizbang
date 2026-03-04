@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,10 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
 
@@ -22,17 +27,23 @@ public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleInvoker? lifecycleInvoker = null,
   IEventTypeProvider? eventTypeProvider = null,
+  IPerspectiveSyncSignaler? syncSignaler = null,
+  ISyncEventTracker? syncEventTracker = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
+  private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
+  private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -80,6 +91,27 @@ public partial class PerspectiveWorker(
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
+
+    // Log registered perspectives at startup for diagnostics
+    await using (var startupScope = _scopeFactory.CreateAsyncScope()) {
+      var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+      if (registry != null) {
+        var registeredPerspectives = registry.GetRegisteredPerspectives();
+        if (registeredPerspectives.Count > 0) {
+          LogRegisteredPerspectivesHeader(_logger, registeredPerspectives.Count);
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            foreach (var p in registeredPerspectives) {
+              var eventTypesStr = string.Join(", ", p.EventTypes);
+              LogRegisteredPerspective(_logger, p.ClrTypeName, p.ModelType, p.EventTypes.Count, eventTypesStr);
+            }
+          }
+        } else {
+          LogNoPerspectivesRegistered(_logger);
+        }
+      } else {
+        LogPerspectiveRegistryNotAvailableAtStartup(_logger);
+      }
+    }
 
     // Process any pending perspective checkpoints IMMEDIATELY on startup (before first polling delay)
     try {
@@ -139,6 +171,28 @@ public partial class PerspectiveWorker(
   }
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
+    // Capture parent context BEFORE making span decisions
+    // This ensures child spans can find a parent even when intermediate spans are skipped
+    // On background threads, Activity.Current is typically null unless explicitly set
+    var parentContext = Activity.Current?.Context ?? default;
+
+    // Optionally create parent activity for all perspective processing in this batch
+    // When enabled, all child activities (Perspective {name}, Lifecycle stages) will be parented to this
+    // Controlled by TracingOptions.EnableWorkerBatchSpans (default: false to reduce noise)
+    var enableBatchSpan = _tracingOptions?.CurrentValue.EnableWorkerBatchSpans ?? false;
+    using var batchActivity = enableBatchSpan
+      ? WhizbangActivitySource.Tracing.StartActivity("PerspectiveWorker ProcessBatch", ActivityKind.Internal)
+      : null;
+    if (batchActivity is not null) {
+      batchActivity.SetTag("whizbang.worker", "PerspectiveWorker");
+      batchActivity.SetTag("whizbang.service.name", _instanceProvider.ServiceName);
+      batchActivity.SetTag("whizbang.instance.id", _instanceProvider.InstanceId.ToString());
+    }
+
+    // Compute effective parent: use batch span if created, otherwise use captured parent
+    // This cascades parent context even when batch span is disabled
+    var effectiveParent = batchActivity?.Context ?? parentContext;
+
     // Create a scope to resolve scoped IWorkCoordinator
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -245,6 +299,12 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
+    // Add batch metrics to parent span for tracing visibility
+    batchActivity?.SetTag("whizbang.perspective.batch.work_items", workBatch.PerspectiveWork.Count);
+    batchActivity?.SetTag("whizbang.perspective.batch.groups", groupedWork.Count);
+    batchActivity?.SetTag("whizbang.perspective.batch.completions_sent", completionsToSend.Length);
+    batchActivity?.SetTag("whizbang.perspective.batch.failures_sent", failuresToSend.Length);
+
 #pragma warning disable CA1848 // Temporary diagnostic logging
     // Diagnostic logging for perspective work batch
     var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
@@ -266,129 +326,214 @@ public partial class PerspectiveWorker(
       var streamId = group.Key.StreamId;
       var perspectiveName = group.Key.PerspectiveName;
 
+      // === Phase 1: Resolve dependencies and load events to extract trace context ===
+      // We need to load events BEFORE creating the perspective activity so we can
+      // extract trace parent from the first event's hops and link the span properly
+
+      // Look up the checkpoint to get the LastProcessedEventId
+      // This tells the runner where to start reading events from
+      var checkpoint = await workCoordinator.GetPerspectiveCheckpointAsync(
+        streamId,
+        perspectiveName,
+        cancellationToken
+      );
+
+      var lastProcessedEventId = checkpoint?.LastEventId;
+
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        var lastProcessedStr = lastProcessedEventId?.ToString() ?? "null (never processed)";
+        LogProcessingPerspectiveCheckpoint(_logger, perspectiveName, streamId, lastProcessedStr);
+      }
+
+      // Resolve the generated IPerspectiveRunner for this perspective
+      var registry = scope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+      if (registry == null) {
+        LogPerspectiveRunnerRegistryNotRegistered(_logger, perspectiveName);
+        continue;
+      }
+
+      // DIAGNOSTIC: Log registry resolution details
+      LogRunnerRegistryResolved(_logger, perspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
+
+      var runner = registry.GetRunner(perspectiveName, scope.ServiceProvider);
+      if (runner == null) {
+        LogNoPerspectiveRunnerFound(_logger, perspectiveName, streamId);
+        continue;
+      }
+
+      // DIAGNOSTIC: Log runner resolution details
+      LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
+
+      // Resolve IEventStore from scope (it's registered as scoped, not singleton)
+      var eventStore = scope.ServiceProvider.GetService<IEventStore>();
+
+      // DIAGNOSTIC: Log lifecycle invocation dependencies for debugging
+      LogLifecycleDependenciesResolved(_logger,
+        perspectiveName,
+        streamId,
+        _lifecycleInvoker is not null,
+        eventStore is not null,
+        _eventTypeProvider is not null);
+
+      // Load events early to extract trace context for distributed tracing
+      // This links perspective spans to the original request that created the events
+      List<MessageEnvelope<IEvent>>? upcomingEvents = null;
+      var perspectiveParentContext = batchActivity is null ? effectiveParent : default;
+
+      if (eventStore is not null && _eventTypeProvider is not null) {
+        var eventTypes = _eventTypeProvider.GetEventTypes();
+        if (eventTypes.Count > 0) {
+          upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
+            streamId,
+            lastProcessedEventId,
+            Guid.Empty, // Read all events after lastProcessedEventId
+            eventTypes,
+            cancellationToken
+          );
+
+          // Extract trace context from the first event's hops
+          // This links the perspective span to the original request trace
+          if (upcomingEvents.Count > 0) {
+            var firstEvent = upcomingEvents[0];
+            var traceParent = firstEvent.Hops
+              .Where(h => h.Type == HopType.Current)
+              .Select(h => h.TraceParent)
+              .LastOrDefault(tp => tp is not null);
+
+            if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var extractedContext)) {
+              perspectiveParentContext = extractedContext;
+            }
+          }
+        }
+      }
+
+      // === Phase 2: Create perspective activity with proper parent context ===
+      // Only create perspective spans when TraceComponents.Perspectives is enabled
+      var enablePerspectiveSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Perspectives) ?? false;
+      using var perspectiveActivity = enablePerspectiveSpans
+        ? WhizbangActivitySource.Tracing.StartActivity(
+            $"Perspective {perspectiveName}",
+            ActivityKind.Internal,
+            parentContext: perspectiveParentContext)
+        : null;
+      perspectiveActivity?.SetTag("whizbang.perspective.name", perspectiveName);
+      perspectiveActivity?.SetTag("whizbang.stream.id", streamId.ToString());
+
+      // DIAGNOSTIC: Help debug orphaned perspective spans
+      perspectiveActivity?.SetTag("whizbang.perspective.events_loaded", upcomingEvents?.Count ?? 0);
+      perspectiveActivity?.SetTag("whizbang.perspective.has_parent_context", perspectiveParentContext != default);
+      if (upcomingEvents is { Count: > 0 }) {
+        var firstEventTraceParent = upcomingEvents[0].Hops
+          .Where(h => h.Type == HopType.Current)
+          .Select(h => h.TraceParent)
+          .LastOrDefault();
+        perspectiveActivity?.SetTag("whizbang.perspective.first_event_traceparent", firstEventTraceParent ?? "(none)");
+      }
+
+      // Check if Lifecycle tracing is enabled via TraceComponents
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
       try {
-        // Look up the checkpoint to get the LastProcessedEventId
-        // This tells the runner where to start reading events from
-        var checkpoint = await workCoordinator.GetPerspectiveCheckpointAsync(
-          streamId,
-          perspectiveName,
-          cancellationToken
-        );
-
-        var lastProcessedEventId = checkpoint?.LastEventId;
-
-        LogProcessingPerspectiveCheckpoint(_logger, perspectiveName, streamId, lastProcessedEventId?.ToString() ?? "null (never processed)");
-
-        // Resolve the generated IPerspectiveRunner for this perspective
-        var registry = scope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
-        if (registry == null) {
-          LogPerspectiveRunnerRegistryNotRegistered(_logger, perspectiveName);
-          continue;
-        }
-
-        // DIAGNOSTIC: Log registry resolution details
-        LogRunnerRegistryResolved(_logger, perspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
-
-        var runner = registry.GetRunner(perspectiveName, scope.ServiceProvider);
-        if (runner == null) {
-          LogNoPerspectiveRunnerFound(_logger, perspectiveName);
-          continue;
-        }
-
-        // DIAGNOSTIC: Log runner resolution details
-        LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
-
-        // Resolve IEventStore from scope (it's registered as scoped, not singleton)
-        var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-
-        // DIAGNOSTIC: Log lifecycle invocation dependencies for debugging
-        LogLifecycleDependenciesResolved(_logger,
-          perspectiveName,
-          streamId,
-          _lifecycleInvoker is not null,
-          eventStore is not null,
-          _eventTypeProvider is not null);
-
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
-        if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
-          try {
-            // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
-            var eventTypes = _eventTypeProvider.GetEventTypes();
-            if (eventTypes.Count > 0) {
-              // Load events that will be processed to invoke PrePerspective receptors
-              var upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
-                streamId,
-                lastProcessedEventId,
-                Guid.Empty, // Read all events after lastProcessedEventId
-                eventTypes,
-                cancellationToken
-              );
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+        // Events are already loaded above for trace context extraction
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal) : null) {
+          if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
+            try {
+              var context = new LifecycleExecutionContext {
+                CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                StreamId = streamId,
+                LastProcessedEventId = lastProcessedEventId,
+                MessageSource = MessageSource.Local,
+                AttemptNumber = 1 // Perspectives process from local event store
+              };
 
-              if (upcomingEvents.Count > 0) {
-                var context = new LifecycleExecutionContext {
-                  CurrentStage = LifecycleStage.PrePerspectiveAsync,
-                  StreamId = streamId,
-                  LastProcessedEventId = lastProcessedEventId,
-                  MessageSource = MessageSource.Local,
-                  AttemptNumber = 1 // Perspectives process from local event store
-                };
-
-                // PrePerspectiveAsync (non-blocking)
-                foreach (var envelope in upcomingEvents) {
-                  await _lifecycleInvoker.InvokeAsync(
-                    envelope.Payload,
-                    LifecycleStage.PrePerspectiveAsync,
-                    context,
-                    cancellationToken
-                  );
-                }
-
-                // PrePerspectiveInline (blocking)
-                context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
-                foreach (var envelope in upcomingEvents) {
-                  await _lifecycleInvoker.InvokeAsync(
-                    envelope.Payload,
-                    LifecycleStage.PrePerspectiveInline,
-                    context,
-                    cancellationToken
-                  );
-                }
+              // PrePerspectiveAsync (non-blocking)
+              foreach (var envelope in upcomingEvents) {
+                await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+                await _lifecycleInvoker.InvokeAsync(
+                  envelope,
+                  LifecycleStage.PrePerspectiveAsync,
+                  context,
+                  cancellationToken
+                );
               }
-            } else {
-              LogWarningNoEventTypes(_logger, perspectiveName, streamId);
+            } catch (Exception ex) {
+              LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+              throw; // Never swallow exceptions
             }
-          } catch (Exception ex) {
-            LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
-            throw; // Never swallow exceptions
+          }
+        }
+
+        // PrePerspectiveInline (blocking) - reuse already loaded events
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal) : null) {
+          if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
+            try {
+              var context = new LifecycleExecutionContext {
+                CurrentStage = LifecycleStage.PrePerspectiveInline,
+                StreamId = streamId,
+                LastProcessedEventId = lastProcessedEventId,
+                MessageSource = MessageSource.Local,
+                AttemptNumber = 1
+              };
+
+              foreach (var envelope in upcomingEvents) {
+                await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+                await _lifecycleInvoker.InvokeAsync(
+                  envelope,
+                  LifecycleStage.PrePerspectiveInline,
+                  context,
+                  cancellationToken
+                );
+              }
+            } catch (Exception ex) {
+              LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+              throw;
+            }
           }
         }
 
         // Invoke runner to process ALL events for this stream/perspective
         // The runner will read from lastProcessedEventId onwards and process all available events
-        var result = await runner.RunAsync(
-          streamId,
-          perspectiveName,
-          lastProcessedEventId,
-          cancellationToken
-        );
+        // Note: Perspective spans are now linked to the first event's trace context (extracted above)
+        PerspectiveCheckpointCompletion result;
+        using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal) : null) {
+          activity?.SetTag("whizbang.perspective.name", perspectiveName);
+          activity?.SetTag("whizbang.stream.id", streamId.ToString());
+          activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
+
+          result = await runner.RunAsync(
+            streamId,
+            perspectiveName,
+            lastProcessedEventId,
+            cancellationToken
+          );
+
+          activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
+          activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+        }
 
         // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
         // Only load once to avoid duplicate queries and potential transaction issues
         var shouldLoadEvents = _lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
-#pragma warning disable CA1848 // Temporary diagnostic logging
-        _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loading events for {PerspectiveName}/{StreamId}: shouldLoad={ShouldLoad}, invoker={HasInvoker}, store={HasStore}, status={Status}, lastProcessed={LastProcessed}, current={Current}",
-          perspectiveName, streamId, shouldLoadEvents, _lifecycleInvoker is not null, eventStore is not null, result.Status, lastProcessedEventId, result.LastEventId);
-#pragma warning restore CA1848
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var hasInvoker = _lifecycleInvoker is not null;
+          var hasStore = eventStore is not null;
+          var statusStr = result.Status.ToString();
+          var lastProcessed = lastProcessedEventId.GetValueOrDefault();
+          var current = result.LastEventId;
+          LogDiagnosticLoadingEvents(_logger, perspectiveName, streamId, shouldLoadEvents, hasInvoker, hasStore, statusStr, lastProcessed, current);
+        }
 
         var processedEvents = shouldLoadEvents
           ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
           : [];
 
-#pragma warning disable CA1848 // Temporary diagnostic logging
-        _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loaded {Count} events for {PerspectiveName}/{StreamId}",
-          processedEvents.Count, perspectiveName, streamId);
-#pragma warning restore CA1848
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          var eventsCount = processedEvents.Count;
+          LogDiagnosticLoadedEvents(_logger, eventsCount, perspectiveName, streamId);
+        }
 
         // NOTE: PostPerspectiveAsync is fired from the generated perspective runner, not here.
         // The runner fires it after flushing data but before returning the completion.
@@ -399,37 +544,66 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
         LogCompletionReported(_logger);
 
+        // Phase 3c.0: Mark processed events in singleton tracker for cross-scope sync
+        // This signals any WaitForPerspectiveEventsAsync callers that this perspective has processed these events
+        // Note: Uses MarkProcessedByPerspective to only remove THIS perspective's entry, not all perspectives
+        if (processedEvents.Count > 0 && _syncEventTracker is not null) {
+          var processedEventIds = processedEvents.Select(e => e.MessageId.Value).ToList();
+#pragma warning disable CA1848
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessedByPerspective: Perspective={Perspective}, StreamId={StreamId}, EventCount={Count}, EventIds=[{Ids}]",
+              perspectiveName, streamId, processedEventIds.Count, string.Join(", ", processedEventIds));
+          }
+#pragma warning restore CA1848
+          _syncEventTracker.MarkProcessedByPerspective(processedEventIds, perspectiveName);
+        } else if (_logger.IsEnabled(LogLevel.Debug)) {
+#pragma warning disable CA1848
+          _logger.LogDebug("[SYNC_DEBUG] PerspectiveWorker MarkProcessed SKIPPED: ProcessedCount={Count}, HasTracker={HasTracker}",
+            processedEvents.Count, _syncEventTracker is not null);
+#pragma warning restore CA1848
+        }
+
+        // Phase 3c.1: Signal checkpoint updated for perspective sync
+        // This notifies any waiting sync awaiters that the perspective has processed up to this event
+        if (result.PerspectiveType is not null) {
+          _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
+        }
+
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
+        // Always trace lifecycle stages even when no receptors are registered
         LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, _lifecycleInvoker is not null);
 
-        if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
-          LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal) : null) {
+          if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+            LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
 
-          await _invokeLifecycleReceptorsForEventsAsync(
-            processedEvents,
-            streamId,
-            perspectiveName,
-            result.PerspectiveType,
-            result.LastEventId,
-            LifecycleStage.PostPerspectiveInline,
-            cancellationToken
-          );
-          LogPostPerspectiveInlineCompleted(_logger);
-        } else {
-          if (processedEvents.Count == 0) {
-            LogSkippingPostPerspectiveInlineNoEvents(_logger);
-#pragma warning disable CA1848 // Temporary diagnostic logging
-            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO EVENTS (lastProcessed={LastProcessed}, current={Current})",
-              perspectiveName, streamId, lastProcessedEventId, result.LastEventId);
-#pragma warning restore CA1848
-          }
-          if (_lifecycleInvoker is null) {
-            LogSkippingPostPerspectiveInlineNoInvoker(_logger);
-#pragma warning disable CA1848 // Temporary diagnostic logging
-            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO INVOKER",
-              perspectiveName, streamId);
-#pragma warning restore CA1848
+            await _invokeLifecycleReceptorsForEventsAsync(
+              processedEvents,
+              streamId,
+              perspectiveName,
+              result.PerspectiveType,
+              result.LastEventId,
+              LifecycleStage.PostPerspectiveInline,
+              scope.ServiceProvider,
+              cancellationToken
+            );
+            LogPostPerspectiveInlineCompleted(_logger);
+          } else {
+            if (processedEvents.Count == 0) {
+              LogSkippingPostPerspectiveInlineNoEvents(_logger);
+              if (_logger.IsEnabled(LogLevel.Debug)) {
+                var lastProcessed = lastProcessedEventId.GetValueOrDefault();
+                var current = result.LastEventId;
+                LogDiagnosticNoEvents(_logger, perspectiveName, streamId, lastProcessed, current);
+              }
+            }
+            if (_lifecycleInvoker is null) {
+              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
+              if (_logger.IsEnabled(LogLevel.Debug)) {
+                LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
+              }
+            }
           }
         }
 
@@ -512,10 +686,11 @@ public partial class PerspectiveWorker(
 
       // Load all events that were just processed by this perspective run
       // Use polymorphic read since we don't know the concrete event types ahead of time
-#pragma warning disable CA1848 // Temporary diagnostic logging
-      _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Calling GetEventsBetweenPolymorphicAsync for {PerspectiveName}/{StreamId}: lastProcessed={LastProcessed}, current={Current}, eventTypes={EventTypes}",
-        perspectiveName, streamId, lastProcessedEventId, currentEventId, eventTypes.Count);
-#pragma warning restore CA1848
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var eventTypesCount = eventTypes.Count;
+        var lastProcessed = lastProcessedEventId.GetValueOrDefault();
+        LogDiagnosticGetEventsBetween(_logger, perspectiveName, streamId, lastProcessed, currentEventId, eventTypesCount);
+      }
 
       var processedEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
         streamId,
@@ -525,10 +700,10 @@ public partial class PerspectiveWorker(
         cancellationToken
       );
 
-#pragma warning disable CA1848 // Temporary diagnostic logging
-      _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] GetEventsBetweenPolymorphicAsync returned {Count} events for {PerspectiveName}/{StreamId}",
-        processedEvents.Count, perspectiveName, streamId);
-#pragma warning restore CA1848
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var eventsCount = processedEvents.Count;
+        LogDiagnosticGetEventsReturned(_logger, eventsCount, perspectiveName, streamId);
+      }
 
       return processedEvents;
 
@@ -549,6 +724,7 @@ public partial class PerspectiveWorker(
       Type? perspectiveType,
       Guid currentEventId,
       LifecycleStage stage,
+      IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
 
     if (_lifecycleInvoker is null) {
@@ -570,8 +746,11 @@ public partial class PerspectiveWorker(
 
       // Invoke receptors for each event
       foreach (var envelope in processedEvents) {
+        // Establish security context BEFORE invoking lifecycle receptors
+        await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
+
         await _lifecycleInvoker.InvokeAsync(
-          envelope.Payload,
+          envelope,
           stage,
           context,
           cancellationToken
@@ -583,6 +762,48 @@ public partial class PerspectiveWorker(
       // Lifecycle receptor failures shouldn't prevent checkpoint progress
       LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
       throw; // Never swallow exceptions
+    }
+  }
+
+  /// <summary>
+  /// Establishes security context from the envelope before lifecycle receptor invocation.
+  /// Sets IScopeContextAccessor.Current and IMessageContextAccessor.Current.
+  /// Same pattern as ReceptorInvoker for consistency.
+  /// </summary>
+  /// <docs>workers/perspective-worker#security-context</docs>
+  /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  private static async ValueTask _establishSecurityContextAsync(
+      MessageEnvelope<IEvent> envelope,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
+
+    // Establish security context from envelope (same pattern as ReceptorInvoker)
+    var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
+    if (securityProvider is not null) {
+      var securityContext = await securityProvider
+        .EstablishContextAsync(envelope, scopedProvider, cancellationToken)
+        .ConfigureAwait(false);
+
+      if (securityContext is not null) {
+        var accessor = scopedProvider.GetService<IScopeContextAccessor>();
+        if (accessor is not null) {
+          accessor.Current = securityContext;
+        }
+      }
+    }
+
+    // Set message context with UserId and TenantId from security context
+    var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
+    if (messageContextAccessor is not null) {
+      var securityContext = envelope.GetCurrentSecurityContext();
+      messageContextAccessor.Current = new MessageContext {
+        MessageId = envelope.MessageId,
+        CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
+        CausationId = envelope.GetCausationId() ?? MessageId.New(),
+        Timestamp = envelope.GetMessageTimestamp(),
+        UserId = securityContext?.UserId,
+        TenantId = securityContext?.TenantId
+      };
     }
   }
 
@@ -667,9 +888,9 @@ public partial class PerspectiveWorker(
   [LoggerMessage(
     EventId = 12,
     Level = LogLevel.Warning,
-    Message = "No IPerspectiveRunner found for perspective {PerspectiveName}. Ensure perspective implements IPerspectiveFor<TModel, TEvent> and has [StreamKey] on model. Skipping."
+    Message = "No IPerspectiveRunner found for perspective '{PerspectiveName}' (stream: {StreamId}). See startup log for registered perspectives."
   )]
-  static partial void LogNoPerspectiveRunnerFound(ILogger logger, string perspectiveName);
+  static partial void LogNoPerspectiveRunnerFound(ILogger logger, string perspectiveName, Guid streamId);
 
   [LoggerMessage(
     EventId = 13,
@@ -853,10 +1074,94 @@ public partial class PerspectiveWorker(
   /// </summary>
   [LoggerMessage(
     EventId = 32,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "[PerspectiveWorker SCHEMA DIAGNOSTIC] Service={ServiceName} (InstanceId={InstanceId}) is processing checkpoints"
   )]
   static partial void LogProcessingWorkBatchForService(ILogger logger, string serviceName, Guid instanceId);
+
+  /// <summary>
+  /// Logs the header line indicating how many perspectives are registered at startup.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 33,
+    Level = LogLevel.Information,
+    Message = "Registered {Count} perspective(s):"
+  )]
+  static partial void LogRegisteredPerspectivesHeader(ILogger logger, int count);
+
+  /// <summary>
+  /// Logs details of a single registered perspective at startup.
+  /// Shows CLR type name, model type, number of event handlers, and event type names.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 34,
+    Level = LogLevel.Information,
+    Message = "  - {PerspectiveName} (Model: {ModelType}, Events: {EventCount}) [{EventTypes}]"
+  )]
+  static partial void LogRegisteredPerspective(ILogger logger, string perspectiveName, string modelType, int eventCount, string eventTypes);
+
+  /// <summary>
+  /// Logs when no perspectives are registered at startup (potential configuration issue).
+  /// </summary>
+  [LoggerMessage(
+    EventId = 35,
+    Level = LogLevel.Warning,
+    Message = "No perspectives registered. Ensure AddPerspectiveRunners() is called during service registration."
+  )]
+  static partial void LogNoPerspectivesRegistered(ILogger logger);
+
+  /// <summary>
+  /// Logs when IPerspectiveRunnerRegistry is not available at startup.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 36,
+    Level = LogLevel.Debug,
+    Message = "IPerspectiveRunnerRegistry not available at startup (perspectives may be registered lazily)"
+  )]
+  static partial void LogPerspectiveRegistryNotAvailableAtStartup(ILogger logger);
+
+  // Diagnostic logging - Debug level only
+  [LoggerMessage(
+    EventId = 37,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] Loading events for {PerspectiveName}/{StreamId}: shouldLoad={ShouldLoad}, invoker={HasInvoker}, store={HasStore}, status={Status}, lastProcessed={LastProcessed}, current={Current}"
+  )]
+  static partial void LogDiagnosticLoadingEvents(ILogger logger, string perspectiveName, Guid streamId, bool shouldLoad, bool hasInvoker, bool hasStore, string status, Guid lastProcessed, Guid current);
+
+  [LoggerMessage(
+    EventId = 38,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] Loaded {Count} events for {PerspectiveName}/{StreamId}"
+  )]
+  static partial void LogDiagnosticLoadedEvents(ILogger logger, int count, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 39,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] Skipping PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO EVENTS (lastProcessed={LastProcessed}, current={Current})"
+  )]
+  static partial void LogDiagnosticNoEvents(ILogger logger, string perspectiveName, Guid streamId, Guid lastProcessed, Guid current);
+
+  [LoggerMessage(
+    EventId = 40,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] Skipping PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO INVOKER"
+  )]
+  static partial void LogDiagnosticNoInvoker(ILogger logger, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 41,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] Calling GetEventsBetweenPolymorphicAsync for {PerspectiveName}/{StreamId}: lastProcessed={LastProcessed}, current={Current}, eventTypes={EventTypesCount}"
+  )]
+  static partial void LogDiagnosticGetEventsBetween(ILogger logger, string perspectiveName, Guid streamId, Guid lastProcessed, Guid current, int eventTypesCount);
+
+  [LoggerMessage(
+    EventId = 42,
+    Level = LogLevel.Debug,
+    Message = "[DIAGNOSTIC] GetEventsBetweenPolymorphicAsync returned {Count} events for {PerspectiveName}/{StreamId}"
+  )]
+  static partial void LogDiagnosticGetEventsReturned(ILogger logger, int count, string perspectiveName, Guid streamId);
 }
 
 /// <summary>

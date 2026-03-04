@@ -54,6 +54,24 @@ public interface IMessageContext {
   string? UserId { get; }
 
   /// <summary>
+  /// Optional tenant identifier for multi-tenant isolation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// In lifecycle receptors (especially deferred stages like <c>PostPerspectiveAsync</c>),
+  /// use this property instead of HTTP-based tenant resolution since the original HTTP
+  /// context is unavailable.
+  /// </para>
+  /// <para>
+  /// The tenant ID propagates through the message envelope's security context hops,
+  /// ensuring consistent tenant context throughout the message's lifecycle.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:TenantId_IsNullByDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Properties_CanBeSetViaInitializer_WithInitSyntaxAsync</tests>
+  string? TenantId { get; }
+
+  /// <summary>
   /// Additional metadata for cross-cutting concerns.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Metadata_IsEmptyByDefaultAsync</tests>

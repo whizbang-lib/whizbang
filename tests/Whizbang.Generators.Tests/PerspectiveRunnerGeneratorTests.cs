@@ -78,7 +78,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
     public string Status { get; init; } = """";
   }
@@ -107,8 +107,8 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveRunnerGenerator_PerspectiveWithModelNoStreamKey_GeneratesNothingAsync() {
-    // Arrange - Model without [StreamKey] attribute should not generate runner
+  public async Task PerspectiveRunnerGenerator_PerspectiveWithModelNoStreamId_GeneratesNothingAsync() {
+    // Arrange - Model without [StreamId] attribute should not generate runner
     var source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
@@ -122,7 +122,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    // Missing [StreamKey] attribute
+    // Missing [StreamId] attribute
     public string OrderId { get; init; } = """";
     public string Status { get; init; } = """";
   }
@@ -137,7 +137,7 @@ namespace TestNamespace {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
-    // Assert - Should not generate runner (model missing [StreamKey])
+    // Assert - Should not generate runner (model missing [StreamId])
     await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
   }
 
@@ -158,7 +158,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -202,7 +202,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -242,7 +242,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -280,7 +280,7 @@ namespace TestNamespace {
   }
 
   public record InventoryModel {
-    [StreamKey]
+    [StreamId]
     public string InventoryId { get; init; } = """";
     public int Quantity { get; init; }
   }
@@ -318,7 +318,7 @@ namespace TestNamespace {
   }
 
   public record OrderReadModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -360,12 +360,12 @@ namespace TestNamespace {
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
   public record InventoryModel {
-    [StreamKey]
+    [StreamId]
     public string InventoryId { get; init; } = """";
   }
 
@@ -413,7 +413,7 @@ namespace TestNamespace {
   public record OrderEvent : IEvent { }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public string OrderId { get; init; } = """";
   }
 
@@ -437,7 +437,7 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveRunnerGenerator_StreamKeyPropertyNameIncludedAsync() {
+  public async Task PerspectiveRunnerGenerator_StreamIdPropertyNameIncludedAsync() {
     // Arrange - Test that stream key property name is used in generated runner
     var source = @"
 using Whizbang.Core;
@@ -450,7 +450,7 @@ namespace TestNamespace {
   public record OrderEvent : IEvent { }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public string CustomOrderIdentifier { get; init; } = """";
     public string Status { get; init; } = """";
   }
@@ -473,8 +473,8 @@ namespace TestNamespace {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task PerspectiveRunnerGenerator_GeneratesExtractStreamIdMethod_UsingEventStreamKeyAsync() {
-    // Arrange - Test that runner generates ExtractStreamId method using event's [StreamKey]
+  public async Task PerspectiveRunnerGenerator_GeneratesExtractStreamIdMethod_UsingEventStreamIdAsync() {
+    // Arrange - Test that runner generates ExtractStreamId method using event's [StreamId]
     var source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
@@ -484,13 +484,13 @@ using System.Threading.Tasks;
 
 namespace TestNamespace {
   public record ProductCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid ProductId { get; init; }  // Event's stream key
     public string ProductName { get; init; } = """";
   }
 
   public record ProductModel {
-    [StreamKey]
+    [StreamId]
     public Guid ProductId { get; init; }  // Model's stream key (same property)
     public string ProductName { get; init; } = """";
   }
@@ -517,7 +517,7 @@ namespace TestNamespace {
     // Should have ExtractStreamId method
     await Assert.That(runnerSource!).Contains("ExtractStreamId");
 
-    // Should access event's ProductId property (the [StreamKey] property)
+    // Should access event's ProductId property (the [StreamId] property)
     await Assert.That(runnerSource!).Contains("@event.ProductId");
 
     // Should return the stream ID as string
@@ -537,19 +537,19 @@ using System.Threading.Tasks;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string CustomerName { get; init; } = """";
   }
 
   public record OrderShippedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }  // Same property name, different event
     public string TrackingNumber { get; init; } = """";
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
   }
@@ -612,17 +612,17 @@ using System;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderShippedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
   }
@@ -668,17 +668,17 @@ using System;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderShippedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
   }
@@ -727,17 +727,17 @@ using System;
 
 namespace TestNamespace {
   public record OrderEvent1 : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderEvent2 : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
@@ -780,12 +780,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
@@ -818,12 +818,12 @@ using System;
 
 namespace TestNamespace {
   public record CustomerUpdatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid CustomerId { get; init; }
   }
 
   public record CustomerReadModel {
-    [StreamKey]
+    [StreamId]
     public Guid CustomerId { get; init; }
     public string Name { get; init; } = """";
   }
@@ -870,12 +870,12 @@ using System;
 
 namespace TestNamespace {
   public record OrderCancelledEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
     public DateTimeOffset? DeletedAt { get; init; }
@@ -910,13 +910,13 @@ using System;
 
 namespace TestNamespace {
   public record OrderUpdatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public bool ShouldSkip { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
   }
@@ -951,13 +951,13 @@ using System;
 
 namespace TestNamespace {
   public record OrderArchivedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public bool ShouldPurge { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public DateTimeOffset? ArchivedAt { get; init; }
     public DateTimeOffset? DeletedAt { get; init; }
@@ -992,13 +992,13 @@ using System;
 
 namespace TestNamespace {
   public record OrderProcessedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Action { get; init; } = """";
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
     public DateTimeOffset? DeletedAt { get; init; }
@@ -1036,17 +1036,17 @@ using System;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderCancelledEvent : IEvent {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
   }
 
   public record OrderModel {
-    [StreamKey]
+    [StreamId]
     public Guid OrderId { get; init; }
     public string Status { get; init; } = """";
     public DateTimeOffset? DeletedAt { get; init; }
@@ -1077,5 +1077,611 @@ namespace TestNamespace {
     await Assert.That(runnerSource!).Contains("OrderPerspectiveRunner");
     await Assert.That(runnerSource!).Contains("OrderCreatedEvent");
     await Assert.That(runnerSource!).Contains("OrderCancelledEvent");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NestedClasses_GeneratesUniqueHintNamesAsync() {
+    // Arrange - Multiple nested classes with the same simple name "Projection"
+    // should generate unique hintNames like "DraftJobStatusProjectionRunner.g.cs"
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record DraftCreatedEvent : IEvent {
+    [StreamId]
+    public string DraftId { get; init; } = """";
+  }
+
+  public record EmbeddingCreatedEvent : IEvent {
+    [StreamId]
+    public string EmbeddingId { get; init; } = """";
+  }
+
+  public record DraftModel {
+    [StreamId]
+    public string DraftId { get; init; } = """";
+    public string Content { get; init; } = """";
+  }
+
+  public record EmbeddingModel {
+    [StreamId]
+    public string EmbeddingId { get; init; } = """";
+    public string Content { get; init; } = """";
+  }
+
+  public static class DraftJobStatus {
+    public class Projection : IPerspectiveFor<DraftModel, DraftCreatedEvent> {
+      public DraftModel Apply(DraftModel currentData, DraftCreatedEvent @event) {
+        return currentData with { Content = ""Draft"" };
+      }
+    }
+  }
+
+  public static class Embedding {
+    public class Projection : IPerspectiveFor<EmbeddingModel, EmbeddingCreatedEvent> {
+      public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingCreatedEvent @event) {
+        return currentData with { Content = ""Embedding"" };
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate 2 runners with unique hintNames
+    // Check that no CS8785 error (duplicate hintName) exists
+    var duplicateHintErrors = result.Diagnostics
+        .Where(d => d.Id == "CS8785" || d.GetMessage(CultureInfo.InvariantCulture).Contains("hintName"))
+        .ToList();
+    await Assert.That(duplicateHintErrors).Count().IsEqualTo(0);
+
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
+
+    // The hintNames should include parent type names for uniqueness
+    var draftRunner = GeneratorTestHelper.GetGeneratedSource(result, "DraftJobStatusProjectionRunner.g.cs");
+    var embeddingRunner = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingProjectionRunner.g.cs");
+
+    await Assert.That(draftRunner).IsNotNull();
+    await Assert.That(embeddingRunner).IsNotNull();
+
+    // Verify the class names also include parent type
+    await Assert.That(draftRunner!).Contains("class DraftJobStatusProjectionRunner");
+    await Assert.That(embeddingRunner!).Contains("class EmbeddingProjectionRunner");
+  }
+
+  // ==================== Multi-Event Support Tests (6-50 events) ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PerspectiveWith10Events_GeneratesRunnerAsync() {
+    // Arrange - Perspective implementing IPerspectiveFor with 10 event types
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record Event1 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event2 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event3 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event4 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event5 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event6 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event7 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event8 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event9 : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Event10 : IEvent { [StreamId] public Guid Id { get; init; } }
+
+  public record MultiEventModel {
+    [StreamId]
+    public Guid Id { get; init; }
+    public int Counter { get; init; }
+  }
+
+  public class MultiEventPerspective : IPerspectiveFor<MultiEventModel, Event1, Event2, Event3, Event4, Event5, Event6, Event7, Event8, Event9, Event10> {
+    public MultiEventModel Apply(MultiEventModel current, Event1 @event) => current with { Counter = current.Counter + 1 };
+    public MultiEventModel Apply(MultiEventModel current, Event2 @event) => current with { Counter = current.Counter + 2 };
+    public MultiEventModel Apply(MultiEventModel current, Event3 @event) => current with { Counter = current.Counter + 3 };
+    public MultiEventModel Apply(MultiEventModel current, Event4 @event) => current with { Counter = current.Counter + 4 };
+    public MultiEventModel Apply(MultiEventModel current, Event5 @event) => current with { Counter = current.Counter + 5 };
+    public MultiEventModel Apply(MultiEventModel current, Event6 @event) => current with { Counter = current.Counter + 6 };
+    public MultiEventModel Apply(MultiEventModel current, Event7 @event) => current with { Counter = current.Counter + 7 };
+    public MultiEventModel Apply(MultiEventModel current, Event8 @event) => current with { Counter = current.Counter + 8 };
+    public MultiEventModel Apply(MultiEventModel current, Event9 @event) => current with { Counter = current.Counter + 9 };
+    public MultiEventModel Apply(MultiEventModel current, Event10 @event) => current with { Counter = current.Counter + 10 };
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner for perspective with 10 events
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "MultiEventPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("class MultiEventPerspectiveRunner");
+    await Assert.That(runnerSource!).Contains("IPerspectiveRunner");
+
+    // Verify all 10 event types are handled
+    await Assert.That(runnerSource!).Contains("Event1");
+    await Assert.That(runnerSource!).Contains("Event10");
+    await Assert.That(runnerSource!).Contains("MultiEventModel");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PerspectiveWith25Events_GeneratesRunnerAsync() {
+    // Arrange - Perspective implementing IPerspectiveFor with 25 event types
+    var eventDeclarations = string.Join("\n",
+        Enumerable.Range(1, 25).Select(i =>
+            $"  public record Evt{i} : IEvent {{ [StreamId] public Guid Id {{ get; init; }} }}"));
+
+    var applyMethods = string.Join("\n",
+        Enumerable.Range(1, 25).Select(i =>
+            $"    public Model Apply(Model c, Evt{i} e) => c with {{ Counter = c.Counter + {i} }};"));
+
+    var eventTypeParams = string.Join(", ", Enumerable.Range(1, 25).Select(i => $"Evt{i}"));
+
+    var source = $@"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {{
+{eventDeclarations}
+
+  public record Model {{
+    [StreamId]
+    public Guid Id {{ get; init; }}
+    public int Counter {{ get; init; }}
+  }}
+
+  public class BigPerspective : IPerspectiveFor<Model, {eventTypeParams}> {{
+{applyMethods}
+  }}
+}}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner for perspective with 25 events
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "BigPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("class BigPerspectiveRunner");
+    await Assert.That(runnerSource!).Contains("IPerspectiveRunner");
+    await Assert.That(runnerSource!).Contains("Evt1");
+    await Assert.That(runnerSource!).Contains("Evt25");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ModelMissingStreamId_EmitsWarningAsync() {
+    // Arrange - perspective with model that has no [StreamId]
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderReadModel {
+    public string OrderId { get; init; } = """";  // No [StreamId]!
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - warning should be emitted (WHIZ033)
+    var warning = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ033");
+    await Assert.That(warning).IsNotNull();
+    await Assert.That(warning!.Severity).IsEqualTo(DiagnosticSeverity.Warning);
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderPerspective");
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderReadModel");
+    await Assert.That(warning.GetMessage(CultureInfo.InvariantCulture)).Contains("[StreamId]");
+
+    // No runner should be generated
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_ModelHasStreamId_NoWarningAsync() {
+    // Arrange - perspective with model that HAS [StreamId]
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderReadModel {
+    [StreamId]
+    public string OrderId { get; init; } = """";  // Has [StreamId]!
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - no WHIZ033 warning should be emitted
+    var warning = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ033");
+    await Assert.That(warning).IsNull();
+
+    // Runner SHOULD be generated
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+  }
+
+  // ========================================
+  // Physical Field Tests
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_VectorField_GeneratesUpsertWithPhysicalFieldsAsync() {
+    // Arrange - model with [VectorField] should generate UpsertWithPhysicalFieldsAsync call
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EmbeddingUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+    public float[]? Embeddings { get; init; }
+  }
+
+  public record EmbeddingModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(1536)]
+    public float[]? Embeddings { get; init; }
+  }
+
+  public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, EmbeddingUpdatedEvent> {
+    public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingUpdatedEvent @event) {
+      return currentData with { Embeddings = @event.Embeddings };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
+    await Assert.That(runnerSource!).Contains("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).Contains("physicalFieldValues");
+    await Assert.That(runnerSource!).Contains(@"""embeddings""");  // snake_case column name
+    await Assert.That(runnerSource!).Contains("model.Embeddings");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PhysicalField_GeneratesUpsertWithPhysicalFieldsAsync() {
+    // Arrange - model with [PhysicalField] should generate UpsertWithPhysicalFieldsAsync call
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField(Indexed = true)]
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderUpdatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderUpdatedEvent @event) {
+      return currentData with { Status = @event.Status };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with UpsertWithPhysicalFieldsAsync
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertWithPhysicalFieldsAsync instead of UpsertAsync
+    await Assert.That(runnerSource!).Contains("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).Contains("physicalFieldValues");
+    await Assert.That(runnerSource!).Contains(@"""status""");  // snake_case column name
+    await Assert.That(runnerSource!).Contains("model.Status");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NoPhysicalFields_UsesSimpleUpsertAsync() {
+    // Arrange - model without physical fields should use simple UpsertAsync
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record SimpleEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record SimpleModel {
+    [StreamId]
+    public Guid Id { get; init; }
+    public string Name { get; init; } = """";
+  }
+
+  public class SimplePerspective : IPerspectiveFor<SimpleModel, SimpleEvent> {
+    public SimpleModel Apply(SimpleModel currentData, SimpleEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner with simple UpsertAsync (no physical fields)
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "SimplePerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use UpsertAsync, NOT UpsertWithPhysicalFieldsAsync
+    await Assert.That(runnerSource!).Contains("UpsertAsync(");
+    await Assert.That(runnerSource!).DoesNotContain("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).DoesNotContain("physicalFieldValues");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_MultiplePhysicalFields_GeneratesAllFieldsAsync() {
+    // Arrange - model with multiple physical fields
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record ProductUpdatedEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record ProductModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [PhysicalField(Indexed = true)]
+    public string Sku { get; init; } = """";
+
+    [VectorField(768)]
+    public float[]? DescriptionEmbedding { get; init; }
+
+    [PhysicalField]
+    public decimal Price { get; init; }
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductUpdatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductUpdatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate all physical fields in dictionary
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should have all three physical fields
+    await Assert.That(runnerSource!).Contains(@"""sku""");
+    await Assert.That(runnerSource!).Contains(@"""description_embedding""");
+    await Assert.That(runnerSource!).Contains(@"""price""");
+    await Assert.That(runnerSource!).Contains("model.Sku");
+    await Assert.That(runnerSource!).Contains("model.DescriptionEmbedding");
+    await Assert.That(runnerSource!).Contains("model.Price");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_VectorFieldWithCustomColumnName_UsesCustomNameAsync() {
+    // Arrange - VectorField with custom ColumnName
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EmbeddingEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public record EmbeddingModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(1536, ColumnName = ""custom_embedding_col"")]
+    public float[]? Vector { get; init; }
+  }
+
+  public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, EmbeddingEvent> {
+    public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should use custom column name
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use custom column name instead of snake_case default
+    await Assert.That(runnerSource!).Contains(@"""custom_embedding_col""");
+    await Assert.That(runnerSource!).Contains("model.Vector");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_StaticProperty_NotIncludedInPhysicalFieldsAsync() {
+    // Arrange - Static properties with VectorField should be ignored
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record TestEvent : IEvent {
+    public Guid Id { get; init; }
+  }
+
+  public class TestModel {
+    [StreamId]
+    public Guid Id { get; init; }
+
+    [VectorField(512)]
+    public static float[]? StaticVector { get; set; }  // Static - should be ignored
+
+    public string Name { get; init; } = """";
+  }
+
+  public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+    public TestModel Apply(TestModel currentData, TestEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Static vector field should NOT be in physical fields
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "TestPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should use simple UpsertAsync (no physical fields after excluding static)
+    await Assert.That(runnerSource!).DoesNotContain("UpsertWithPhysicalFieldsAsync");
+    await Assert.That(runnerSource!).DoesNotContain("StaticVector");
+    await Assert.That(runnerSource!).Contains("UpsertAsync(");
+  }
+
+  // ==================== Security Context Propagation Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PostPerspectiveAsync_EstablishesSecurityContextAsync() {
+    // Arrange - This test verifies that PostPerspectiveAsync lifecycle handlers
+    // have access to TenantId from the message envelope's security context.
+    // The generated runner MUST establish IMessageContextAccessor.Current before
+    // invoking PostPerspectiveAsync lifecycle receptors.
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // CRITICAL: The generated code MUST establish FULL security context BEFORE
+    // invoking PostPerspectiveAsync lifecycle handlers.
+    // This ensures IMessageContext.TenantId is available in handlers.
+    // Pattern must match PerspectiveWorker._establishSecurityContextAsync:
+    // 1. Call IMessageSecurityContextProvider.EstablishContextAsync (sets IScopeContextAccessor)
+    // 2. Set IMessageContextAccessor.Current with envelope security context
+
+    // Step 1: Should get IMessageSecurityContextProvider and establish context
+    await Assert.That(runnerSource!).Contains("GetService<IMessageSecurityContextProvider>()");
+    await Assert.That(runnerSource!).Contains("EstablishContextAsync");
+    await Assert.That(runnerSource!).Contains("GetService<IScopeContextAccessor>()");
+    await Assert.That(runnerSource!).Contains("scopeContextAccessor.Current = establishedContext");
+
+    // Step 2: Should get IMessageContextAccessor from service provider
+    await Assert.That(runnerSource!).Contains("GetService<IMessageContextAccessor>()");
+
+    // Should get security context from envelope
+    await Assert.That(runnerSource!).Contains("GetCurrentSecurityContext()");
+
+    // Should set messageContextAccessor.Current with TenantId from envelope
+    // This is the critical fix - the template must populate IMessageContextAccessor.Current
+    // BEFORE invoking PostPerspectiveAsync lifecycle receptors
+    await Assert.That(runnerSource!).Contains("messageContextAccessor.Current = new MessageContext");
+
+    // Should extract TenantId from security context
+    await Assert.That(runnerSource!).Contains("TenantId = securityContext?.TenantId");
   }
 }

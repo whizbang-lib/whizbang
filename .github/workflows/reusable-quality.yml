@@ -89,28 +89,33 @@ jobs:
           COVERAGE_FILES="${{ steps.check-coverage.outputs.files }}"
           echo "Coverage files to merge: $COVERAGE_FILES"
 
+          # File filters to exclude from coverage reports
+          # Only exclude source-generated files (*.g.cs, .whizbang-generated)
+          # Note: samples/benchmarks/tools are excluded via sonar.coverage.exclusions in SonarCloud
+          FILE_FILTERS="-*.g.cs;-**/.whizbang-generated/*"
+
           # Generate merged report in SonarQube format
-          # Exclude source-generated files from coverage (*.g.cs, .whizbang-generated)
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/sonarqube" \
             "-reporttypes:SonarQube" \
-            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
+            "-filefilters:${FILE_FILTERS}"
 
           # Convert absolute paths to relative paths for SonarCloud
+          # Remove CI runner path AND deterministic build prefix (/_/)
           sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
+          sed -i 's|/_/||g' coverage/sonarqube/SonarQube.xml
 
           # Debug: show first few lines to verify paths
           echo "=== Merged coverage report (first 30 lines) ==="
           head -30 coverage/sonarqube/SonarQube.xml
 
-          # Also generate text summary for coverage check
-          # Use same exclusions as SonarQube report
+          # Also generate text summary for coverage check (same filters)
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/summary" \
             "-reporttypes:TextSummary" \
-            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
+            "-filefilters:${FILE_FILTERS}"
 
       - name: Check Coverage Threshold
         run: |
@@ -118,7 +123,15 @@ jobs:
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
           echo "Line coverage: ${COVERAGE}%"
 
-          # Check against threshold (80%)
+          # Fail if coverage could not be parsed
+          if [ -z "$COVERAGE" ]; then
+            echo "::error::Failed to parse coverage percentage from Summary.txt"
+            echo "Summary.txt contents:"
+            cat coverage/summary/Summary.txt
+            exit 1
+          fi
+
+          # Check against threshold
           THRESHOLD=80
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "::error::Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
@@ -128,15 +141,24 @@ jobs:
           fi
 
       - name: SonarCloud Analysis
-        # Only run on main/develop pushes - PR analysis not supported by current SonarCloud plan
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
+          # Build PR-specific parameters if this is a pull request
+          PR_PARAMS=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_PARAMS="/d:sonar.pullrequest.key=$PR_NUMBER /d:sonar.pullrequest.branch=$HEAD_REF /d:sonar.pullrequest.base=$BASE_REF"
+          fi
+
           dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
             /d:sonar.token="${SONAR_TOKEN}" \
             /d:sonar.host.url="https://sonarcloud.io" \
+            ${PR_PARAMS} \
             /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/node_modules/**,**/*Generated.cs,**/.whizbang-generated/**" \
             /d:sonar.cpd.exclusions="**/tests/**,**/tools/**,**/samples/**,**/benchmarks/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Transports.HotChocolate.Generators/**,src/Whizbang.Transports.FastEndpoints.Generators/**" \
             /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,**/tools/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Transports.HotChocolate.Generators/**,src/Whizbang.Transports.FastEndpoints.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \

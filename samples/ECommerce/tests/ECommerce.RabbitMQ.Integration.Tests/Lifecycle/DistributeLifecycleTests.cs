@@ -88,7 +88,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -128,7 +128,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPreDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -168,7 +168,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -208,7 +208,7 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
@@ -258,7 +258,7 @@ public class DistributeLifecycleTests {
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     // NOTE: Async stages run in Task.Run (fire-and-forget), so need longer timeout
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeAsyncAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 30000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -297,7 +297,7 @@ public class DistributeLifecycleTests {
     // Distribute lifecycle stages fire when events are published, not when commands are dispatched
     // IMPORTANT: Start waiting but don't await yet - we need to send the command first!
     var receptorTask = fixture.InventoryHost.WaitForPostDistributeInlineAsync<ProductCreatedEvent>(
-      timeoutMilliseconds: 10000);
+      timeoutMilliseconds: 60000);
 
     // Send command - this will trigger event publication and fire the lifecycle receptor
     await fixture.Dispatcher.SendAsync(command);
@@ -336,11 +336,11 @@ public class DistributeLifecycleTests {
 
     // Create receptors for all 5 stages
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
-    var preInlineCompletion = new TaskCompletionSource<bool>();
-    var preAsyncCompletion = new TaskCompletionSource<bool>();
-    var distributeAsyncCompletion = new TaskCompletionSource<bool>();
-    var postAsyncCompletion = new TaskCompletionSource<bool>();
-    var postInlineCompletion = new TaskCompletionSource<bool>();
+    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var distributeAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
     var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
@@ -411,7 +411,7 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 

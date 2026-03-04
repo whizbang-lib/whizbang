@@ -57,23 +57,23 @@ public class InboxRoutingStrategyTests {
   #region SharedTopicInboxStrategy
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_ReturnsDefaultTopicAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_ReturnsDefaultInboxTopicAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands", "myapp.inventory.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert
-    await Assert.That(subscription.Topic).IsEqualTo("whizbang.inbox");
+    // Assert - Default inbox topic is "inbox"
+    await Assert.That(subscription.Topic).IsEqualTo("inbox");
   }
 
   [Test]
   public async Task SharedTopicInboxStrategy_GetSubscription_WithCustomTopic_ReturnsCustomTopicAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy("my.custom.inbox");
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
@@ -83,60 +83,82 @@ public class InboxRoutingStrategyTests {
   }
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_ReturnsFilterExpressionAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesSystemCommandsInFilterAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert - Filter should list owned domains
+    // Assert - Filter should include system commands namespace
     await Assert.That(subscription.FilterExpression).IsNotNull();
-    await Assert.That(subscription.FilterExpression).Contains("orders");
-    await Assert.That(subscription.FilterExpression).Contains("inventory");
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.commands.system.#");
   }
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_SingleDomain_ReturnsRoutingPatternAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesOwnedNamespacesInFilterAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands", "myapp.inventory.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert - Metadata should contain routing pattern
-    await Assert.That(subscription.Metadata is not null).IsTrue();
-    await Assert.That(subscription.Metadata!["RoutingPattern"]).IsEqualTo("orders.#");
+    // Assert - Filter should include owned command namespaces
+    await Assert.That(subscription.FilterExpression).IsNotNull();
+    await Assert.That(subscription.FilterExpression).Contains("myapp.orders.commands.#");
+    await Assert.That(subscription.FilterExpression).Contains("myapp.inventory.commands.#");
   }
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_MultipleDomains_ReturnsCatchAllPatternAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_ReturnsRoutingPatternsMetadataAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert - With multiple domains, use catch-all pattern and rely on filtering
+    // Assert - Metadata should contain routing patterns list
     await Assert.That(subscription.Metadata is not null).IsTrue();
-    await Assert.That(subscription.Metadata!["RoutingPattern"]).IsEqualTo("#");
+    await Assert.That(subscription.Metadata!.ContainsKey("RoutingPatterns")).IsTrue();
   }
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesDestinationFilterMetadataAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_RoutingPatternsIncludesSystemAndOwnedAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders", "inventory" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
 
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert - Metadata should include DestinationFilter for ASB CorrelationFilter
+    // Assert - Routing patterns should include both system commands and owned namespaces
     await Assert.That(subscription.Metadata is not null).IsTrue();
-    await Assert.That(subscription.Metadata!.ContainsKey("DestinationFilter")).IsTrue();
+    var routingPatterns = (List<string>)subscription.Metadata!["RoutingPatterns"];
+    await Assert.That(routingPatterns).Contains("whizbang.core.commands.system.#");
+    await Assert.That(routingPatterns).Contains("myapp.orders.commands.#");
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscription_WildcardNamespace_ConvertsToHashPatternAsync() {
+    // Arrange
+    var strategy = new SharedTopicInboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.*" };
+
+    // Act
+    var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
+
+    // Assert - Wildcard ".*" should be converted to ".#"
+    await Assert.That(subscription.FilterExpression).IsNotNull();
+    await Assert.That(subscription.FilterExpression).Contains("myapp.orders.#");
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_SystemCommandNamespace_ReturnsCorrectValueAsync() {
+    // Assert - Static property returns system command namespace
+    await Assert.That(SharedTopicInboxStrategy.SystemCommandNamespace).IsEqualTo("whizbang.core.commands.system");
   }
 
   #endregion
@@ -214,7 +236,7 @@ public class InboxRoutingStrategyTests {
   #region Edge Cases
 
   [Test]
-  public async Task SharedTopicInboxStrategy_GetSubscription_EmptyDomains_ReturnsEmptyFilterAsync() {
+  public async Task SharedTopicInboxStrategy_GetSubscription_EmptyDomains_StillIncludesSystemCommandsAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -222,8 +244,9 @@ public class InboxRoutingStrategyTests {
     // Act
     var subscription = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
 
-    // Assert
-    await Assert.That(subscription.FilterExpression).IsEmpty();
+    // Assert - All services receive system commands even with no owned domains
+    await Assert.That(subscription.FilterExpression).IsNotEmpty();
+    await Assert.That(subscription.FilterExpression).Contains("whizbang.core.commands.system.#");
   }
 
   [Test]

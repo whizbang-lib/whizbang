@@ -3,6 +3,7 @@
 // and used as templates during code generation.
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.Schema;
 
@@ -35,6 +36,13 @@ public class EFCoreSnippets {
       //   - Full LINQ query support (Where, OrderBy, Select on nested properties)
       //   - Collection queries (Any, Contains, Count)
       //   - String methods (Contains, StartsWith)
+      //
+      // IMPORTANT LIMITATION - Dictionary<K,V> NOT SUPPORTED:
+      //   EF Core 10's ToJson() throws NullReferenceException for Dictionary properties.
+      //   If your perspective model needs key-value metadata, use one of these alternatives:
+      //     - List<KeyValuePair<string, string>> for ordered pairs
+      //     - List<AttributeEntry> where AttributeEntry has Key/Value properties
+      //     - String property with manual JSON serialization
       //
       // Prerequisites (implemented in Whizbang):
       //   1. WhizbangId types store Guid directly (not TrackedGuid) for simple EF Core construction
@@ -71,6 +79,59 @@ __PHYSICAL_FIELD_CONFIGS__
 
 
   /// <summary>
+  /// Configuration for a PerspectiveRow&lt;TModel&gt; entity with polymorphic types.
+  /// Uses Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson() to allow
+  /// System.Text.Json polymorphic serialization to handle abstract types.
+  /// Placeholders: __MODEL_TYPE__, __TABLE_NAME__, __SCHEMA__
+  /// </summary>
+  public void PerspectiveEntityConfigurationPolymorphic(ModelBuilder modelBuilder) {
+    #region PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET
+    // PerspectiveRow<__MODEL_TYPE__> - POLYMORPHIC MODEL
+    // Uses Property().HasColumnType("jsonb") for System.Text.Json polymorphic serialization
+    // This allows abstract types with [JsonPolymorphic] to work correctly
+    modelBuilder.Entity<PerspectiveRow<__MODEL_TYPE__>>(entity => {
+      entity.ToTable("__TABLE_NAME__");
+      entity.HasKey(e => e.Id);
+
+      // Primary key
+      entity.Property(e => e.Id).HasColumnName("id");
+
+      // JSONB columns - Using Property().HasColumnType("jsonb") for polymorphic support
+      //
+      // Unlike ComplexProperty().ToJson(), this approach:
+      //   - Allows System.Text.Json polymorphic serialization ([JsonPolymorphic], [JsonDerivedType])
+      //   - Supports abstract types in the model hierarchy
+      //   - Uses JsonContextRegistry for serialization options
+      //
+      // IMPORTANT: Queries on nested JSON properties require explicit JSON path operators
+      // or use of the polymorphic query extensions (WherePolymorphic, As<TDerived>).
+      //
+      // For type-based queries, use physical discriminator columns marked with
+      // [PolymorphicDiscriminator] for efficient indexed queries.
+      //
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+
+      // System fields
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+      entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+
+      // Indexes
+      entity.HasIndex(e => e.CreatedAt);
+
+      // GIN indexes for JSONB columns
+      entity.HasIndex(e => e.Data).HasMethod("gin");
+      entity.HasIndex(e => e.Scope).HasMethod("gin");
+
+      // Physical fields (shadow properties for database columns)
+__PHYSICAL_FIELD_CONFIGS__
+    });
+    #endregion
+  }
+
+  /// <summary>
   /// AOT-compatible registration for core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator).
   /// Placeholders: __DBCONTEXT_FQN__
   /// </summary>
@@ -90,10 +151,18 @@ __PHYSICAL_FIELD_CONFIGS__
     });
     services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
 
-    // Register WorkCoordinatorOptions (if not already registered)
-    // This is defensive - users can override by registering their own options before calling .WithDriver.Postgres
+    // Register WorkCoordinatorOptions singleton
+    // Supports both direct registration AND IOptions<T> pattern (Configure<WorkCoordinatorOptions>())
     if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.WorkCoordinatorOptions))) {
-      services.AddSingleton(new Whizbang.Core.Messaging.WorkCoordinatorOptions());
+      services.AddSingleton<Whizbang.Core.Messaging.WorkCoordinatorOptions>(sp => {
+        // Check if user configured via IOptions<T> pattern
+        var optionsAccessor = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>();
+        if (optionsAccessor is not null) {
+          return optionsAccessor.Value;
+        }
+        // Fallback to default
+        return new Whizbang.Core.Messaging.WorkCoordinatorOptions();
+      });
     }
 
     // Register shared work channel writer as singleton
@@ -112,17 +181,43 @@ __PHYSICAL_FIELD_CONFIGS__
       var channelWriter = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkChannelWriter>();
       var options = sp.GetRequiredService<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
-      var lifecycleInvoker = sp.GetService<Whizbang.Core.Messaging.ILifecycleInvoker>();
-      var lifecycleMessageDeserializer = sp.GetService<Whizbang.Core.Messaging.ILifecycleMessageDeserializer>();
+      var dependencies = new Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
+        LifecycleInvoker = sp.GetService<Whizbang.Core.Messaging.ILifecycleInvoker>(),
+        LifecycleMessageDeserializer = sp.GetService<Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>()
+      };
       return new Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
         coordinator,
         instanceProvider,
         channelWriter,
         options,
         logger,
-        lifecycleInvoker,
-        lifecycleMessageDeserializer
+        dependencies
       );
+    });
+
+    // Register IEventStoreQuery - scoped (for web APIs, receptors)
+    services.AddScoped<Whizbang.Core.Messaging.IEventStoreQuery>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+    });
+
+    // Register IFilterableEventStoreQuery - scoped (for ScopedLensFactory integration)
+    services.AddScoped<Whizbang.Core.Messaging.IFilterableEventStoreQuery>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+    });
+
+    // Register IScopedEventStoreQuery - singleton (auto-scoping for background services)
+    services.AddSingleton<Whizbang.Core.Messaging.IScopedEventStoreQuery>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Data.EFCore.Postgres.ScopedEventStoreQuery(scopeFactory);
+    });
+
+    // Register IEventStoreQueryFactory - singleton (manual scope control for batch operations)
+    services.AddSingleton<Whizbang.Core.Messaging.IEventStoreQueryFactory>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Data.EFCore.Postgres.EventStoreQueryFactory(scopeFactory);
     });
     #endregion
   }
@@ -131,6 +226,11 @@ __PHYSICAL_FIELD_CONFIGS__
   /// AOT-compatible registration for a perspective model (IPerspectiveStore + ILensQuery).
   /// Placeholders: __MODEL_TYPE__, __DBCONTEXT_FQN__, __TABLE_NAME__
   /// </summary>
+  /// <remarks>
+  /// ILensQuery is registered as TRANSIENT to support HotChocolate parallel resolvers.
+  /// Each injection gets its own DbContext from the pool, avoiding concurrency errors.
+  /// Requires AddPooledDbContextFactory instead of AddDbContext.
+  /// </remarks>
   public void RegisterPerspectiveModel(IServiceCollection services, IDbUpsertStrategy upsertStrategy) {
     #region REGISTER_PERSPECTIVE_MODEL_SNIPPET
     // Register IPerspectiveStore<__MODEL_TYPE__> - AOT compatible
@@ -139,10 +239,17 @@ __PHYSICAL_FIELD_CONFIGS__
       return new Whizbang.Data.EFCore.Postgres.EFCorePostgresPerspectiveStore<__MODEL_TYPE__>(context, "__TABLE_NAME__", upsertStrategy);
     });
 
-    // Register ILensQuery<__MODEL_TYPE__> - scoped (for web APIs, receptors)
-    services.AddScoped<Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
-      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<__MODEL_TYPE__>(context, "__TABLE_NAME__");
+    // Register ILensQuery<__MODEL_TYPE__> - TRANSIENT (HotChocolate parallel resolver safe)
+    // Each injection gets its own DbContext from the pool via FactoryOwnedLensQuery pattern.
+    // This avoids "A second operation was started on this context instance" errors in parallel resolvers.
+    // NOTE: Requires AddPooledDbContextFactory<__DBCONTEXT_FQN__>() instead of AddDbContext<__DBCONTEXT_FQN__>()
+    services.AddTransient<Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
+      var dbContextFactory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
+      var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {
+        [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"
+      };
+      var lensFactory = new Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames);
+      return new Whizbang.Core.Lenses.FactoryOwnedLensQuery<__MODEL_TYPE__>(lensFactory);
     });
 
     // Register IScopedLensQuery<__MODEL_TYPE__> - singleton (auto-scoping for background services)

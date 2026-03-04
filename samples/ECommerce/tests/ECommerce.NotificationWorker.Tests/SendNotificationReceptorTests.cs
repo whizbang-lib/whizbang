@@ -5,6 +5,7 @@ using ECommerce.NotificationWorker.Receptors;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.NotificationWorker.Tests;
@@ -67,9 +68,9 @@ public class SendNotificationReceptorTests {
   private sealed class TestDispatcher : IDispatcher {
     public List<object> PublishedEvents { get; } = [];
 
-    public Task PublishAsync<TEvent>(TEvent eventData) {
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
       PublishedEvents.Add(eventData!);
-      return Task.CompletedTask;
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(MessageId.New(), "test"));
     }
 
     public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull =>
@@ -115,9 +116,13 @@ public class SendNotificationReceptorTests {
         ValueTask.FromResult(default(TResult)!);
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) =>
         ValueTask.CompletedTask;
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
       PublishedEvents.Add(eventData!);
-      return Task.CompletedTask;
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(MessageId.New(), "test"));
     }
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 }

@@ -158,7 +158,8 @@ public class DispatcherTransportBridge(
       ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
-      CausationId = context.CausationId
+      CausationId = context.CausationId,
+      TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
     envelope.AddHop(hop);

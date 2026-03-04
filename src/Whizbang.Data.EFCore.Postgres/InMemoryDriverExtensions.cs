@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -50,6 +51,16 @@ public static class InMemoryDriverExtensions {
             selector.DbContextType,
             new InMemoryUpsertStrategy()
         );
+
+        // TURNKEY: Wrap IEventStore with sync tracking decorator
+        // This enables perspective synchronization by tracking emitted events
+        // before they reach the database (cross-scope sync support)
+        selector.Services.DecorateEventStoreWithSyncTracking();
+
+        // TURNKEY: Invoke perspective runner registration callbacks
+        // This is registered by source-generated module initializer in consumer assembly
+        // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker
+        PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
 
         return new WhizbangPerspectiveBuilder(selector.Services);
       }

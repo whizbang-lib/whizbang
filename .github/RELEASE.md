@@ -241,7 +241,7 @@ pwsh scripts/Run-Tests.ps1
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 
 # Run with AI-friendly output
-pwsh scripts/Run-Tests.ps1 -AiMode
+pwsh scripts/Run-Tests.ps1
 ```
 
 ### 1.3 Fix Absolute Paths
@@ -990,7 +990,7 @@ pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 pwsh scripts/Run-Tests.ps1 -TestFilter "DispatcherTests"
 
 # AI-friendly output
-pwsh scripts/Run-Tests.ps1 -AiMode
+pwsh scripts/Run-Tests.ps1
 ```
 
 ## Building
@@ -1752,19 +1752,19 @@ To release:
   - Set `<PackageDescription>`
   - Verify `<IsPackable>true</IsPackable>`
 
-- [ ] **Whizbang.Testing** - Testing utilities
-  - Set `<PackageDescription>`
-  - Verify `<IsPackable>true</IsPackable>`
-
 #### Data Packages
 - [ ] **Whizbang.Data.Schema** - Schema management
 - [ ] **Whizbang.Data.Postgres** - PostgreSQL support
+- [ ] **Whizbang.Data.Dapper.Custom** - Base Dapper abstractions
 - [ ] **Whizbang.Data.Dapper.Postgres** - Dapper + PostgreSQL
 - [ ] **Whizbang.Data.Dapper.Sqlite** - Dapper + SQLite
-- [ ] **Whizbang.Data.Dapper.Custom** - Custom Dapper implementations
+- [ ] **Whizbang.Data.EFCore.Custom** - Base EF Core abstractions
 - [ ] **Whizbang.Data.EFCore.Postgres** - EF Core + PostgreSQL
 - [ ] **Whizbang.Data.EFCore.Postgres.Generators** - EF Core source generators
-- [ ] **Whizbang.Data.EFCore.Custom** - Custom EF Core implementations
+
+#### Internal Packages (NOT published to NuGet - IsPackable=false)
+- **Whizbang.Generators.Shared** - ILMerged into generator packages
+- **Whizbang.Testing** - Empty placeholder
 
 #### Hosting & Transport Packages
 - [ ] **Whizbang.Hosting.Azure.ServiceBus** - Azure Service Bus hosting

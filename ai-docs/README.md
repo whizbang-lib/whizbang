@@ -110,6 +110,13 @@ This directory contains focused documentation topics to help Claude Code underst
 4. Check: Timeout too short? → Increase for bulk operations (200s) or parallel load (600ms delays)
 5. Check: Timing-sensitive? → Use deterministic synchronization instead of delays
 
+### "JSON serialization error (DateTimeOffset, enum, type not found)"
+1. Read: [json-serialization-customizations.md](json-serialization-customizations.md) - All custom handling
+2. Check: Is it a PostgreSQL edge case? (`-infinity`, no timezone, etc.)
+3. Check: Is it a nullable enum? → Generator should create both versions
+4. Check: Is it a nested type? → May need CLR name format handling
+5. Add: Test case and handling to appropriate converter
+
 ---
 
 ## 📖 Complete Documentation List
@@ -127,6 +134,11 @@ This directory contains focused documentation topics to help Claude Code underst
 8. **[sample-projects.md](sample-projects.md)** - Dogfooding philosophy
 9. **[efcore-10-usage.md](efcore-10-usage.md)** - PostgreSQL JsonB, UUIDv7
 10. **[script-standards.md](script-standards.md)** - PowerShell, containers
+
+### Internals & Troubleshooting
+11. **[json-serialization-customizations.md](json-serialization-customizations.md)** - Custom JSON converters and edge cases
+    - **When to use:** Debugging serialization errors, adding new converters
+    - **Critical:** Documents PostgreSQL-specific handling (infinity, no timezone, etc.)
 
 ---
 

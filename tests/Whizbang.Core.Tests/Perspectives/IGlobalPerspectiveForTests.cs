@@ -224,6 +224,7 @@ internal sealed class StringPartitionPerspective : IGlobalPerspectiveFor<TestMod
 /// Model for audit log entries - captures all events.
 /// </summary>
 internal sealed record AuditEntry {
+  [StreamId]
   public required Guid Id { get; init; }
   public required string EventType { get; init; }
   public int EventCount { get; init; }
