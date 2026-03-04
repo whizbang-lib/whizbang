@@ -1,9 +1,13 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Resilience;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
@@ -12,43 +16,69 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Generic background service that consumes messages from any ITransport implementation.
-/// Subscribes to configured destinations and dispatches received messages to IDispatcher.
+/// Subscribes to configured destinations with built-in resilience (retry with exponential backoff).
+/// Uses both IReceptorInvoker (compile-time business receptors) and ILifecycleInvoker (runtime test receptors).
 /// </summary>
+/// <remarks>
+/// <para>
+/// Resilience features:
+/// <list type="bullet">
+/// <item>Exponential backoff retry for failed subscriptions</item>
+/// <item>Per-destination state tracking</item>
+/// <item>Connection recovery handling via <see cref="ITransportWithRecovery"/></item>
+/// <item>Health monitoring for failed subscriptions</item>
+/// </list>
+/// </para>
+/// </remarks>
 /// <docs>components/workers/transport-consumer</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 public class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
+  private readonly SubscriptionResilienceOptions _resilienceOptions;
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly OrderedStreamProcessor _orderedProcessor;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILogger<TransportConsumerWorker> _logger;
-  private readonly List<ISubscription> _subscriptions = [];
+
+  private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
+  private CancellationTokenSource? _linkedCts;
 
   /// <summary>
   /// Initializes a new instance of TransportConsumerWorker.
   /// </summary>
   /// <param name="transport">The transport to consume messages from</param>
   /// <param name="options">Configuration options specifying destinations</param>
+  /// <param name="resilienceOptions">Resilience options for subscription retry behavior</param>
   /// <param name="scopeFactory">Service scope factory for creating scoped services</param>
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
-  /// <param name="lifecycleInvoker">Optional lifecycle invoker for PreInbox and PostInbox stages</param>
-  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer</param>
+  /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
+  /// <param name="lifecycleInvoker">Optional lifecycle invoker for runtime test/lifecycle receptors</param>
   /// <param name="logger">Logger instance</param>
+  /// <remarks>
+  /// <para>
+  /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from the per-message scope
+  /// rather than being injected as a constructor parameter. This follows industry patterns (MediatR, MassTransit)
+  /// where handlers are scoped and resolved from the message processing scope.
+  /// </para>
+  /// </remarks>
   public TransportConsumerWorker(
     ITransport transport,
     TransportConsumerOptions options,
+    SubscriptionResilienceOptions resilienceOptions,
     IServiceScopeFactory scopeFactory,
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
-    ILifecycleInvoker? lifecycleInvoker,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
+    ILifecycleInvoker? lifecycleInvoker,
     ILogger<TransportConsumerWorker> logger
   ) {
     ArgumentNullException.ThrowIfNull(transport);
     ArgumentNullException.ThrowIfNull(options);
+    ArgumentNullException.ThrowIfNull(resilienceOptions);
     ArgumentNullException.ThrowIfNull(scopeFactory);
     ArgumentNullException.ThrowIfNull(jsonOptions);
     ArgumentNullException.ThrowIfNull(orderedProcessor);
@@ -56,20 +86,54 @@ public class TransportConsumerWorker : BackgroundService {
 
     _transport = transport;
     _options = options;
+    _resilienceOptions = resilienceOptions;
     _scopeFactory = scopeFactory;
     _jsonOptions = jsonOptions;
     _orderedProcessor = orderedProcessor;
-    _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _lifecycleInvoker = lifecycleInvoker;
     _logger = logger;
+
+    // Initialize state for each destination
+    foreach (var destination in _options.Destinations) {
+      _states[destination] = new SubscriptionState(destination);
+    }
+
+    // Register recovery handler if transport supports it
+    if (_transport is ITransportWithRecovery recoveryTransport) {
+      recoveryTransport.SetRecoveryHandler(_onConnectionRecoveredAsync);
+    }
   }
+
+  /// <summary>
+  /// Gets the current subscription states for health monitoring.
+  /// </summary>
+  public IReadOnlyDictionary<TransportDestination, SubscriptionState> SubscriptionStates => _states;
 
   /// <summary>
   /// Executes the worker, creating subscriptions for all configured destinations.
   /// </summary>
   /// <param name="stoppingToken">Token to signal shutdown</param>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation("TransportConsumerWorker starting");
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var destinationCount = _options.Destinations.Count;
+      _logger.LogInformation("TransportConsumerWorker starting with {DestinationCount} destinations", destinationCount);
+    }
+
+    // Log all destinations we're going to subscribe to
+    foreach (var destination in _options.Destinations) {
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        var address = destination.Address;
+        var routingKey = destination.RoutingKey ?? "#";
+        _logger.LogInformation(
+          "  → Destination: {Address} (routing key: {RoutingKey})",
+          address,
+          routingKey
+        );
+      }
+    }
+
+    _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
     // Wait for transport readiness if readiness check is configured
     using (var scope = _scopeFactory.CreateScope()) {
@@ -83,35 +147,152 @@ public class TransportConsumerWorker : BackgroundService {
         }
         _logger.LogInformation("Transport is ready");
       }
+
+      // Provision infrastructure for owned domains before creating subscriptions
+      var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
+      var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
+      if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          var ownedDomainsCount = routingOptions.OwnedDomains.Count;
+          _logger.LogInformation(
+            "Provisioning infrastructure for {Count} owned domains",
+            ownedDomainsCount);
+        }
+
+        await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
+
+        _logger.LogInformation("Infrastructure provisioning completed");
+      }
     }
 
-    // Subscribe to each destination
-    foreach (var destination in _options.Destinations) {
+    // Subscribe to all destinations with retry
+    await _subscribeToAllDestinationsAsync(stoppingToken);
+
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var healthyCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Healthy);
+      var failedCount = _states.Values.Count(s => s.Status == SubscriptionStatus.Failed);
+
       _logger.LogInformation(
-        "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
-        destination.Address,
-        destination.RoutingKey
+        "TransportConsumerWorker started with {HealthyCount} healthy, {FailedCount} failed subscriptions",
+        healthyCount,
+        failedCount
       );
-
-      var subscription = await _transport.SubscribeAsync(
-        async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
-        destination,
-        stoppingToken
-      );
-
-      _subscriptions.Add(subscription);
     }
 
-    _logger.LogInformation(
-      "TransportConsumerWorker started with {Count} subscriptions",
-      _subscriptions.Count
-    );
+    // Start health monitor in background
+    _ = _monitorSubscriptionHealthAsync(_linkedCts.Token);
 
     // Keep running until cancellation is requested
     try {
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
       _logger.LogInformation("TransportConsumerWorker cancellation requested");
+    }
+  }
+
+  /// <summary>
+  /// Subscribes to all destinations with retry logic.
+  /// </summary>
+  private async Task _subscribeToAllDestinationsAsync(CancellationToken cancellationToken) {
+    var tasks = _states.Values.Select(state =>
+      _subscribeWithRetryAsync(state, cancellationToken)
+    );
+
+    if (_resilienceOptions.AllowPartialSubscriptions) {
+      // Allow partial failures - wait for all tasks
+      await Task.WhenAll(tasks);
+    } else {
+      // All must succeed - throw on first failure
+      foreach (var task in tasks) {
+        await task;
+        var completedState = _states.Values.FirstOrDefault(s => s.Status == SubscriptionStatus.Failed);
+        if (completedState != null) {
+          throw new InvalidOperationException(
+            $"Subscription to {completedState.Destination.Address} failed and AllowPartialSubscriptions=false"
+          );
+        }
+      }
+    }
+  }
+
+  /// <summary>
+  /// Subscribes to a single destination with retry logic.
+  /// </summary>
+  private async Task _subscribeWithRetryAsync(SubscriptionState state, CancellationToken cancellationToken) {
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var address = state.Destination.Address;
+      var routingKey = state.Destination.RoutingKey;
+      _logger.LogInformation(
+        "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
+        address,
+        routingKey
+      );
+    }
+
+    await SubscriptionRetryHelper.SubscribeWithRetryAsync(
+      _transport,
+      state.Destination,
+      async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
+      state,
+      _resilienceOptions,
+      _logger,
+      cancellationToken
+    );
+  }
+
+  /// <summary>
+  /// Handles connection recovery by re-establishing all subscriptions.
+  /// </summary>
+  private async Task _onConnectionRecoveredAsync(CancellationToken cancellationToken) {
+    _logger.LogInformation("Connection recovered, re-establishing subscriptions...");
+
+    // Reset all states to Pending
+    foreach (var state in _states.Values) {
+      state.Subscription?.Dispose();
+      state.Subscription = null;
+      state.Status = SubscriptionStatus.Pending;
+      state.ResetAttempts();
+    }
+
+    // Re-subscribe to all destinations
+    await _subscribeToAllDestinationsAsync(cancellationToken);
+
+    _logger.LogInformation("Subscription re-establishment completed");
+  }
+
+  /// <summary>
+  /// Background task that monitors subscription health and attempts recovery.
+  /// </summary>
+  private async Task _monitorSubscriptionHealthAsync(CancellationToken cancellationToken) {
+    while (!cancellationToken.IsCancellationRequested) {
+      try {
+        await Task.Delay(_resilienceOptions.HealthCheckInterval, cancellationToken);
+
+        var failedStates = _states.Values
+          .Where(s => s.Status == SubscriptionStatus.Failed)
+          .ToList();
+
+        if (failedStates.Count > 0) {
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            var count = failedStates.Count;
+            _logger.LogInformation(
+              "Health monitor: attempting to recover {Count} failed subscriptions",
+              count
+            );
+          }
+
+          foreach (var state in failedStates) {
+            // Reset and retry in background
+            state.Status = SubscriptionStatus.Pending;
+            state.ResetAttempts();
+            _ = _subscribeWithRetryAsync(state, cancellationToken);
+          }
+        }
+      } catch (OperationCanceledException) {
+        break;
+      } catch (Exception ex) {
+        _logger.LogError(ex, "Error in subscription health monitor");
+      }
     }
   }
 
@@ -125,15 +306,42 @@ public class TransportConsumerWorker : BackgroundService {
     string? envelopeType,
     CancellationToken cancellationToken
   ) {
+    // Restore distributed trace context from the incoming message's TraceParent
+    // This enables cross-service tracing by linking spans from sender to receiver
+    Activity? inboxActivity = null;
+    var traceParent = envelope.Hops
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      // Start a new activity as child of the sender's span
+      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
+        $"Inbox {messageType}",
+        ActivityKind.Consumer,
+        parentContext
+      );
+      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+      inboxActivity?.SetTag("messaging.operation", "receive");
+      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
+    }
+
     try {
-      // Create scope to resolve scoped services (IWorkCoordinatorStrategy)
+      // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
-      _logger.LogDebug(
-        "Processing message {MessageId} from transport",
-        envelope.MessageId
-      );
+      // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)
+      var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug(
+          "Processing message {MessageId} from transport",
+          messageId
+        );
+      }
 
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
@@ -148,24 +356,39 @@ public class TransportConsumerWorker : BackgroundService {
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
       if (myWork.Count == 0) {
-        _logger.LogInformation(
-          "Message {MessageId} already processed (duplicate), skipping",
-          envelope.MessageId
-        );
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          var messageId = envelope.MessageId;
+          _logger.LogInformation(
+            "Message {MessageId} already processed (duplicate), skipping",
+            messageId
+          );
+        }
         return;
       }
 
-      _logger.LogInformation(
-        "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
-        envelope.MessageId,
-        myWork.Count
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        var workCount = myWork.Count;
+        _logger.LogDebug(
+          "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
+          messageId,
+          workCount
+        );
+      }
 
-      // 5. Invoke PreInbox lifecycle stages (before local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      // 5. Invoke PreInbox lifecycle stages (ALL receptors registered at PreInbox stages)
+      foreach (var work in myWork) {
+        object? message = null;
+        IMessageEnvelope? typedEnvelope = null;
 
+        // Deserialize message if we have any invoker
+        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+        }
+
+        if (typedEnvelope is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreInboxAsync,
             EventId = null,
@@ -175,10 +398,26 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          }
 
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          }
+
+          // PreInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          }
+
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          }
         }
       }
 
@@ -200,7 +439,9 @@ public class TransportConsumerWorker : BackgroundService {
         },
         completionHandler: (msgId, status) => {
           strategy.QueueInboxCompletion(msgId, status);
-          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+          if (_logger.IsEnabled(LogLevel.Debug)) {
+            _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+          }
         },
         failureHandler: (msgId, status, error) => {
           strategy.QueueInboxFailure(msgId, status, error);
@@ -209,11 +450,20 @@ public class TransportConsumerWorker : BackgroundService {
         cancellationToken
       );
 
-      // 7. Invoke PostInbox lifecycle stages (after local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-        foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      // 7. Invoke PostInbox lifecycle stages (ALL receptors registered at PostInbox stages)
+      // This is where DEFAULT receptors (without [FireAt]) fire for the distributed receive path
+      foreach (var work in myWork) {
+        object? message = null;
+        IMessageEnvelope? typedEnvelope = null;
 
+        // Deserialize message if we have any invoker
+        if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+        }
+
+        if (typedEnvelope is not null) {
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostInboxAsync,
             EventId = null,
@@ -223,20 +473,46 @@ public class TransportConsumerWorker : BackgroundService {
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          // Invoke compile-time business receptors via IReceptorInvoker
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          }
 
+          // Invoke runtime test/lifecycle receptors via ILifecycleInvoker
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          }
+
+          // PostInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          }
+
+          if (_lifecycleInvoker is not null) {
+            await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          }
         }
       }
 
       // 8. Report completions/failures back to database
       await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
-      _logger.LogInformation("Successfully processed message {MessageId}", envelope.MessageId);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug("Successfully processed message {MessageId}", messageId);
+      }
+
+      inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
+      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
+      inboxActivity?.SetTag("exception.message", ex.Message);
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter
+    } finally {
+      inboxActivity?.Dispose();
     }
   }
 
@@ -356,14 +632,16 @@ public class TransportConsumerWorker : BackgroundService {
 
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
+  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
+    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
-        aggregateIdElem.ValueKind == JsonValueKind.String) {
-      var aggregateIdStr = aggregateIdElem.GetString();
-      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+        streamIdElem.ValueKind == JsonValueKind.String) {
+      var streamIdStr = streamIdElem.GetString();
+      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
+        return parsedStreamId;
       }
     }
 
@@ -377,8 +655,10 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
-    foreach (var subscription in _subscriptions) {
-      await subscription.PauseAsync();
+    foreach (var state in _states.Values) {
+      if (state.Subscription != null) {
+        await state.Subscription.PauseAsync();
+      }
     }
 
     _logger.LogInformation("All subscriptions paused");
@@ -391,8 +671,10 @@ public class TransportConsumerWorker : BackgroundService {
   public async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
-    foreach (var subscription in _subscriptions) {
-      await subscription.ResumeAsync();
+    foreach (var state in _states.Values) {
+      if (state.Subscription != null) {
+        await state.Subscription.ResumeAsync();
+      }
     }
 
     _logger.LogInformation("All subscriptions resumed");
@@ -405,12 +687,15 @@ public class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
+    _linkedCts?.Cancel();
+    _linkedCts?.Dispose();
+
     // Dispose all subscriptions
-    foreach (var subscription in _subscriptions) {
-      subscription.Dispose();
+    foreach (var state in _states.Values) {
+      state.Subscription?.Dispose();
     }
 
-    _subscriptions.Clear();
+    _states.Clear();
 
     _logger.LogInformation("TransportConsumerWorker stopped");
 

@@ -9,7 +9,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 #if AZURESERVICEBUS
@@ -24,8 +24,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-var postgresConnection = builder.Configuration.GetConnectionString("inventorydb")
-    ?? throw new InvalidOperationException("PostgreSQL connection string 'inventorydb' not found");
+// Note: PostgreSQL connection string "inventorydb" is resolved by .WithEFCore<InventoryDbContext>().WithDriver.Postgres
 
 #if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
@@ -55,51 +54,29 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-// Create JsonSerializerOptions from global registry (MUST be registered before data source)
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-
-// Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-// IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-// This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
-var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-dataSourceBuilder.EnableDynamicJson();
-var dataSource = dataSourceBuilder.Build();
-builder.Services.AddSingleton(dataSource);
-
-builder.Services.AddDbContext<InventoryDbContext>(options =>
-  options.UseNpgsql(dataSource));
-
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
+// - NpgsqlDataSource with JSON serialization configured
+// - Pooled DbContext factory (HotChocolate parallel resolver safe)
+// - Scoped DbContext for mutations/receptors
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
 // Source generator discovers ProductDto, InventoryLevelDto from perspective implementations
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
 _ = builder.Services
   .AddWhizbang()
+  .WithRouting(routing => {
+    routing
+      .OwnDomains("ecommerce.inventory.commands")
+      .SubscribeTo("ecommerce.products.events")
+      .Inbox.UseSharedTopic("inbox");
+  })
   .WithEFCore<InventoryDbContext>()
-  .WithDriver.Postgres;
+  .WithDriver.Postgres
+  .AddTransportConsumer();
 
 // Register Whizbang generated services (from ECommerce.Contracts)
 builder.Services.AddReceptors();
-builder.Services.AddWhizbangAggregateIdExtractor();
-
-// Register transport readiness check
-#if AZURESERVICEBUS
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var transport = sp.GetRequiredService<ITransport>();
-  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
-  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
-});
-
-#elif RABBITMQ
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
-  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
-});
-
-#endif
 
 // Register generated perspective runners (ProductCatalogPerspective, InventoryLevelsPerspective)
 // This registers IPerspectiveRunnerRegistry + all discovered IPerspectiveRunner implementations
@@ -122,34 +99,6 @@ builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleRecept
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();
 builder.Services.AddScoped<IInventoryLens, InventoryLens>();
-
-// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-  new TransportPublishStrategy(
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<ITransportReadinessCheck>()
-  )
-);
-
-// Transport consumer - receives events and commands
-var consumerOptions = new TransportConsumerOptions();
-
-#if AZURESERVICEBUS
-// Event subscription - receives all events published to "products" topic
-consumerOptions.Destinations.Add(new TransportDestination("products", "sub-inventory-products"));
-// Inbox subscription - receives point-to-point messages with destination filter
-consumerOptions.Destinations.Add(new TransportDestination("inbox", "sub-inbox-inventory"));
-
-#elif RABBITMQ
-// Event subscription - RabbitMQ queue bound to products exchange
-consumerOptions.Destinations.Add(new TransportDestination("products", "inventory-products-queue"));
-// Inbox subscription - RabbitMQ queue for direct messages
-consumerOptions.Destinations.Add(new TransportDestination("inbox", "inventory-inbox-queue"));
-
-#endif
-
-builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<TransportConsumerWorker>();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section

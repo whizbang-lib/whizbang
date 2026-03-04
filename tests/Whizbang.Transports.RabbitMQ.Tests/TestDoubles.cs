@@ -65,12 +65,16 @@ internal class FakeChannel : IChannel {
   public bool ExchangeDeclareAsyncCalled { get; private set; }
   public bool BasicPublishAsyncCalled { get; private set; }
 
+  // Track exchange declarations with parameters for provisioning tests
+  public List<(string Exchange, string Type, bool Durable, bool AutoDelete)> DeclaredExchanges { get; } = [];
+
   // Track method calls for SubscribeAsync tests
   public bool QueueDeclareAsyncCalled { get; private set; }
   public bool QueueBindAsyncCalled { get; private set; }
   public bool BasicConsumeAsyncCalled { get; private set; }
   public bool BasicCancelAsyncCalled { get; private set; }
   public string? LastConsumerTag { get; private set; }
+  public string? LastDeclaredQueueName { get; private set; }
 
   // Members actually used by RabbitMQChannelPool
   public bool IsOpen => !IsDisposed;
@@ -99,7 +103,9 @@ internal class FakeChannel : IChannel {
 
   // Implement methods used by PublishAsync
   public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
     ExchangeDeclareAsyncCalled = true;
+    DeclaredExchanges.Add((exchange, type, durable, autoDelete));
     return Task.CompletedTask;
   }
 
@@ -116,6 +122,7 @@ internal class FakeChannel : IChannel {
   // Implement subscription methods for SubscribeAsync tests
   public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
     QueueDeclareAsyncCalled = true;
+    LastDeclaredQueueName = queue;
     // Return a fake QueueDeclareOk
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }

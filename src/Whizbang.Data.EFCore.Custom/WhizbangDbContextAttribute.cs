@@ -127,6 +127,29 @@ public sealed class WhizbangDbContextAttribute : Attribute {
   public string? Schema { get; set; }
 
   /// <summary>
+  /// Gets or sets the connection string name to use for this DbContext.
+  /// If not specified, derived from the DbContext class name.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Connection String Naming Convention:</strong>
+  /// </para>
+  /// <list type="bullet">
+  /// <item>Default: "{ContextName}-db" where ContextName is the class name minus "DbContext" suffix</item>
+  /// <item>Example: ChatDbContext → "chat-db"</item>
+  /// <item>Set this property to override the default (e.g., "chat-service-db")</item>
+  /// </list>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [WhizbangDbContext(ConnectionStringName = "chat-service-db")]
+  /// public partial class ChatDbContext : DbContext { }
+  /// </code>
+  /// </example>
+  /// <docs>features/vector-search#turnkey-setup</docs>
+  public string? ConnectionStringName { get; set; }
+
+  /// <summary>
   /// Initializes a new instance of the <see cref="WhizbangDbContextAttribute"/> class
   /// with the default unnamed key.
   /// </summary>

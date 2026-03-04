@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
@@ -6,6 +7,8 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -48,11 +51,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         $"// Looking for: IPerspectiveFor<TModel> interfaces");
     });
 
+    // Extract table name configuration from MSBuild properties (WhizbangStripTableNameSuffixes, etc.)
+    var tableNameConfig = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectTableNameConfig
+    );
+
     // Discover all perspective classes that implement IPerspectiveFor<TModel>
-    var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
+    // Phase 1: Extract candidates (config-independent data only)
+    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveModelCandidate(ctx, ct)
     ).Where(static info => info is not null);
+
+    // Phase 2: Combine candidates with config and build final PerspectiveModelInfo
+    var perspectives = perspectiveCandidates.Combine(tableNameConfig)
+        .Select(static (pair, _) => _buildPerspectiveModelInfo(pair.Left!, pair.Right))
+        .Where(static info => info is not null);
 
     // Discover DbContext classes
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
@@ -153,13 +167,39 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
             var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
             var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+            var compilation = data.Right;
 
-            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts);
+            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts, compilation);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE995",
                 title: "EFCore Generator Error",
                 messageFormat: "Error in GenerateSchemaExtensions: {0}",
+                category: DIAGNOSTIC_CATEGORY,
+                defaultSeverity: DiagnosticSeverity.Error,
+                isEnabledByDefault: true);
+            ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
+          }
+        }
+    );
+
+    // Generate turnkey DbContext extension methods (Add{DbContextName})
+    context.RegisterSourceOutput(
+        allData,
+        static (ctx, data) => {
+          var perspectives = data.Left.Left;
+          var dbContexts = data.Left.Right;
+
+          try {
+            var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
+            var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+
+            _generateTurnkeyExtensions(ctx, validPerspectives, validDbContexts);
+          } catch (Exception ex) {
+            var descriptor = new DiagnosticDescriptor(
+                id: "EFCORE994",
+                title: "EFCore Generator Error",
+                messageFormat: "Error in GenerateTurnkeyExtensions: {0}",
                 category: DIAGNOSTIC_CATEGORY,
                 defaultSeverity: DiagnosticSeverity.Error,
                 isEnabledByDefault: true);
@@ -224,12 +264,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       schema = _deriveSchemaFromNamespace(symbol.ContainingNamespace.ToDisplayString());
     }
 
+    // Extract connection string name from attribute, or derive from class name
+    var connectionStringName = _extractConnectionStringNameFromAttribute(attribute)
+        ?? _deriveConnectionStringName(symbol.Name);
+
     return new DbContextInfo(
         ClassName: symbol.Name,
         FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         Namespace: symbol.ContainingNamespace.ToDisplayString(),
         Schema: schema ?? "public", // Should never be null, but satisfy compiler
-        Keys: keys
+        Keys: keys,
+        ConnectionStringName: connectionStringName
     );
   }
 
@@ -247,6 +292,27 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return null;
+  }
+
+  private static string? _extractConnectionStringNameFromAttribute(AttributeData attribute) {
+    // Look for ConnectionStringName named property
+    var connProp = attribute.NamedArguments
+        .FirstOrDefault(kvp => kvp.Key == "ConnectionStringName");
+
+    if (connProp.Key == "ConnectionStringName" && connProp.Value.Value is string connValue) {
+      return connValue;
+    }
+
+    return null;
+  }
+
+  private static string _deriveConnectionStringName(string className) {
+    // Derive connection string name from DbContext name by convention:
+    // "ChatDbContext" -> "chat-db" (remove DbContext suffix, lowercase, add -db)
+    var name = className.EndsWith("DbContext", StringComparison.Ordinal)
+        ? className[..^9]
+        : className;
+    return name.ToLowerInvariant() + "-db";
   }
 
   /// <summary>
@@ -286,13 +352,25 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class implementing IPerspectiveFor.
+  /// Quotes a PostgreSQL identifier to handle reserved keywords (e.g., "user", "table", "select").
+  /// Always quotes to ensure safety regardless of the identifier value.
+  /// Example: "user" → "\"user\"", "bff" → "\"bff\""
+  /// </summary>
+  private static string _quotePostgresIdentifier(string identifier) {
+    // Double quotes are the PostgreSQL standard for quoting identifiers
+    // This handles reserved keywords like "user", "table", "select", etc.
+    return $"\"{identifier}\"";
+  }
+
+  /// <summary>
+  /// Extracts perspective candidate information from a class implementing IPerspectiveFor.
   /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
   /// Returns null if the class doesn't implement the interface.
+  /// This is Phase 1 of the pipeline - extracts config-independent data only.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
-  private static PerspectiveModelInfo? _extractPerspectiveInfo(
+  private static PerspectiveModelCandidate? _extractPerspectiveModelCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -315,7 +393,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
+    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
+    var dbSetPropertyName = TypeNameUtilities.GetDbSetPropertyName(modelType);
+
+    // Extract physical fields from model type
+    var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
@@ -330,38 +412,40 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       keys = Array.Empty<string>();
     }
 
-    return new PerspectiveModelInfo(
+    return new PerspectiveModelCandidate(
         PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        TableName: tableName,
+        DbSetPropertyName: dbSetPropertyName,
+        TableBaseName: tableBaseName,
         NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
-        Keys: keys
+        Keys: keys,
+        PhysicalFields: physicalFields
     );
   }
 
   /// <summary>
-  /// Converts PascalCase to snake_case.
+  /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
+  /// This is Phase 2 of the pipeline - applies config-dependent table name generation.
   /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string _toSnakeCase(string input) {
-    if (string.IsNullOrEmpty(input)) {
-      return input;
-    }
+  /// <param name="candidate">The perspective candidate with config-independent data</param>
+  /// <param name="config">Table name configuration from MSBuild properties</param>
+  /// <returns>Final PerspectiveModelInfo with generated table name</returns>
+  private static PerspectiveModelInfo? _buildPerspectiveModelInfo(
+      PerspectiveModelCandidate candidate,
+      TableNameConfig config) {
 
-    var sb = new StringBuilder();
-    sb.Append(char.ToLowerInvariant(input[0]));
+    // Apply table name configuration to generate final table name
+    var tableName = NamingConventionUtilities.GenerateTableName(candidate.TableBaseName, config);
 
-    for (int i = 1; i < input.Length; i++) {
-      char c = input[i];
-      if (char.IsUpper(c)) {
-        sb.Append('_');
-        sb.Append(char.ToLowerInvariant(c));
-      } else {
-        sb.Append(c);
-      }
-    }
-
-    return sb.ToString();
+    return new PerspectiveModelInfo(
+        PerspectiveClassName: candidate.PerspectiveClassName,
+        ModelTypeName: candidate.ModelTypeName,
+        DbSetPropertyName: candidate.DbSetPropertyName,
+        TableName: tableName,
+        NamespaceHint: candidate.NamespaceHint,
+        Keys: candidate.Keys,
+        PhysicalFields: candidate.PhysicalFields
+    );
   }
 
   /// <summary>
@@ -389,6 +473,186 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return Array.Empty<string>();
+  }
+
+  /// <summary>
+  /// Extracts physical field information from a model type.
+  /// Looks for [PhysicalField] and [VectorField] attributes on properties.
+  /// </summary>
+  private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return ImmutableArray<PhysicalFieldInfo>.Empty;
+    }
+
+    var physicalFields = new System.Collections.Generic.List<PhysicalFieldInfo>();
+    var properties = modelType.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(p => !p.IsStatic);
+
+    foreach (var property in properties) {
+      var physicalFieldAttr = property.GetAttributes()
+          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+      var vectorFieldAttr = property.GetAttributes()
+          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.VectorFieldAttribute");
+
+      if (physicalFieldAttr is not null) {
+        var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
+        if (info is not null) {
+          physicalFields.Add(info);
+        }
+      } else if (vectorFieldAttr is not null) {
+        var info = _extractVectorFieldInfo(property, vectorFieldAttr);
+        if (info is not null) {
+          physicalFields.Add(info);
+        }
+      }
+    }
+
+    return physicalFields.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Extracts PhysicalFieldInfo from a [PhysicalField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
+    var propertyName = property.Name;
+    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Extract named arguments
+    bool isIndexed = false;
+    bool isUnique = false;
+    string? columnName = null;
+
+    foreach (var namedArg in attribute.NamedArguments) {
+      switch (namedArg.Key) {
+        case "Indexed":
+          isIndexed = namedArg.Value.Value is true;
+          break;
+        case "Unique":
+          isUnique = namedArg.Value.Value is true;
+          break;
+        case "ColumnName":
+          columnName = namedArg.Value.Value as string;
+          break;
+      }
+    }
+
+    // Generate column name from property name if not specified
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
+
+    return new PhysicalFieldInfo(
+        PropertyName: propertyName,
+        ColumnName: finalColumnName,
+        TypeName: typeName,
+        IsIndexed: isIndexed,
+        IsUnique: isUnique,
+        MaxLength: null, // Not applicable for physical fields (JSONB handles length)
+        IsVector: false,
+        VectorDimensions: null,
+        VectorDistanceMetric: null,
+        VectorIndexType: null,
+        VectorIndexLists: null
+    );
+  }
+
+  /// <summary>
+  /// Extracts PhysicalFieldInfo from a [VectorField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
+    var propertyName = property.Name;
+    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Extract constructor argument (dimensions)
+    int? dimensions = null;
+    if (attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int dim) {
+      dimensions = dim;
+    }
+
+    // Extract named arguments
+    bool isIndexed = true; // Vectors are typically indexed
+    string? columnName = null;
+    GeneratorVectorDistanceMetric? distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
+    GeneratorVectorIndexType? indexType = GeneratorVectorIndexType.IVFFlat; // Default
+    int? indexLists = null;
+
+    foreach (var namedArg in attribute.NamedArguments) {
+      switch (namedArg.Key) {
+        case "Indexed":
+          isIndexed = namedArg.Value.Value is true;
+          break;
+        case "ColumnName":
+          columnName = namedArg.Value.Value as string;
+          break;
+        case "DistanceMetric":
+          if (namedArg.Value.Value is int metricInt) {
+            distanceMetric = (GeneratorVectorDistanceMetric)metricInt;
+          }
+          break;
+        case "IndexType":
+          if (namedArg.Value.Value is int indexTypeInt) {
+            indexType = (GeneratorVectorIndexType)indexTypeInt;
+          }
+          break;
+        case "IndexLists":
+          if (namedArg.Value.Value is int lists) {
+            indexLists = lists;
+          }
+          break;
+      }
+    }
+
+    // Generate column name from property name if not specified
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
+
+    return new PhysicalFieldInfo(
+        PropertyName: propertyName,
+        ColumnName: finalColumnName,
+        TypeName: typeName,
+        IsIndexed: isIndexed,
+        IsUnique: false, // Vectors are never unique
+        MaxLength: null, // Not applicable for vectors
+        IsVector: true,
+        VectorDimensions: dimensions,
+        VectorDistanceMetric: distanceMetric,
+        VectorIndexType: indexType,
+        VectorIndexLists: indexLists
+    );
+  }
+
+  /// <summary>
+  /// Converts a PhysicalFieldInfo to the corresponding PostgreSQL column type.
+  /// </summary>
+  private static string _getPostgresColumnType(PhysicalFieldInfo field) {
+    // Handle vector fields specially
+    if (field.IsVector && field.VectorDimensions.HasValue) {
+      return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // Map .NET types to PostgreSQL types
+    // The TypeName is fully qualified with global:: prefix
+    var typeName = field.TypeName
+        .Replace("global::", "")
+        .TrimEnd('?'); // Remove nullable suffix
+
+    return typeName switch {
+      "System.Guid" => "UUID",
+      "System.String" => "TEXT",
+      "System.Int32" => "INTEGER",
+      "System.Int64" => "BIGINT",
+      "System.Int16" => "SMALLINT",
+      "System.Boolean" => "BOOLEAN",
+      "System.DateTime" => "TIMESTAMPTZ",
+      "System.DateTimeOffset" => "TIMESTAMPTZ",
+      "System.DateOnly" => "DATE",
+      "System.TimeOnly" => "TIME",
+      "System.Decimal" => "NUMERIC",
+      "System.Double" => "DOUBLE PRECISION",
+      "System.Single" => "REAL",
+      "System.Byte[]" => "BYTEA",
+      "float[]" => "REAL[]", // Array of floats
+      "double[]" => "DOUBLE PRECISION[]",
+      _ => "TEXT" // Default to TEXT for unknown types
+    };
   }
 
   /// <summary>
@@ -498,11 +762,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"public partial class {dbContext.ClassName} {{");
 
       foreach (var model in uniqueModels) {
-        var modelName = _extractSimpleName(model.ModelTypeName);
-        var propertyName = $"{modelName}s";  // Pluralize
+        var propertyName = model.DbSetPropertyName;
 
         sb.AppendLine($"  /// <summary>");
-        sb.AppendLine($"  /// DbSet for {modelName} perspective (table: {model.TableName})");
+        sb.AppendLine($"  /// DbSet for {propertyName} perspective (table: {model.TableName})");
         sb.AppendLine($"  /// </summary>");
         sb.AppendLine($"  public DbSet<PerspectiveRow<{model.ModelTypeName}>> {propertyName} => Set<PerspectiveRow<{model.ModelTypeName}>>();");
         sb.AppendLine();
@@ -629,9 +892,21 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("using System.Runtime.CompilerServices;");
+    sb.AppendLine("using Microsoft.EntityFrameworkCore;");
+    sb.AppendLine("using Microsoft.Extensions.Configuration;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
+    sb.AppendLine("using Microsoft.Extensions.Logging;");
     sb.AppendLine("using Whizbang.Core.Lenses;");
     sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
+    // Add pgvector usings if ANY DbContext has vector fields
+    // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
+    // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
+    var anyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
+    if (anyVectorFields) {
+      sb.AppendLine("using Npgsql;");
+      sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+    }
     sb.AppendLine();
 
     // Use consumer assembly's namespace to avoid collisions when multiple assemblies reference same generator
@@ -684,10 +959,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     sb.AppendLine("    });");
+    sb.AppendLine();
+
+    // Generate DbContext registration callbacks for each DbContext
+    // This enables turnkey setup via .WithEFCore<T>().WithDriver.Postgres
+    foreach (var group in dbContextGroups) {
+      var dbContextHasVectorFields = group.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+      _generateDbContextRegistrationCallback(sb, group.DbContext, dbContextHasVectorFields);
+    }
+
     sb.AppendLine("  }");
     sb.AppendLine("}");
 
     context.AddSource("EFCoreModelRegistration.g.cs", sb.ToString());
+
+    // Generate VectorConfigurationRegistry for turnkey pgvector support
+    // Check if ANY perspective across all DbContexts has vector fields
+    var hasAnyVectorFields = dbContextGroups.Any(g => g.Models.Any(m => m.PhysicalFields.Any(f => f.IsVector)));
+    _generateVectorConfigurationRegistry(context, consumerNamespace, hasAnyVectorFields);
 
     // Report diagnostic
     var descriptor = new DiagnosticDescriptor(
@@ -699,6 +988,361 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         isEnabledByDefault: true);
 
     context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, totalUniqueModels, dbContextGroups.Count));
+  }
+
+  /// <summary>
+  /// Generates VectorConfigurationRegistry static class for turnkey pgvector configuration.
+  /// Provides HasVectorFields property for conditional UseVector() calls.
+  /// </summary>
+  private static void _generateVectorConfigurationRegistry(
+      SourceProductionContext context,
+      string consumerNamespace,
+      bool hasVectorFields) {
+
+    var sb = new StringBuilder();
+
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+    sb.AppendLine("using Npgsql;");
+    sb.AppendLine("using Microsoft.EntityFrameworkCore;");
+    if (hasVectorFields) {
+      // Only include Pgvector.EntityFrameworkCore using if vector fields exist
+      // NpgsqlDataSourceBuilder.UseVector() is in Npgsql namespace (already included above)
+      // NpgsqlDbContextOptionsBuilder.UseVector() is in Pgvector.EntityFrameworkCore namespace
+      sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+    }
+    sb.AppendLine();
+    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine();
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
+    sb.AppendLine("/// Use this to conditionally enable pgvector support based on compile-time discovery.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("/// <docs>features/vector-search#auto-config</docs>");
+    sb.AppendLine("public static class VectorConfigurationRegistry {");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Indicates whether any perspective models have [VectorField] attributes.");
+    sb.AppendLine("  /// Use this to conditionally configure pgvector support.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine($"  public static bool HasVectorFields => {hasVectorFields.ToString().ToLowerInvariant()};");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Configures the NpgsqlDataSourceBuilder with UseVector() if vector fields are detected.");
+    sb.AppendLine("  /// Call this method after creating your NpgsqlDataSourceBuilder and before calling Build().");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  /// <param name=\"builder\">The NpgsqlDataSourceBuilder to configure</param>");
+    sb.AppendLine("  /// <returns>The builder for method chaining</returns>");
+    sb.AppendLine("  /// <example>");
+    sb.AppendLine("  /// <code>");
+    sb.AppendLine("  /// var builder = new NpgsqlDataSourceBuilder(connectionString);");
+    sb.AppendLine("  /// VectorConfigurationRegistry.ConfigureDataSource(builder);");
+    sb.AppendLine("  /// var dataSource = builder.Build();");
+    sb.AppendLine("  /// </code>");
+    sb.AppendLine("  /// </example>");
+    sb.AppendLine("  public static NpgsqlDataSourceBuilder ConfigureDataSource(NpgsqlDataSourceBuilder builder) {");
+    if (hasVectorFields) {
+      sb.AppendLine("    // Vector fields detected - configure pgvector support");
+      sb.AppendLine("    builder.UseVector();");
+    } else {
+      sb.AppendLine("    // No vector fields detected - no pgvector configuration needed");
+    }
+    sb.AppendLine("    return builder;");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Configures the NpgsqlDbContextOptionsBuilder with UseVector() if vector fields are detected.");
+    sb.AppendLine("  /// Call this method inside your UseNpgsql() configuration lambda.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  /// <param name=\"options\">The NpgsqlDbContextOptionsBuilder to configure</param>");
+    sb.AppendLine("  /// <returns>The options for method chaining</returns>");
+    sb.AppendLine("  /// <example>");
+    sb.AppendLine("  /// <code>");
+    sb.AppendLine("  /// services.AddDbContext&lt;MyDbContext&gt;(options =&gt;");
+    sb.AppendLine("  ///     options.UseNpgsql(dataSource, npgsqlOptions =&gt;");
+    sb.AppendLine("  ///         VectorConfigurationRegistry.ConfigureDbContext(npgsqlOptions)));");
+    sb.AppendLine("  /// </code>");
+    sb.AppendLine("  /// </example>");
+    sb.AppendLine("  public static Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.NpgsqlDbContextOptionsBuilder ConfigureDbContext(Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.NpgsqlDbContextOptionsBuilder options) {");
+    if (hasVectorFields) {
+      sb.AppendLine("    // Vector fields detected - configure pgvector support for EF Core");
+      sb.AppendLine("    options.UseVector();");
+    } else {
+      sb.AppendLine("    // No vector fields detected - no pgvector configuration needed");
+    }
+    sb.AppendLine("    return options;");
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+
+    context.AddSource("VectorConfigurationRegistry.g.cs", sb.ToString());
+
+    // Report diagnostic
+    var descriptor = new DiagnosticDescriptor(
+        id: "EFCORE107",
+        title: "Vector Configuration Registry Generated",
+        messageFormat: "Generated VectorConfigurationRegistry (HasVectorFields: {0})",
+        category: DIAGNOSTIC_CATEGORY,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+
+    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, hasVectorFields));
+  }
+
+  /// <summary>
+  /// Generates turnkey extension methods for each DbContext.
+  /// Creates {DbContextName}Extensions.g.cs with Add{DbContextName}() extension method.
+  /// Automatically configures UseVector() if any perspective models have [VectorField] attributes.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/VectorAutoConfigurationTests.cs:TurnkeyExtension_WithVectorField_GeneratesAddDbContextMethodAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/VectorAutoConfigurationTests.cs:TurnkeyExtension_WithoutVectorField_DoesNotIncludeUseVectorAsync</tests>
+  private static void _generateTurnkeyExtensions(
+      SourceProductionContext context,
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<DbContextInfo> dbContexts) {
+
+    if (dbContexts.IsEmpty) {
+      return; // No DbContext found
+    }
+
+    foreach (var dbContext in dbContexts) {
+      // Check if any perspective models for this DbContext have vector fields
+      var matchingPerspectives = perspectives.IsEmpty
+          ? ImmutableArray<PerspectiveModelInfo>.Empty
+          : perspectives
+              .Where(p => _matchesDbContext(p, dbContext))
+              .ToImmutableArray();
+
+      var hasVectorFields = matchingPerspectives.Any(m => m.PhysicalFields.Any(f => f.IsVector));
+
+      var sb = new StringBuilder();
+
+      // File header
+      sb.AppendLine("// <auto-generated/>");
+      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+      sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+      sb.AppendLine("#nullable enable");
+      sb.AppendLine();
+
+      // Usings
+      sb.AppendLine("using Microsoft.EntityFrameworkCore;");
+      sb.AppendLine("using Microsoft.Extensions.Configuration;");
+      sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+      sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
+      sb.AppendLine("using Npgsql;");
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
+      if (hasVectorFields) {
+        sb.AppendLine("using Pgvector.EntityFrameworkCore;");
+      }
+      sb.AppendLine();
+
+      sb.AppendLine($"namespace {dbContext.Namespace};");
+      sb.AppendLine();
+
+      sb.AppendLine("/// <summary>");
+      sb.AppendLine($"/// Turnkey extension methods for registering {dbContext.ClassName} with dependency injection.");
+      sb.AppendLine("/// </summary>");
+      sb.AppendLine($"public static class {dbContext.ClassName}Extensions {{");
+      sb.AppendLine();
+
+      // Generate Add{DbContextName} method
+      sb.AppendLine("  /// <summary>");
+      sb.AppendLine($"  /// Registers {dbContext.ClassName} and its dependencies with the service collection.");
+      sb.AppendLine("  /// Configures NpgsqlDataSource with JSON serialization and pgvector support (if needed).");
+      sb.AppendLine("  /// </summary>");
+      sb.AppendLine("  /// <param name=\"services\">The service collection to add services to</param>");
+      sb.AppendLine("  /// <param name=\"connectionStringName\">Optional connection string name override. Default: " +
+          $"\"{dbContext.ConnectionStringName}\"</param>");
+      sb.AppendLine("  /// <returns>The service collection for method chaining</returns>");
+      sb.AppendLine($"  public static IServiceCollection Add{dbContext.ClassName}(");
+      sb.AppendLine("      this IServiceCollection services,");
+      sb.AppendLine($"      string? connectionStringName = null) {{");
+      sb.AppendLine();
+      sb.AppendLine($"    var connectionStringKey = connectionStringName ?? \"{dbContext.ConnectionStringName}\";");
+      sb.AppendLine();
+      sb.AppendLine("    // Build temporary service provider to resolve IConfiguration");
+      sb.AppendLine("    // This allows us to get connection string at registration time");
+      sb.AppendLine("    using var tempProvider = services.BuildServiceProvider(new ServiceProviderOptions {");
+      sb.AppendLine("      ValidateOnBuild = false,");
+      sb.AppendLine("      ValidateScopes = false");
+      sb.AppendLine("    });");
+      sb.AppendLine("    var config = tempProvider.GetRequiredService<IConfiguration>();");
+      sb.AppendLine("    var connectionString = config.GetConnectionString(connectionStringKey)");
+      sb.AppendLine("        ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+      sb.AppendLine();
+      sb.AppendLine("    // Build NpgsqlDataSource synchronously at registration time");
+      sb.AppendLine("    // This allows us to capture it by closure for AddPooledDbContextFactory (singleton options)");
+      sb.AppendLine("    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
+      sb.AppendLine();
+      sb.AppendLine("    // Configure JSON serialization using Whizbang's combined options");
+      sb.AppendLine("    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+      sb.AppendLine("    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
+      sb.AppendLine("    dataSourceBuilder.EnableDynamicJson();");
+      sb.AppendLine();
+      if (hasVectorFields) {
+        sb.AppendLine("    // Auto-configured: pgvector support required for [VectorField] columns");
+        sb.AppendLine("    dataSourceBuilder.UseVector();");
+        sb.AppendLine();
+      }
+      sb.AppendLine("    var dataSource = dataSourceBuilder.Build();");
+      sb.AppendLine();
+      sb.AppendLine("    // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
+      sb.AppendLine("    services.RemoveAll<NpgsqlDataSource>();");
+      sb.AppendLine("    services.AddSingleton(dataSource);");
+      sb.AppendLine();
+      sb.AppendLine($"    // Remove any existing DbContext registration (e.g., from manual AddDbContext calls)");
+      sb.AppendLine($"    // to avoid conflicts with our registration");
+      sb.AppendLine($"    services.RemoveAll<DbContextOptions<{dbContext.FullyQualifiedName}>>();");
+      sb.AppendLine($"    services.RemoveAll<{dbContext.FullyQualifiedName}>();");
+      sb.AppendLine($"    services.RemoveAll<IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
+      sb.AppendLine();
+      sb.AppendLine($"    // Register scoped DbContext using AddDbContext");
+      sb.AppendLine($"    // dataSource is captured by closure from the synchronous build above");
+      if (hasVectorFields) {
+        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
+        sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
+        sb.AppendLine("        // Auto-configured: pgvector support for EF Core");
+        sb.AppendLine("        npgsqlOptions.UseVector();");
+        sb.AppendLine("      });");
+        sb.AppendLine("    });");
+      } else {
+        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options =>");
+        sb.AppendLine("      options.UseNpgsql(dataSource));");
+      }
+      sb.AppendLine();
+      sb.AppendLine($"    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
+      sb.AppendLine($"    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
+      sb.AppendLine($"    // avoiding scope validation issues that AddPooledDbContextFactory causes");
+      sb.AppendLine($"    services.AddSingleton<IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
+      sb.AppendLine($"      new ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+      sb.AppendLine($"        sp.GetRequiredService<IServiceScopeFactory>()));");
+      sb.AppendLine();
+      sb.AppendLine("    // Register JsonSerializerOptions for Whizbang components");
+      sb.AppendLine("    services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+      sb.AppendLine();
+      sb.AppendLine("    return services;");
+      sb.AppendLine("  }");
+      sb.AppendLine("}");
+
+      context.AddSource($"{dbContext.ClassName}Extensions.g.cs", sb.ToString());
+
+      // Report diagnostic
+      var descriptor = new DiagnosticDescriptor(
+          id: "EFCORE108",
+          title: "Turnkey Extension Generated",
+          messageFormat: "Generated Add{0}() extension method (HasVectorFields: {1})",
+          category: DIAGNOSTIC_CATEGORY,
+          defaultSeverity: DiagnosticSeverity.Info,
+          isEnabledByDefault: true);
+
+      context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, dbContext.ClassName, hasVectorFields));
+    }
+  }
+
+  /// <summary>
+  /// Generates DbContext registration callback code for the module initializer.
+  /// This callback registers NpgsqlDataSource and DbContext with the service collection.
+  /// Called by PostgresDriverExtensions.Postgres via DbContextRegistrationRegistry.
+  /// The callback accepts an optional connection string name override from WithEFCore&lt;T&gt;("name").
+  /// </summary>
+  private static void _generateDbContextRegistrationCallback(
+      StringBuilder sb,
+      DbContextInfo dbContext,
+      bool hasVectorFields) {
+
+    // Use connection string name from attribute (or derived default) as the fallback
+    var defaultConnectionStringKey = dbContext.ConnectionStringName;
+
+    sb.AppendLine($"    // Register DbContext callback for {dbContext.ClassName}");
+    sb.AppendLine($"    // Default connection string: \"{defaultConnectionStringKey}\" (can be overridden via WithEFCore<T>(\"name\"))");
+    sb.AppendLine($"    DbContextRegistrationRegistry.Register<{dbContext.FullyQualifiedName}>((services, connectionStringNameOverride) => {{");
+    sb.AppendLine();
+    sb.AppendLine($"      // Use override if provided, otherwise fall back to attribute/derived default");
+    sb.AppendLine($"      var connectionStringKey = connectionStringNameOverride ?? \"{defaultConnectionStringKey}\";");
+    sb.AppendLine();
+    sb.AppendLine("      // Build temporary service provider to resolve IConfiguration");
+    sb.AppendLine("      // This allows us to get connection string at registration time");
+    sb.AppendLine("      using var tempProvider = services.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceProviderOptions {");
+    sb.AppendLine("        ValidateOnBuild = false,");
+    sb.AppendLine("        ValidateScopes = false");
+    sb.AppendLine("      });");
+    sb.AppendLine("      var config = tempProvider.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();");
+    sb.AppendLine("      var connectionString = config.GetConnectionString(connectionStringKey)");
+    sb.AppendLine("          ?? throw new InvalidOperationException($\"Connection string '{connectionStringKey}' not found in configuration.\");");
+    sb.AppendLine();
+    sb.AppendLine("      // Build NpgsqlDataSource synchronously at registration time");
+    sb.AppendLine("      // This allows us to capture it by closure for AddPooledDbContextFactory (singleton options)");
+    sb.AppendLine("      var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
+    sb.AppendLine();
+    sb.AppendLine("      // Configure JSON serialization using Whizbang's combined options");
+    sb.AppendLine("      var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+    sb.AppendLine("      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
+    sb.AppendLine("      dataSourceBuilder.EnableDynamicJson();");
+    sb.AppendLine();
+    if (hasVectorFields) {
+      sb.AppendLine("      // Auto-configured: pgvector support required for [VectorField] columns");
+      sb.AppendLine("      dataSourceBuilder.UseVector();");
+      sb.AppendLine();
+      sb.AppendLine("      // CRITICAL: Create pgvector extension BEFORE building the data source.");
+      sb.AppendLine("      // When NpgsqlDataSource.Build() executes, Npgsql queries the database's pg_type catalog");
+      sb.AppendLine("      // to load type information. If the vector extension doesn't exist at that moment,");
+      sb.AppendLine("      // Npgsql won't know how to handle Vector types, causing runtime errors.");
+      sb.AppendLine("      // Using a temporary connection (without UseVector) to create the extension first.");
+      sb.AppendLine("      using (var tempConn = new Npgsql.NpgsqlConnection(connectionString)) {");
+      sb.AppendLine("        tempConn.Open();");
+      sb.AppendLine("        using var cmd = tempConn.CreateCommand();");
+      sb.AppendLine("        cmd.CommandText = \"CREATE EXTENSION IF NOT EXISTS vector\";");
+      sb.AppendLine("        cmd.ExecuteNonQuery();");
+      sb.AppendLine("      }");
+      sb.AppendLine();
+    }
+    sb.AppendLine("      var dataSource = dataSourceBuilder.Build();");
+    sb.AppendLine();
+    sb.AppendLine("      // Remove any existing NpgsqlDataSource registration (e.g., from Aspire)");
+    sb.AppendLine("      // to ensure Whizbang's version with UseVector() and JSON options is used");
+    sb.AppendLine("      services.RemoveAll<Npgsql.NpgsqlDataSource>();");
+    sb.AppendLine("      services.AddSingleton(dataSource);");
+    sb.AppendLine();
+    sb.AppendLine($"      // Remove any existing DbContext registration (e.g., from manual AddDbContext calls)");
+    sb.AppendLine($"      // to avoid conflicts with our registration");
+    sb.AppendLine($"      services.RemoveAll<Microsoft.EntityFrameworkCore.DbContextOptions<{dbContext.FullyQualifiedName}>>();");
+    sb.AppendLine($"      services.RemoveAll<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine($"      services.RemoveAll<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
+    sb.AppendLine();
+    sb.AppendLine($"      // Register scoped DbContext using AddDbContext");
+    sb.AppendLine($"      // dataSource is captured by closure from the synchronous build above");
+    if (hasVectorFields) {
+      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
+      sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
+      sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
+      sb.AppendLine("          npgsqlOptions.UseVector();");
+      sb.AppendLine("        });");
+      sb.AppendLine("      });");
+    } else {
+      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options =>");
+      sb.AppendLine("        options.UseNpgsql(dataSource));");
+    }
+    sb.AppendLine();
+    sb.AppendLine($"      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
+    sb.AppendLine($"      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
+    sb.AppendLine($"      // avoiding scope validation issues that AddPooledDbContextFactory causes");
+    sb.AppendLine($"      services.AddSingleton<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
+    sb.AppendLine($"        new Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+    sb.AppendLine($"          sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));");
+    sb.AppendLine();
+    sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
+    sb.AppendLine("      services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+    sb.AppendLine("    });");
+    sb.AppendLine();
+    sb.AppendLine($"    // Register initialization callback for EnsureWhizbangInitializedAsync()");
+    sb.AppendLine($"    // This enables turnkey initialization via app.EnsureWhizbangInitializedAsync()");
+    sb.AppendLine($"    DbContextInitializationRegistry.Register<{dbContext.FullyQualifiedName}>(async (sp, logger, ct) => {{");
+    sb.AppendLine($"      using var scope = sp.CreateScope();");
+    sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetRequiredService<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine($"      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);");
+    sb.AppendLine($"    }});");
+    sb.AppendLine();
   }
 
   /// <summary>
@@ -715,7 +1359,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _generateSchemaExtensions(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
-      ImmutableArray<DbContextInfo> dbContexts) {
+      ImmutableArray<DbContextInfo> dbContexts,
+      Compilation compilation) {
 
     if (dbContexts.IsEmpty) {
       return; // No DbContext found
@@ -756,12 +1401,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // Note: CORE_INFRASTRUCTURE_SCHEMA is no longer replaced - template calls PostgresSchemaBuilder at runtime
 
-      // Replace PERSPECTIVE_TABLES_SCHEMA region with embedded perspective tables SQL
-      template = TemplateUtilities.ReplaceRegion(
-          template,
-          "PERSPECTIVE_TABLES_SCHEMA",
-          perspectiveTablesSchema
-      );
+      // Replace PERSPECTIVE_TABLES_SCHEMA placeholder with embedded perspective tables SQL
+      // Note: perspectiveTablesSchema already includes @"..." wrapping from _generatePerspectiveTablesSchema
+      template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -770,11 +1412,39 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           migrationsCode
       );
 
+      // Get assembly name for service identification
+      var assemblyName = compilation.AssemblyName ?? "Unknown";
+
+      // Replace REGISTER_ASSOCIATIONS region with call to RegisterPerspectiveAssociationsAsync
+      // Only generate the call if this DbContext has matching perspectives (otherwise the extension method won't exist)
+      string registerAssociationsCode;
+      if (matchingPerspectives.Count > 0) {
+        registerAssociationsCode = $"await dbContext.RegisterPerspectiveAssociationsAsync(\"{dbContext.Schema}\", \"{assemblyName}\", logger, cancellationToken);";
+      } else {
+        registerAssociationsCode = "// No perspectives found for this DbContext - skipping association registration";
+      }
+      template = TemplateUtilities.ReplaceRegion(
+          template,
+          "REGISTER_ASSOCIATIONS",
+          registerAssociationsCode
+      );
+
+      // Generate perspective registry JSON for CLR type → table name tracking
+      string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
+
       // Replace placeholders
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
+      // __QUOTED_SCHEMA__ is used in SQL contexts where reserved keywords like "user" need quoting
+      // Double quotes are escaped ("") for use inside C# verbatim string literals (@"...")
+      template = template.Replace("__QUOTED_SCHEMA__", $"\"\"{dbContext.Schema}\"\"");
+      // __SCHEMA__ is used in C# contexts (like HasDefaultSchema) where EF Core handles quoting
       template = template.Replace("__SCHEMA__", dbContext.Schema);
+      // __PERSPECTIVE_REGISTRY_JSON__ contains CLR type → table name mappings with schema hash
+      template = template.Replace("__PERSPECTIVE_REGISTRY_JSON__", perspectiveRegistryJson);
+      // __SERVICE_NAME__ is the assembly name for service identification
+      template = template.Replace("__SERVICE_NAME__", assemblyName);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 
@@ -850,7 +1520,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Escape the SQL content for C# verbatim string literal (@"...")
       // In verbatim strings, only quotes need escaping (by doubling them)
       // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
+      // IMPORTANT: Replace __SCHEMA__ with __MIGRATION_SCHEMA__ to prevent build-time replacement.
+      //            The runtime _transformMigrationSql function uses the schema parameter, not __SCHEMA__.
       var escapedContent = content
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")  // Preserve for runtime transformation
           .Replace("\"", "\"\"")  // Escape quotes for verbatim string
           .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
           .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
@@ -864,17 +1537,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return sb.ToString();
   }
-
-  /// <summary>
-  /// Extracts simple type name from fully qualified name.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string _extractSimpleName(string fullyQualifiedName) {
-    var withoutGlobal = fullyQualifiedName.Replace("global::", "");
-    var lastDot = withoutGlobal.LastIndexOf('.');
-    return lastDot >= 0 ? withoutGlobal.Substring(lastDot + 1) : withoutGlobal;
-  }
-
 
   /// <summary>
   /// Generates CREATE TABLE statements for perspective tables.
@@ -892,15 +1554,26 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return "\"\""; // Empty string - no perspective tables
     }
 
+    // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user", "table")
+    var quotedSchema = _quotePostgresIdentifier(schema);
+
     var sb = new StringBuilder();
     sb.AppendLine("-- Perspective Tables (auto-generated from PerspectiveRow<TModel> types)");
     sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine($"-- Schema: {schema}");
     sb.AppendLine();
 
-    // Create schema if it doesn't exist
-    sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {schema};");
+    // Create schema if it doesn't exist (quoted to handle reserved keywords like "user")
+    sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {quotedSchema};");
     sb.AppendLine();
+
+    // Check if any perspectives have vector fields - if so, create pgvector extension
+    var hasVectorFields = perspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
+    if (hasVectorFields) {
+      sb.AppendLine("-- Create pgvector extension for vector similarity search");
+      sb.AppendLine("CREATE EXTENSION IF NOT EXISTS vector;");
+      sb.AppendLine();
+    }
 
     // Get unique tables (same table might be referenced by multiple perspectives)
     var uniqueTables = perspectives
@@ -911,35 +1584,76 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
-      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {_extractSimpleName(perspective.ModelTypeName)})");
-      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {schema}.{perspective.TableName} (");
+      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
+      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
       sb.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
       sb.AppendLine($"  data JSONB NOT NULL,");
       sb.AppendLine($"  metadata JSONB NOT NULL,");
       sb.AppendLine($"  scope JSONB NOT NULL,");
       sb.AppendLine($"  created_at TIMESTAMPTZ NOT NULL,");
       sb.AppendLine($"  updated_at TIMESTAMPTZ NOT NULL,");
-      sb.AppendLine($"  version INTEGER NOT NULL");
+
+      // Check if there are physical fields to add
+      if (perspective.PhysicalFields.IsEmpty) {
+        sb.AppendLine($"  version INTEGER NOT NULL");
+      } else {
+        sb.AppendLine($"  version INTEGER NOT NULL,");
+        // Add physical fields
+        for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
+          var field = perspective.PhysicalFields[i];
+          var columnType = _getPostgresColumnType(field);
+          var isLast = i == perspective.PhysicalFields.Length - 1;
+          sb.AppendLine($"  {field.ColumnName} {columnType}{(isLast ? "" : ",")}");
+        }
+      }
       sb.AppendLine($");");
       sb.AppendLine();
 
       // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{perspective.TableName.Replace("wh_per_", "")}_created_at");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} (created_at);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
       sb.AppendLine();
 
       // Add GIN indexes on JSONB columns for full LINQ query support
       // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
       var shortName = perspective.TableName.Replace("wh_per_", "");
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (data);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (data);");
       sb.AppendLine();
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (metadata);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
       sb.AppendLine();
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
-      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (scope);");
+      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
       sb.AppendLine();
+
+      // Add indexes for physical fields marked with Indexed = true
+      foreach (var field in perspective.PhysicalFields) {
+        if (field.IsIndexed) {
+          if (field.IsVector && field.VectorDimensions.HasValue) {
+            // pgvector index dimension limits:
+            // - ivfflat: max 2000 dimensions
+            // - hnsw: max 2000 dimensions (pgvector < 0.7.0) or 16000 (pgvector >= 0.7.0)
+            // To be safe with all pgvector versions, skip index for > 2000 dimensions
+            // The column still works for queries, just without index acceleration
+            if (field.VectorDimensions.Value <= 2000) {
+              sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
+              sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+              sb.AppendLine();
+            } else {
+              sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({field.VectorDimensions.Value} dimensions > 2000 limit)");
+              sb.AppendLine($"-- Vector queries will still work but without index acceleration");
+              sb.AppendLine($"-- To enable indexing, upgrade to pgvector >= 0.7.0 and manually create an hnsw index");
+              sb.AppendLine();
+            }
+          } else {
+            // Regular B-tree index
+            sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}");
+            sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+            sb.AppendLine();
+          }
+        }
+      }
     }
 
     // Escape for C# verbatim string
@@ -961,6 +1675,115 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return $"@\"{sql}\"";
   }
+
+  /// <summary>
+  /// Generates perspective registry JSON for CLR type → table name tracking.
+  /// Used by reconcile_perspective_registry() function for schema drift detection.
+  /// </summary>
+  /// <param name="perspectives">List of perspectives to register</param>
+  /// <param name="serviceName">Assembly name for service identification</param>
+  /// <returns>JSON string ready for C# embedding (escaped quotes)</returns>
+  private static string _generatePerspectiveRegistryJson(
+      List<PerspectiveModelInfo> perspectives,
+      string serviceName) {
+
+    if (perspectives.Count == 0) {
+      return "\"[]\"";  // Empty JSON array as C# string literal
+    }
+
+    var sb = new StringBuilder();
+    sb.Append('[');
+
+    for (int i = 0; i < perspectives.Count; i++) {
+      var perspective = perspectives[i];
+
+      // Build schema object for this perspective
+      var schemaColumns = new List<ColumnSchema> {
+        new("id", "uuid", false, true, false, null),
+        new("data", "jsonb", false, false, false, null),
+        new("metadata", "jsonb", false, false, false, null),
+        new("scope", "jsonb", false, false, false, null),
+        new("created_at", "timestamptz", false, false, false, null),
+        new("updated_at", "timestamptz", false, false, false, null),
+        new("version", "integer", false, false, false, null)
+      };
+
+      // Add physical fields to schema
+      foreach (var field in perspective.PhysicalFields) {
+        var postgresType = _getPostgresColumnType(field).ToLowerInvariant();
+        schemaColumns.Add(new ColumnSchema(
+            field.ColumnName,
+            postgresType,
+            true,  // Physical fields are nullable
+            false, // Not primary key
+            field.IsVector,
+            field.VectorDimensions
+        ));
+      }
+
+      // Build indexes
+      var schemaIndexes = new List<IndexSchema> {
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_created_at", new List<string> { "created_at" }, "btree", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_data_gin", new List<string> { "data" }, "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_metadata_gin", new List<string> { "metadata" }, "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_scope_gin", new List<string> { "scope" }, "gin", false)
+      };
+
+      // Add indexes for physical fields
+      var shortName = perspective.TableName.Replace("wh_per_", "");
+      foreach (var field in perspective.PhysicalFields) {
+        if (field.IsIndexed) {
+          // Skip vector indexes for > 2000 dimensions (pgvector limit in older versions)
+          if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
+            continue; // No index for high-dimensional vectors
+          }
+
+          var indexType = field.IsVector ? "ivfflat" : "btree";
+          schemaIndexes.Add(new IndexSchema(
+              $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
+              new List<string> { field.ColumnName },
+              indexType,
+              false
+          ));
+        }
+      }
+
+      // Create schema and compute hash
+      var tableSchema = new PerspectiveTableSchema(schemaColumns, schemaIndexes);
+      var schemaJson = SchemaHashUtilities.ToCanonicalJson(tableSchema);
+      var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
+
+      // Build JSON object for this perspective
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append('{');
+      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelTypeName)}\",");
+      sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
+      sb.Append($"\"SchemaJson\":{schemaJson},");
+      sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
+      sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\"");
+      sb.Append('}');
+    }
+
+    sb.Append(']');
+
+    // Escape for C# string literal (double the quotes)
+    var json = sb.ToString().Replace("\"", "\\\"");
+    return $"\"{json}\"";
+  }
+
+  /// <summary>
+  /// Escapes a string for use in JSON (handles special characters).
+  /// </summary>
+  private static string _escapeJsonString(string value) {
+    return value
+        .Replace("\\", "\\\\")
+        .Replace("\"", "\\\"")
+        .Replace("\n", "\\n")
+        .Replace("\r", "\\r")
+        .Replace("\t", "\\t");
+  }
 }
 
 /// <summary>
@@ -971,24 +1794,50 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 /// <param name="Namespace">Containing namespace</param>
 /// <param name="Schema">PostgreSQL schema name derived from namespace (e.g., "inventory", "bff")</param>
 /// <param name="Keys">Array of keys that identify which perspectives should be included. Default: [""]</param>
+/// <param name="ConnectionStringName">Connection string name for turnkey setup. Default: "{className}-db"</param>
 internal sealed record DbContextInfo(
     string ClassName,
     string FullyQualifiedName,
     string Namespace,
     string Schema,
-    string[] Keys);
+    string[] Keys,
+    string ConnectionStringName);
 
 /// <summary>
 /// Information about a discovered perspective and its TModel type.
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model (for DDL generation)</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
+    string DbSetPropertyName,
     string TableName,
     string NamespaceHint,
-    string[] Keys);
+    string[] Keys,
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields);
+
+/// <summary>
+/// Intermediate candidate for perspective model discovery before table name config is applied.
+/// Separates syntax/semantic extraction from configuration-dependent table name generation.
+/// </summary>
+/// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
+/// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="DbSetPropertyName">Property name for DbSet</param>
+/// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
+/// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
+/// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+internal sealed record PerspectiveModelCandidate(
+    string PerspectiveClassName,
+    string ModelTypeName,
+    string DbSetPropertyName,
+    string TableBaseName,
+    string NamespaceHint,
+    string[] Keys,
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields);

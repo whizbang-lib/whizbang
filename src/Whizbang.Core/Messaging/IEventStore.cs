@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Messaging;
 
@@ -173,4 +174,73 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Appends an event and waits for the specified perspective type to process it.
+  /// This is the synchronous verification pattern for request-response over event sourcing.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type</typeparam>
+  /// <typeparam name="TPerspective">The perspective type to wait for</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID)</param>
+  /// <param name="message">The message payload to append</param>
+  /// <param name="timeout">Optional timeout for waiting. Defaults to 30 seconds if not specified.</param>
+  /// <param name="onWaiting">
+  /// Optional callback invoked when waiting begins. Only called if there are events to wait for.
+  /// </param>
+  /// <param name="onDecisionMade">
+  /// Optional callback always invoked when the sync decision is made, regardless of outcome.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
+  /// <docs>core-concepts/event-store#append-and-wait</docs>
+  /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
+  Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
+      Guid streamId,
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class
+      => throw new NotSupportedException(
+          "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
+          "Ensure AddWhizbang() is called and perspective sync is enabled.");
+
+  /// <summary>
+  /// Appends a message to an event stream and waits for ALL perspectives to process the event.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Unlike <see cref="AppendAndWaitAsync{TMessage, TPerspective}"/> which waits for a specific perspective,
+  /// this method waits for ALL registered perspectives to process the event.
+  /// </para>
+  /// <para>
+  /// This uses <see cref="IEventCompletionAwaiter"/> to wait for all perspectives.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message payload type</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID)</param>
+  /// <param name="message">The message payload to append</param>
+  /// <param name="timeout">Optional timeout for waiting. Defaults to 30 seconds if not specified.</param>
+  /// <param name="onWaiting">
+  /// Optional callback invoked when waiting begins. Only called if there are events to wait for.
+  /// </param>
+  /// <param name="onDecisionMade">
+  /// Optional callback always invoked when the sync decision is made, regardless of outcome.
+  /// </param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
+  /// <docs>core-concepts/event-store#append-and-wait-all</docs>
+  Task<SyncResult> AppendAndWaitAsync<TMessage>(
+      Guid streamId,
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<SyncWaitingContext>? onWaiting = null,
+      Action<SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new NotSupportedException(
+          "AppendAndWaitAsync requires the AppendAndWaitEventStoreDecorator to be registered. " +
+          "Ensure AddWhizbang() is called with IEventCompletionAwaiter enabled.");
 }

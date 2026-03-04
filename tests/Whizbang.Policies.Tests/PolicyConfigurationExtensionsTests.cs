@@ -45,24 +45,24 @@ public class PolicyConfigurationExtensionsTests {
   // ========================================
 
   [Test]
-  public async Task UseStreamKey_ShouldSetStreamKeyAsync() {
+  public async Task UseStreamId_ShouldSetStreamIdAsync() {
     // Arrange
     var config = new PolicyConfiguration();
 
     // Act
-    config.UseStreamKey("order-123");
+    config.UseStreamId("order-123");
 
     // Assert
-    await Assert.That(config.StreamKey).IsEqualTo("order-123");
+    await Assert.That(config.StreamId).IsEqualTo("order-123");
   }
 
   [Test]
-  public async Task UseStreamKey_ShouldReturnSelfForFluentAPIAsync() {
+  public async Task UseStreamId_ShouldReturnSelfForFluentAPIAsync() {
     // Arrange
     var config = new PolicyConfiguration();
 
     // Act
-    var result = config.UseStreamKey("order-123");
+    var result = config.UseStreamId("order-123");
 
     // Assert
     await Assert.That(result).IsSameReferenceAs(config);
@@ -257,14 +257,14 @@ public class PolicyConfigurationExtensionsTests {
     // Arrange & Act
     var config = new PolicyConfiguration()
       .UseTopic("orders")
-      .UseStreamKey("order-123")
+      .UseStreamId("order-123")
       .UseExecutionStrategy<FakeExecutionStrategy>()
       .WithPartitions(16)
       .WithConcurrency(10);
 
     // Assert
     await Assert.That(config.Topic).IsEqualTo("orders");
-    await Assert.That(config.StreamKey).IsEqualTo("order-123");
+    await Assert.That(config.StreamId).IsEqualTo("order-123");
     await Assert.That(config.ExecutionStrategyType).IsEqualTo(typeof(FakeExecutionStrategy));
     await Assert.That(config.PartitionCount).IsEqualTo(16);
     await Assert.That(config.MaxConcurrency).IsEqualTo(10);

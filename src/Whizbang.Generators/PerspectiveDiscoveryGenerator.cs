@@ -56,36 +56,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class declaration.
-  /// Returns array of PerspectiveInfo (one per implemented interface).
-  /// Supports both patterns:
-  /// - Single variadic: IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;
-  /// - Multiple separate: IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;
-  /// </summary>
-  private static string _formatTypeNameForRuntime(ITypeSymbol typeSymbol) {
-    if (typeSymbol == null) {
-      throw new ArgumentNullException(nameof(typeSymbol));
-    }
-
-    // Get fully qualified type name WITHOUT global:: prefix
-    var typeName = typeSymbol.ToDisplayString(new SymbolDisplayFormat(
-        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-    ));
-
-    // Get assembly name (simple name only, no version/culture/publicKeyToken)
-    // For array types, get assembly from the element type (array types don't have ContainingAssembly)
-    var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
-        ? arrayType.ElementType.ContainingAssembly.Name
-        : typeSymbol.ContainingAssembly.Name;
-
-    // Format: "TypeName, AssemblyName"
-    // Example: "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts"
-    // Example (array): "ECommerce.Contracts.ProductCreatedEvent[], ECommerce.Contracts"
-    return $"{typeName}, {assemblyName}";
-  }
-
-  /// <summary>
   /// Extracts perspective information from a class that implements IPerspectiveFor interfaces.
   private static PerspectiveInfo[]? _extractPerspectiveInfos(
       GeneratorSyntaxContext context,
@@ -117,11 +87,17 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Get model type and StreamKey property (same across all interfaces for this class)
+    // Get model type and StreamId property (same across all interfaces for this class)
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
-    var streamKeyPropertyName = _findStreamKeyProperty(modelType);
+    var streamKeyPropertyName = _findStreamIdProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Compute nested-aware simple name
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
+
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
     // Generate one PerspectiveInfo per implemented interface
     var results = perspectiveInterfaces.Select(perspectiveInterface => {
@@ -140,19 +116,21 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
       // This format is used for registration in wh_message_associations table
       var messageTypeNames = eventTypeSymbols
-          .Select(t => _formatTypeNameForRuntime(t))
+          .Select(t => TypeNameUtilities.FormatTypeNameForRuntime(t))
           .ToArray();
 
-      // Validate event types and extract StreamKey information
-      var (validationErrors, eventStreamKeys) = _validateAndExtractEventInfo(eventTypeSymbols);
+      // Validate event types and extract StreamId information
+      var (validationErrors, eventStreamIds) = _validateAndExtractEventInfo(eventTypeSymbols);
 
       return new PerspectiveInfo(
           ClassName: className,
+          SimpleName: simpleName,
+          ClrTypeName: clrTypeName,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
-          StreamKeyPropertyName: streamKeyPropertyName,
-          EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
+          StreamIdPropertyName: streamKeyPropertyName,
+          EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
       );
     }).ToArray();
@@ -161,58 +139,64 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Finds the StreamKey property in a model type.
+  /// Finds the StreamId property in a model type.
   /// Returns the property name if found, null otherwise.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static string? _findStreamKeyProperty(ITypeSymbol modelType) {
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+  private static string? _findStreamIdProperty(ITypeSymbol modelType) {
+    var currentType = modelType as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
-          return property.Name;
+          if (hasStreamIdAttribute) {
+            return property.Name;
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
     return null;
   }
 
   /// <summary>
-  /// Validates event types and extracts StreamKey information.
-  /// Returns validation errors and StreamKey info for valid events.
+  /// Validates event types and extracts StreamId information.
+  /// Returns validation errors and StreamId info for valid events.
   /// </summary>
-  private static (List<EventValidationError> ValidationErrors, List<EventStreamKeyInfo> StreamKeys) _validateAndExtractEventInfo(
+  private static (List<EventValidationError> ValidationErrors, List<EventStreamIdInfo> StreamIds) _validateAndExtractEventInfo(
       ITypeSymbol[] eventTypeSymbols) {
 
     var validationErrors = new List<EventValidationError>();
-    var eventStreamKeys = new List<EventStreamKeyInfo>();
+    var eventStreamIds = new List<EventStreamIdInfo>();
 
     foreach (var eventTypeSymbol in eventTypeSymbols) {
-      var error = _validateEventStreamKey(eventTypeSymbol);
+      var error = _validateEventStreamId(eventTypeSymbol);
       if (error != null) {
         validationErrors.Add(error);
       } else {
-        // Extract StreamKey property name (only if valid)
-        var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
+        // Extract StreamId property name (only if valid)
+        var streamKeyProp = _extractStreamIdProperty(eventTypeSymbol);
         if (streamKeyProp != null) {
-          eventStreamKeys.Add(new EventStreamKeyInfo(
+          eventStreamIds.Add(new EventStreamIdInfo(
               EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              StreamKeyPropertyName: streamKeyProp
+              StreamIdPropertyName: streamKeyProp
           ));
         }
       }
     }
 
-    return (validationErrors, eventStreamKeys);
+    return (validationErrors, eventStreamIds);
   }
 
   /// <summary>
-  /// Validates that an event type has exactly one property marked with [StreamKey].
+  /// Validates that an event type has exactly one property marked with [StreamId].
   /// Returns validation error if found, null if valid.
   /// Handles array types by validating the element type.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static EventValidationError? _validateEventStreamKey(ITypeSymbol eventTypeSymbol) {
+  private static EventValidationError? _validateEventStreamId(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, validate the element type instead
     var typeToValidate = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
@@ -221,50 +205,61 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     var streamKeyProperties = new List<string>();
 
-    foreach (var member in typeToValidate.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+    // Traverse the type hierarchy to find [StreamId] on inherited properties
+    var currentType = typeToValidate as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
-          streamKeyProperties.Add(property.Name);
+          if (hasStreamIdAttribute) {
+            streamKeyProperties.Add(property.Name);
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
 
     var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleEventName = _getSimpleName(eventTypeName);
+    var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
 
     if (streamKeyProperties.Count == 0) {
-      return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
+      return new EventValidationError(simpleEventName, StreamIdErrorType.MissingStreamId);
     } else if (streamKeyProperties.Count > 1) {
-      return new EventValidationError(simpleEventName, StreamKeyErrorType.MultipleStreamKeys);
+      return new EventValidationError(simpleEventName, StreamIdErrorType.MultipleStreamIds);
     }
 
     return null;
   }
 
   /// <summary>
-  /// Extracts the StreamKey property name from an event type.
-  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// Extracts the StreamId property name from an event type.
+  /// Returns the property name if exactly one [StreamId] is found, null otherwise.
   /// Handles array types by extracting from the element type.
+  /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
-  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamIdProperty(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, extract from the element type instead
     var typeToExtract = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
       typeToExtract = arrayType.ElementType;
     }
 
-    foreach (var member in typeToExtract.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+    // Traverse the type hierarchy to find [StreamId] on inherited properties
+    var currentType = typeToExtract as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamIdAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
-          return property.Name;
+          if (hasStreamIdAttribute) {
+            return property.Name;
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
 
     return null;
@@ -287,29 +282,29 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective and any validation errors
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveDiscovered,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));
 
       // Report validation errors for this perspective
       if (perspective.EventValidationErrors != null) {
         foreach (var error in perspective.EventValidationErrors) {
-          var simplePerspectiveName = _getSimpleName(perspective.ClassName);
+          var simplePerspectiveName = TypeNameUtilities.GetSimpleName(perspective.ClassName);
 
-          if (error.ErrorType == StreamKeyErrorType.MissingStreamKey) {
+          if (error.ErrorType == StreamIdErrorType.MissingStreamId) {
             context.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.PerspectiveEventMissingStreamKey,
+                DiagnosticDescriptors.PerspectiveEventMissingStreamId,
                 Location.None,
                 error.EventTypeName,
                 simplePerspectiveName
             ));
-          } else if (error.ErrorType == StreamKeyErrorType.MultipleStreamKeys) {
+          } else if (error.ErrorType == StreamIdErrorType.MultipleStreamIds) {
             context.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.PerspectiveEventMultipleStreamKeys,
+                DiagnosticDescriptors.PerspectiveEventMultipleStreamIds,
                 Location.None,
                 error.EventTypeName
             ));
@@ -363,48 +358,15 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       totalRegistrations++;
     }
 
-    // Generate message associations JSON for database registration
-    var associations = new StringBuilder();
-    int associationCount = 0;
-    bool isFirstAssociation = true;
-
-    foreach (var perspective in perspectives) {
-      // Extract perspective class name (without namespace)
-      var perspectiveClassName = _getSimpleName(perspective.ClassName);
-
-      // Each event type creates one association
-      // Use MessageTypeNames which already has the correct database format (no global:: prefix)
-      foreach (var messageTypeName in perspective.MessageTypeNames) {
-        // Add comma separator (except for first item)
-        if (!isFirstAssociation) {
-          associations.AppendLine("    json.AppendLine(\",\");");
-        }
-        isFirstAssociation = false;
-
-        // MessageTypeNames already in correct format: "TypeName, AssemblyName"
-        // No need to strip global:: or recalculate assembly name
-
-        // Generate C# code that appends JSON object
-        associations.AppendLine($"    json.Append(\"    {{\");");
-        associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{messageTypeName}\\\", \");");
-        associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
-        associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspectiveClassName}\\\", \");");
-        associations.AppendLine("    json.Append(\"\\\"ServiceName\\\": \\\"\");");
-        associations.AppendLine("    json.Append(serviceName);");
-        associations.AppendLine("    json.Append(\"\\\"\");");
-        associations.AppendLine("    json.Append(\"}\");");
-
-        associationCount++;
-      }
-    }
-
     // Generate message associations array for C# querying
     var associationsArray = new StringBuilder();
     associationsArray.AppendLine("    return new MessageAssociation[] {");
     bool isFirst = true;
 
     foreach (var perspective in perspectives) {
-      var perspectiveClassName = _getSimpleName(perspective.ClassName);
+      // Use CLR format name for database storage (e.g., "Namespace.Parent+Child")
+      // This is consistent with registry lookup and avoids naming collisions
+      var perspectiveClassName = perspective.ClrTypeName;
 
       // Use MessageTypeNames which already has the correct database format
       foreach (var messageTypeName in perspective.MessageTypeNames) {
@@ -430,9 +392,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveDiscoveryGenerator).Assembly, result);
     result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString(CultureInfo.InvariantCulture));
-    result = result.Replace("{{ASSOCIATION_COUNT}}", associationCount.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", registrations.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_ARRAY", associationsArray.ToString());
 
     // Generate PERSPECTIVE_ASSOCIATIONS_TYPED region (Phase 3: Delegates)
@@ -493,23 +453,5 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();");
 
     return sb.ToString();
-  }
-
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// Handles tuples, arrays, and nested types.
-  /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    // Handle arrays: Type[]
-    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
-      var baseType = fullyQualifiedName[..^2];
-      return _getSimpleName(baseType) + "[]";
-    }
-
-    // Handle simple types
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

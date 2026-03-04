@@ -16,9 +16,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 
   // Test message types
-  public record _testEvent1([StreamKey] string Id = "test-1") : IEvent { }
-  public record _testEvent2([StreamKey] string Id = "test-2") : IEvent { }
-  public record _testEvent3([StreamKey] string Id = "test-3") : IEvent { }
+  public record _testEvent1([StreamId] string Id = "test-1") : IEvent { }
+  public record _testEvent2([StreamId] string Id = "test-2") : IEvent { }
+  public record _testEvent3([StreamId] string Id = "test-3") : IEvent { }
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy

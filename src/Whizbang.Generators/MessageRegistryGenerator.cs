@@ -557,16 +557,6 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts simple type name for mapping lookup.
-  /// "Whizbang.Core.Dispatcher" → "Dispatcher"
-  /// "IDispatcher" → "IDispatcher" (keeps interface prefix)
-  /// </summary>
-  private static string _extractSimpleTypeName(string fullName) {
-    var lastDot = fullName.LastIndexOf('.');
-    return lastDot >= 0 ? fullName.Substring(lastDot + 1) : fullName;
-  }
-
-  /// <summary>
   /// Enriches a MessageTypeInfo with documentation URL and test information.
   /// </summary>
   private static MessageTypeInfo _enrichMessageInfo(
@@ -574,7 +564,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = _extractSimpleTypeName(info.TypeName);
+    var simpleName = TypeNameUtilities.GetSimpleName(info.TypeName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -589,7 +579,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = _extractSimpleTypeName(info.ClassName);
+    var simpleName = TypeNameUtilities.GetSimpleName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -604,7 +594,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = _extractSimpleTypeName(info.ClassName);
+    var simpleName = TypeNameUtilities.GetSimpleName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -619,7 +609,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = _extractSimpleTypeName(info.ClassName);
+    var simpleName = TypeNameUtilities.GetSimpleName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 

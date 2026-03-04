@@ -13,6 +13,11 @@ on:
           - major      # Force major version bump (x.0.0)
           - minor      # Force minor version bump (0.x.0)
           - patch      # Force patch version bump (0.0.x)
+          - manual     # Use manually specified version
+      manual_version:
+        description: 'Manual version (only used when release_type is "manual", e.g., 1.2.3 or 1.2.3-beta.1)'
+        required: false
+        type: string
 
 env:
   DOTNET_NOLOGO: true
@@ -48,34 +53,52 @@ jobs:
 
       - name: Calculate Final Version
         id: version
+        env:
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+          INPUT_MANUAL_VERSION: ${{ inputs.manual_version }}
         run: |
-          MAJOR=${{ steps.gitversion.outputs.major }}
-          MINOR=${{ steps.gitversion.outputs.minor }}
-          PATCH=${{ steps.gitversion.outputs.patch }}
-          PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
-
-          case "${{ inputs.release_type }}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-            auto)
-              # Use GitVersion's calculated version as-is
-              ;;
-          esac
-
-          if [ -n "$PRERELEASE" ]; then
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+          if [ "$INPUT_RELEASE_TYPE" = "manual" ]; then
+            # Use manually specified version
+            MANUAL_VER="$INPUT_MANUAL_VERSION"
+            if [ -z "$MANUAL_VER" ]; then
+              echo "::error::Manual version is required when release_type is 'manual'"
+              exit 1
+            fi
+            # Validate version format (basic semver check)
+            if ! echo "$MANUAL_VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version format. Expected: x.y.z or x.y.z-prerelease"
+              exit 1
+            fi
+            SEMVER="$MANUAL_VER"
           else
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            MAJOR=${{ steps.gitversion.outputs.major }}
+            MINOR=${{ steps.gitversion.outputs.minor }}
+            PATCH=${{ steps.gitversion.outputs.patch }}
+            PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+            case "$INPUT_RELEASE_TYPE" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              auto)
+                # Use GitVersion's calculated version as-is
+                ;;
+            esac
+
+            if [ -n "$PRERELEASE" ]; then
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            fi
           fi
 
           echo "semver=$SEMVER" >> $GITHUB_OUTPUT
@@ -113,36 +136,41 @@ jobs:
           git push origin "$BRANCH"
 
       - name: Create Pull Request
-        id: create-pr
-        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
-        with:
-          branch: ${{ steps.version.outputs.branch }}
-          base: main
-          title: "chore(release): v${{ steps.version.outputs.semver }}"
-          body: |
-            ## Release v${{ steps.version.outputs.semver }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          BRANCH="${{ steps.version.outputs.branch }}"
 
-            This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(release): v$VERSION" \
+            --label "release" \
+            --label "automated" \
+            --body "$(cat <<'EOF'
+          ## Release v${{ steps.version.outputs.semver }}
 
-            ### Changes
-            - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
+          This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
 
-            ### Release Checklist
-            - [ ] All CI checks pass
-            - [ ] Version number is correct
-            - [ ] CHANGELOG updated (if applicable)
+          ### Changes
+          - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
 
-            ### After Merge
-            When this PR is merged to `main`, the release workflow will:
-            1. Create git tag `v${{ steps.version.outputs.semver }}`
-            2. Create GitHub Release with auto-generated notes
-            3. Publish NuGet packages
+          ### Release Checklist
+          - [ ] All CI checks pass
+          - [ ] Version number is correct
+          - [ ] CHANGELOG updated (if applicable)
 
-            ---
-            *This PR was automatically created by the Start Release workflow.*
-          labels: |
-            release
-            automated
+          ### After Merge
+          When this PR is merged to `main`, the release workflow will:
+          1. Create git tag `v${{ steps.version.outputs.semver }}`
+          2. Create GitHub Release with auto-generated notes
+          3. Publish NuGet packages
+
+          ---
+          *This PR was automatically created by the Start Release workflow.*
+          EOF
+          )"
 
       - name: Summary
         run: |

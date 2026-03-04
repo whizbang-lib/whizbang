@@ -52,6 +52,12 @@ public static class WhizbangJsonContextInitializer {
     // Important for efficient JSONB array queries using PostgreSQL's containment operators.
     JsonContextRegistry.RegisterConverter(new Security.SecurityPrincipalIdJsonConverter());
 
+    // Register TrackedGuid converter for UUID string serialization.
+    // This ensures TrackedGuid values serialize as plain UUID strings like "019c7df5-494b-77d6-b994-e7145b796ec0"
+    // rather than objects with Value/Metadata properties.
+    // Important for PostgreSQL UUID column compatibility and JSONB queries.
+    JsonContextRegistry.RegisterConverter(new ValueObjects.TrackedGuidJsonConverter());
+
     // Register type name mappings for infrastructure types
     // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name
     JsonContextRegistry.RegisterTypeName(

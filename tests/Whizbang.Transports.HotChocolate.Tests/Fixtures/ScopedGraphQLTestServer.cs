@@ -145,6 +145,12 @@ public class TestScopeContext : IScopeContext {
   public IReadOnlySet<SecurityPrincipalId> SecurityPrincipals { get; init; } = new HashSet<SecurityPrincipalId>();
   public IReadOnlyDictionary<string, string> Claims { get; init; } = new Dictionary<string, string>();
 
+  public string? ActualPrincipal => throw new NotImplementedException();
+
+  public string? EffectivePrincipal => throw new NotImplementedException();
+
+  public SecurityContextType ContextType => throw new NotImplementedException();
+
   public bool HasPermission(Permission permission) => Permissions.Contains(permission);
   public bool HasAnyPermission(params Permission[] permissions) => permissions.Any(p => Permissions.Contains(p));
   public bool HasAllPermissions(params Permission[] permissions) => permissions.All(p => Permissions.Contains(p));

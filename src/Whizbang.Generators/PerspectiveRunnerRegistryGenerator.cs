@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -54,26 +56,22 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1..5> interfaces (single-stream)
+    // Look for IPerspectiveFor<TModel, TEvent1..50> interfaces (single-stream)
     var singleStreamInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
+          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();
 
-    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..3> interfaces (multi-stream)
+    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..50> interfaces (multi-stream)
     var globalInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+          // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
         })
         .ToList();
@@ -94,43 +92,82 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find property with [StreamKey] attribute on the model
-    var hasStreamKeyAttribute = false;
+    // Find property with [StreamId] attribute on the model
+    var hasStreamIdAttribute = false;
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
-        hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+        hasStreamIdAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
 
-        if (hasStreamKeyAttribute) {
+        if (hasStreamIdAttribute) {
           break;
         }
       }
     }
 
-    if (!hasStreamKeyAttribute) {
-      // Cannot generate runner without StreamKey - skip silently
+    if (!hasStreamIdAttribute) {
+      // Cannot generate runner without StreamId - skip silently
       return null;
     }
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleName = _getSimpleName(className);
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
+    // Extract event types (all type arguments after TModel)
+    var eventTypes = new List<string>();
+    if (singleStreamInterfaces.Count > 0) {
+      // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> - events start at index 1
+      foreach (var iface in singleStreamInterfaces) {
+        for (var i = 1; i < iface.TypeArguments.Length; i++) {
+          eventTypes.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        }
+      }
+    } else if (globalInterfaces.Count > 0) {
+      // IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> - events start at index 2
+      foreach (var iface in globalInterfaces) {
+        for (var i = 2; i < iface.TypeArguments.Length; i++) {
+          eventTypes.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        }
+      }
+    }
 
     return new PerspectiveRegistryInfo(
         ClassName: className,
         SimpleName: simpleName,
-        RunnerName: $"{simpleName}Runner"
+        ClrTypeName: clrTypeName,
+        RunnerName: $"{simpleName.Replace(".", "")}Runner",
+        ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        EventTypes: eventTypes.Distinct().ToArray()
     );
   }
 
   /// <summary>
   /// Generates the static registry class with GetRunner() and AddPerspectiveRunners() methods.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
   private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveRegistryInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
+      return;
+    }
+
+    // Check for name collisions before generating
+    var nameGroups = perspectives.GroupBy(p => p.SimpleName).Where(g => g.Count() > 1).ToList();
+    if (nameGroups.Count > 0) {
+      foreach (var group in nameGroups) {
+        var classNames = string.Join(", ", group.Select(p => p.ClassName));
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PerspectiveNameCollision,
+            Location.None,
+            group.Key,
+            classNames
+        ));
+      }
+      // Skip generation if collisions found
       return;
     }
 
@@ -146,7 +183,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("#nullable enable");
     source.AppendLine();
     source.AppendLine("using System;");
+    source.AppendLine("using System.Collections.Generic;");
+    source.AppendLine("using System.Runtime.CompilerServices;");
     source.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    source.AppendLine("using Whizbang.Core.Messaging;");
     source.AppendLine("using Whizbang.Core.Perspectives;");
     source.AppendLine();
     source.AppendLine($"namespace {namespaceName};");
@@ -166,7 +206,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  /// Gets a perspective runner by perspective type name (zero reflection).");
     source.AppendLine("  /// Returns null if no runner found for the given perspective name.");
     source.AppendLine("  /// </summary>");
-    source.AppendLine("  /// <param name=\"perspectiveName\">Simple name of the perspective class (e.g., \"InventoryLevelsPerspective\")</param>");
+    source.AppendLine("  /// <param name=\"perspectiveName\">CLR format type name (e.g., \"MyApp.Perspectives.OrderPerspective\" or \"MyApp.Parent+Nested\")</param>");
     source.AppendLine("  /// <param name=\"serviceProvider\">Service provider to resolve runner dependencies</param>");
     source.AppendLine("  /// <returns>IPerspectiveRunner instance or null if not found</returns>");
     source.AppendLine("  public IPerspectiveRunner? GetRunner(");
@@ -175,14 +215,56 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
     source.AppendLine("    return perspectiveName switch {");
 
-    // Generate switch cases for each perspective
-    foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {
-      source.AppendLine($"      \"{perspective.SimpleName}\" => serviceProvider.GetRequiredService<{perspective.RunnerName}>(),");
+    // Generate switch cases for each perspective - use ClrTypeName for consistent database lookup
+    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName)) {
+      source.AppendLine($"      \"{perspective.ClrTypeName}\" => serviceProvider.GetRequiredService<{perspective.RunnerName}>(),");
     }
 
     source.AppendLine("      _ => null");
     source.AppendLine("    };");
     source.AppendLine("  }");
+    source.AppendLine();
+
+    // GetRegisteredPerspectives() method for diagnostics
+    source.AppendLine("  private static readonly PerspectiveRegistrationInfo[] _registeredPerspectives = [");
+    foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName)) {
+      var eventTypesArray = string.Join(", ", perspective.EventTypes.Select(e => $"\"{e}\""));
+      source.AppendLine($"    new PerspectiveRegistrationInfo(");
+      source.AppendLine($"      \"{perspective.ClrTypeName}\",");
+      source.AppendLine($"      \"{perspective.ClassName}\",");
+      source.AppendLine($"      \"{perspective.ModelType}\",");
+      source.AppendLine($"      [{eventTypesArray}]");
+      source.AppendLine($"    ),");
+    }
+    source.AppendLine("  ];");
+    source.AppendLine();
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Gets information about all registered perspectives (zero reflection).");
+    source.AppendLine("  /// Useful for diagnostic messages when runner lookup fails.");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registeredPerspectives;");
+    source.AppendLine();
+
+    // Generate _allEventTypes array (unique event types across all perspectives)
+    var allEventTypes = perspectives
+        .SelectMany(p => p.EventTypes)
+        .Distinct()
+        .OrderBy(e => e, StringComparer.Ordinal)
+        .ToList();
+
+    source.AppendLine("  // All unique event types for IEventTypeProvider (lifecycle receptor polymorphic deserialization)");
+    source.AppendLine("  private static readonly Type[] _allEventTypes = [");
+    foreach (var eventType in allEventTypes) {
+      source.AppendLine($"    typeof({eventType}),");
+    }
+    source.AppendLine("  ];");
+    source.AppendLine();
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Gets all unique event types across all perspectives.");
+    source.AppendLine("  /// Used by PerspectiveWorker for lifecycle receptor invocation (AOT-compatible polymorphic deserialization).");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  public IReadOnlyList<Type> GetEventTypes() => _allEventTypes;");
+
     source.AppendLine("}");
     source.AppendLine();
 
@@ -193,23 +275,54 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("public static class PerspectiveRunnerRegistryExtensions {");
     source.AppendLine("  /// <summary>");
     source.AppendLine($"  /// Registers all {perspectives.Length} perspective runner(s) as scoped services.");
-    source.AppendLine("  /// Also registers the PerspectiveRunnerRegistry as the IPerspectiveRunnerRegistry singleton.");
+    source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as IPerspectiveRunnerRegistry and IEventTypeProvider singletons.");
     source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
     source.AppendLine("  /// </summary>");
     source.AppendLine("  public static IServiceCollection AddPerspectiveRunners(");
     source.AppendLine("      this IServiceCollection services) {");
     source.AppendLine();
-    source.AppendLine("    // Register the registry as singleton");
-    source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry, PerspectiveRunnerRegistry>();");
+    source.AppendLine("    // Register the registry as singleton (implements both IPerspectiveRunnerRegistry and IEventTypeProvider)");
+    source.AppendLine("    services.AddSingleton<PerspectiveRunnerRegistry>();");
+    source.AppendLine("    services.AddSingleton<IPerspectiveRunnerRegistry>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
+    source.AppendLine("    services.AddSingleton<IEventTypeProvider>(sp => sp.GetRequiredService<PerspectiveRunnerRegistry>());");
     source.AppendLine();
 
-    // Register each runner
+    // Register each perspective class and its runner
     foreach (var perspective in perspectives.OrderBy(p => p.SimpleName)) {
+      source.AppendLine($"    services.AddScoped<{perspective.ClassName}>();");
       source.AppendLine($"    services.AddScoped<{perspective.RunnerName}>();");
     }
 
     source.AppendLine();
+    source.AppendLine("    // TURNKEY: Automatically register PerspectiveWorker as hosted service");
+    source.AppendLine("    // This ensures perspectives are processed without requiring manual registration");
+    source.AppendLine("    services.AddHostedService<global::Whizbang.Core.Workers.PerspectiveWorker>();");
+    source.AppendLine();
     source.AppendLine("    return services;");
+    source.AppendLine("  }");
+    source.AppendLine("}");
+    source.AppendLine();
+
+    // Module initializer class for automatic registration
+    source.AppendLine("/// <summary>");
+    source.AppendLine($"/// Auto-generated module initializer for registering {perspectives.Length} perspective runner(s).");
+    source.AppendLine("/// Runs at module load time and registers with PerspectiveRunnerCallbackRegistry (AOT-compatible).");
+    source.AppendLine("/// For test assemblies where ModuleInitializers may not run reliably, call Initialize() explicitly.");
+    source.AppendLine("/// </summary>");
+    source.AppendLine("public static class PerspectiveRunnerInitializer {");
+    source.AppendLine("  /// <summary>");
+    source.AppendLine("  /// Module initializer that registers the perspective runner registration callback.");
+    source.AppendLine("  /// This runs automatically when the assembly is loaded (no reflection required).");
+    source.AppendLine("  /// For test assemblies, you can call this method explicitly in test setup.");
+    source.AppendLine("  /// </summary>");
+    source.AppendLine("  [ModuleInitializer]");
+    source.AppendLine("  public static void Initialize() {");
+    source.AppendLine("    // Register callback with the library's registry");
+    source.AppendLine("    // When .WithDriver.Postgres (or similar) is called, this callback will be invoked");
+    source.AppendLine("    // Wrap in lambda because AddPerspectiveRunners returns IServiceCollection (fluent API)");
+    source.AppendLine("    PerspectiveRunnerCallbackRegistry.RegisterCallback(services => {");
+    source.AppendLine("      _ = PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(services);");
+    source.AppendLine("    });");
     source.AppendLine("  }");
     source.AppendLine("}");
 
@@ -223,24 +336,22 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     ));
   }
 
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
-  }
 }
 
 /// <summary>
 /// Registry information for a discovered perspective.
 /// </summary>
-/// <param name="ClassName">Fully qualified class name</param>
+/// <param name="ClassName">Fully qualified class name (with global:: prefix for code generation)</param>
 /// <param name="SimpleName">Simple class name (e.g., "InventoryLevelsPerspective")</param>
+/// <param name="ClrTypeName">CLR format type name for database storage (e.g., "Namespace.Parent+Child")</param>
 /// <param name="RunnerName">Generated runner name (e.g., "InventoryLevelsPerspectiveRunner")</param>
+/// <param name="ModelType">Fully qualified model type from IPerspectiveFor&lt;TModel, TEvent&gt;</param>
+/// <param name="EventTypes">Fully qualified event types from IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;</param>
 internal sealed record PerspectiveRegistryInfo(
     string ClassName,
     string SimpleName,
-    string RunnerName
+    string ClrTypeName,
+    string RunnerName,
+    string ModelType,
+    string[] EventTypes
 );

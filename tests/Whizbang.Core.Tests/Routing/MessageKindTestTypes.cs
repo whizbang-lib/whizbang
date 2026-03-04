@@ -2,7 +2,7 @@ using Whizbang.Core;
 using Whizbang.Core.Routing;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores
-#pragma warning disable WHIZ009 // Event without StreamKey - test types don't need StreamKey
+#pragma warning disable WHIZ009 // Event without StreamId - test types don't need StreamId
 
 namespace Whizbang.Core.Tests.Routing {
   #region Test Types - Root Namespace (for suffix detection)
@@ -33,7 +33,7 @@ namespace Whizbang.Core.Tests.Routing {
   // Types that implement interfaces
   public sealed record InterfaceCommand : ICommand;
 
-  public sealed record InterfaceEvent([property: StreamKey] Guid StreamKey) : IEvent;
+  public sealed record InterfaceEvent([property: StreamId] Guid StreamId) : IEvent;
 
   public sealed record InterfaceQuery : IQuery;
 

@@ -11,7 +11,7 @@ namespace Whizbang.Transports.Mutations;
 /// </summary>
 /// <typeparam name="TCommand">The command type that must implement <see cref="ICommand"/>.</typeparam>
 /// <typeparam name="TResult">The result type returned after command execution.</typeparam>
-/// <docs>v0.1.0/mutations/command-endpoints</docs>
+/// <docs>mutations/command-endpoints</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/CommandEndpointAttributeTests.cs</tests>
 /// <example>
 /// // Simple - command is the request
@@ -37,7 +37,7 @@ public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
   /// If null, no REST endpoint is generated.
   /// Example: "/api/orders" or "/api/v1/orders/{id}"
   /// </summary>
-  /// <docs>v0.1.0/mutations/command-endpoints#rest-route</docs>
+  /// <docs>mutations/command-endpoints#rest-route</docs>
   public string? RestRoute { get; set; }
 
   /// <summary>
@@ -45,7 +45,7 @@ public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
   /// If null, no GraphQL mutation is generated.
   /// Example: "createOrder" generates mutation { createOrder(...) { ... } }
   /// </summary>
-  /// <docs>v0.1.0/mutations/command-endpoints#graphql-mutation</docs>
+  /// <docs>mutations/command-endpoints#graphql-mutation</docs>
   public string? GraphQLMutation { get; set; }
 
   /// <summary>
@@ -54,6 +54,6 @@ public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
   /// instead of the command directly. User must implement
   /// <c>MapRequestToCommandAsync</c> in their partial class.
   /// </summary>
-  /// <docs>v0.1.0/mutations/custom-request-dto</docs>
+  /// <docs>mutations/custom-request-dto</docs>
   public Type? RequestType { get; set; }
 }

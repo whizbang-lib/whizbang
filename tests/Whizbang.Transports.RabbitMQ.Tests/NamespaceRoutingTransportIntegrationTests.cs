@@ -9,6 +9,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Transport;
 using Whizbang.Transports.RabbitMQ;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -103,17 +104,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct
-    await Assert.That(topic).IsEqualTo("orders");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
 
     // Set up consumer to verify message arrival
-    var receivedTcs = new TaskCompletionSource<string>();
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      awaiter.Handler,
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -126,13 +124,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -152,17 +147,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct (extracted from type name)
-    await Assert.That(topic).IsEqualTo("order");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.commands");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      awaiter.Handler,
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -174,14 +166,11 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
-      // Assert - Message should arrive at "order" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
+      // Assert - Message should arrive at namespace exchange
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -204,17 +193,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from composite strategy
     var topic = composite.ResolveTopic(messageType, "");
 
-    // Verify topic is correct
-    await Assert.That(topic).IsEqualTo("orders-01");
+    // Verify topic is correct - full namespace with suffix
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events-01");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      awaiter.Handler,
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -227,13 +213,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders-01" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -259,13 +242,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("custom-topic-ordercreated");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      awaiter.Handler,
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -278,13 +258,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at custom exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -300,11 +277,11 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Arrange
     var routingStrategy = new NamespaceRoutingStrategy();
 
-    // Define message types and their expected topics
+    // Define message types and their expected topics - now returns full namespace
     var testCases = new (Type MessageType, string ExpectedTopic)[] {
-      (typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "orders"),
-      (typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder), "order"),
-      (typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "order")
+      (typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "testnamespaces.myapp.orders.events"),
+      (typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder), "testnamespaces.myapp.contracts.commands"),
+      (typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "testnamespaces.myapp.contracts.events")
     };
 
     var receivedMessages = new Dictionary<string, TaskCompletionSource<bool>>();
@@ -314,7 +291,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       // Set up consumers for each unique topic
       foreach (var (messageType, expectedTopic) in testCases) {
         if (!receivedMessages.ContainsKey(expectedTopic)) {
-          receivedMessages[expectedTopic] = new TaskCompletionSource<bool>();
+          receivedMessages[expectedTopic] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
           var topicForClosure = expectedTopic;
           var subscription = await _transport!.SubscribeAsync(
@@ -322,7 +299,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
               receivedMessages[topicForClosure].TrySetResult(true);
               await Task.CompletedTask;
             },
-            new TransportDestination(expectedTopic, $"test-queue-{expectedTopic}-{Guid.NewGuid():N}"),
+            _createTestDestination(expectedTopic),
             cancellationToken
           );
           subscriptions.Add(subscription);
@@ -359,7 +336,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
 
   [Test]
   [Timeout(30000)]
-  public async Task PublishAsync_WithEventsNamespace_StripsCreatedSuffixAsync(
+  public async Task PublishAsync_WithEventsNamespace_ReturnsFullNamespaceAsync(
     CancellationToken cancellationToken
   ) {
     // Arrange
@@ -369,17 +346,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct (strips "Created" suffix)
-    await Assert.That(topic).IsEqualTo("order");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.events");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
-      new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
+      awaiter.Handler,
+      _createTestDestination(topic),
       cancellationToken
     );
 
@@ -392,13 +366,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -415,14 +386,25 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Act
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Assert
+    // Assert - now returns full namespace in lowercase
     await Assert.That(topic).IsEqualTo(topic.ToLowerInvariant());
-    await Assert.That(topic).IsEqualTo("orders");
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   // ========================================
   // HELPER METHODS
   // ========================================
+
+  /// <summary>
+  /// Creates a TransportDestination with deterministic SubscriberName metadata for testing.
+  /// Each call generates a unique subscriber name to ensure test isolation.
+  /// </summary>
+  private static TransportDestination _createTestDestination(string address, string? routingKey = null) {
+    var metadata = new Dictionary<string, JsonElement> {
+      ["SubscriberName"] = JsonDocument.Parse($"\"test-sub-{Guid.NewGuid():N}\"").RootElement.Clone()
+    };
+    return new TransportDestination(address, routingKey, metadata);
+  }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {

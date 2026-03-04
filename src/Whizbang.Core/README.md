@@ -15,10 +15,7 @@ Core interfaces, types, and abstractions for the Whizbang library.
 - **`CausationId`** - Causal chain tracking
 
 ### Exception Types
-- **`HandlerNotFoundException`** - No handler found for message type
-
-### Attributes
-- **`WhizbangHandlerAttribute`** - Marks handlers for source generator discovery
+- **`ReceptorNotFoundException`** - No receptor found for message type
 
 ## Design Principles
 
@@ -29,7 +26,7 @@ All handler discovery and routing happens at compile-time via source generators.
 Generic interfaces provide compile-time type checking:
 ```csharp
 public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> Receive(CreateOrder message) {
+    public async Task<OrderCreated> HandleAsync(CreateOrder message) {
         // Type-safe: must return OrderCreated
     }
 }
@@ -49,16 +46,14 @@ Receptors support various response patterns:
 
 ```csharp
 using Whizbang.Core;
-using Whizbang.Core.Attributes;
 
 // Define your message
 public record CreateOrder(Guid CustomerId, OrderItem[] Items);
 public record OrderCreated(Guid OrderId, Guid CustomerId);
 
-// Create a receptor
-[WhizbangHandler]  // Discovered by source generator
+// Create a receptor (auto-discovered by source generator - no attribute needed)
 public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> Receive(CreateOrder message) {
+    public async Task<OrderCreated> HandleAsync(CreateOrder message) {
         // Validation
         if (message.Items.Length == 0) {
             throw new InvalidOperationException("Order must have items");

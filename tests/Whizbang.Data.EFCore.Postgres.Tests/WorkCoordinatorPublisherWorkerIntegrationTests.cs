@@ -67,7 +67,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
 
     // Publish the message (simulating what the worker would do)
     // OutboxWork.Envelope is already deserialized and ready to publish
-    await testTransport.PublishAsync(outboxWork.Envelope, new TransportDestination(outboxWork.Destination, null, null), default);
+    await testTransport.PublishAsync(outboxWork.Envelope, new TransportDestination(outboxWork.Destination ?? "test-destination", null, null), default);
 
     // Assert - Message was published
     await Assert.That(testTransport.PublishedMessages).Count().IsEqualTo(1)
@@ -161,7 +161,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     // Publish them in order
     foreach (var work in workBatch.OutboxWork.OrderBy(w => w.MessageId)) {
       // OutboxWork.Envelope is already deserialized and ready to publish
-      await testTransport.PublishAsync(work.Envelope, new TransportDestination(work.Destination, null, null), default);
+      await testTransport.PublishAsync(work.Envelope, new TransportDestination(work.Destination ?? "test-destination", null, null), default);
     }
 
     // Assert - All 3 messages published in order

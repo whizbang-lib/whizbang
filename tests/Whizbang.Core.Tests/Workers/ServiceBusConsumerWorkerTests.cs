@@ -49,7 +49,7 @@ public static class ServiceBusConsumerWorkerTests {
 /// Test event for ServiceBusConsumerWorker tests (Worker-specific to avoid naming conflicts)
 /// </summary>
 public record ServiceBusWorkerTestEvent : IEvent {
-  [StreamKey]
+  [StreamId]
   public string Data { get; init; } = string.Empty;
 }
 
@@ -110,6 +110,10 @@ internal sealed class TestTransport : ITransport {
 /// </summary>
 internal sealed class TestSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
+
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
 
   public Task PauseAsync() {
     IsActive = false;

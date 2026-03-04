@@ -128,7 +128,8 @@ public class DapperPostgresEventStore(
       Hops = [
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };
@@ -297,7 +298,7 @@ public class DapperPostgresEventStore(
       }
 
       // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
-      // Stored metadata uses snake_case keys: message_id, correlation_id, causation_id, hops
+      // Stored metadata uses PascalCase keys: MessageId, Hops
       var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
       if (metadataDictTypeInfo == null) {
         throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
@@ -306,12 +307,12 @@ public class DapperPostgresEventStore(
       var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-      // Extract message_id from metadata
+      // Extract MessageId from metadata (snake_case key to match ToJsonb)
       var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
         : throw new InvalidOperationException("message_id not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata (snake_case key)
       List<MessageHop> hops;
       if (metadataDict.TryGetValue("hops", out var hopsElem)) {
         var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
@@ -319,6 +320,30 @@ public class DapperPostgresEventStore(
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
       } else {
         hops = [];
+      }
+
+      // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+      if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
+        var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                                ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
+        var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+        if (scopeDict != null) {
+          string? tenantId = null;
+          string? userId = null;
+
+          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+            tenantId = tenantElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+            userId = userElem.Value.GetString();
+          }
+
+          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+            // Update first hop with SecurityContext
+            var firstHop = hops[0];
+            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+          }
+        }
       }
 
       // Cast to IEvent and construct envelope
@@ -376,12 +401,13 @@ public class DapperPostgresEventStore(
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
+  /// Guid.Empty means "no upper bound" - read all events for the stream.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
     SELECT event_type AS EventType, event_data::text AS EventData, metadata::text AS Metadata, scope::text AS Scope
     FROM wh_event_store
     WHERE stream_id = @StreamId
-      AND event_id <= @UpToEventId
+      AND (@UpToEventId = '00000000-0000-0000-0000-000000000000' OR event_id <= @UpToEventId)
       AND (@AfterEventId IS NULL OR event_id > @AfterEventId)
     ORDER BY event_id";
 

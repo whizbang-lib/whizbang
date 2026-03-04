@@ -20,8 +20,8 @@ public class SyncReceptorTests : DiagnosticTestBase {
   public record SyncOrderItem(string Sku, int Quantity, decimal Price);
   public record SyncOrderResult(Guid OrderId);
 
-  // Event with StreamKey for auto-cascade tests
-  public record SyncOrderCreatedEvent([property: StreamKey] Guid OrderId, Guid CustomerId, decimal Total) : IEvent;
+  // Event with StreamId for auto-cascade tests
+  public record SyncOrderCreatedEvent([property: StreamId] Guid OrderId, Guid CustomerId, decimal Total) : IEvent;
 
   /// <summary>
   /// Tests that a sync receptor returns a typed response directly (no ValueTask).

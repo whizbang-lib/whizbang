@@ -18,7 +18,7 @@ Tests for dispatcher functionality:
 - Message routing
 - Context tracking (correlation/causation IDs)
 - Handler discovery
-- Error handling (HandlerNotFoundException)
+- Error handling (ReceptorNotFoundException)
 - Batch operations
 
 ## Current Status
@@ -57,7 +57,7 @@ MethodName_Scenario_ExpectedBehavior
 
 Examples:
 - `Receive_ValidCommand_ShouldReturnTypeSafeResponse`
-- `Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundException`
+- `Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundException`
 
 ## Writing Tests
 

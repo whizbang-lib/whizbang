@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core.Tags;
@@ -49,7 +50,7 @@ public sealed class TagOptions {
   /// options.Tags.UseHook&lt;AuditTagAttribute, AuditLogHook&gt;(priority: -10);
   /// </code>
   /// </example>
-  public TagOptions UseHook<TAttribute, THook>(int priority = -100)
+  public TagOptions UseHook<TAttribute, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(int priority = -100)
     where TAttribute : MessageTagAttribute
     where THook : class, IMessageTagHook<TAttribute> {
     var registration = new TagHookRegistration(
@@ -75,7 +76,7 @@ public sealed class TagOptions {
   /// options.Tags.UseUniversalHook&lt;UniversalTagLoggerHook&gt;();
   /// </code>
   /// </example>
-  public TagOptions UseUniversalHook<THook>(int priority = -100)
+  public TagOptions UseUniversalHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(int priority = -100)
     where THook : class, IMessageTagHook<MessageTagAttribute> {
     return UseHook<MessageTagAttribute, THook>(priority);
   }

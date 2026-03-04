@@ -6,8 +6,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when inventory is replenished
 /// </summary>
 public record InventoryRestockedEvent : IEvent {
-  [AggregateId]
-  [StreamKey]
+  [StreamId]
   public required Guid ProductId { get; init; }
   public int QuantityAdded { get; init; }
   public int NewTotalQuantity { get; init; }

@@ -50,37 +50,75 @@ public static class TemplateUtilities {
   /// <param name="replacement">The generated code to insert</param>
   /// <returns>Template with region replaced by generated code, indentation preserved</returns>
   public static string ReplaceRegion(string template, string regionName, string replacement) {
-    // Pattern explanation:
-    // (\s*)           - Capture leading whitespace (for indentation preservation)
-    // #region\s+      - Match '#region' followed by whitespace
-    // {regionName}    - Match the specific region name
-    // \s*             - Optional whitespace after region name
-    // (?:[^\r\n]*)    - Match rest of line (non-capturing, allows region description)
-    // [\r\n]+         - Match line ending(s)
-    // .*?             - Match any content between (non-greedy)
-    // \s*             - Optional whitespace before endregion
-    // #endregion      - Match '#endregion'
-    var pattern = $@"(\s*)#region\s+{Regex.Escape(regionName)}\s*(?:[^\r\n]*)[\r\n]+.*?\s*#endregion";
+    // Use simple string search instead of regex to avoid catastrophic backtracking
+    // This is more efficient for large templates (migration scripts can be 50KB+)
+    var regionStart = $"#region {regionName}";
+    var regionEnd = "#endregion";
 
-    // Timeout added to prevent ReDoS attacks (S6444)
-    var match = Regex.Match(template, pattern, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
-    if (!match.Success) {
-      // Fallback: region not found, return original
+    var startIdx = template.IndexOf(regionStart, StringComparison.Ordinal);
+    if (startIdx < 0) {
+      // Region not found, return original
       return template;
     }
 
-    // Get the indentation from the captured group
-    var indentation = match.Groups[1].Value;
+    // Find matching #endregion after the region start
+    var endIdx = template.IndexOf(regionEnd, startIdx, StringComparison.Ordinal);
+    if (endIdx < 0) {
+      // No matching #endregion found, return original
+      return template;
+    }
+
+    // Capture leading whitespace for indentation (look back from #region)
+    var indentStart = startIdx;
+    while (indentStart > 0 && template[indentStart - 1] != '\n' && template[indentStart - 1] != '\r') {
+      indentStart--;
+    }
+    var indentation = template.Substring(indentStart, startIdx - indentStart);
 
     // Indent the replacement code to match the region's indentation
     var indentedReplacement = IndentCode(replacement.TrimEnd(), indentation);
 
-    // Escape $ as $$ for Regex.Replace ($ has special meaning in replacement strings)
-    var escapedReplacement = indentedReplacement.Replace("$", "$$");
+    // Find where to start the replacement (beginning of region line including indentation)
+    var replaceStart = indentStart;
 
-    // Replace the entire region block with the indented code
-    // Timeout added to prevent ReDoS attacks (S6444)
-    return Regex.Replace(template, pattern, escapedReplacement, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
+    // Find end of #endregion
+    var replaceEnd = endIdx + regionEnd.Length;
+
+    // Capture any trailing content after #endregion on the same line (e.g., semicolon)
+    // This handles inline patterns like: const string x = #region X ... #endregion;
+    var trailingContent = new System.Text.StringBuilder();
+    while (replaceEnd < template.Length && template[replaceEnd] != '\n' && template[replaceEnd] != '\r') {
+      trailingContent.Append(template[replaceEnd]);
+      replaceEnd++;
+    }
+
+    // Consume the line ending (handle \r\n, \r, or \n)
+    if (replaceEnd < template.Length) {
+      if (template[replaceEnd] == '\r') {
+        replaceEnd++;
+        if (replaceEnd < template.Length && template[replaceEnd] == '\n') {
+          replaceEnd++;
+        }
+      } else if (template[replaceEnd] == '\n') {
+        replaceEnd++;
+      }
+    }
+
+    // Build the result - add trailing content (like semicolon) after replacement
+    var suffix = template.Substring(replaceEnd);
+    var trailing = trailingContent.ToString();
+
+    // If there's trailing content (like ";"), append it directly to the replacement
+    if (trailing.Length > 0) {
+      indentedReplacement = indentedReplacement.TrimEnd() + trailing;
+    }
+
+    // Add newline after replacement if there's content after
+    if (suffix.Length > 0 && !indentedReplacement.EndsWith("\n", StringComparison.Ordinal) && !indentedReplacement.EndsWith("\r", StringComparison.Ordinal)) {
+      indentedReplacement += "\n";
+    }
+
+    return template.Substring(0, replaceStart) + indentedReplacement + suffix;
   }
 
   /// <summary>

@@ -45,7 +45,8 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     _connectionString = builder.ConnectionString;
 
     var optionsBuilder = new DbContextOptionsBuilder<MinimalDbContext>();
-    optionsBuilder.UseNpgsql(_connectionString);
+    optionsBuilder.UseNpgsql(_connectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     _dbContextOptions = optionsBuilder.Options;
   }
 

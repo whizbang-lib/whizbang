@@ -110,8 +110,16 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         })
         .ToArray();
 
+    // Compute nested-aware simple name
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
+
+    // Compute CLR format name for database storage (uses + for nested types)
+    var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        SimpleName: simpleName,
+        ClrTypeName: clrTypeName,
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes,
         MessageTypeNames: messageTypeNames
@@ -141,11 +149,11 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective for routing
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveInvokerGenerated,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));
     }
@@ -214,15 +222,5 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", "// No perspectives discovered");
 
     context.AddSource("PerspectiveInvoker.g.cs", result);
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
-  /// </summary>
-  /// <tests>No tests found</tests>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

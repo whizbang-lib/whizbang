@@ -31,6 +31,13 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// Singleton instance for easy static access (backward compatibility).
   /// </summary>
   public static readonly PostgresSchemaBuilder Instance = new();
+
+  /// <summary>
+  /// Quotes a PostgreSQL identifier to handle reserved keywords (e.g., "user", "table", "select").
+  /// Always quotes to ensure safety regardless of the identifier value.
+  /// Example: "user" → "\"user\"", "bff" → "\"bff\""
+  /// </summary>
+  private static string _quoteIdentifier(string identifier) => $"\"{identifier}\"";
   /// <summary>
   /// Builds a CREATE TABLE statement for a single table definition.
   /// </summary>
@@ -47,7 +54,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
     // "public" is the default Postgres schema - no qualification needed
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? tableName : $"{schema}.{tableName}";
+    // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? tableName : $"{_quoteIdentifier(schema)}.{tableName}";
 
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {qualifiedTableName} (");
 
@@ -132,7 +140,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix, string? schema = null) {
     var fullTableName = $"{prefix}{tableName}";
     // "public" is the default Postgres schema - no qualification needed
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? fullTableName : $"{schema}.{fullTableName}";
+    // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? fullTableName : $"{_quoteIdentifier(schema)}.{fullTableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
     var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
@@ -150,7 +159,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   public string BuildCreateSequence(SequenceDefinition sequence, string prefix, string? schema = null) {
     var sequenceName = $"{prefix}{sequence.Name}";
     // "public" is the default Postgres schema - no qualification needed
-    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == "public" ? sequenceName : $"{schema}.{sequenceName}";
+    // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
+    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == "public" ? sequenceName : $"{_quoteIdentifier(schema)}.{sequenceName}";
     return $"CREATE SEQUENCE IF NOT EXISTS {qualifiedSequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 
@@ -177,9 +187,10 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     sb.AppendLine();
 
     // Create schema if not using default "public" schema
+    // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user")
     if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != "public") {
       sb.AppendLine($"-- Create schema for service isolation");
-      sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {config.SchemaName};");
+      sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {_quoteIdentifier(config.SchemaName)};");
       sb.AppendLine();
     }
 
@@ -196,6 +207,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
       (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
+      (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };

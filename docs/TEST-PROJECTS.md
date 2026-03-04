@@ -18,13 +18,13 @@ pwsh scripts/Run-Tests.ps1 -Coverage
 # Run specific project
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 
-# Run all tests including integration tests (requires Docker)
-pwsh scripts/Run-Tests.ps1 -Mode Full
+# Run unit tests only (fast, ~5800 tests)
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit
 
 # Run only integration tests
-pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly
+pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations
 
-# AI-optimized output (sparse progress, detailed errors)
+# AI-optimized output, ALL tests (default)
 pwsh scripts/Run-Tests.ps1 -Mode Ai
 
 # Stop on first failure
@@ -36,20 +36,20 @@ pwsh scripts/Run-Tests.ps1 -FailFast
 All CI workflows use `Run-Tests.ps1` for consistency with local development. Run these locally to verify before pushing:
 
 ```bash
-# Unit tests (reusable-test-unit.yml) - 19 unit test projects
-pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
+# Unit tests (reusable-test-unit.yml) - 25 unit test projects
+pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
 
 # PostgreSQL tests (reusable-test-postgres.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "Postgres" -Coverage -Configuration Release
+pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres
 
 # InMemory integration (reusable-test-inmemory.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.InMemory.Integration" -Mode IntegrationsOnly -Coverage -Configuration Release
+pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory
 
 # RabbitMQ integration (reusable-test-rabbitmq.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.RabbitMQ.Integration" -Mode IntegrationsOnly -Coverage -Configuration Release
+pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag RabbitMQ
 
 # ServiceBus integration (reusable-test-servicebus.yml) - requires Docker
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.Integration.Tests" -Mode IntegrationsOnly -Coverage -Configuration Release
+pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
 ```
 
 | Workflow | Tests | Timeout |

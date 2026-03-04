@@ -95,7 +95,8 @@ public class DapperSqliteEventStore(
       Hops = [
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core;
 
@@ -27,7 +28,7 @@ public interface IDispatcher {
   /// <param name="message">The message to send</param>
   /// <returns>Delivery receipt with correlation information</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync</tests>
   Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull;
 
@@ -118,7 +119,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>The typed business result from the receptor</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull;
 
@@ -204,7 +205,7 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_ShouldInvokeWithoutReturningResultAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_SynchronousCompletion_ShouldNotAllocateAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithTracing_StoresEnvelopeAsync</tests>
   ValueTask LocalInvokeAsync(object message);
 
@@ -276,23 +277,219 @@ public interface IDispatcher {
   // ========================================
 
   /// <summary>
-  /// Publishes an event to all interested handlers (fire-and-forget).
-  /// No return value - handlers execute independently.
+  /// Publishes an event to all interested handlers.
+  /// Returns a delivery receipt with StreamId extracted from [StreamId] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
+  /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
-  Task PublishAsync<TEvent>(TEvent eventData);
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherDeliveryReceiptTests.cs:PublishAsync_EventWithStreamId_DeliveryReceiptHasStreamIdAsync</tests>
+  Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData);
 
   /// <summary>
-  /// Publishes an event with dispatch options (fire-and-forget).
+  /// Publishes an event with dispatch options.
+  /// Returns a delivery receipt with StreamId extracted from [StreamId] attribute.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="eventData">The event to publish</param>
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
-  Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
+  Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
+
+  /// <summary>
+  /// Cascades a message (event or command) with explicit routing mode.
+  /// Called by <see cref="IEventCascader"/> after resolving routing from wrappers and attributes.
+  /// </summary>
+  /// <param name="message">The message to cascade.</param>
+  /// <param name="sourceEnvelope">
+  /// The source envelope that caused this cascade (e.g., the command envelope).
+  /// Used to inherit SecurityContext for the cascaded message when ambient context is unavailable.
+  /// </param>
+  /// <param name="mode">The dispatch mode (Local, Outbox, or Both).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>A task representing the asynchronous operation.</returns>
+  /// <remarks>
+  /// <para>
+  /// Actions based on mode:
+  /// - Local: Invokes in-process receptors only
+  /// - Outbox: Writes to outbox for cross-service delivery only
+  /// - Both: Does both local invocation and outbox write
+  /// </para>
+  /// <para>
+  /// Security context inheritance: The cascaded message gets its own new envelope.
+  /// The SecurityContext in the new envelope's initial hop is inherited from the
+  /// sourceEnvelope's current security context when ambient context is unavailable.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
+
+  // ========================================
+  // LOCAL INVOKE AND SYNC - Wait for All Perspectives
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process and waits for ALL perspectives to fully process
+  /// any events emitted during the invocation before returning the result.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method combines <see cref="LocalInvokeAsync{TMessage,TResult}(TMessage)"/> with
+  /// automatic synchronization. After the handler completes, it waits for all registered
+  /// perspectives to process any events that were tracked during the invocation.
+  /// </para>
+  /// <para>
+  /// <strong>Use this when:</strong>
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><description>You need to query read models immediately after a command</description></item>
+  ///   <item><description>Building synchronous-feeling APIs over event sourcing</description></item>
+  ///   <item><description>API endpoints that must return consistent data after mutations</description></item>
+  /// </list>
+  /// <para>
+  /// <strong>Example:</strong>
+  /// </para>
+  /// <code>
+  /// // In a GraphQL mutation or API controller
+  /// var result = await dispatcher.LocalInvokeAndSyncAsync&lt;CreateOrder, OrderResult&gt;(
+  ///     new CreateOrder { CustomerId = id, Items = items },
+  ///     timeout: TimeSpan.FromSeconds(10));
+  ///
+  /// // All perspectives have now processed the events - safe to query read models
+  /// return result.OrderId;
+  /// </code>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <typeparam name="TResult">The expected business result type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for perspectives to sync. Defaults to 30 seconds.</param>
+  /// <param name="onWaiting">
+  /// Optional callback invoked when waiting begins. Only called if there are events to wait for
+  /// and they haven't already been processed. Not called for <see cref="Perspectives.Sync.SyncOutcome.NoPendingEvents"/>.
+  /// </param>
+  /// <param name="onDecisionMade">
+  /// Optional callback always invoked when the sync decision is made, regardless of outcome.
+  /// </param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>The typed business result from the receptor.</returns>
+  /// <exception cref="TimeoutException">
+  /// Thrown when perspectives don't complete processing within the timeout period.
+  /// Note: The handler has already completed successfully; only perspective sync timed out.
+  /// </exception>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
+      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new NotSupportedException("LocalInvokeAndSyncAsync requires a Dispatcher implementation with IEventCompletionAwaiter support.");
+
+  /// <summary>
+  /// Invokes a void receptor in-process and waits for ALL perspectives to fully process
+  /// any events emitted during the invocation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This method combines <see cref="LocalInvokeAsync{TMessage}(TMessage)"/> with
+  /// automatic synchronization. After the handler completes, it waits for all registered
+  /// perspectives to process any events that were tracked during the invocation.
+  /// </para>
+  /// <para>
+  /// Returns a <see cref="Perspectives.Sync.SyncResult"/> indicating whether all perspectives
+  /// completed processing within the timeout.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for perspectives to sync. Defaults to 30 seconds.</param>
+  /// <param name="onWaiting">
+  /// Optional callback invoked when waiting begins. Only called if there are events to wait for
+  /// and they haven't already been processed. Not called for <see cref="Perspectives.Sync.SyncOutcome.NoPendingEvents"/>.
+  /// </param>
+  /// <param name="onDecisionMade">
+  /// Optional callback always invoked when the sync decision is made, regardless of outcome.
+  /// </param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
+      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      => throw new NotSupportedException("LocalInvokeAndSyncAsync requires a Dispatcher implementation with IEventCompletionAwaiter support.");
+
+  /// <summary>
+  /// Invokes a receptor returning a result and waits for a SPECIFIC perspective to process
+  /// any events emitted during the invocation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Unlike <see cref="LocalInvokeAndSyncAsync{TMessage,TResult}(TMessage,TimeSpan?,Action{Perspectives.Sync.SyncWaitingContext}?,Action{Perspectives.Sync.SyncDecisionContext}?,CancellationToken)"/>
+  /// which waits for ALL perspectives, this method waits only for the specified perspective type.
+  /// This is useful when you only care about one read model being updated before returning.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <typeparam name="TResult">The expected business result type.</typeparam>
+  /// <typeparam name="TPerspective">The perspective type to wait for.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for the perspective to sync. Defaults to 30 seconds.</param>
+  /// <param name="onWaiting">Optional callback invoked when waiting begins.</param>
+  /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>The typed business result from the receptor.</returns>
+  /// <exception cref="TimeoutException">Thrown when the perspective doesn't complete processing within the timeout.</exception>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
+      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class
+      => throw new NotSupportedException("LocalInvokeAndSyncAsync with specific perspective requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
+
+  /// <summary>
+  /// Invokes a void receptor and waits for a SPECIFIC perspective to process
+  /// any events emitted during the invocation.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Unlike <see cref="LocalInvokeAndSyncAsync{TMessage}(TMessage,TimeSpan?,Action{Perspectives.Sync.SyncWaitingContext}?,Action{Perspectives.Sync.SyncDecisionContext}?,CancellationToken)"/>
+  /// which waits for ALL perspectives, this method waits only for the specified perspective type.
+  /// </para>
+  /// <para>
+  /// This method is named differently from the result-returning overload to avoid generic type
+  /// parameter ambiguity between TMessage,TResult and TMessage,TPerspective.
+  /// </para>
+  /// </remarks>
+  /// <typeparam name="TMessage">The message type.</typeparam>
+  /// <typeparam name="TPerspective">The perspective type to wait for.</typeparam>
+  /// <param name="message">The message to process.</param>
+  /// <param name="timeout">Maximum time to wait for the perspective to sync. Defaults to 30 seconds.</param>
+  /// <param name="onWaiting">Optional callback invoked when waiting begins.</param>
+  /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
+  /// <param name="cancellationToken">A cancellation token.</param>
+  /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
+  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
+      TMessage message,
+      TimeSpan? timeout = null,
+      Action<Perspectives.Sync.SyncWaitingContext>? onWaiting = null,
+      Action<Perspectives.Sync.SyncDecisionContext>? onDecisionMade = null,
+      CancellationToken cancellationToken = default)
+      where TMessage : notnull
+      where TPerspective : class
+      => throw new NotSupportedException("LocalInvokeAndSyncForPerspectiveAsync requires a Dispatcher implementation with IPerspectiveSyncAwaiter support.");
 
   // ========================================
   // BATCH OPERATIONS

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesCausationIdAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesMetadataAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesServiceNameAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamKeyPartitionAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamIdPartitionAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesSequenceNumberAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTimestampAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_WithNullValues_HandlesGracefullyAsync</tests>
@@ -43,7 +43,7 @@ public interface IMessageSerializer {
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesCausationIdAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesMetadataAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesServiceNameAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamKeyPartitionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamIdPartitionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesSequenceNumberAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTimestampAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_WithNullValues_HandlesGracefullyAsync</tests>
@@ -65,7 +65,7 @@ public interface IMessageSerializer {
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesCausationIdAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesMetadataAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesServiceNameAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamKeyPartitionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTopicStreamIdPartitionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesSequenceNumberAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_PreservesTimestampAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/IMessageSerializerTests.cs:RoundTrip_WithNullValues_HandlesGracefullyAsync</tests>

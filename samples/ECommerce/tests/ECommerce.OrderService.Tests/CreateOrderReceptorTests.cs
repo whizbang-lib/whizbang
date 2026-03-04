@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace ECommerce.OrderService.Tests;
 
@@ -21,9 +22,9 @@ public class CreateOrderReceptorTests {
     public List<object> PublishedMessages { get; } = [];
     public int PublishCount => PublishedMessages.Count;
 
-    public Task PublishAsync<TEvent>(TEvent @event) {
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) {
       PublishedMessages.Add(@event!);
-      return Task.CompletedTask;
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(Whizbang.Core.ValueObjects.MessageId.New(), "test"));
     }
 
     // Generic SendAsync methods
@@ -60,10 +61,14 @@ public class CreateOrderReceptorTests {
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
-    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+    public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
       PublishedMessages.Add(eventData!);
-      return Task.CompletedTask;
+      return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(Whizbang.Core.ValueObjects.MessageId.New(), "test"));
     }
+    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   [Test]

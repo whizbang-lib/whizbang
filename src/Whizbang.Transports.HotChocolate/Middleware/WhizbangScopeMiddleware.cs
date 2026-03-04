@@ -9,7 +9,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// ASP.NET Core middleware that extracts scope from HTTP context and sets it in the scope context accessor.
 /// Supports extraction from JWT claims and custom headers.
 /// </summary>
-/// <docs>v0.1.0/graphql/scoping#middleware</docs>
+/// <docs>graphql/scoping#middleware</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/ScopedQueryTests.cs</tests>
 /// <example>
 /// // In Program.cs or Startup.cs
@@ -39,21 +39,28 @@ public class WhizbangScopeMiddleware {
     var principals = _extractPrincipals(context);
     var claims = _extractClaims(context);
 
-    // Set the scope context for this request
-    scopeContextAccessor.Current = new RequestScopeContext {
+    // Create SecurityExtraction with all extracted data
+    var extraction = new SecurityExtraction {
       Scope = scope,
       Roles = roles,
       Permissions = permissions,
       SecurityPrincipals = principals,
-      Claims = claims
+      Claims = claims,
+      Source = "HttpContext",
+      ActualPrincipal = scope.UserId,
+      EffectivePrincipal = scope.UserId,
+      ContextType = SecurityContextType.User
     };
+
+    // Wrap in ImmutableScopeContext for Dispatcher compatibility
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
 
     await _next(context);
   }
 
   private PerspectiveScope _buildScope(HttpContext context) {
     var tenantId = _extractValue(context, _options.TenantIdClaimType, _options.TenantIdHeaderName);
-    var userId = _extractValue(context, _options.UserIdClaimType, _options.UserIdHeaderName);
+    var userId = _extractValueWithFallback(context, _options.UserIdClaimTypes, _options.UserIdHeaderName);
     var orgId = _extractValue(context, _options.OrganizationIdClaimType, _options.OrganizationIdHeaderName);
     var customerId = _extractValue(context, _options.CustomerIdClaimType, _options.CustomerIdHeaderName);
 
@@ -97,6 +104,28 @@ public class WhizbangScopeMiddleware {
     return null;
   }
 
+  /// <summary>
+  /// Extracts a value trying multiple claim types in order (for fallback scenarios).
+  /// Tries each claim type until one is found, then falls back to header.
+  /// </summary>
+  private static string? _extractValueWithFallback(HttpContext context, IEnumerable<string> claimTypes, string headerName) {
+    // Try each claim type in order
+    foreach (var claimType in claimTypes) {
+      var claimValue = context.User?.FindFirst(claimType)?.Value;
+      if (!string.IsNullOrEmpty(claimValue)) {
+        return claimValue;
+      }
+    }
+
+    // Then try header
+    if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
+        !string.IsNullOrEmpty(headerValue)) {
+      return headerValue!;
+    }
+
+    return null;
+  }
+
   private HashSet<string> _extractRoles(HttpContext context) {
     var roles = new HashSet<string>();
 
@@ -131,8 +160,15 @@ public class WhizbangScopeMiddleware {
   private HashSet<SecurityPrincipalId> _extractPrincipals(HttpContext context) {
     var principals = new HashSet<SecurityPrincipalId>();
 
-    // Add user principal
-    var userId = context.User?.FindFirst(_options.UserIdClaimType)?.Value;
+    // Add user principal - try all claim types in order
+    string? userId = null;
+    foreach (var claimType in _options.UserIdClaimTypes) {
+      userId = context.User?.FindFirst(claimType)?.Value;
+      if (!string.IsNullOrEmpty(userId)) {
+        break;
+      }
+    }
+
     if (!string.IsNullOrEmpty(userId)) {
       principals.Add(SecurityPrincipalId.User(userId));
     }
@@ -165,46 +201,10 @@ public class WhizbangScopeMiddleware {
 }
 
 /// <summary>
-/// Scope context implementation for HTTP requests.
-/// </summary>
-internal sealed class RequestScopeContext : IScopeContext {
-  public required PerspectiveScope Scope { get; init; }
-  public required IReadOnlySet<string> Roles { get; init; }
-  public required IReadOnlySet<Permission> Permissions { get; init; }
-  public required IReadOnlySet<SecurityPrincipalId> SecurityPrincipals { get; init; }
-  public required IReadOnlyDictionary<string, string> Claims { get; init; }
-
-  public bool HasPermission(Permission permission) {
-    foreach (var p in Permissions) {
-      if (p.Matches(permission)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  public bool HasAnyPermission(params Permission[] permissions) =>
-      permissions.Any(HasPermission);
-
-  public bool HasAllPermissions(params Permission[] permissions) =>
-      permissions.All(HasPermission);
-
-  public bool HasRole(string roleName) => Roles.Contains(roleName);
-
-  public bool HasAnyRole(params string[] roleNames) =>
-      roleNames.Any(r => Roles.Contains(r));
-
-  public bool IsMemberOfAny(params SecurityPrincipalId[] principals) =>
-      principals.Any(p => SecurityPrincipals.Contains(p));
-
-  public bool IsMemberOfAll(params SecurityPrincipalId[] principals) =>
-      principals.All(p => SecurityPrincipals.Contains(p));
-}
-
-/// <summary>
 /// Configuration options for scope extraction middleware.
+/// Supports fallback claim types for common identity provider variations.
 /// </summary>
-/// <docs>v0.1.0/graphql/scoping#options</docs>
+/// <docs>graphql/scoping#options</docs>
 /// <example>
 /// services.Configure&lt;WhizbangScopeOptions&gt;(options => {
 ///     options.TenantIdClaimType = "tenant_id";
@@ -224,9 +224,26 @@ public class WhizbangScopeOptions {
   public string TenantIdHeaderName { get; set; } = "X-Tenant-Id";
 
   /// <summary>
-  /// Claim type for user ID. Default: ClaimTypes.NameIdentifier.
+  /// Claim types for user ID, tried in order until one is found.
+  /// Default: ["http://schemas.microsoft.com/identity/claims/objectidentifier", "objectid", "oid", "sub", ClaimTypes.NameIdentifier].
+  /// Covers Azure AD (objectidentifier, oid), standard JWT (sub), and ASP.NET (NameIdentifier).
   /// </summary>
-  public string UserIdClaimType { get; set; } = ClaimTypes.NameIdentifier;
+  public List<string> UserIdClaimTypes { get; set; } = [
+    "http://schemas.microsoft.com/identity/claims/objectidentifier", // Azure AD full claim
+    "objectid",  // Azure AD short form
+    "oid",       // Azure AD abbreviated
+    "sub",       // Standard JWT
+    ClaimTypes.NameIdentifier  // ASP.NET Identity
+  ];
+
+  /// <summary>
+  /// Primary claim type for user ID. Gets the first claim type in <see cref="UserIdClaimTypes"/>.
+  /// Setting this replaces all claim types with a single value (for backwards compatibility).
+  /// </summary>
+  public string UserIdClaimType {
+    get => UserIdClaimTypes.FirstOrDefault() ?? ClaimTypes.NameIdentifier;
+    set => UserIdClaimTypes = [value];
+  }
 
   /// <summary>
   /// Header name for user ID. Default: "X-User-Id".

@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -784,5 +785,7 @@ public class OrderedStreamProcessorTests {
       }
       return null;
     }
+
+    public SecurityContext? GetCurrentSecurityContext() => null;
   }
 }

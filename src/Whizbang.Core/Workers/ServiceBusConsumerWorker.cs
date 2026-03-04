@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -123,16 +125,50 @@ public partial class ServiceBusConsumerWorker(
   }
 
   private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
+    // Restore distributed trace context from the incoming message's TraceParent
+    // This enables cross-service tracing by linking spans from sender to receiver
+    Activity? inboxActivity = null;
+    var traceParent = envelope.Hops
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      // Start a new activity as child of the sender's span
+      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
+        $"Inbox {messageType}",
+        ActivityKind.Consumer,
+        parentContext
+      );
+      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+      inboxActivity?.SetTag("messaging.operation", "receive");
+      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
+    }
+
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
-      var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+      var scopedProvider = scope.ServiceProvider;
+
+      // Establish security context FIRST (before any business logic)
+      // This populates IScopeContextAccessor.Current so all scoped services can access security context
+      var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
+      if (securityProvider is not null) {
+        var securityContext = await securityProvider.EstablishContextAsync(envelope, scopedProvider, ct);
+        if (securityContext is not null) {
+          var accessor = scopedProvider.GetRequiredService<IScopeContextAccessor>();
+          accessor.Current = securityContext;
+        }
+      }
+
+      var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
       LogProcessingMessage(_logger, envelope.MessageId);
 
       // 1. Serialize envelope to InboxMessage
       // Pass scope so we can resolve IEnvelopeSerializer if needed
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
+      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
 
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
@@ -183,6 +219,8 @@ public partial class ServiceBusConsumerWorker(
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreInboxAsync,
@@ -193,10 +231,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
         }
       }
 
@@ -230,6 +268,8 @@ public partial class ServiceBusConsumerWorker(
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          // Reconstruct envelope with deserialized payload to preserve security context
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostInboxAsync,
@@ -240,10 +280,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
         }
       }
 
@@ -253,9 +293,15 @@ public partial class ServiceBusConsumerWorker(
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
 
       // Scope will be disposed automatically by 'await using' at end of method
+      inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
+      inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
+      inboxActivity?.SetTag("exception.message", ex.Message);
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw; // Let the transport handle retry/dead-letter
+    } finally {
+      inboxActivity?.Dispose();
     }
   }
 
@@ -418,18 +464,18 @@ public partial class ServiceBusConsumerWorker(
 
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering.
-  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Check first hop for aggregate ID or stream key
+    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
-        aggregateIdElem.ValueKind == JsonValueKind.String) {
-      var aggregateIdStr = aggregateIdElem.GetString();
-      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
+        streamIdElem.ValueKind == JsonValueKind.String) {
+      var streamIdStr = streamIdElem.GetString();
+      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
+        return parsedStreamId;
       }
     }
 
@@ -480,8 +526,8 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 19,
-    Level = LogLevel.Warning,
-    Message = "[ServiceBusConsumer DIAGNOSTIC] _serializeToNewInboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
+    Level = LogLevel.Debug,
+    Message = "Serializing to InboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
   )]
   static partial void LogSerializeInboxMessage(ILogger logger, Guid messageId, string payloadType, bool isEvent, Guid streamId);
 
@@ -529,14 +575,14 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 10,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Message {MessageId} accepted for processing ({WorkCount} inbox work items)"
   )]
   static partial void LogMessageAcceptedForProcessing(ILogger logger, MessageId messageId, int workCount);
 
   [LoggerMessage(
     EventId = 11,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Invoked perspectives for {EventType} (message {MessageId})"
   )]
   static partial void LogInvokedPerspectives(ILogger logger, string eventType, Guid messageId);
@@ -564,7 +610,7 @@ public partial class ServiceBusConsumerWorker(
 
   [LoggerMessage(
     EventId = 15,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Successfully processed message {MessageId}"
   )]
   static partial void LogSuccessfullyProcessedMessage(ILogger logger, MessageId messageId);

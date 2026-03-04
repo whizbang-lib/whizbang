@@ -6,7 +6,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Transports;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 #if AZURESERVICEBUS
@@ -59,65 +59,25 @@ builder.Services.AddDbContext<PaymentDbContext>(options =>
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
 _ = builder.Services
   .AddWhizbang()
+  .WithRouting(routing => {
+    routing
+      .OwnDomains("ecommerce.payment.commands")
+      .SubscribeTo("ecommerce.orders.events")
+      .Inbox.UseSharedTopic("inbox");
+  })
   .WithEFCore<PaymentDbContext>()
-  .WithDriver.Postgres;
+  .WithDriver.Postgres
+  .AddTransportConsumer();
 
 // Register Whizbang generated services (from ECommerce.Contracts)
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
-builder.Services.AddWhizbangAggregateIdExtractor();
-
-// Register transport readiness check
-#if AZURESERVICEBUS
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var transport = sp.GetRequiredService<ITransport>();
-  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
-  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
-});
-
-#elif RABBITMQ
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck>>();
-  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
-});
-
-#endif
-
-// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-  new TransportPublishStrategy(
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<ITransportReadinessCheck>()
-  )
-);
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-
-// Transport consumer - receives events and commands
-var consumerOptions = new TransportConsumerOptions();
-
-#if AZURESERVICEBUS
-consumerOptions.Destinations.Add(new TransportDestination(
-  Address: "orders",
-  RoutingKey: "sub-payment-orders"  // Azure Service Bus subscription name
-));
-
-#elif RABBITMQ
-consumerOptions.Destinations.Add(new TransportDestination(
-  Address: "orders",                // RabbitMQ exchange name
-  RoutingKey: "payment-worker-queue"  // RabbitMQ queue name
-));
-
-#endif
-
-builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<TransportConsumerWorker>();
 
 var host = builder.Build();
 

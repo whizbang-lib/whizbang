@@ -179,4 +179,127 @@ public class DeliveryReceiptTests {
     await Assert.That(receipt.Timestamp).IsNotEqualTo(default);
     await Assert.That(receipt.Metadata).IsNotNull();
   }
+
+  // ========================================
+  // StreamId Tests
+  // ========================================
+
+  [Test]
+  public async Task Accepted_WithStreamId_IncludesStreamIdAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestReceptor";
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var receipt = DeliveryReceipt.Accepted(messageId, destination, streamId: streamId);
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
+  }
+
+  [Test]
+  public async Task Queued_WithStreamId_IncludesStreamIdAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestQueue";
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var receipt = DeliveryReceipt.Queued(messageId, destination, streamId: streamId);
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Queued);
+  }
+
+  [Test]
+  public async Task Delivered_WithStreamId_IncludesStreamIdAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestHandler";
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var receipt = DeliveryReceipt.Delivered(messageId, destination, streamId: streamId);
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  public async Task Failed_WithStreamId_IncludesStreamIdAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "FailedHandler";
+    var streamId = Guid.NewGuid();
+    var exception = new InvalidOperationException("Test error");
+
+    // Act
+    var receipt = DeliveryReceipt.Failed(messageId, destination, streamId: streamId, exception: exception);
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Failed);
+  }
+
+  [Test]
+  public async Task FactoryMethods_WithoutStreamId_StreamIdIsNullAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestHandler";
+
+    // Act - Create receipts without streamId parameter
+    var accepted = DeliveryReceipt.Accepted(messageId, destination);
+    var queued = DeliveryReceipt.Queued(messageId, destination);
+    var delivered = DeliveryReceipt.Delivered(messageId, destination);
+    var failed = DeliveryReceipt.Failed(messageId, destination);
+
+    // Assert - All should have null StreamId
+    await Assert.That(accepted.StreamId).IsNull();
+    await Assert.That(queued.StreamId).IsNull();
+    await Assert.That(delivered.StreamId).IsNull();
+    await Assert.That(failed.StreamId).IsNull();
+  }
+
+  [Test]
+  public async Task Constructor_WithStreamId_SetsStreamIdPropertyAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestHandler";
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var receipt = new DeliveryReceipt(
+      messageId,
+      destination,
+      DeliveryStatus.Delivered,
+      streamId: streamId
+    );
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+  }
+
+  [Test]
+  public async Task StreamId_IsAccessible_ThroughInterfaceAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var destination = "TestHandler";
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var receipt = DeliveryReceipt.Delivered(messageId, destination, streamId: streamId);
+
+    // Assert
+    await Assert.That(receipt.StreamId).IsNotNull();
+    await Assert.That(receipt.StreamId!.Value).IsEqualTo(streamId);
+  }
 }

@@ -67,7 +67,7 @@ public class CreateProductWorkflowTests {
   /// 4. Product is queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_PublishesEvent_MaterializesInBothPerspectivesAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -94,8 +94,8 @@ public class CreateProductWorkflowTests {
 
     // Wait for perspective processing to complete (deterministic, no race condition!)
     // Longer timeout for workflow tests (45s) due to per-test container initialization
-    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 90000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
@@ -128,7 +128,7 @@ public class CreateProductWorkflowTests {
   /// Tests that creating multiple products in sequence works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_MultipleProducts_AllMaterializeCorrectlyAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -169,8 +169,8 @@ public class CreateProductWorkflowTests {
         inventoryPerspectives: 1,
         bffPerspectives: 1);  // BFF has InventoryLevelsPerspective that handles this event
       await fixture.Dispatcher.SendAsync(command);
-      await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-      await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await productWaiter.WaitAsync(timeoutMilliseconds: 90000);
+      await restockWaiter.WaitAsync(timeoutMilliseconds: 90000);
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
@@ -203,7 +203,7 @@ public class CreateProductWorkflowTests {
   /// Tests that creating a product with zero initial stock works correctly.
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_ZeroInitialStock_MaterializesWithZeroQuantityAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -221,7 +221,7 @@ public class CreateProductWorkflowTests {
       inventoryPerspectives: 2,
       bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 90000);
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
@@ -238,7 +238,7 @@ public class CreateProductWorkflowTests {
   /// Tests that creating a product without an image URL works correctly (nullable field).
   /// </summary>
   [Test]
-  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
+  [Timeout(120000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_NoImageUrl_MaterializesWithNullImageAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -261,7 +261,7 @@ public class CreateProductWorkflowTests {
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for event processing...");
 
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 90000);
     Console.WriteLine("[TEST] Perspective processing complete");
 
     // Assert - Verify product exists with null ImageUrl

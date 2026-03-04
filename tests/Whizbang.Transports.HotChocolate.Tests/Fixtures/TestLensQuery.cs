@@ -117,6 +117,45 @@ public class TestFilterOnlyLens : IFilterOnlyLens {
 }
 
 /// <summary>
+/// Test lens interface for pre-ordered queries.
+/// Used to test that GraphQL sorting replaces pre-existing OrderBy.
+/// </summary>
+[GraphQLLens(
+    QueryName = "preOrderedProducts",
+    EnablePaging = true,
+    DefaultPageSize = 10,
+    MaxPageSize = 50)]
+public interface IPreOrderedProductLens : ILensQuery<ProductReadModel> { }
+
+/// <summary>
+/// In-memory test lens that returns a pre-ordered query.
+/// This simulates application code that applies a default OrderBy before HotChocolate.
+/// </summary>
+public class TestPreOrderedProductLens : IPreOrderedProductLens {
+  private readonly List<PerspectiveRow<ProductReadModel>> _data;
+
+  public TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) {
+    _data = data?.ToList() ?? [];
+  }
+
+  /// <summary>
+  /// Returns pre-ordered query - this is the scenario that triggers the bug.
+  /// Application code applies OrderBy before HotChocolate's sorting middleware.
+  /// </summary>
+  public IQueryable<PerspectiveRow<ProductReadModel>> Query =>
+      _data.AsQueryable().OrderBy(r => r.Id);
+
+  public Task<ProductReadModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
+    var row = _data.FirstOrDefault(r => r.Id == id);
+    return Task.FromResult(row?.Data);
+  }
+
+  public void AddData(IEnumerable<PerspectiveRow<ProductReadModel>> rows) {
+    _data.AddRange(rows);
+  }
+}
+
+/// <summary>
 /// Factory for creating test data.
 /// </summary>
 public static class TestDataFactory {

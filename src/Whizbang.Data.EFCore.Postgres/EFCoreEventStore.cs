@@ -112,7 +112,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       Hops = [
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
-          Timestamp = DateTimeOffset.UtcNow
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]
     };
@@ -316,8 +317,14 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+      .Where(e => e.StreamId == streamId);
+
+    // Apply upper bound only if upToEventId is not Guid.Empty
+    if (upToEventId != Guid.Empty) {
+      query = query.Where(e => e.Id <= upToEventId);
+    }
 
     if (afterEventId != null) {
       query = query.Where(e => e.Id > afterEventId.Value);
@@ -361,7 +368,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsUnknownEventsAsync</tests>
   public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
@@ -377,8 +384,14 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     }
 
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+      .Where(e => e.StreamId == streamId);
+
+    // Apply upper bound only if upToEventId is not Guid.Empty
+    if (upToEventId != Guid.Empty) {
+      query = query.Where(e => e.Id <= upToEventId);
+    }
 
     if (afterEventId != null) {
       query = query.Where(e => e.Id > afterEventId.Value);
@@ -417,11 +430,9 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
+      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
       if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
-        throw new InvalidOperationException(
-          $"Unknown event type '{record.EventType}' (normalized: '{normalizedTypeName}'). " +
-          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
-        );
+        continue;
       }
 
       // Deserialize to concrete type using JSON source generation

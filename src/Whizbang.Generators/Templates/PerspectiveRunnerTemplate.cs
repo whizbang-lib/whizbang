@@ -1,11 +1,17 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
+using Whizbang.Core.Tracing;
+using Whizbang.Core.ValueObjects;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -40,18 +46,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly IEventStore _eventStore;
   private readonly IPerspectiveStore<__MODEL_TYPE_NAME__> _perspectiveStore;
   private readonly ILifecycleInvoker _lifecycleInvoker;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
   public __RUNNER_CLASS_NAME__(
       IServiceProvider serviceProvider,
       ILogger<__RUNNER_CLASS_NAME__> logger,
       IEventStore eventStore,
       IPerspectiveStore<__MODEL_TYPE_NAME__> perspectiveStore,
-      ILifecycleInvoker lifecycleInvoker) {
+      ILifecycleInvoker lifecycleInvoker,
+      IOptionsMonitor<TracingOptions>? tracingOptions = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
     _perspectiveStore = perspectiveStore ?? throw new ArgumentNullException(nameof(perspectiveStore));
     _lifecycleInvoker = lifecycleInvoker ?? throw new ArgumentNullException(nameof(lifecycleInvoker));
+    _tracingOptions = tracingOptions;
   }
 
   public async Task<PerspectiveCheckpointCompletion> RunAsync(
@@ -82,7 +91,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Track progress
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
-    var processedEvents = new List<(object Event, Guid EventId)>();  // Track events for PostPerspectiveInline (fires AFTER save)
+    var processedEvents = new List<Whizbang.Core.Observability.MessageEnvelope<Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
@@ -125,7 +134,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
       if (events.Count > 0) {
-        var firstEvent = events[0].Payload;  // Peek at first event for receptor routing
+        var firstEnvelope = events[0];  // First envelope for receptor routing (envelope preserves security context)
 
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveAsync,
@@ -139,7 +148,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
         // However, we track it to ensure completion before returning from RunAsync.
         var preAsyncTask = _lifecycleInvoker.InvokeAsync(
-          firstEvent,  // Pass first event for type-based receptor routing
+          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
           LifecycleStage.PrePerspectiveAsync,
           context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
           cancellationToken
@@ -148,21 +157,42 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
         // Fire INLINE hooks (blocking, transactional)
         await _lifecycleInvoker.InvokeAsync(
-          firstEvent,  // Pass first event for type-based receptor routing
+          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
           LifecycleStage.PrePerspectiveInline,
           context with { CurrentStage = LifecycleStage.PrePerspectiveInline },
           cancellationToken
         );
       }
 
+      // Check if per-event tracing is enabled
+      var enableEventSpans = _tracingOptions?.CurrentValue.EnablePerspectiveEventSpans ?? false;
+      var appliedEventTypes = new System.Collections.Generic.List<string>();
+
       // Process all events in order
       foreach (var envelope in events) {
 
         // Extract event from envelope
         var @event = envelope.Payload;
+        var eventTypeName = @event.GetType().Name;
+
+        // Create per-event span if enabled
+        using var eventActivity = enableEventSpans
+          ? WhizbangActivitySource.Tracing.StartActivity(
+              $"Apply {eventTypeName}",
+              ActivityKind.Internal)
+          : null;
+        eventActivity?.SetTag("whizbang.perspective.event_type", @event.GetType().FullName);
+        eventActivity?.SetTag("whizbang.perspective.event_id", envelope.MessageId.Value.ToString());
+        eventActivity?.SetTag("whizbang.perspective.stream_id", streamId.ToString());
+
+        // Track event type for summary
+        appliedEventTypes.Add(eventTypeName);
 
         // Apply event to model using perspective's pure Apply method
         var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+
+        // Set span outcome
+        eventActivity?.SetTag("whizbang.perspective.action", action.ToString());
 
         // Handle action from Apply result
         switch (action) {
@@ -185,12 +215,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             break;
         }
 
-        // Track event for PostPerspective lifecycle hooks (fire AFTER save completes)
-        processedEvents.Add((@event, envelope.MessageId.Value));
+        // Track envelope for PostPerspective lifecycle hooks (fire AFTER save completes)
+        // Envelope preserved for security context propagation
+        processedEvents.Add(envelope);
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
         eventsProcessed++;
+      }
+
+      // Add summary tags to parent activity (Perspective RunAsync span from PerspectiveWorker)
+      // These tags show which events were processed even when per-event spans are disabled
+      if (eventsProcessed > 0) {
+        var currentActivity = Activity.Current;
+        if (currentActivity is not null) {
+          currentActivity.SetTag("whizbang.perspective.events_applied", eventsProcessed);
+          // Group event types with counts (e.g., "OrderCreated:3, OrderUpdated:2")
+          var eventTypeCounts = appliedEventTypes
+            .GroupBy(t => t)
+            .Select(g => $"{g.Key}:{g.Count()}")
+            .ToArray();
+          currentActivity.SetTag("whizbang.perspective.event_types", string.Join(", ", eventTypeCounts));
+        }
       }
 
       // Unit of Work: Save model + checkpoint ONCE at end
@@ -229,20 +275,55 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
-        foreach (var (evt, eventId) in processedEvents) {
+        foreach (var envelope in processedEvents) {
+          // CRITICAL: Establish FULL security context BEFORE invoking lifecycle receptors
+          // This ensures IMessageContext.TenantId and UserId are available in handlers
+          // Pattern matches PerspectiveWorker._establishSecurityContextAsync - must do both steps:
+          // 1. Call IMessageSecurityContextProvider.EstablishContextAsync to set IScopeContextAccessor
+          // 2. Set IMessageContextAccessor.Current with envelope security context
+
+          // Step 1: Establish security context via provider (sets IScopeContextAccessor.Current)
+          var securityProvider = _serviceProvider.GetService<IMessageSecurityContextProvider>();
+          if (securityProvider is not null) {
+            var establishedContext = await securityProvider
+              .EstablishContextAsync(envelope, _serviceProvider, cancellationToken)
+              .ConfigureAwait(false);
+            if (establishedContext is not null) {
+              var scopeContextAccessor = _serviceProvider.GetService<IScopeContextAccessor>();
+              if (scopeContextAccessor is not null) {
+                scopeContextAccessor.Current = establishedContext;
+              }
+            }
+          }
+
+          // Step 2: Set message context with security info from envelope
+          var messageContextAccessor = _serviceProvider.GetService<IMessageContextAccessor>();
+          if (messageContextAccessor is not null) {
+            var securityContext = envelope.GetCurrentSecurityContext();
+            messageContextAccessor.Current = new MessageContext {
+              MessageId = envelope.MessageId,
+              CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
+              CausationId = envelope.GetCausationId() ?? MessageId.New(),
+              Timestamp = envelope.GetMessageTimestamp(),
+              UserId = securityContext?.UserId,
+              TenantId = securityContext?.TenantId
+            };
+          }
+
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
-            EventId = eventId,
+            EventId = envelope.MessageId.Value,
             LastProcessedEventId = lastSuccessfulEventId
           };
 
           // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
           // Note: We don't await this immediately, allowing perspective processing to complete.
           // However, we track it to ensure completion before returning from RunAsync.
+          // Envelope passed to preserve security context from message hops
           var postAsyncTask = _lifecycleInvoker.InvokeAsync(
-            evt,
+            envelope,
             LifecycleStage.PostPerspectiveAsync,
             context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
             cancellationToken
@@ -367,7 +448,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
   #region EXTRACT_STREAM_ID_METHODS
   // Generated ExtractStreamId methods go here (one per event type)
-  // These methods extract the stream ID from each event's [StreamKey] property
+  // These methods extract the stream ID from each event's [StreamId] property
   #endregion
 
   /// <summary>
@@ -383,6 +464,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid checkpointEventId,
       CancellationToken cancellationToken) {
 
+    #region UPSERT_CALL
     // Upsert model (insert or update)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     await _perspectiveStore.UpsertAsync(
@@ -390,5 +472,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         model,
         cancellationToken
     );
+    #endregion
   }
 }

@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Observability;
 
 namespace ECommerce.InventoryWorker.Tests.Receptors;
 
@@ -44,6 +45,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithValidCommand_PublishesProductCreatedEventAsync() {
     // Arrange
@@ -75,6 +77,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithZeroInitialStock_PublishesOnlyProductCreatedEventAsync() {
     // Arrange
@@ -102,6 +105,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_WithPositiveInitialStock_PublishesBothEventsAsync() {
     // Arrange
@@ -190,6 +194,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
   [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductCreationAsync() {
     // Arrange
@@ -249,9 +254,9 @@ public class CreateProductReceptorTests {
 internal class TestDispatcher : IDispatcher {
   public List<object> PublishedEvents { get; } = [];
 
-  public Task PublishAsync<TEvent>(TEvent @event) {
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent @event) {
     PublishedEvents.Add(@event!);
-    return Task.CompletedTask;
+    return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(Whizbang.Core.ValueObjects.MessageId.New(), "test"));
   }
 
   // Minimal stub implementations for other IDispatcher methods
@@ -333,8 +338,12 @@ internal class TestDispatcher : IDispatcher {
     throw new NotImplementedException();
   public ValueTask LocalInvokeAsync(object message, DispatchOptions options) =>
     throw new NotImplementedException();
-  public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
+  public Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
+  public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    Task.CompletedTask;
 }
 
 /// <summary>

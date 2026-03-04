@@ -25,7 +25,8 @@
   <Folder Name="/samples/ECommerce/tests/">
     <Project Path="samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj" />
-    <Project Path="samples/ECommerce/tests/ECommerce.Integration.Tests/ECommerce.Integration.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests/ECommerce.AzureServiceBus.Integration.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.AzureServiceBus.Integration.Tests.AppHost/ECommerce.AzureServiceBus.Integration.Tests.AppHost.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/ECommerce.InventoryWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />
@@ -65,14 +66,13 @@
   <Folder Name="/tests/">
     <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.EFCore.Postgres.Tests/Whizbang.Data.EFCore.Postgres.Tests.csproj" />
-    <Project Path="tests/Whizbang.Data.Postgres.Tests/Whizbang.Data.Postgres.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.Dapper.Postgres.Tests/Whizbang.Data.Dapper.Postgres.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Schema.Tests/Whizbang.Data.Schema.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Tests/Whizbang.Data.Tests.csproj" />
     <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
-    <Project Path="tests/Whizbang.Hosting.RabbitMQ.Tests/Whizbang.Hosting.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
@@ -83,6 +83,7 @@
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.AzureServiceBus.Tests/Whizbang.Transports.AzureServiceBus.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.FastEndpoints.Tests/Whizbang.Transports.FastEndpoints.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

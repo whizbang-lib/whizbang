@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -60,20 +61,33 @@ public class DapperWorkCoordinator(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
-    _logger?.LogDebug(
-      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-      request.InstanceId,
-      request.ServiceName,
-      request.HostName,
-      request.ProcessId,
-      request.OutboxCompletions.Length,
-      request.OutboxFailures.Length,
-      request.InboxCompletions.Length,
-      request.InboxFailures.Length,
-      request.NewOutboxMessages.Length,
-      request.NewInboxMessages.Length,
-      request.Flags
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var instanceId = request.InstanceId;
+      var serviceName = request.ServiceName;
+      var hostName = request.HostName;
+      var processId = request.ProcessId;
+      var outboxCompletionsCount = request.OutboxCompletions.Length;
+      var outboxFailuresCount = request.OutboxFailures.Length;
+      var inboxCompletionsCount = request.InboxCompletions.Length;
+      var inboxFailuresCount = request.InboxFailures.Length;
+      var newOutboxCount = request.NewOutboxMessages.Length;
+      var newInboxCount = request.NewInboxMessages.Length;
+      var flags = request.Flags;
+      _logger.LogDebug(
+        "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
+        instanceId,
+        serviceName,
+        hostName,
+        processId,
+        outboxCompletionsCount,
+        outboxFailuresCount,
+        inboxCompletionsCount,
+        inboxFailuresCount,
+        newOutboxCount,
+        newInboxCount,
+        flags
+      );
+    }
 
     await using var connection = new NpgsqlConnection(_connectionString);
 
@@ -113,7 +127,8 @@ public class DapperWorkCoordinator(
         @p_renew_inbox_lease_ids::jsonb,
         @p_renew_perspective_event_lease_ids::jsonb,
         @p_flags::int,
-        @p_stale_threshold_seconds::int
+        @p_stale_threshold_seconds::int,
+        @p_sync_inquiries::jsonb
       )";
 
     var parameters = new {
@@ -140,7 +155,8 @@ public class DapperWorkCoordinator(
       p_renew_inbox_lease_ids = serializedData.RenewInboxLeaseIds,
       p_renew_perspective_event_lease_ids = "[]",
       p_flags = (int)request.Flags,
-      p_stale_threshold_seconds = request.StaleThresholdSeconds
+      p_stale_threshold_seconds = request.StaleThresholdSeconds,
+      p_sync_inquiries = serializedData.SyncInquiries
     };
 
     var commandDefinition = new CommandDefinition(
@@ -250,17 +266,41 @@ public class DapperWorkCoordinator(
       })
       .ToList();
 
-    _logger?.LogInformation(
-      "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work",
-      outboxWork.Count,
-      inboxWork.Count,
-      perspectiveWork.Count
-    );
+    // Parse sync inquiry results
+    // SQL returns: source='sync_result', work_id=inquiry_id, work_stream_id=stream_id,
+    //              partition_number=pending_count, status=processed_count,
+    //              message_data=pending_event_ids JSON, metadata={"processed_event_ids":[...]}
+    var syncInquiryResults = resultList
+      .Where(r => r.source == "sync_result")
+      .Select(r => new SyncInquiryResult {
+        InquiryId = r.work_id,
+        StreamId = r.work_stream_id ?? Guid.Empty,
+        PendingCount = r.partition_number ?? 0,
+        ProcessedCount = r.status,
+        PendingEventIds = _parsePendingEventIds(r.message_data),
+        ProcessedEventIds = _parseProcessedEventIds(r.metadata)
+      })
+      .ToList();
+
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var outboxWorkCount = outboxWork.Count;
+      var inboxWorkCount = inboxWork.Count;
+      var perspectiveWorkCount = perspectiveWork.Count;
+      var syncResultsCount = syncInquiryResults.Count;
+      _logger.LogDebug(
+        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
+        outboxWorkCount,
+        inboxWorkCount,
+        perspectiveWorkCount,
+        syncResultsCount
+      );
+    }
 
     return new WorkBatch {
       OutboxWork = outboxWork,
       InboxWork = inboxWork,
-      PerspectiveWork = perspectiveWork
+      PerspectiveWork = perspectiveWork,
+      SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
     };
   }
 
@@ -297,14 +337,18 @@ public class DapperWorkCoordinator(
     var json = JsonSerializer.Serialize(messages, typeInfo);
 
     // Log the first message for debugging
-    if (messages.Length > 0) {
+    if (messages.Length > 0 && _logger?.IsEnabled(LogLevel.Debug) == true) {
       // OutboxMessage is non-generic - access properties directly
       var firstMessage = messages[0];
+      var messageId = firstMessage.MessageId;
+      var destination = firstMessage.Destination;
+      var envelopeType = firstMessage.EnvelopeType;
+      var hopsCount = firstMessage.Envelope.Hops.Count;
+      var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
 
-      _logger?.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
-        firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType,
-        firstMessage.Envelope.Hops.Count);
-      _logger?.LogDebug("First outbox message JSON: {Json}", json.Length > 500 ? json.Substring(0, 500) + "..." : json);
+      _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
+        messageId, destination, envelopeType, hopsCount);
+      _logger.LogDebug("First outbox message JSON: {Json}", jsonPreview);
     }
 
     return json;
@@ -361,13 +405,24 @@ public class DapperWorkCoordinator(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
+    if (inquiries == null || inquiries.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(SyncInquiry[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for SyncInquiry[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(inquiries, typeInfo);
+  }
+
   /// <summary>
   /// Deserializes envelope from database envelope_type and envelope_data columns.
   /// Envelopes are always deserialized as MessageEnvelope&lt;JsonElement&gt; to support covariant casting to IMessageEnvelope&lt;object&gt;.
   /// </summary>
   private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     // Log the envelope data for debugging
-    _logger?.LogDebug("Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}", envelopeTypeName, envelopeDataJson);
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      _logger.LogDebug("Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}", envelopeTypeName, envelopeDataJson);
+    }
 
     // Always deserialize as MessageEnvelope<JsonElement> to support covariance casting to IMessageEnvelope<object>
     // (JsonElement is a value type, but the envelope interface is covariant and can be cast to object)
@@ -379,7 +434,11 @@ public class DapperWorkCoordinator(
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     // Log result for debugging
-    _logger?.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", envelope.MessageId, envelope.Hops.Count);
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var messageId = envelope.MessageId;
+      var hopsCount = envelope.Hops.Count;
+      _logger.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", messageId, hopsCount);
+    }
 
     return envelope;
   }
@@ -483,8 +542,11 @@ public class DapperWorkCoordinator(
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
-    _logger?.LogDebug("PostgreSQL Notice [{Severity}]: {Message}",
-      args.Notice.Severity, args.Notice.MessageText);
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var severity = args.Notice.Severity;
+      var message = args.Notice.MessageText;
+      _logger.LogDebug("PostgreSQL Notice [{Severity}]: {Message}", severity, message);
+    }
   }
 
   /// <summary>
@@ -502,8 +564,54 @@ public class DapperWorkCoordinator(
       NewInboxMessages: _serializeNewInboxMessages(request.NewInboxMessages),
       Metadata: _serializeMetadata(request.Metadata),
       RenewOutboxLeaseIds: _serializeLeaseRenewals(request.RenewOutboxLeaseIds),
-      RenewInboxLeaseIds: _serializeLeaseRenewals(request.RenewInboxLeaseIds)
+      RenewInboxLeaseIds: _serializeLeaseRenewals(request.RenewInboxLeaseIds),
+      SyncInquiries: _serializeSyncInquiries(request.PerspectiveSyncInquiries)
     );
+  }
+
+  /// <summary>
+  /// Parses pending event IDs from the JSON array encoded in message_data column.
+  /// </summary>
+  private Guid[]? _parsePendingEventIds(string? messageData) {
+    if (string.IsNullOrWhiteSpace(messageData)) {
+      return null;
+    }
+
+    try {
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
+      var ids = JsonSerializer.Deserialize(messageData, typeInfo) as Guid[];
+      return ids;
+    } catch {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Parses processed event IDs from the metadata JSON object.
+  /// SQL returns: {"processed_event_ids": [...]}
+  /// </summary>
+  private static Guid[]? _parseProcessedEventIds(string? metadata) {
+    if (string.IsNullOrWhiteSpace(metadata)) {
+      return null;
+    }
+
+    try {
+      using var doc = JsonDocument.Parse(metadata);
+      if (!doc.RootElement.TryGetProperty("processed_event_ids", out var idsElement)) {
+        return null;
+      }
+
+      var ids = new List<Guid>();
+      foreach (var element in idsElement.EnumerateArray()) {
+        if (element.TryGetGuid(out var id)) {
+          ids.Add(id);
+        }
+      }
+      return ids.Count > 0 ? ids.ToArray() : [];
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -557,6 +665,7 @@ internal sealed record SerializedWorkBatchData(
   string NewInboxMessages,
   string Metadata,
   string RenewOutboxLeaseIds,
-  string RenewInboxLeaseIds
+  string RenewInboxLeaseIds,
+  string SyncInquiries
 );
 

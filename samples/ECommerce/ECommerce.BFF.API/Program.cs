@@ -42,8 +42,7 @@ builder.Logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Debug);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-var postgresConnection = builder.Configuration.GetConnectionString("bffdb")
-    ?? throw new InvalidOperationException("PostgreSQL connection string 'bffdb' not found");
+// Note: PostgreSQL connection string "bffdb" is resolved by .WithEFCore<BffDbContext>().WithDriver.Postgres
 
 #if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
@@ -88,22 +87,11 @@ builder.Services.AddSingleton<OrderedStreamProcessor>();
 builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
   .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
 
-// Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-// IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-// This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
-// Use the jsonOptions already created and registered at line 49
-var bffJsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
-dataSourceBuilder.ConfigureJsonOptions(bffJsonOptions);
-dataSourceBuilder.EnableDynamicJson();
-var dataSource = dataSourceBuilder.Build();
-builder.Services.AddSingleton(dataSource);
-
-builder.Services.AddDbContext<BffDbContext>(options =>
-  options.UseNpgsql(dataSource));
-
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
+// - NpgsqlDataSource with JSON serialization configured
+// - Pooled DbContext factory (HotChocolate parallel resolver safe)
+// - Scoped DbContext for mutations/receptors
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
 // Source generator discovers perspective models from BffDbContext
@@ -145,31 +133,6 @@ builder.Services
   .AddFiltering()  // Enable WHERE clauses
   .AddSorting()    // Enable ORDER BY clauses
   .AddProjections();  // Enable field selection optimization
-
-// Register transport readiness check
-#if AZURESERVICEBUS
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var transport = sp.GetRequiredService<ITransport>();
-  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
-  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
-  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
-});
-
-#elif RABBITMQ
-builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
-  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
-  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
-});
-
-#endif
-
-// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-  new TransportPublishStrategy(
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<ITransportReadinessCheck>()
-  )
-);
 
 // Transport consumer - receives events from all services
 // Perspectives are invoked automatically via PerspectiveInvoker

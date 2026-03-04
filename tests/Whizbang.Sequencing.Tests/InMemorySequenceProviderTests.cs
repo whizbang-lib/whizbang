@@ -96,10 +96,10 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
       var streamKey = $"stream-{streamIdx}";
       for (int call = 0; call < callsPerStream; call++) {
-        var capturedStreamKey = streamKey;
+        var capturedStreamId = streamKey;
         allTasks.Add(Task.Run(async () => {
-          var value = await provider.GetNextAsync(capturedStreamKey);
-          return (capturedStreamKey, value);
+          var value = await provider.GetNextAsync(capturedStreamId);
+          return (capturedStreamId, value);
         }));
       }
     }
@@ -175,8 +175,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     }
 
     // Verify each stream maintains its own counter
-    var randomStreamKey = $"stream-{streamCount / 2}";
-    var nextValue = await provider.GetNextAsync(randomStreamKey);
+    var randomStreamId = $"stream-{streamCount / 2}";
+    var nextValue = await provider.GetNextAsync(randomStreamId);
     await Assert.That(nextValue).IsEqualTo(1); // Should be 1 (second call for this stream)
   }
 
@@ -271,8 +271,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
       var streamKey = $"concurrent-stream-{streamIdx}";
       for (int call = 0; call < callsPerStream; call++) {
-        var capturedStreamKey = streamKey;
-        allTasks.Add(Task.Run(async () => await provider.GetNextAsync(capturedStreamKey)));
+        var capturedStreamId = streamKey;
+        allTasks.Add(Task.Run(async () => await provider.GetNextAsync(capturedStreamId)));
       }
     }
 
@@ -296,10 +296,10 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task UnusedStreams_ShouldReturnMinusOneAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var neverUsedStreamKey = "never-used-stream";
+    var neverUsedStreamId = "never-used-stream";
 
     // Act - Get current for a stream that was never initialized
-    var current = await provider.GetCurrentAsync(neverUsedStreamKey);
+    var current = await provider.GetCurrentAsync(neverUsedStreamId);
 
     // Assert
     await Assert.That(current).IsEqualTo(-1);

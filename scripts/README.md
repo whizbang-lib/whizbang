@@ -14,20 +14,20 @@ Runs all test projects in the Whizbang solution with parallel execution and AI-o
 
 **Usage:**
 ```powershell
-pwsh scripts/Run-Tests.ps1                                    # Default: AI mode, exclude integration
-pwsh scripts/Run-Tests.ps1 -Mode Ci                           # Full output for CI/CD
-pwsh scripts/Run-Tests.ps1 -Mode Full                         # Include integration tests (slow)
+pwsh scripts/Run-Tests.ps1                                    # Default: Ai mode, ALL tests (8000+)
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit                       # Unit tests only (fast, ~5800 tests)
+pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations               # Integration tests only
+pwsh scripts/Run-Tests.ps1 -Mode Unit                         # Unit tests with verbose output
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"              # Filter to specific project
 pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync" # Filter to specific tests
 ```
 
 **Modes:**
-- `Ai` (default) - AI-optimized sparse output, exclude integration tests
-- `Ci` - Full output, exclude integration tests (for CI/CD)
-- `Full` - Full output, include all tests (comprehensive validation)
-- `AiFull` - AI-optimized output, include all tests
-- `IntegrationsOnly` - Full output, only integration tests
-- `AiIntegrations` - AI-optimized output, only integration tests
+- `Ai` (default) - AI-optimized sparse output, ALL tests
+- `AiUnit` - AI-optimized output, unit tests only
+- `AiIntegrations` - AI-optimized output, integration tests only
+- `Unit` - Verbose output, unit tests only
+- `Integration` - Verbose output, integration tests only
 
 **Parameters:**
 - `-MaxParallel` - Maximum parallel test projects (default: CPU core count)

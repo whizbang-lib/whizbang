@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
@@ -16,12 +17,13 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </summary>
 /// <docs>components/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
-public class RabbitMQTransport : ITransport, IAsyncDisposable {
+public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
+  private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
 
@@ -50,6 +52,29 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     _channelPool = channelPool;
     _options = options;
     _logger = logger;
+
+    // Hook into connection recovery event to notify subscribers
+    _connection.RecoverySucceededAsync += _onConnectionRecoverySucceededAsync;
+  }
+
+  /// <inheritdoc />
+  public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
+    _recoveryHandler = onRecovered;
+  }
+
+  /// <summary>
+  /// Handles RabbitMQ connection recovery event by invoking the recovery handler.
+  /// </summary>
+  private async Task _onConnectionRecoverySucceededAsync(object sender, AsyncEventArgs args) {
+    _logger?.LogInformation("RabbitMQ connection recovered, invoking recovery handler");
+
+    if (_recoveryHandler != null) {
+      try {
+        await _recoveryHandler(CancellationToken.None);
+      } catch (Exception ex) {
+        _logger?.LogError(ex, "Error in recovery handler after connection recovery");
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -99,12 +124,15 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     var exchangeName = destination.Address;
     var routingKey = destination.RoutingKey ?? "#";
 
-    _logger?.LogDebug(
-      "Publishing message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
-      envelope.MessageId,
-      exchangeName,
-      routingKey
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var messageId = envelope.MessageId;
+      _logger.LogDebug(
+        "Publishing message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
+        messageId,
+        exchangeName,
+        routingKey
+      );
+    }
 
     try {
       // Rent channel from pool (RAII pattern - automatically returned on dispose)
@@ -177,10 +205,25 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      _logger?.LogDebug(
-        "Successfully published message {MessageId} to exchange {ExchangeName}",
-        envelope.MessageId,
-        exchangeName
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        var messageId = envelope.MessageId;
+        _logger.LogDebug(
+          "Successfully published message {MessageId} to exchange {ExchangeName}",
+          messageId,
+          exchangeName
+        );
+      }
+    } catch (AlreadyClosedException ex) {
+      // Channel/connection was closed - likely during shutdown or connection failure
+      // The message is already persisted to the database (outbox pattern) and will be retried
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ connection closed while publishing message {MessageId} - message will be retried from outbox",
+        envelope.MessageId
+      );
+      throw new InvalidOperationException(
+        $"RabbitMQ connection closed while publishing message {envelope.MessageId}. The message has been persisted and will be retried.",
+        ex
       );
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(
@@ -212,17 +255,33 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     }
 
     var exchangeName = destination.Address;
-    var queueName = destination.RoutingKey ?? _options.DefaultQueueName
-      ?? throw new InvalidOperationException("Queue name must be specified in TransportDestination.RoutingKey or RabbitMQOptions.DefaultQueueName");
 
-    var routingPattern = _getRoutingPattern(destination);
+    // Queue name priority:
+    // 1. Explicit DefaultQueueName from options (for specific use cases)
+    // 2. SubscriberName from metadata (REQUIRED for competing consumers)
+    // SubscriberName ensures deterministic queue naming across service instances
+    var subscriberName = _getSubscriberName(destination);
+    if (_options.DefaultQueueName is null && subscriberName is null) {
+      throw new InvalidOperationException(
+        $"SubscriberName is required in destination metadata for deterministic queue naming. " +
+        $"Configure SubscriberName when building TransportDestination, or set RabbitMQOptions.DefaultQueueName. " +
+        $"Exchange: '{exchangeName}'");
+    }
 
-    _logger?.LogDebug(
-      "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing pattern {RoutingPattern}",
-      exchangeName,
-      queueName,
-      routingPattern
-    );
+    var queueName = _options.DefaultQueueName ?? $"{subscriberName}-{exchangeName}";
+
+    // Get routing patterns - may be multiple for topic exchange filtering
+    var routingPatterns = _getRoutingPatterns(destination);
+
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var routingPatternsStr = string.Join(", ", routingPatterns);
+      _logger.LogDebug(
+        "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing patterns [{RoutingPatterns}]",
+        exchangeName,
+        queueName,
+        routingPatternsStr
+      );
+    }
 
     try {
       // Create dedicated channel for this consumer (long-lived, one per subscription)
@@ -270,15 +329,27 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      // Bind queue to exchange with routing pattern
-      await channel.QueueBindAsync(
-        queue: queueName,
-        exchange: exchangeName,
-        routingKey: routingPattern,
-        arguments: null,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
+      // Bind queue to exchange with routing patterns
+      // Create one binding per pattern for proper topic exchange filtering
+      foreach (var pattern in routingPatterns) {
+        if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+          _logger.LogDebug(
+            "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
+            queueName,
+            exchangeName,
+            pattern
+          );
+        }
+
+        await channel.QueueBindAsync(
+          queue: queueName,
+          exchange: exchangeName,
+          routingKey: pattern,
+          arguments: null,
+          noWait: false,
+          cancellationToken: cancellationToken
+        );
+      }
 
       // Create async consumer
       var consumer = new AsyncEventingBasicConsumer(channel);
@@ -288,28 +359,52 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
 
       // Set up message received handler
       consumer.ReceivedAsync += async (_, args) => {
-        if (subscription is { IsActive: false }) {
-          await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
-          return;
-        }
-
         try {
-          var envelope = _deserializeMessage(args, out var envelopeTypeName);
-          if (envelope == null) {
-            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+          if (subscription is { IsActive: false }) {
+            _logger?.LogWarning(
+              "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
+              args.BasicProperties.MessageId ?? "unknown",
+              queueName
+            );
+            await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
             return;
           }
 
-          await handler(envelope, envelopeTypeName, cancellationToken);
-          await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
+          try {
+            var envelope = _deserializeMessage(args, out var envelopeTypeName);
+            if (envelope == null) {
+              _logger?.LogWarning(
+                "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
+                args.BasicProperties.MessageId ?? "unknown",
+                queueName
+              );
+              await channel.BasicNackAsync(args.DeliveryTag, false, false);
+              return;
+            }
 
-          _logger?.LogDebug(
-            "Processed message {MessageId} from queue {QueueName}",
-            args.BasicProperties.MessageId,
+            await handler(envelope, envelopeTypeName, cancellationToken);
+            await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
+
+            if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+              var messageId = args.BasicProperties.MessageId;
+              _logger.LogDebug(
+                "Processed message {MessageId} from queue {QueueName}",
+                messageId,
+                queueName
+              );
+            }
+          } catch (Exception ex) when (ex is not AlreadyClosedException) {
+            // Handle message processing failures (but not channel closure - that propagates to outer catch)
+            await _handleMessageFailureAsync(channel, args, queueName, ex);
+          }
+        } catch (AlreadyClosedException) {
+          // Channel/connection closed during message handling - this is expected during shutdown
+          // Message will be redelivered when consumer reconnects
+          _logger?.LogWarning(
+            "RabbitMQ channel closed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
+            args.BasicProperties.MessageId ?? "unknown",
             queueName
           );
-        } catch (Exception ex) {
-          await _handleMessageFailureAsync(channel, args, queueName, ex);
         }
       };
 
@@ -328,12 +423,14 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       // Create subscription wrapper with consumer tag (so Dispose can cancel consumer explicitly)
       subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
 
-      _logger?.LogInformation(
-        "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
-        exchangeName,
-        queueName,
-        consumerTag
-      );
+      if (_logger?.IsEnabled(LogLevel.Information) == true) {
+        _logger.LogInformation(
+          "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
+          exchangeName,
+          queueName,
+          consumerTag
+        );
+      }
 
       return subscription;
     } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -410,15 +507,60 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
   }
 
   /// <summary>
-  /// Extracts the routing pattern from destination metadata.
+  /// Extracts the routing patterns from destination metadata.
+  /// Returns multiple patterns for creating multiple bindings.
   /// </summary>
-  private static string _getRoutingPattern(TransportDestination destination) {
-    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) != true) {
-      return "#";
+  private static List<string> _getRoutingPatterns(TransportDestination destination) {
+    // Try "RoutingPatterns" (plural) first - set by SharedTopicInboxStrategy
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsValue) == true) {
+      // RoutingPatterns is a JsonElement containing an array of strings
+      if (patternsValue.ValueKind == System.Text.Json.JsonValueKind.Array) {
+        var patterns = new List<string>();
+        foreach (var item in patternsValue.EnumerateArray()) {
+          var pattern = item.GetString();
+          if (!string.IsNullOrEmpty(pattern)) {
+            patterns.Add(pattern);
+          }
+        }
+        if (patterns.Count > 0) {
+          return patterns;
+        }
+      }
     }
 
-    var patternStr = patternValue.ToString();
-    return string.IsNullOrEmpty(patternStr) ? "#" : patternStr;
+    // Fallback: Try "RoutingPattern" (singular)
+    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) == true) {
+      var patternStr = patternValue.ToString();
+      if (!string.IsNullOrEmpty(patternStr)) {
+        return [patternStr];
+      }
+    }
+
+    // Fallback: Check if RoutingKey contains comma-separated patterns
+    if (!string.IsNullOrEmpty(destination.RoutingKey) && destination.RoutingKey.Contains(',')) {
+      return destination.RoutingKey.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+    }
+
+    // Default: match all
+    return ["#"];
+  }
+
+  /// <summary>
+  /// Extracts the SubscriberName from destination metadata for deterministic queue naming.
+  /// Returns null if not found or empty/whitespace.
+  /// </summary>
+  /// <param name="destination">The transport destination containing metadata</param>
+  /// <returns>The subscriber name, or null if not found</returns>
+  private static string? _getSubscriberName(TransportDestination destination) {
+    if (destination.Metadata?.TryGetValue("SubscriberName", out var subscriberNameValue) == true) {
+      if (subscriberNameValue.ValueKind == System.Text.Json.JsonValueKind.String) {
+        var name = subscriberNameValue.GetString();
+        if (!string.IsNullOrWhiteSpace(name)) {
+          return name;
+        }
+      }
+    }
+    return null;
   }
 
   /// <summary>
@@ -443,11 +585,14 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       return null;
     }
 
-    _logger?.LogDebug(
-      "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
-      envelopeTypeName,
-      typeInfo.Type.FullName
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var typeInfoTypeName = typeInfo.Type.FullName;
+      _logger.LogDebug(
+        "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
+        envelopeTypeName,
+        typeInfoTypeName
+      );
+    }
 
     if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
       _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
@@ -455,12 +600,17 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       return null;
     }
 
-    _logger?.LogDebug(
-      "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
-      envelope.GetType().FullName,
-      envelope.Payload?.GetType().FullName ?? "null",
-      envelope.MessageId.Value
-    );
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      var envelopeType = envelope.GetType().FullName;
+      var payloadType = envelope.Payload?.GetType().FullName ?? "null";
+      var messageId = envelope.MessageId.Value;
+      _logger.LogDebug(
+        "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
+        envelopeType,
+        payloadType,
+        messageId
+      );
+    }
 
     return envelope;
   }
@@ -487,16 +637,37 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       deliveryCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
     }
 
-    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+    try {
+      if (deliveryCount >= _options.MaxDeliveryAttempts) {
+        _logger?.LogWarning(
+          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue. Exception: {ExceptionType}: {ExceptionMessage}",
+          deliveryCount,
+          _options.MaxDeliveryAttempts,
+          args.BasicProperties.MessageId ?? "unknown",
+          queueName,
+          ex.GetType().Name,
+          ex.Message
+        );
+        await channel.BasicNackAsync(args.DeliveryTag, false, false);
+      } else {
+        _logger?.LogWarning(
+          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+          deliveryCount,
+          _options.MaxDeliveryAttempts,
+          args.BasicProperties.MessageId ?? "unknown",
+          queueName,
+          ex.GetType().Name,
+          ex.Message
+        );
+        await channel.BasicNackAsync(args.DeliveryTag, false, true);
+      }
+    } catch (AlreadyClosedException) {
+      // Channel/connection was closed during shutdown - this is expected
+      // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(
-        "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), nacking without requeue",
-        args.BasicProperties.MessageId,
-        _options.MaxDeliveryAttempts
+        "RabbitMQ channel closed during failure handling for message {MessageId} - message will be redelivered on reconnection",
+        args.BasicProperties.MessageId ?? "unknown"
       );
-      await channel.BasicNackAsync(args.DeliveryTag, false, false);
-    } else {
-      // Nack with requeue for retry
-      await channel.BasicNackAsync(args.DeliveryTag, false, true);
     }
   }
 
@@ -528,6 +699,10 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     }
 
     _disposed = true;
+
+    // Unhook recovery event to prevent memory leak
+    _connection.RecoverySucceededAsync -= _onConnectionRecoverySucceededAsync;
+    _recoveryHandler = null;
 
     // Dispose channel pool
     _channelPool.Dispose();

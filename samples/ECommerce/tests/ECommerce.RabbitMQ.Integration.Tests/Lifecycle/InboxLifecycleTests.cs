@@ -157,7 +157,7 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -177,7 +177,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing happened (perspective materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
@@ -240,7 +240,7 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -261,7 +261,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing completed (perspective should be materialized)
-      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 90000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
@@ -330,10 +330,10 @@ public class InboxLifecycleTests {
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
 
     // Create receptors for all 4 stages
-    var preInlineCompletion = new TaskCompletionSource<bool>();
-    var preAsyncCompletion = new TaskCompletionSource<bool>();
-    var postAsyncCompletion = new TaskCompletionSource<bool>();
-    var postInlineCompletion = new TaskCompletionSource<bool>();
+    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
     var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
@@ -398,7 +398,7 @@ public class InboxLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();

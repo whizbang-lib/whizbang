@@ -79,7 +79,8 @@ public class InMemoryEventStore : IEventStore {
         Hops = [
           new MessageHop {
             ServiceInstance = ServiceInstanceInfo.Unknown,
-            Timestamp = DateTimeOffset.UtcNow
+            Timestamp = DateTimeOffset.UtcNow,
+            TraceParent = System.Diagnostics.Activity.Current?.Id
           }
         ]
       };
@@ -295,7 +296,10 @@ public class InMemoryEventStore : IEventStore {
 
     public IEnumerable<IMessageEnvelope> ReadBetween(Guid? afterEventId, Guid upToEventId) {
       lock (_lock) {
-        var query = _events.Where(e => e.EventId.CompareTo(upToEventId) <= 0);
+        // Guid.Empty means "no upper bound" - read all events
+        var query = upToEventId == Guid.Empty
+          ? _events.AsEnumerable()
+          : _events.Where(e => e.EventId.CompareTo(upToEventId) <= 0);
 
         if (afterEventId != null) {
           query = query.Where(e => e.EventId.CompareTo(afterEventId.Value) > 0);

@@ -47,7 +47,7 @@ public sealed record EventAudited : ISystemEvent {
   /// Unique identifier for this audit event.
   /// Used as the stream key for routing to the system event stream.
   /// </summary>
-  [StreamKey]
+  [StreamId]
   public required Guid Id { get; init; }
 
   /// <summary>

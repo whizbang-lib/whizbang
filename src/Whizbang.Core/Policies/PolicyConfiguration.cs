@@ -32,8 +32,8 @@ public class PolicyConfiguration {
   /// <summary>
   /// Stream key for ordering and partitioning
   /// </summary>
-  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamKey_ShouldSetStreamKeyAsync</tests>
-  public string? StreamKey { get; private set; }
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamId_ShouldSetStreamIdAsync</tests>
+  public string? StreamId { get; private set; }
 
   /// <summary>
   /// Type of execution strategy to use (e.g., SerialExecutor, ParallelExecutor)
@@ -96,10 +96,10 @@ public class PolicyConfiguration {
   /// <summary>
   /// Sets the stream key for ordering and partitioning
   /// </summary>
-  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamKey_ShouldSetStreamKeyAsync</tests>
-  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamKey_ShouldReturnSelfForFluentAPIAsync</tests>
-  public PolicyConfiguration UseStreamKey(string streamKey) {
-    StreamKey = streamKey;
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamId_ShouldSetStreamIdAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs:UseStreamId_ShouldReturnSelfForFluentAPIAsync</tests>
+  public PolicyConfiguration UseStreamId(string streamKey) {
+    StreamId = streamKey;
     return this;
   }
 

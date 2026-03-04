@@ -316,6 +316,8 @@ public class CommandAuditPipelineBehaviorTests {
 
     public Dictionary<string, object> MetadataDict { get; } = [];
     public IReadOnlyDictionary<string, object> Metadata => MetadataDict;
+
+    public string? TenantId => throw new NotImplementedException();
   }
 
   private sealed class MockSystemEventEmitter : ISystemEventEmitter {

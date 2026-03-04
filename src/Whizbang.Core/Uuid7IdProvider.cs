@@ -1,4 +1,4 @@
-using Medo;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
 
@@ -12,10 +12,10 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7IdProviderTests.cs</tests>
 public sealed class Uuid7IdProvider : IWhizbangIdProvider {
   /// <summary>
-  /// Generates a new time-ordered UUIDv7.
+  /// Generates a new time-ordered UUIDv7 with tracking metadata.
   /// </summary>
-  /// <returns>A new Guid value using UUIDv7 format.</returns>
+  /// <returns>A TrackedGuid using UUIDv7 format with Medo source metadata.</returns>
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7IdProviderTests.cs:NewGuid_ShouldReturnNonEmptyGuidAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/ValueObjects/Uuid7IdProviderTests.cs:NewGuid_CalledSequentially_ShouldReturnTimeOrderedGuidsAsync</tests>
-  public Guid NewGuid() => Uuid7.NewUuid7().ToGuid();
+  public TrackedGuid NewGuid() => TrackedGuid.NewMedo();
 }

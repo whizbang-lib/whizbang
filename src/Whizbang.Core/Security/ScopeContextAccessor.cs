@@ -14,12 +14,35 @@ namespace Whizbang.Core.Security;
 /// - Each parallel task can have isolated context
 /// </para>
 /// <para>
-/// Register as singleton in DI:
-/// services.AddSingleton&lt;IScopeContextAccessor, ScopeContextAccessor&gt;();
+/// Register as scoped in DI:
+/// services.AddScoped&lt;IScopeContextAccessor, ScopeContextAccessor&gt;();
+/// </para>
+/// <para>
+/// For singleton services that need to read the current context (e.g., Dispatcher),
+/// use <see cref="CurrentContext"/> which provides direct access to the static AsyncLocal.
 /// </para>
 /// </remarks>
 public sealed class ScopeContextAccessor : IScopeContextAccessor {
   private static readonly AsyncLocal<IScopeContext?> _current = new();
+
+  /// <summary>
+  /// Static accessor for the current scope context.
+  /// Use this from singleton services that cannot resolve the scoped IScopeContextAccessor.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This provides direct access to the ambient context without requiring DI resolution.
+  /// Use sparingly - prefer the scoped IScopeContextAccessor for proper DI patterns.
+  /// </para>
+  /// <para>
+  /// Primary use case: Singleton services (e.g., Dispatcher) that need to read/write
+  /// context but cannot resolve scoped services.
+  /// </para>
+  /// </remarks>
+  public static IScopeContext? CurrentContext {
+    get => _current.Value;
+    set => _current.Value = value;
+  }
 
   /// <inheritdoc />
   public IScopeContext? Current {

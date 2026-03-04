@@ -149,26 +149,49 @@ public abstract class DapperEventStoreBase : IEventStore {
     // Use dictionary approach for metadata deserialization (matches ToJsonb snake_case keys)
     var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
 
     foreach (var row in rows) {
       var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
-      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      // Deserialize metadata using dictionary approach (stored with PascalCase keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
 
-      // Extract message_id from metadata
+      // Extract MessageId from metadata (snake_case key to match ToJsonb)
       var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
         : throw new InvalidOperationException("message_id not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata (snake_case key)
       List<MessageHop> hops;
       if (metadataDict.TryGetValue("hops", out var hopsElem)) {
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
       } else {
         hops = [];
+      }
+
+      // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0) {
+        var scopeDict = JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+        if (scopeDict != null) {
+          string? tenantId = null;
+          string? userId = null;
+
+          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+            tenantId = tenantElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+            userId = userElem.Value.GetString();
+          }
+
+          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+            // Update first hop with SecurityContext
+            var firstHop = hops[0];
+            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+          }
+        }
       }
 
       envelopes.Add(new MessageEnvelope<TMessage> {
@@ -214,6 +237,7 @@ public abstract class DapperEventStoreBase : IEventStore {
     // Use dictionary approach for metadata deserialization (matches ToJsonb snake_case keys)
     var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>));
 
     foreach (var row in rows) {
       // Normalize event type name (remove assembly version/culture/publickey if present)
@@ -224,31 +248,51 @@ public abstract class DapperEventStoreBase : IEventStore {
       var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
+      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
       if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
-        throw new InvalidOperationException(
-          $"Unknown event type '{row.EventType}' (normalized: '{normalizedTypeName}'). " +
-          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
-        );
+        continue;
       }
 
       var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
-      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      // Deserialize metadata using dictionary approach (stored with PascalCase keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
 
-      // Extract message_id from metadata
+      // Extract MessageId from metadata (snake_case key to match ToJsonb)
       var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
         ? Guid.Parse(msgIdElem.GetString()!)
         : throw new InvalidOperationException("message_id not found in metadata");
 
-      // Deserialize hops from metadata
+      // Deserialize Hops from metadata (snake_case key)
       List<MessageHop> hops;
       if (metadataDict.TryGetValue("hops", out var hopsElem)) {
         hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
       } else {
         hops = [];
+      }
+
+      // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0) {
+        var scopeDict = JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+        if (scopeDict != null) {
+          string? tenantId = null;
+          string? userId = null;
+
+          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+            tenantId = tenantElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+            userId = userElem.Value.GetString();
+          }
+
+          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+            // Update first hop with SecurityContext
+            var firstHop = hops[0];
+            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+          }
+        }
       }
 
       envelopes.Add(new MessageEnvelope<IEvent> {

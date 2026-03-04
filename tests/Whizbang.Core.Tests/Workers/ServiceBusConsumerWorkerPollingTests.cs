@@ -176,6 +176,10 @@ internal sealed class TestPollingTransport : ITransport {
 internal sealed class PollingTestSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
 
+#pragma warning disable CS0067 // Event is required by interface but not used in test
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+#pragma warning restore CS0067
+
   public Task PauseAsync() {
     IsActive = false;
     return Task.CompletedTask;

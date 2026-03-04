@@ -7,7 +7,7 @@ namespace ECommerce.Contracts.Commands;
 /// </summary>
 public record ReserveInventoryCommand : ICommand {
   public required OrderId OrderId { get; init; }
-  [AggregateId]
+  [StreamId]
   public required ProductId ProductId { get; init; }
   public int Quantity { get; init; }
 }

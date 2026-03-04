@@ -63,6 +63,32 @@ public interface IScopeContext {
   IReadOnlyDictionary<string, string> Claims { get; }
 
   /// <summary>
+  /// The actual principal who initiated this operation (never hidden).
+  /// Null for true system operations with no user involvement.
+  /// For impersonation scenarios, this shows who is actually performing the action.
+  /// </summary>
+  /// <example>
+  /// // Admin impersonating user for debugging
+  /// ActualPrincipal = "admin@example.com"
+  /// EffectivePrincipal = "user@example.com"
+  /// </example>
+  string? ActualPrincipal { get; }
+
+  /// <summary>
+  /// The effective principal the operation runs as.
+  /// May differ from ActualPrincipal when impersonating.
+  /// For system operations, this is "SYSTEM".
+  /// </summary>
+  string? EffectivePrincipal { get; }
+
+  /// <summary>
+  /// Type of security context establishment.
+  /// Indicates whether this is a normal user operation, system operation,
+  /// impersonation, or service account.
+  /// </summary>
+  SecurityContextType ContextType { get; }
+
+  /// <summary>
   /// Check if caller has specific permission (with wildcard support).
   /// </summary>
   /// <param name="permission">The permission to check.</param>

@@ -22,7 +22,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProductModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [PhysicalField(Indexed = true)]
@@ -37,7 +37,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductCreated([property: StreamKey] Guid ProductId, decimal Price) : IEvent;
+            public record ProductCreated([property: StreamId] Guid ProductId, decimal Price) : IEvent;
             """;
 
     // Act
@@ -63,7 +63,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Split)]
             public record ProductSearchModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [VectorField(1536, DistanceMetric = VectorDistanceMetric.Cosine)]
@@ -78,7 +78,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductIndexed([property: StreamKey] Guid ProductId, float[]? Embedding) : IEvent;
+            public record ProductIndexed([property: StreamId] Guid ProductId, float[]? Embedding) : IEvent;
             """;
 
     // Act
@@ -104,7 +104,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record OrderModel {
-              [StreamKey]
+              [StreamId]
               public Guid OrderId { get; init; }
 
               [PhysicalField(Indexed = true)]
@@ -125,7 +125,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record OrderCreated([property: StreamKey] Guid OrderId) : IEvent;
+            public record OrderCreated([property: StreamId] Guid OrderId) : IEvent;
             """;
 
     // Act
@@ -152,7 +152,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProductModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [PhysicalField(Indexed = true, MaxLength = 200)]
@@ -165,7 +165,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductCreated([property: StreamKey] Guid ProductId) : IEvent;
+            public record ProductCreated([property: StreamId] Guid ProductId) : IEvent;
             """;
 
     // Act
@@ -190,7 +190,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Split)]
             public record EmbeddingModel {
-              [StreamKey]
+              [StreamId]
               public Guid ItemId { get; init; }
 
               [VectorField(768, DistanceMetric = VectorDistanceMetric.Cosine, IndexType = VectorIndexType.HNSW)]
@@ -203,7 +203,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ItemEmbedded([property: StreamKey] Guid ItemId, float[]? Embedding) : IEvent;
+            public record ItemEmbedded([property: StreamId] Guid ItemId, float[]? Embedding) : IEvent;
             """;
 
     // Act
@@ -228,7 +228,7 @@ public class PhysicalFieldDiscoveryTests {
             namespace MyApp.Perspectives;
 
             public record SimpleModel {
-              [StreamKey]
+              [StreamId]
               public Guid Id { get; init; }
               public string Name { get; init; } = string.Empty;
             }
@@ -239,7 +239,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record SimpleEvent([property: StreamKey] Guid Id) : IEvent;
+            public record SimpleEvent([property: StreamId] Guid Id) : IEvent;
             """;
 
     // Act
@@ -267,7 +267,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProductModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [PhysicalField(ColumnName = "product_price", Indexed = true)]
@@ -280,7 +280,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductCreated([property: StreamKey] Guid ProductId) : IEvent;
+            public record ProductCreated([property: StreamId] Guid ProductId) : IEvent;
             """;
 
     // Act
@@ -305,7 +305,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Split)]
             public record SearchModel {
-              [StreamKey]
+              [StreamId]
               public Guid DocId { get; init; }
 
               [VectorField(512, DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.IVFFlat, IndexLists = 50)]
@@ -318,7 +318,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record DocIndexed([property: StreamKey] Guid DocId) : IEvent;
+            public record DocIndexed([property: StreamId] Guid DocId) : IEvent;
             """;
 
     // Act
@@ -344,7 +344,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProductModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [PhysicalField(Indexed = true, Unique = true)]
@@ -357,7 +357,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductCreated([property: StreamKey] Guid ProductId) : IEvent;
+            public record ProductCreated([property: StreamId] Guid ProductId) : IEvent;
             """;
 
     // Act
@@ -382,7 +382,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Split)]
             public record SimilarityModel {
-              [StreamKey]
+              [StreamId]
               public Guid ItemId { get; init; }
 
               [VectorField(384, DistanceMetric = VectorDistanceMetric.InnerProduct, IndexType = VectorIndexType.HNSW)]
@@ -395,7 +395,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ItemProcessed([property: StreamKey] Guid ItemId) : IEvent;
+            public record ItemProcessed([property: StreamId] Guid ItemId) : IEvent;
             """;
 
     // Act
@@ -420,7 +420,7 @@ public class PhysicalFieldDiscoveryTests {
 
             [PerspectiveStorage(FieldStorageMode.Extracted)]
             public record ProductModel {
-              [StreamKey]
+              [StreamId]
               public Guid ProductId { get; init; }
 
               [PhysicalField(Indexed = true)]
@@ -436,7 +436,7 @@ public class PhysicalFieldDiscoveryTests {
               }
             }
 
-            public record ProductCreated([property: StreamKey] Guid ProductId) : IEvent;
+            public record ProductCreated([property: StreamId] Guid ProductId) : IEvent;
             """;
 
     // Act

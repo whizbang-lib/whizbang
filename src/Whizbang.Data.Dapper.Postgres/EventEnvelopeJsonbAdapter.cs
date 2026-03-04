@@ -101,18 +101,42 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                        ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
 
-    // Extract envelope properties from metadata
+    // Extract envelope properties from metadata (snake_case keys to match ToJsonb)
     var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
       ? Guid.Parse(msgIdElem.GetString()!)
-      : throw new InvalidOperationException("MessageId not found in metadata");
+      : throw new InvalidOperationException("message_id not found in metadata");
 
-    // Deserialize hops (AOT-compatible)
+    // Deserialize Hops (AOT-compatible, using snake_case key)
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
       var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>. Ensure the type is registered in WhizbangJsonContext.");
       hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
     } else {
       hops = [];
+    }
+
+    // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+    if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
+      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                              ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
+      var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+      if (scopeDict != null) {
+        string? tenantId = null;
+        string? userId = null;
+
+        if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+          tenantId = tenantElem.Value.GetString();
+        }
+        if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+          userId = userElem.Value.GetString();
+        }
+
+        if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+          // Update first hop with SecurityContext
+          var firstHop = hops[0];
+          hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+        }
+      }
     }
 
     // Deserialize payload (event data) with concrete type - AOT-compatible

@@ -8,7 +8,7 @@ namespace __NAMESPACE__;
 
 /// <summary>
 /// AOT-compatible provider for generating __TYPE_NAME__ instances.
-/// Uses the configured base IWhizbangIdProvider to generate underlying Guid values.
+/// Uses the configured base IWhizbangIdProvider to generate underlying TrackedGuid values.
 /// </summary>
 public sealed class __TYPE_NAME__Provider : global::Whizbang.Core.IWhizbangIdProvider<__TYPE_NAME__> {
   private readonly global::Whizbang.Core.IWhizbangIdProvider _baseProvider;
@@ -16,7 +16,7 @@ public sealed class __TYPE_NAME__Provider : global::Whizbang.Core.IWhizbangIdPro
   /// <summary>
   /// Creates a new __TYPE_NAME__Provider with the specified base provider.
   /// </summary>
-  /// <param name="baseProvider">The base provider to use for Guid generation</param>
+  /// <param name="baseProvider">The base provider to use for TrackedGuid generation</param>
   /// <exception cref="ArgumentNullException">Thrown when baseProvider is null</exception>
   public __TYPE_NAME__Provider(global::Whizbang.Core.IWhizbangIdProvider baseProvider) {
     _baseProvider = baseProvider ?? throw new ArgumentNullException(nameof(baseProvider));

@@ -18,13 +18,19 @@ public sealed record ListTypeInfo(
 ) {
   /// <summary>
   /// Unique identifier derived from element type name, suitable for C# identifiers.
-  /// Strips "global::" prefix and replaces "." with "_".
+  /// Strips "global::" prefix and replaces special characters with "_".
   /// E.g., "global::MyApp.Models.OrderLineItem" becomes "MyApp_Models_OrderLineItem".
+  /// E.g., "global::System.Collections.Generic.Dictionary&lt;string, string&gt;" becomes
+  /// "System_Collections_Generic_Dictionary_string__string_".
   /// This prevents duplicate field/method names when element types have the same SimpleName.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync</tests>
   public string ElementUniqueIdentifier => ElementTypeName
     .Replace("global::", "")
     .Replace(".", "_")
+    .Replace("<", "_")
+    .Replace(">", "_")
+    .Replace(",", "_")
+    .Replace(" ", "")
     .Replace("?", "__Nullable");
 }

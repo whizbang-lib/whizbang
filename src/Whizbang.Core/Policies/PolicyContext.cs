@@ -242,40 +242,40 @@ public class PolicyContext {
   }
 
   /// <summary>
-  /// Gets the aggregate ID from the message using source-generated extractors.
-  /// The message type must have a property marked with [AggregateId] attribute.
+  /// Gets the aggregate/stream ID from the message using source-generated extractors.
+  /// The message type must have a property marked with [StreamId] attribute.
   /// Zero reflection - uses DI-injected extractor for optimal performance.
   /// </summary>
-  /// <returns>The aggregate ID</returns>
-  /// <exception cref="InvalidOperationException">If aggregate ID extractor is not registered or aggregate ID is not found</exception>
-  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithAggregateIdAttribute_UsesGeneratedExtractorAsync</tests>
-  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithoutAggregateIdAttribute_ThrowsHelpfulExceptionAsync</tests>
-  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ReturnsId_WhenMessageContainsAggregateIdAsync</tests>
-  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ThrowsException_WhenMessageDoesNotContainAggregateIdAsync</tests>
+  /// <returns>The aggregate/stream ID</returns>
+  /// <exception cref="InvalidOperationException">If stream ID extractor is not registered or stream ID is not found</exception>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithStreamIdAttribute_UsesGeneratedExtractorAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithoutStreamIdAttribute_ThrowsHelpfulExceptionAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ReturnsId_WhenMessageContainsStreamIdAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ThrowsException_WhenMessageDoesNotContainStreamIdAsync</tests>
   public Guid GetAggregateId() {
     // Get the DI-injected extractor (zero reflection)
     if (Services is null) {
       throw new InvalidOperationException(
           "ServiceProvider is not configured. " +
-          "Ensure PolicyContext is created with a valid IServiceProvider that includes aggregate ID extraction. " +
-          "Call services.AddWhizbangAggregateIdExtractor() during startup."
+          "Ensure PolicyContext is created with a valid IServiceProvider that includes stream ID extraction. " +
+          "Call services.AddWhizbang() during startup."
       );
     }
 
-    var extractor = Services.GetService(typeof(IAggregateIdExtractor)) as IAggregateIdExtractor ?? throw new InvalidOperationException(
-          "IAggregateIdExtractor is not registered in the ServiceProvider. " +
-          "Call services.AddWhizbangAggregateIdExtractor() during startup to register the source-generated extractor."
+    var extractor = Services.GetService(typeof(IStreamIdExtractor)) as IStreamIdExtractor ?? throw new InvalidOperationException(
+          "IStreamIdExtractor is not registered in the ServiceProvider. " +
+          "Call services.AddWhizbang() during startup to register the stream ID extractor."
       );
 
     // Use the source-generated extractor (zero reflection)
-    var aggregateId = extractor.ExtractAggregateId(Message, MessageType);
-    if (aggregateId.HasValue) {
-      return aggregateId.Value;
+    var streamId = extractor.ExtractStreamId(Message, MessageType);
+    if (streamId.HasValue) {
+      return streamId.Value;
     }
 
     throw new InvalidOperationException(
-        $"Message type {MessageType.Name} does not have a property marked with [AggregateId] attribute. " +
-        $"Add [AggregateId] to a Guid property to enable aggregate ID extraction."
+        $"Message type {MessageType.Name} does not have a property marked with [StreamId] attribute. " +
+        $"Add [StreamId] to a Guid property to enable stream ID extraction."
     );
   }
 }

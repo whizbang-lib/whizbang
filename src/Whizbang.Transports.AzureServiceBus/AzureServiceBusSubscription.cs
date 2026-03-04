@@ -14,10 +14,46 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Subscription lifecycle logging - infrequent pause/resume/dispose operations")]
-public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) : ISubscription {
-  private readonly ServiceBusProcessor _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+public class AzureServiceBusSubscription : ISubscription {
+  private readonly ServiceBusProcessor _processor;
+  private readonly ILogger _logger;
   private bool _isDisposed;
+
+  /// <summary>
+  /// Initializes a new instance of AzureServiceBusSubscription.
+  /// </summary>
+  public AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) {
+    _processor = processor ?? throw new ArgumentNullException(nameof(processor));
+    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Azure Service Bus SDK handles reconnection internally. The OnDisconnected event
+  /// is raised when the transport detects a connection-level error that requires
+  /// subscription re-establishment.
+  /// </remarks>
+  public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
+
+  /// <summary>
+  /// Raises the OnDisconnected event. Called by the transport when connection errors are detected.
+  /// </summary>
+  internal void RaiseDisconnected(string reason, Exception? exception) {
+    if (_isDisposed) {
+      return;
+    }
+
+    _logger.LogWarning(
+      "Azure Service Bus subscription disconnected: {Reason}",
+      reason
+    );
+
+    OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs {
+      Reason = reason,
+      Exception = exception,
+      IsApplicationInitiated = false
+    });
+  }
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_InitialState_IsActiveAsync</tests>

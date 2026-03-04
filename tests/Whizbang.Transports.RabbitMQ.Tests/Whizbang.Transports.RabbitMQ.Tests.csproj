@@ -7,6 +7,10 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Integration: Requires RabbitMQ via Testcontainers -->
+    <WhizbangTestType>Integration</WhizbangTestType>
+    <!-- Tags for filtering: RabbitMQ, Docker, Messaging -->
+    <WhizbangTestTags>RabbitMQ;Docker;Messaging</WhizbangTestTags>
   </PropertyGroup>
 
   <ItemGroup>

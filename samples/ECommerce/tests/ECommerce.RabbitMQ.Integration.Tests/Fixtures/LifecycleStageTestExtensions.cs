@@ -288,7 +288,8 @@ public static class LifecycleStageTestExtensions {
     ArgumentNullException.ThrowIfNull(host);
 
     // Create completion source for signaling
-    var completionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Create receptor that will signal completion
     var receptor = new GenericLifecycleCompletionReceptor<TMessage>(

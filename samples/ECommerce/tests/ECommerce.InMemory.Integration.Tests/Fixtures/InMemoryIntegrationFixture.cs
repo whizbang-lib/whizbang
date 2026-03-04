@@ -7,7 +7,9 @@ using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -16,6 +18,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -233,6 +236,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "inventory-db" from "InventoryDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:inventory-db"] = postgresConnection
+    });
+
     // Register service instance provider with unique instance ID
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
 
@@ -261,6 +270,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
       options.UseNpgsql(inventoryDataSource));
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture already ensures the database schema is created before starting hosts,
+    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
+    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
@@ -271,13 +286,16 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // Configure security to allow anonymous messages for testing
+    // This is required because lifecycle receptors in PerspectiveWorker need security context
+    builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
+
     // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
     var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
     Console.WriteLine($"[InMemoryFixture] InventoryWorker IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    builder.Services.AddWhizbangAggregateIdExtractor();
 
     // Register lifecycle services for Perspective stage support
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
@@ -369,6 +387,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost _createBffHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
+    // Add connection string to configuration for generated turnkey extensions
+    // The generated code derives "bff-db" from "BffDbContext"
+    builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> {
+      ["ConnectionStrings:bff-db"] = postgresConnection
+    });
+
     // Register service instance provider with unique instance ID
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));
 
@@ -398,6 +422,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
 
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture already ensures the database schema is created before starting hosts,
+    // and the PostgresDatabaseReadinessCheck looks for tables in 'public' schema but we use
+    // named schemas (inventory, bff). DefaultDatabaseReadinessCheck avoids this mismatch.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
+
     // Register Whizbang with EFCore infrastructure
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
@@ -407,6 +437,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Configure security to allow anonymous messages for testing
+    builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
 
     // Register TopicRegistry to provide base topic names for events
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
@@ -557,8 +590,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      // Use generated RegisterPerspectiveAssociationsAsync from EFCorePerspectiveAssociationGenerator
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         inventoryDbContext,
         schema: "inventory",
         serviceName: "ECommerce.InventoryWorker",
@@ -574,8 +607,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      // Use generated RegisterPerspectiveAssociationsAsync from EFCorePerspectiveAssociationGenerator
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         bffDbContext,
         schema: "bff",
         serviceName: "ECommerce.BFF.API",
@@ -752,10 +785,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[WaitForPerspective] Waiting for {typeof(TEvent).Name} processing (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
 
-    var inventoryCompletionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var inventoryCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
-    var bffCompletionSource = new TaskCompletionSource<bool>();
+    var bffCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     var tasksToWait = new List<Task>();

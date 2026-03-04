@@ -30,7 +30,7 @@ namespace Whizbang.Testing.Containers;
 /// </remarks>
 public static class SharedPostgresContainer {
   private const string CONTAINER_NAME = "whizbang-test-postgres";
-  private const string IMAGE_NAME = "postgres:17-alpine";
+  private const string IMAGE_NAME = "pgvector/pgvector:pg17";
   private const string USERNAME = "whizbang_user";
   private const string PASSWORD = "whizbang_pass";
   private const string DATABASE = "whizbang_test";

@@ -66,6 +66,12 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
     }
 
     var modelType = lensInterface.TypeArguments[0];
+
+    // Skip open generic types (e.g., FactoryOwnedLensQuery<TModel> where TModel is unbound)
+    if (modelType is ITypeParameterSymbol) {
+      return null;
+    }
+
     var modelFullName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     var lensFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 

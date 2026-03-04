@@ -47,6 +47,13 @@ public interface IDeliveryReceipt {
   /// Causation ID (ID of the message that caused this message)
   /// </summary>
   MessageId? CausationId { get; }
+
+  /// <summary>
+  /// Stream ID the message belongs to, if applicable.
+  /// Extracted from [StreamId] attribute on events, commands, and DTOs.
+  /// </summary>
+  /// <docs>core-concepts/delivery-receipts</docs>
+  Guid? StreamId { get; }
 }
 
 /// <summary>
@@ -95,7 +102,8 @@ public sealed class DeliveryReceipt(
   DeliveryStatus status,
   CorrelationId? correlationId = null,
   MessageId? causationId = null,
-  Dictionary<string, JsonElement>? metadata = null
+  Dictionary<string, JsonElement>? metadata = null,
+  Guid? streamId = null
   ) : IDeliveryReceipt {
 
   /// <inheritdoc />
@@ -121,6 +129,9 @@ public sealed class DeliveryReceipt(
   /// <inheritdoc />
   public MessageId? CausationId { get; } = causationId;
 
+  /// <inheritdoc />
+  public Guid? StreamId { get; } = streamId;
+
   /// <summary>
   /// Creates a delivery receipt for an accepted message
   /// </summary>
@@ -128,14 +139,17 @@ public sealed class DeliveryReceipt(
     MessageId messageId,
     string destination,
     CorrelationId? correlationId = null,
-    MessageId? causationId = null
+    MessageId? causationId = null,
+    Guid? streamId = null
   ) {
     return new DeliveryReceipt(
       messageId,
       destination,
       DeliveryStatus.Accepted,
       correlationId,
-      causationId
+      causationId,
+      metadata: null,
+      streamId: streamId
     );
   }
 
@@ -146,14 +160,17 @@ public sealed class DeliveryReceipt(
     MessageId messageId,
     string destination,
     CorrelationId? correlationId = null,
-    MessageId? causationId = null
+    MessageId? causationId = null,
+    Guid? streamId = null
   ) {
     return new DeliveryReceipt(
       messageId,
       destination,
       DeliveryStatus.Queued,
       correlationId,
-      causationId
+      causationId,
+      metadata: null,
+      streamId: streamId
     );
   }
 
@@ -164,14 +181,17 @@ public sealed class DeliveryReceipt(
     MessageId messageId,
     string destination,
     CorrelationId? correlationId = null,
-    MessageId? causationId = null
+    MessageId? causationId = null,
+    Guid? streamId = null
   ) {
     return new DeliveryReceipt(
       messageId,
       destination,
       DeliveryStatus.Delivered,
       correlationId,
-      causationId
+      causationId,
+      metadata: null,
+      streamId: streamId
     );
   }
 
@@ -183,7 +203,8 @@ public sealed class DeliveryReceipt(
     string destination,
     CorrelationId? correlationId = null,
     MessageId? causationId = null,
-    Exception? exception = null
+    Exception? exception = null,
+    Guid? streamId = null
   ) {
     var metadata = exception != null
         ? new Dictionary<string, JsonElement> {
@@ -199,7 +220,8 @@ public sealed class DeliveryReceipt(
       DeliveryStatus.Failed,
       correlationId,
       causationId,
-      metadata
+      metadata,
+      streamId: streamId
     );
   }
 }

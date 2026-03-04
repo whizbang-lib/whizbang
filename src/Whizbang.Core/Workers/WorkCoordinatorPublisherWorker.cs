@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -52,6 +53,13 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_ProcessesReturnedWorkFromCompletionsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_MultipleIterationsProcessAllWorkAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_LoopTerminatesWhenNoWorkAsync</tests>
+/// <remarks>
+/// <para>
+/// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from a per-work-item scope
+/// rather than being injected as a constructor parameter. This follows industry patterns (MediatR, MassTransit)
+/// where handlers are scoped and resolved from the message processing scope.
+/// </para>
+/// </remarks>
 public partial class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
@@ -59,8 +67,9 @@ public partial class WorkCoordinatorPublisherWorker(
   IWorkChannelWriter workChannelWriter,
   IOptions<WorkCoordinatorPublisherOptions> options,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -68,8 +77,9 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -268,47 +278,153 @@ public partial class WorkCoordinatorPublisherWorker(
         // Transport is ready - reset consecutive counter
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
+        // Create scope for scoped services (IReceptorInvoker)
+        // Following MediatR/MassTransit pattern: handlers are scoped, resolved from message processing scope
+        await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+        var receptorInvoker = lifecycleScope.ServiceProvider.GetService<IReceptorInvoker>();
+
+        // Extract trace context from envelope hops FIRST to parent all lifecycle spans
+        // This ensures all outbox processing appears as children of the original request trace
+        var latestHop = work.Envelope.Hops.LastOrDefault();
+        ActivityContext traceContext = default;
+        var traceParentValue = latestHop?.TraceParent;
+        var parseSucceeded = false;
+        if (traceParentValue is not null &&
+            ActivityContext.TryParse(traceParentValue, null, out var parsedContext)) {
+          traceContext = parsedContext;
+          parseSucceeded = true;
+        }
+
+        // Check if Lifecycle tracing is enabled via TraceComponents
+        var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
         // PreOutbox lifecycle stages (before publishing to transport)
-        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+        // ALL receptors registered at PreOutbox stages fire here, including:
+        // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
+        // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PreOutboxAsync,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+            }
+          }
+        }
 
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreOutboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Outbox,
-            AttemptNumber = work.Attempts
-          };
-
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreOutboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PreOutboxInline,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+            }
+          }
         }
 
         // Publish via strategy
         LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
-        var result = await _publishStrategy.PublishAsync(work, stoppingToken);
+        MessagePublishResult result;
+
+        using (var activity = WhizbangActivitySource.Tracing.StartActivity(
+          "Outbox PublishAsync",
+          ActivityKind.Producer,
+          parentContext: traceContext)) {
+          activity?.SetTag("whizbang.message.id", work.MessageId.ToString());
+          activity?.SetTag("whizbang.message.type", work.MessageType);
+          activity?.SetTag("whizbang.message.destination", work.Destination ?? "local");
+          activity?.SetTag("whizbang.message.attempts", work.Attempts);
+          activity?.SetTag("whizbang.trace.context_restored", traceContext != default);
+          activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops.Count);
+          activity?.SetTag("whizbang.trace.traceparent_raw", traceParentValue ?? "(null)");
+          activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
+
+          result = await _publishStrategy.PublishAsync(work, stoppingToken);
+
+          activity?.SetTag("whizbang.publish.success", result.Success.ToString());
+          activity?.SetTag("whizbang.publish.status", result.CompletedStatus.ToString());
+          if (!result.Success && result.Error != null) {
+            activity?.SetTag("whizbang.publish.error", result.Error);
+            activity?.SetTag("whizbang.publish.failure_reason", result.Reason.ToString());
+          }
+        }
         LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
         // PostOutbox lifecycle stages (after publishing to transport)
-        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+        // ALL receptors registered at PostOutbox stages fire here
+        // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
+        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            // Reconstruct envelope with deserialized payload to preserve security context
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostOutboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Outbox,
-            AttemptNumber = work.Attempts
-          };
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PostOutboxAsync,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
 
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            // Invoke compile-time business receptors
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            }
+            // Invoke runtime test/lifecycle receptors
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            }
+          }
+        }
 
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostOutboxInline };
-          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+            // Reconstruct envelope with deserialized payload to preserve security context
+            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+
+            var lifecycleContext = new LifecycleExecutionContext {
+              CurrentStage = LifecycleStage.PostOutboxInline,
+              EventId = null,
+              StreamId = null,
+              LastProcessedEventId = null,
+              MessageSource = MessageSource.Outbox,
+              AttemptNumber = work.Attempts
+            };
+
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+            }
+            if (_lifecycleInvoker is not null) {
+              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+            }
+          }
         }
 
         // Collect results
@@ -616,22 +732,22 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 10,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: PublisherLoop started, waiting for work from channel..."
+    Level = LogLevel.Debug,
+    Message = "PublisherLoop started, waiting for work from channel..."
   )]
   static partial void LogPublisherLoopStarted(ILogger logger);
 
   [LoggerMessage(
     EventId = 11,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
+    Level = LogLevel.Debug,
+    Message = "PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
   )]
-  static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string destination);
+  static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 12,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Transport readiness check: IsReady={IsReady}"
+    Level = LogLevel.Debug,
+    Message = "Transport readiness check: IsReady={IsReady}"
   )]
   static partial void LogTransportReadinessCheck(ILogger logger, bool isReady);
 
@@ -640,7 +756,7 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Information,
     Message = "Transport not ready, buffering message {MessageId} (destination: {Destination})"
   )]
-  static partial void LogTransportNotReadyBuffering(ILogger logger, Guid messageId, string destination);
+  static partial void LogTransportNotReadyBuffering(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 14,
@@ -651,15 +767,15 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 15,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: About to publish message {MessageId} to {Destination}"
+    Level = LogLevel.Debug,
+    Message = "About to publish message {MessageId} to {Destination}"
   )]
-  static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string destination);
+  static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string? destination);
 
   [LoggerMessage(
     EventId = 16,
-    Level = LogLevel.Warning,
-    Message = "DIAGNOSTIC: Publish result for {MessageId}: Success={Success}, Status={Status}"
+    Level = LogLevel.Debug,
+    Message = "Publish result for {MessageId}: Success={Success}, Status={Status}"
   )]
   static partial void LogPublishResult(ILogger logger, Guid messageId, bool success, MessageProcessingStatus status);
 
@@ -668,14 +784,14 @@ public partial class WorkCoordinatorPublisherWorker(
     Level = LogLevel.Warning,
     Message = "Transport failure for message {MessageId} to {Destination}: {Error}. Renewing lease for retry."
   )]
-  static partial void LogTransportFailureRenewingLease(ILogger logger, Guid messageId, string destination, string error);
+  static partial void LogTransportFailureRenewingLease(ILogger logger, Guid messageId, string? destination, string error);
 
   [LoggerMessage(
     EventId = 18,
     Level = LogLevel.Error,
     Message = "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})"
   )]
-  static partial void LogFailedToPublishMessage(ILogger logger, Guid messageId, string destination, string error, MessageFailureReason reason);
+  static partial void LogFailedToPublishMessage(ILogger logger, Guid messageId, string? destination, string error, MessageFailureReason reason);
 
   [LoggerMessage(
     EventId = 19,
