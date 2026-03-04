@@ -221,7 +221,7 @@ jobs:
 
       - name: Check if version already exists
         run: |
-          VERSION="${{ needs.version.outputs.semver }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           TAG="v$VERSION"
 
           # Check if tag already exists
@@ -247,7 +247,7 @@ jobs:
 
       - name: Update Version in Directory.Build.props
         run: |
-          VERSION="${{ needs.version.outputs.semver }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           echo "Updating version to: $VERSION"
 
           # Update the version in Directory.Build.props using sed
@@ -258,7 +258,7 @@ jobs:
 
       - name: Commit Version Change
         run: |
-          VERSION="${{ needs.version.outputs.semver }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           git add Directory.Build.props
           git commit -m "chore(release): bump version to $VERSION" || echo "No changes to commit"
 
@@ -272,7 +272,7 @@ jobs:
           git push origin "$TAG"
 
       - name: Create GitHub Release (stable only)
-        if: ${{ needs.version.outputs.prerelease == '' }}
+        if: ${{ !contains(needs.check-release.outputs.version, '-') }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
@@ -281,7 +281,7 @@ jobs:
           prerelease: false
 
       - name: Create GitHub Pre-Release
-        if: ${{ needs.version.outputs.prerelease != '' }}
+        if: ${{ contains(needs.check-release.outputs.version, '-') }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
