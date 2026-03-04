@@ -48,41 +48,40 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       IDictionary<string, object?>? physicalFieldValues,
       CancellationToken cancellationToken)
       where TModel : class {
-    // First check local change tracker to avoid tracking conflicts.
-    // This handles cases where the same entity is processed multiple times
-    // in a batch before SaveChanges clears the tracker.
-    var existingRow = context.Set<PerspectiveRow<TModel>>().Local
+    // Check if entity exists in local tracker and detach it to avoid tracking conflicts.
+    // EF Core 10's ComplexProperty().ToJson() maintains internal indexes for collections
+    // inside complex types. Any modification to tracked complex type collections corrupts
+    // these indexes, causing ArgumentOutOfRangeException during AcceptChanges.
+    // By detaching tracked entities and using AsNoTracking() for queries, we ensure
+    // no corrupted tracking state exists when we attach the updated entity.
+    var localRow = context.Set<PerspectiveRow<TModel>>().Local
         .FirstOrDefault(r => r.Id == id);
 
-    // If not found locally, query the database
-    existingRow ??= await context.Set<PerspectiveRow<TModel>>()
-        .AsTracking()
+    if (localRow != null) {
+      context.Entry(localRow).State = EntityState.Detached;
+    }
+
+    // Query database WITHOUT tracking to get a clean entity with no internal tracking state.
+    var existingRow = await context.Set<PerspectiveRow<TModel>>()
+        .AsNoTracking()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;
 
     PerspectiveRow<TModel> row;
     if (existingRow != null) {
-      // Update existing row in place to avoid EF Core tracking issues with complex type collections.
-      // The previous remove+add pattern caused ArgumentOutOfRangeException when EF Core tried to
-      // track nested collection changes during shared identity handling.
-      existingRow.Data = model;
-      existingRow.Metadata = CloneMetadata(metadata);
-      existingRow.Scope = CloneScope(scope);
-      existingRow.UpdatedAt = now;
-      existingRow.Version++;
-
-      // Force-mark Data as modified for polymorphic models where EF Core uses reference equality.
-      // Apply methods commonly mutate in place and return the same reference, which EF Core
-      // won't detect as a change. This ensures the JSONB data column is always included in UPDATEs.
-      // Note: This only applies to scalar JSONB properties, not owned/complex types.
-      var entry = context.Entry(existingRow);
-      var dataProperty = entry.Metadata.FindProperty(nameof(PerspectiveRow<TModel>.Data));
-      if (dataProperty != null) {
-        entry.Property(nameof(PerspectiveRow<TModel>.Data)).IsModified = true;
-      }
-
-      row = existingRow;
+      // Create updated row with new complex type instances.
+      // We use Update() to attach as Modified, which will update all columns.
+      row = new PerspectiveRow<TModel> {
+        Id = existingRow.Id,
+        Data = model,
+        Metadata = CloneMetadata(metadata),
+        Scope = CloneScope(scope),
+        CreatedAt = existingRow.CreatedAt,
+        UpdatedAt = now,
+        Version = existingRow.Version + 1
+      };
+      context.Set<PerspectiveRow<TModel>>().Update(row);
     } else {
       row = _createNewRow(id, model, metadata, scope, now);
       context.Set<PerspectiveRow<TModel>>().Add(row);
@@ -142,5 +141,45 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       AllowedPrincipals = [.. scope.AllowedPrincipals],
       Extensions = [.. scope.Extensions]
     };
+  }
+
+  /// <summary>
+  /// Updates PerspectiveMetadata in place for tracked entities.
+  /// Required for EF Core 10 ComplexProperty().ToJson() to avoid index corruption.
+  /// </summary>
+  /// <docs>data-access/efcore-complex-types#in-place-updates</docs>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
+    target.EventType = source.EventType;
+    target.EventId = source.EventId;
+    target.Timestamp = source.Timestamp;
+    target.CorrelationId = source.CorrelationId;
+    target.CausationId = source.CausationId;
+  }
+
+  /// <summary>
+  /// Updates PerspectiveScope in place for tracked entities.
+  /// CRITICAL: Must clear and re-add collection items, NOT replace the List instances.
+  /// EF Core 10's InternalComplexCollectionEntry maintains indexes into collections.
+  /// Replacing List instances corrupts those indexes causing ArgumentOutOfRangeException.
+  /// </summary>
+  /// <docs>data-access/efcore-complex-types#in-place-updates</docs>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  protected static void UpdateScopeInPlace(PerspectiveScope target, PerspectiveScope source) {
+    target.TenantId = source.TenantId;
+    target.CustomerId = source.CustomerId;
+    target.UserId = source.UserId;
+    target.OrganizationId = source.OrganizationId;
+
+    // Clear and re-add collection items - DO NOT replace the List instances
+    target.AllowedPrincipals.Clear();
+    foreach (var principal in source.AllowedPrincipals) {
+      target.AllowedPrincipals.Add(principal);
+    }
+
+    target.Extensions.Clear();
+    foreach (var extension in source.Extensions) {
+      target.Extensions.Add(new ScopeExtension(extension.Key, extension.Value));
+    }
   }
 }
