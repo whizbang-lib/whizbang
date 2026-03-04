@@ -300,11 +300,11 @@ jobs:
 
   publish:
     name: Publish to NuGet
-    needs: [version, release]
-    if: ${{ !inputs.dry_run }}
+    needs: [check-release, release]
+    if: needs.check-release.outputs.should_release == 'true'
     uses: ./.github/workflows/nuget-publish.yml
     with:
-      tag: v${{ needs.version.outputs.semver }}
+      tag: v${{ needs.check-release.outputs.version }}
     # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
     # which relies on id-token permission (declared in the called workflow),
     # not repository secrets
