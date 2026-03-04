@@ -12,9 +12,10 @@ EF Core 10 is a Long Term Support (LTS) release (November 2025 - November 2028) 
 2. [UUIDv7 Support](#uuidv7-support)
 3. [Partial JSON Updates](#partial-json-updates)
 4. [Querying JSON Properties](#querying-json-properties)
-5. [Virtual Generated Columns](#virtual-generated-columns)
-6. [Array Mapping](#array-mapping)
-7. [AOT Compatibility](#aot-compatibility)
+5. [Limitations with ComplexProperty().ToJson()](#limitations-with-complexproperty-tojson)
+6. [Virtual Generated Columns](#virtual-generated-columns)
+7. [Array Mapping](#array-mapping)
+8. [AOT Compatibility](#aot-compatibility)
 
 ---
 
@@ -336,6 +337,53 @@ CREATE INDEX idx_orders_scope_gin ON orders USING gin (scope);
 ---
 
 ## Limitations with ComplexProperty().ToJson()
+
+### ❌ In-Place Updates Required for Tracked Entities with Collections
+
+When updating **tracked entities** that have complex types containing collections, you **MUST** modify the existing instance in-place rather than replacing it. EF Core 10's `ComplexProperty().ToJson()` maintains internal indexes for collections inside complex types. Replacing a tracked complex type instance corrupts these indexes.
+
+**Problem:**
+
+```csharp
+// ❌ BAD - Corrupts EF Core's internal collection indexes
+var existingOrder = await context.Orders.FirstAsync(o => o.Id == id);
+
+// This replaces the tracked Scope instance - CRASHES during SaveChangesAsync!
+existingOrder.Scope = new OrderScope {
+    TenantId = "new-tenant",
+    Principals = ["user:alice"]  // New List instance!
+};
+
+await context.SaveChangesAsync();  // ArgumentOutOfRangeException!
+```
+
+**Solution:**
+
+```csharp
+// ✅ GOOD - Modifies existing instance in place
+var existingOrder = await context.Orders.FirstAsync(o => o.Id == id);
+
+// Modify scalar properties directly
+existingOrder.Scope.TenantId = "new-tenant";
+
+// For collections: Clear and re-add, DON'T replace the List instance
+existingOrder.Scope.Principals.Clear();
+existingOrder.Scope.Principals.Add("user:alice");
+
+await context.SaveChangesAsync();  // Works!
+```
+
+**Why This Happens:**
+
+EF Core's `InternalComplexCollectionEntry` tracks collection elements using internal indexes. When you assign a new complex type instance (with new `List<T>` instances), those indexes become invalid. The error occurs during `AcceptChanges` inside `SaveChangesAsync()` - after the database write succeeds but before returning.
+
+**Key Rules:**
+
+1. **New entities**: Can use `new ComplexType { ... }` freely - no tracking yet
+2. **Tracked entities**: Must modify existing instance in-place
+3. **Collections inside complex types**: Use `Clear()` + `Add()`, never replace the `List<T>` reference
+
+---
 
 ### ❌ Dictionary<K,V> NOT Supported
 
