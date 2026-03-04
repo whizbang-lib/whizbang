@@ -34,6 +34,12 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
 
     public static void TestUpdateScopeInPlace(PerspectiveScope target, PerspectiveScope source)
       => UpdateScopeInPlace(target, source);
+
+    public static PerspectiveMetadata TestCloneMetadata(PerspectiveMetadata metadata)
+      => CloneMetadata(metadata);
+
+    public static PerspectiveScope TestCloneScope(PerspectiveScope scope)
+      => CloneScope(scope);
   }
 
   // ============================================================================
@@ -330,5 +336,245 @@ public class BaseUpsertStrategyInPlaceUpdateTests : EFCoreTestBase {
     await Assert.That(result.scope).Contains("tenant-2");
     await Assert.That(result.scope).Contains("user:bob");
     await Assert.That(result.scope).Contains("eu-central");
+  }
+
+  // ============================================================================
+  // CloneMetadata Tests
+  // ============================================================================
+
+  /// <summary>
+  /// Verifies CloneMetadata creates a new instance with all properties copied.
+  /// </summary>
+  [Test]
+  public async Task CloneMetadata_AllProperties_CreatesNewInstanceWithCopiedValuesAsync() {
+    // Arrange
+    var original = new PerspectiveMetadata {
+      EventType = "OrderCreated",
+      EventId = "event-123",
+      Timestamp = new DateTime(2024, 1, 15, 10, 30, 0, DateTimeKind.Utc),
+      CorrelationId = "corr-456",
+      CausationId = "cause-789"
+    };
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneMetadata(original);
+
+    // Assert - Values are equal
+    await Assert.That(clone.EventType).IsEqualTo("OrderCreated");
+    await Assert.That(clone.EventId).IsEqualTo("event-123");
+    await Assert.That(clone.Timestamp).IsEqualTo(original.Timestamp);
+    await Assert.That(clone.CorrelationId).IsEqualTo("corr-456");
+    await Assert.That(clone.CausationId).IsEqualTo("cause-789");
+
+    // Assert - It's a new instance
+    await Assert.That(ReferenceEquals(clone, original)).IsFalse()
+      .Because("Clone should be a new instance, not the same reference");
+  }
+
+  /// <summary>
+  /// Verifies CloneMetadata handles null optional properties.
+  /// </summary>
+  [Test]
+  public async Task CloneMetadata_WithNullOptionalProperties_ClonesCorrectlyAsync() {
+    // Arrange
+    var original = new PerspectiveMetadata {
+      EventType = "TestEvent",
+      EventId = "event-id",
+      Timestamp = DateTime.UtcNow,
+      CorrelationId = null,
+      CausationId = null
+    };
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneMetadata(original);
+
+    // Assert
+    await Assert.That(clone.EventType).IsEqualTo("TestEvent");
+    await Assert.That(clone.CorrelationId).IsNull();
+    await Assert.That(clone.CausationId).IsNull();
+  }
+
+  // ============================================================================
+  // CloneScope Tests
+  // ============================================================================
+
+  /// <summary>
+  /// Verifies CloneScope creates a new instance with all scalar properties copied.
+  /// </summary>
+  [Test]
+  public async Task CloneScope_ScalarProperties_CreatesNewInstanceWithCopiedValuesAsync() {
+    // Arrange
+    var original = new PerspectiveScope {
+      TenantId = "tenant-abc",
+      CustomerId = "customer-123",
+      UserId = "user-456",
+      OrganizationId = "org-789"
+    };
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneScope(original);
+
+    // Assert - Values are equal
+    await Assert.That(clone.TenantId).IsEqualTo("tenant-abc");
+    await Assert.That(clone.CustomerId).IsEqualTo("customer-123");
+    await Assert.That(clone.UserId).IsEqualTo("user-456");
+    await Assert.That(clone.OrganizationId).IsEqualTo("org-789");
+
+    // Assert - It's a new instance
+    await Assert.That(ReferenceEquals(clone, original)).IsFalse()
+      .Because("Clone should be a new instance, not the same reference");
+  }
+
+  /// <summary>
+  /// Verifies CloneScope creates new list instances for AllowedPrincipals.
+  /// </summary>
+  [Test]
+  public async Task CloneScope_AllowedPrincipals_CreatesNewListWithCopiedItemsAsync() {
+    // Arrange
+    var original = new PerspectiveScope {
+      AllowedPrincipals = ["user:alice", "group:admins", "service:api"]
+    };
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneScope(original);
+
+    // Assert - Content is equal
+    await Assert.That(clone.AllowedPrincipals.Count).IsEqualTo(3);
+    await Assert.That(clone.AllowedPrincipals).Contains("user:alice");
+    await Assert.That(clone.AllowedPrincipals).Contains("group:admins");
+    await Assert.That(clone.AllowedPrincipals).Contains("service:api");
+
+    // Assert - It's a new list instance
+    await Assert.That(ReferenceEquals(clone.AllowedPrincipals, original.AllowedPrincipals)).IsFalse()
+      .Because("Clone should have a new list instance");
+  }
+
+  /// <summary>
+  /// Verifies CloneScope creates new ScopeExtension instances in Extensions.
+  /// </summary>
+  [Test]
+  public async Task CloneScope_Extensions_CreatesNewListWithNewExtensionInstancesAsync() {
+    // Arrange
+    var original = new PerspectiveScope();
+    original.SetExtension("region", "us-west");
+    original.SetExtension("priority", "high");
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneScope(original);
+
+    // Assert - Content is equal
+    await Assert.That(clone.Extensions.Count).IsEqualTo(2);
+    await Assert.That(clone.GetValue("region")).IsEqualTo("us-west");
+    await Assert.That(clone.GetValue("priority")).IsEqualTo("high");
+
+    // Assert - It's a new list instance
+    await Assert.That(ReferenceEquals(clone.Extensions, original.Extensions)).IsFalse()
+      .Because("Clone should have a new Extensions list instance");
+  }
+
+  /// <summary>
+  /// Verifies CloneScope handles empty collections.
+  /// </summary>
+  [Test]
+  public async Task CloneScope_EmptyCollections_ClonesCorrectlyAsync() {
+    // Arrange
+    var original = new PerspectiveScope {
+      TenantId = "tenant",
+      AllowedPrincipals = [],
+      // Extensions is empty by default
+    };
+
+    // Act
+    var clone = TestableUpsertStrategy.TestCloneScope(original);
+
+    // Assert
+    await Assert.That(clone.TenantId).IsEqualTo("tenant");
+    await Assert.That(clone.AllowedPrincipals).IsEmpty();
+    await Assert.That(clone.Extensions).IsEmpty();
+  }
+
+  // ============================================================================
+  // Local Entity Detachment Tests
+  // ============================================================================
+
+  /// <summary>
+  /// Tests that when an entity is already tracked locally, it is detached before upsert.
+  /// This covers the if (localRow != null) branch in _upsertCoreAsync.
+  /// </summary>
+  [Test]
+  public async Task Upsert_WhenEntityAlreadyTrackedLocally_DetachesAndUpsertsSuccessfullyAsync() {
+    // Arrange
+    var testId = Guid.CreateVersion7();
+    var strategy = new PostgresUpsertStrategy();
+
+    var metadata = new PerspectiveMetadata {
+      EventType = "OrderCreated",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+    var scope = new PerspectiveScope { TenantId = "tenant-1" };
+
+    var initialOrder = new Order {
+      OrderId = new TestOrderId(testId),
+      Amount = 100.00m,
+      Status = "Created"
+    };
+
+    // Create the initial record
+    await using (var context = CreateDbContext()) {
+      await strategy.UpsertPerspectiveRowAsync(
+        context,
+        "wh_per_order",
+        testId,
+        initialOrder,
+        metadata,
+        scope);
+    }
+
+    // Act - Use a context where the entity is already tracked locally
+    await using (var context = CreateDbContext()) {
+      // First, load the entity into the local tracker (simulating prior operations)
+      var existingRow = await context.Set<PerspectiveRow<Order>>()
+        .FirstAsync(r => r.Id == testId);
+
+      // Verify it's tracked
+      var trackedEntities = context.ChangeTracker.Entries().Count();
+      await Assert.That(trackedEntities).IsGreaterThan(0)
+        .Because("Entity should be tracked before upsert");
+
+      // Now upsert with updated data - this should detach the tracked entity
+      var updatedOrder = new Order {
+        OrderId = new TestOrderId(testId),
+        Amount = 200.00m,
+        Status = "Updated"
+      };
+
+      var updatedMetadata = new PerspectiveMetadata {
+        EventType = "OrderUpdated",
+        EventId = Guid.NewGuid().ToString(),
+        Timestamp = DateTime.UtcNow
+      };
+
+      // This should NOT throw despite the entity being tracked
+      await strategy.UpsertPerspectiveRowAsync(
+        context,
+        "wh_per_order",
+        testId,
+        updatedOrder,
+        updatedMetadata,
+        scope);
+    }
+
+    // Assert - Verify the update was persisted
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    var result = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
+      "SELECT version, (data->>'Amount')::decimal as amount, data->>'Status' as status FROM wh_per_order WHERE id = @id",
+      new { id = testId });
+
+    await Assert.That(result.version).IsEqualTo(2);
+    await Assert.That(result.amount).IsEqualTo(200.00m);
+    await Assert.That(result.status).IsEqualTo("Updated");
   }
 }
