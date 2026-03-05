@@ -139,54 +139,54 @@ __PHYSICAL_FIELD_CONFIGS__
     #region REGISTER_INFRASTRUCTURE_SNIPPET
     // Register core infrastructure (EventStore, WorkCoordinator, WorkCoordinatorStrategy) - AOT compatible
     // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
-    services.AddScoped<global::Whizbang.Core.Messaging.IEventStore>(sp => {
+    services.AddScoped<Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = global::Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
-      var perspectiveInvoker = sp.GetService<global::Whizbang.Core.Perspectives.IPerspectiveInvoker>();
-      return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
+      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
+      var perspectiveInvoker = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveInvoker>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
         jsonOptions,
         perspectiveInvoker
       );
     });
-    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
+    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
 
     // Register WorkCoordinatorOptions singleton
     // Supports both direct registration AND IOptions<T> pattern (Configure<WorkCoordinatorOptions>())
-    if (!services.Any(sd => sd.ServiceType == typeof(global::Whizbang.Core.Messaging.WorkCoordinatorOptions))) {
-      services.AddSingleton<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>(sp => {
+    if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.WorkCoordinatorOptions))) {
+      services.AddSingleton<Whizbang.Core.Messaging.WorkCoordinatorOptions>(sp => {
         // Check if user configured via IOptions<T> pattern
-        var optionsAccessor = sp.GetService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>>();
+        var optionsAccessor = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>();
         if (optionsAccessor is not null) {
           return optionsAccessor.Value;
         }
         // Fallback to default
-        return new global::Whizbang.Core.Messaging.WorkCoordinatorOptions();
+        return new Whizbang.Core.Messaging.WorkCoordinatorOptions();
       });
     }
 
     // Register shared work channel writer as singleton
     // Shared between ScopedWorkCoordinatorStrategy (writer) and WorkCoordinatorPublisherWorker (reader)
     // Enables immediate processing of work returned from process_work_batch
-    if (!services.Any(sd => sd.ServiceType == typeof(global::Whizbang.Core.Messaging.IWorkChannelWriter))) {
-      services.AddSingleton<global::Whizbang.Core.Messaging.IWorkChannelWriter, global::Whizbang.Core.Messaging.WorkChannelWriter>();
+    if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.IWorkChannelWriter))) {
+      services.AddSingleton<Whizbang.Core.Messaging.IWorkChannelWriter, Whizbang.Core.Messaging.WorkChannelWriter>();
     }
 
     // Register scoped work coordinator strategy for dispatcher outbox routing
     // ScopedWorkCoordinatorStrategy batches operations within a scope (e.g., HTTP request)
     // This enables the dispatcher to route messages to outbox when no local receptor exists
-    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
-      var coordinator = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkCoordinator>();
-      var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
-      var channelWriter = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>();
-      var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
-      var dependencies = new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
-        LifecycleInvoker = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleInvoker>(),
-        LifecycleMessageDeserializer = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
+    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
+      var coordinator = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>();
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      var channelWriter = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkChannelWriter>();
+      var options = sp.GetRequiredService<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
+      var dependencies = new Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
+        LifecycleInvoker = sp.GetService<Whizbang.Core.Messaging.ILifecycleInvoker>(),
+        LifecycleMessageDeserializer = sp.GetService<Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<Whizbang.Core.Tracing.TracingOptions>>()
       };
-      return new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
+      return new Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
         coordinator,
         instanceProvider,
         channelWriter,
@@ -197,27 +197,27 @@ __PHYSICAL_FIELD_CONFIGS__
     });
 
     // Register IEventStoreQuery - scoped (for web APIs, receptors)
-    services.AddScoped<global::Whizbang.Core.Messaging.IEventStoreQuery>(sp => {
+    services.AddScoped<Whizbang.Core.Messaging.IEventStoreQuery>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      return new global::Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
     });
 
     // Register IFilterableEventStoreQuery - scoped (for ScopedLensFactory integration)
-    services.AddScoped<global::Whizbang.Core.Messaging.IFilterableEventStoreQuery>(sp => {
+    services.AddScoped<Whizbang.Core.Messaging.IFilterableEventStoreQuery>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      return new global::Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
+      return new Whizbang.Data.EFCore.Postgres.EFCoreFilterableEventStoreQuery(context);
     });
 
     // Register IScopedEventStoreQuery - singleton (auto-scoping for background services)
-    services.AddSingleton<global::Whizbang.Core.Messaging.IScopedEventStoreQuery>(sp => {
+    services.AddSingleton<Whizbang.Core.Messaging.IScopedEventStoreQuery>(sp => {
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      return new global::Whizbang.Data.EFCore.Postgres.ScopedEventStoreQuery(scopeFactory);
+      return new Whizbang.Data.EFCore.Postgres.ScopedEventStoreQuery(scopeFactory);
     });
 
     // Register IEventStoreQueryFactory - singleton (manual scope control for batch operations)
-    services.AddSingleton<global::Whizbang.Core.Messaging.IEventStoreQueryFactory>(sp => {
+    services.AddSingleton<Whizbang.Core.Messaging.IEventStoreQueryFactory>(sp => {
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      return new global::Whizbang.Data.EFCore.Postgres.EventStoreQueryFactory(scopeFactory);
+      return new Whizbang.Data.EFCore.Postgres.EventStoreQueryFactory(scopeFactory);
     });
     #endregion
   }
@@ -234,34 +234,34 @@ __PHYSICAL_FIELD_CONFIGS__
   public void RegisterPerspectiveModel(IServiceCollection services, IDbUpsertStrategy upsertStrategy) {
     #region REGISTER_PERSPECTIVE_MODEL_SNIPPET
     // Register IPerspectiveStore<__MODEL_TYPE__> - AOT compatible
-    services.AddScoped<global::Whizbang.Core.Perspectives.IPerspectiveStore<__MODEL_TYPE__>>(sp => {
+    services.AddScoped<Whizbang.Core.Perspectives.IPerspectiveStore<__MODEL_TYPE__>>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      return new global::Whizbang.Data.EFCore.Postgres.EFCorePostgresPerspectiveStore<__MODEL_TYPE__>(context, "__TABLE_NAME__", upsertStrategy);
+      return new Whizbang.Data.EFCore.Postgres.EFCorePostgresPerspectiveStore<__MODEL_TYPE__>(context, "__TABLE_NAME__", upsertStrategy);
     });
 
     // Register ILensQuery<__MODEL_TYPE__> - TRANSIENT (HotChocolate parallel resolver safe)
     // Each injection gets its own DbContext from the pool via FactoryOwnedLensQuery pattern.
     // This avoids "A second operation was started on this context instance" errors in parallel resolvers.
     // NOTE: Requires AddPooledDbContextFactory<__DBCONTEXT_FQN__>() instead of AddDbContext<__DBCONTEXT_FQN__>()
-    services.AddTransient<global::Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
+    services.AddTransient<Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
       var dbContextFactory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
       var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {
         [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"
       };
-      var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames);
-      return new global::Whizbang.Core.Lenses.FactoryOwnedLensQuery<__MODEL_TYPE__>(lensFactory);
+      var lensFactory = new Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames);
+      return new Whizbang.Core.Lenses.FactoryOwnedLensQuery<__MODEL_TYPE__>(lensFactory);
     });
 
     // Register IScopedLensQuery<__MODEL_TYPE__> - singleton (auto-scoping for background services)
-    services.AddSingleton<global::Whizbang.Core.Lenses.IScopedLensQuery<__MODEL_TYPE__>>(sp => {
+    services.AddSingleton<Whizbang.Core.Lenses.IScopedLensQuery<__MODEL_TYPE__>>(sp => {
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      return new global::Whizbang.Core.Lenses.ScopedLensQuery<__MODEL_TYPE__>(scopeFactory);
+      return new Whizbang.Core.Lenses.ScopedLensQuery<__MODEL_TYPE__>(scopeFactory);
     });
 
     // Register ILensQueryFactory<__MODEL_TYPE__> - singleton (manual scope control for batch operations)
-    services.AddSingleton<global::Whizbang.Core.Lenses.ILensQueryFactory<__MODEL_TYPE__>>(sp => {
+    services.AddSingleton<Whizbang.Core.Lenses.ILensQueryFactory<__MODEL_TYPE__>>(sp => {
       var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
-      return new global::Whizbang.Core.Lenses.LensQueryFactory<__MODEL_TYPE__>(scopeFactory);
+      return new Whizbang.Core.Lenses.LensQueryFactory<__MODEL_TYPE__>(scopeFactory);
     });
     #endregion
   }

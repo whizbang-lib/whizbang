@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Configuration;
-using Whizbang.Core.Messaging;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Generated;
 
@@ -39,15 +38,13 @@ public class DispatcherTagProcessingTests {
     public int InvocationCount { get; private set; }
     public object? LastMessage { get; private set; }
     public Type? LastMessageType { get; private set; }
-    public LifecycleStage? LastStage { get; private set; }
     public IReadOnlyDictionary<string, object?>? LastScope { get; private set; }
-    public List<(object Message, Type MessageType, LifecycleStage Stage)> AllInvocations { get; } = [];
+    public List<(object Message, Type MessageType)> AllInvocations { get; } = [];
 
     public void Reset() {
       InvocationCount = 0;
       LastMessage = null;
       LastMessageType = null;
-      LastStage = null;
       LastScope = null;
       AllInvocations.Clear();
     }
@@ -55,15 +52,13 @@ public class DispatcherTagProcessingTests {
     public ValueTask ProcessTagsAsync(
         object message,
         Type messageType,
-        LifecycleStage stage,
         IReadOnlyDictionary<string, object?>? scope = null,
         CancellationToken ct = default) {
       InvocationCount++;
       LastMessage = message;
       LastMessageType = messageType;
-      LastStage = stage;
       LastScope = scope;
-      AllInvocations.Add((message, messageType, stage));
+      AllInvocations.Add((message, messageType));
       return ValueTask.CompletedTask;
     }
   }

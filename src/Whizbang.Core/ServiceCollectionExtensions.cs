@@ -64,29 +64,17 @@ public static class ServiceCollectionExtensions {
   /// <remarks>
   /// <para>
   /// Use this method to configure Whizbang behavior including tag processing.
-  /// This method can be called multiple times safely - hook registrations from
-  /// all calls are merged together. This enables different parts of your startup
-  /// code to register different hooks independently.
   /// </para>
   /// <example>
   /// <code>
-  /// // First call registers notification hooks
   /// services.AddWhizbang(options => {
-  ///     options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
-  /// });
-  ///
-  /// // Second call registers telemetry (hooks are merged)
-  /// services.AddWhizbang(options => {
-  ///     options.Tags.UseHook&lt;TelemetryTagAttribute, OpenTelemetryHook&gt;();
+  ///     options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
+  ///     options.TagProcessingMode = TagProcessingMode.AfterReceptorCompletion;
   /// });
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>core-concepts/dependency-injection#multiple-addwhizbang-calls</docs>
-  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async</tests>
-  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_ImplementationInstancePreserved_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs</tests>
   public static WhizbangBuilder AddWhizbang(
       this IServiceCollection services,
       Action<WhizbangCoreOptions>? configure) {
@@ -94,31 +82,17 @@ public static class ServiceCollectionExtensions {
     var coreOptions = new WhizbangCoreOptions();
     configure?.Invoke(coreOptions);
 
-    // Register WhizbangCoreOptions as singleton (only if not already registered)
-    // This allows AddWhizbang() to be called multiple times - first call wins for options
-    services.TryAddSingleton(coreOptions);
+    // Register WhizbangCoreOptions as singleton
+    services.AddSingleton(coreOptions);
 
-    // Merge tag hooks into existing TagOptions if already registered
-    // This allows hooks registered in separate AddWhizbang() calls to be combined
-    var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
-    if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
-      // Merge hooks from new options into existing
-      foreach (var hook in coreOptions.Tags.HookRegistrations) {
-        if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
-          existing.UseHookRegistration(hook);
-        }
-      }
-    } else {
-      // First registration - add TagOptions
-      services.TryAddSingleton(coreOptions.Tags);
-    }
+    // Register TagOptions as singleton
+    services.AddSingleton(coreOptions.Tags);
 
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);
 
     // Register IConfiguration binding as PostConfigure (IConfiguration is optional)
-    // Use TryAdd to avoid duplicate registrations when AddWhizbang() is called multiple times
-    services.TryAddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
+    services.AddSingleton<IPostConfigureOptions<TracingOptions>>(sp => {
       var config = sp.GetService<IConfiguration>();
       return new TracingOptionsPostConfigure(config);
     });
@@ -126,8 +100,8 @@ public static class ServiceCollectionExtensions {
     // Register hooks with DI (scoped lifetime for access to DbContext, etc.)
     _registerTagHooks(services, coreOptions);
 
-    // Register MessageTagProcessor as Singleton (only if not already registered)
-    services.TryAddSingleton<IMessageTagProcessor>(sp => {
+    // Register MessageTagProcessor as Singleton
+    services.AddSingleton<IMessageTagProcessor>(sp => {
       var tagOptions = sp.GetRequiredService<TagOptions>();
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new MessageTagProcessor(tagOptions, scopeFactory);

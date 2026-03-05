@@ -81,9 +81,9 @@ public static class DbContextRegistrationRegistry {
       for (var i = _registrations.Count - 1; i >= 0; i--) {
         Console.WriteLine($"[Whizbang:DbContextRegistrationRegistry] Checking registration[{i}]: {_registrations[i].DbContextType.FullName}");
         if (_registrations[i].DbContextType == dbContextType) {
-          Console.WriteLine("[Whizbang:DbContextRegistrationRegistry] Found match! Invoking callback...");
+          Console.WriteLine($"[Whizbang:DbContextRegistrationRegistry] Found match! Invoking callback...");
           _registrations[i].Callback(services, connectionStringNameOverride);
-          Console.WriteLine("[Whizbang:DbContextRegistrationRegistry] Callback completed successfully");
+          Console.WriteLine($"[Whizbang:DbContextRegistrationRegistry] Callback completed successfully");
           return true;
         }
       }

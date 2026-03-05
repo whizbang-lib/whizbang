@@ -38,7 +38,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
-public sealed class AwaitPerspectiveSyncAttribute(Type perspectiveType) : Attribute {
+public sealed class AwaitPerspectiveSyncAttribute : Attribute {
   /// <summary>
   /// Gets or sets the default timeout in milliseconds for all sync operations.
   /// </summary>
@@ -50,9 +50,18 @@ public sealed class AwaitPerspectiveSyncAttribute(Type perspectiveType) : Attrib
   public static int DefaultTimeoutMs { get; set; } = 5000;
 
   /// <summary>
+  /// Initializes a new instance of <see cref="AwaitPerspectiveSyncAttribute"/>.
+  /// </summary>
+  /// <param name="perspectiveType">The type of the perspective to wait for.</param>
+  /// <exception cref="ArgumentNullException">Thrown when <paramref name="perspectiveType"/> is null.</exception>
+  public AwaitPerspectiveSyncAttribute(Type perspectiveType) {
+    PerspectiveType = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
+  }
+
+  /// <summary>
   /// Gets the type of the perspective to wait for.
   /// </summary>
-  public Type PerspectiveType { get; } = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
+  public Type PerspectiveType { get; }
 
   /// <summary>
   /// Gets or sets the event types to wait for.

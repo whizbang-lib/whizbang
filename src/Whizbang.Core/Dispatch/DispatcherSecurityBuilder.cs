@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 
@@ -43,20 +41,12 @@ namespace Whizbang.Core.Dispatch;
 /// </example>
 /// <docs>core-concepts/message-security#explicit-security-context-api</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
-public sealed partial class DispatcherSecurityBuilder {
+public sealed class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
   private readonly SecurityContextType _contextType;
   private readonly string? _effectivePrincipal;
   private readonly string? _actualPrincipal;
   private readonly string? _tenantId;
-
-  // Lazy-resolved logger for security warnings
-  private ILogger? _logger;
-#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
-  private ILogger _Logger => _logger ??= (_dispatcher as Dispatcher)?.InternalServiceProvider
-    .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatch.DispatcherSecurityBuilder")
-    ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-#pragma warning restore IDE1006
 
   /// <summary>
   /// Creates a new security builder for dispatching with explicit security context.
@@ -230,14 +220,6 @@ public sealed partial class DispatcherSecurityBuilder {
   }
 
   private ImmutableScopeContext _createExplicitContext() {
-    // Warn if the actual principal (current user before elevation) is an empty GUID
-    // This indicates the originating request didn't have proper user context
-    if (!string.IsNullOrEmpty(_actualPrincipal) &&
-        Guid.TryParse(_actualPrincipal, out var parsedActual) &&
-        parsedActual == Guid.Empty) {
-      Log.EmptyGuidActualPrincipal(_Logger, _contextType.ToString(), _tenantId);
-    }
-
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope {
         UserId = _effectivePrincipal,
@@ -253,19 +235,5 @@ public sealed partial class DispatcherSecurityBuilder {
       EffectivePrincipal = _effectivePrincipal
     };
     return new ImmutableScopeContext(extraction, shouldPropagate: true);
-  }
-
-  /// <summary>
-  /// AOT-compatible logging for security builder warnings.
-  /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
-  /// </summary>
-  private static partial class Log {
-    [LoggerMessage(
-      EventId = 1,
-      Level = LogLevel.Warning,
-      Message = "Explicit security context ({ContextType}) created with empty GUID (00000000-0000-0000-0000-000000000000) as ActualPrincipal. " +
-                "This indicates the originating request didn't have proper user context captured. TenantId: {TenantId}",
-      SkipEnabledCheck = true)]
-    public static partial void EmptyGuidActualPrincipal(ILogger logger, string? contextType, string? tenantId);
   }
 }

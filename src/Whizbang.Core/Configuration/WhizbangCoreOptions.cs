@@ -15,7 +15,7 @@ namespace Whizbang.Core.Configuration;
 /// <example>
 /// <code>
 /// services.AddWhizbang(options => {
-///   options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
+///   options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
 ///   options.TagProcessingMode = TagProcessingMode.AfterReceptorCompletion;
 /// });
 /// </code>

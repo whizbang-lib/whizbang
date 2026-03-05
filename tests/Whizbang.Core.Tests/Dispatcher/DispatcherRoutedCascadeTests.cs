@@ -372,8 +372,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       };
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (evt, envelope, ct) => {
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return evt => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };
@@ -474,8 +474,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (_, __, ___) => Task.CompletedTask;
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
@@ -656,8 +656,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (_, __, ___) => Task.CompletedTask;
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
@@ -775,8 +775,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return (_, __, ___) => Task.CompletedTask;
+    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return _ => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {

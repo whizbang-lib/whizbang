@@ -17,9 +17,6 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <docs>components/workers/service-bus-consumer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
@@ -154,10 +151,16 @@ public partial class ServiceBusConsumerWorker(
       await using var scope = _scopeFactory.CreateAsyncScope();
       var scopedProvider = scope.ServiceProvider;
 
-      // Establish FULL security context FIRST (before any business logic)
-      // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
-      // so all scoped services can access security context via either mechanism
-      await SecurityContextHelper.EstablishFullContextAsync(envelope, scopedProvider, ct);
+      // Establish security context FIRST (before any business logic)
+      // This populates IScopeContextAccessor.Current so all scoped services can access security context
+      var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
+      if (securityProvider is not null) {
+        var securityContext = await securityProvider.EstablishContextAsync(envelope, scopedProvider, ct);
+        if (securityContext is not null) {
+          var accessor = scopedProvider.GetRequiredService<IScopeContextAccessor>();
+          accessor.Current = securityContext;
+        }
+      }
 
       var strategy = scopedProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
@@ -189,7 +192,7 @@ public partial class ServiceBusConsumerWorker(
             Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   - Perspective: {pw.PerspectiveName}, StreamId: {pw.StreamId}, LastProcessedEventId: {pw.LastProcessedEventId}");
           }
         } else {
-          Console.WriteLine("[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
+          Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
         }
       }
 

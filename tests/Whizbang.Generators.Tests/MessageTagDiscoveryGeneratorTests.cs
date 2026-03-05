@@ -13,7 +13,7 @@ namespace Whizbang.Generators.Tests;
 public class MessageTagDiscoveryGeneratorTests {
 
   /// <summary>
-  /// Test that generator discovers SignalTagAttribute and generates registry.
+  /// Test that generator discovers NotificationTagAttribute and generates registry.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
@@ -25,7 +25,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created", Properties = ["OrderId", "CustomerId"])]
+            [NotificationTag(Tag = "order-created", Properties = ["OrderId", "CustomerId"])]
             public record OrderCreatedEvent(Guid OrderId, Guid CustomerId, string Status);
             """;
 
@@ -137,13 +137,13 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
 
-            [SignalTag(Tag = "order-shipped")]
+            [NotificationTag(Tag = "order-shipped")]
             public record OrderShippedEvent(Guid OrderId, string TrackingNumber);
 
-            [SignalTag(Tag = "order-cancelled")]
+            [NotificationTag(Tag = "order-cancelled")]
             public record OrderCancelledEvent(Guid OrderId, string Reason);
             """;
 
@@ -171,7 +171,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-updated", IncludeEvent = true)]
+            [NotificationTag(Tag = "order-updated", IncludeEvent = true)]
             public record OrderUpdatedEvent(Guid OrderId, string Status);
             """;
 
@@ -197,7 +197,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-updated", ExtraJson = """{"source": "api"}""")]
+            [NotificationTag(Tag = "order-updated", ExtraJson = """{"source": "api"}""")]
             public record OrderUpdatedEvent(Guid OrderId);
             """";
 
@@ -224,7 +224,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-event", Properties = ["OrderId", "Status", "Total"])]
+            [NotificationTag(Tag = "order-event", Properties = ["OrderId", "Status", "Total"])]
             public record OrderEvent(Guid OrderId, string Status, decimal Total, string InternalNote);
             """;
 
@@ -281,7 +281,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "test-event", Properties = ["Id"])]
+            [NotificationTag(Tag = "test-event", Properties = ["Id"])]
             public record TestEvent(Guid Id, string Name);
             """;
 
@@ -313,7 +313,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -341,7 +341,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -368,7 +368,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -395,7 +395,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -422,7 +422,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -477,7 +477,7 @@ public class MessageTagDiscoveryGeneratorTests {
 
             namespace TestApp;
 
-            [SignalTag(Tag = "order-created")]
+            [NotificationTag(Tag = "order-created")]
             public record OrderCreatedEvent(Guid OrderId);
             """;
 
@@ -687,433 +687,5 @@ public class MessageTagDiscoveryGeneratorTests {
 
     // Should also have IncludeEvent = false for RefundIssuedEvent
     await Assert.That(code).Contains("IncludeEvent = false");
-  }
-
-  // ============================================================================
-  // Phase 1: Multi-Attribute Discovery Tests
-  // Events with multiple tag attributes should have ALL attributes registered
-  // ============================================================================
-
-  /// <summary>
-  /// Test that generator discovers ALL tag attributes on a single event type.
-  /// This is the primary bug fix - FirstOrDefault was only getting the first attribute.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithMultipleTagAttributes_DiscoversAllAsync() {
-    // Arrange - Event with TWO different tag attributes (like JDNext's NotificationTag + NotificationIdTag)
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            /// <summary>
-            /// First custom tag attribute.
-            /// </summary>
-            public class CategoryTagAttribute : MessageTagAttribute {
-              public CategoryTagAttribute(string tag) {
-                Tag = tag;
-              }
-            }
-
-            /// <summary>
-            /// Second custom tag attribute.
-            /// </summary>
-            public class EntityTagAttribute : MessageTagAttribute {
-              public EntityTagAttribute(string tag) {
-                Tag = tag;
-              }
-
-              public string EntityIdProperty { get; set; } = "";
-            }
-
-            // Event with BOTH attributes - both should be discovered
-            [CategoryTag("orders")]
-            [EntityTag("order", EntityIdProperty = "OrderId")]
-            public record OrderCreatedEvent(Guid OrderId, string CustomerId);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
-    await Assert.That(code).IsNotNull();
-
-    // CRITICAL: Both attributes MUST be in the generated registry
-    await Assert.That(code!).Contains("CategoryTagAttribute");
-    await Assert.That(code).Contains("EntityTagAttribute");
-
-    // Both tag values should be present
-    await Assert.That(code).Contains("orders");
-    await Assert.That(code).Contains("order");
-
-    // Only one event type, but TWO registrations
-    await Assert.That(code).Contains("OrderCreatedEvent");
-  }
-
-  /// <summary>
-  /// Test that multiple attributes of the SAME type are all discovered.
-  /// E.g., [SignalTag("a")] [SignalTag("b")] on same event.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithMultipleSameTypeAttributes_DiscoversAllAsync() {
-    // Arrange - Event with TWO NotificationTag attributes
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            // Event with two NotificationTag attributes (different tags)
-            [SignalTag(Tag = "orders")]
-            [SignalTag(Tag = "all-events")]
-            public record OrderCreatedEvent(Guid OrderId);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
-    await Assert.That(code).IsNotNull();
-
-    // Both tag values should be present
-    await Assert.That(code!).Contains("orders");
-    await Assert.That(code).Contains("all-events");
-  }
-
-  /// <summary>
-  /// Test that the registry contains the correct count of registrations.
-  /// N attributes = N registrations, not just 1.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithMultipleAttributes_GeneratesCorrectCountAsync() {
-    // Arrange - 3 events with varying attribute counts
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            /// <summary>
-            /// Custom tag attribute for testing.
-            /// </summary>
-            public class CustomTag1Attribute : MessageTagAttribute {
-              public CustomTag1Attribute(string tag) { Tag = tag; }
-            }
-
-            public class CustomTag2Attribute : MessageTagAttribute {
-              public CustomTag2Attribute(string tag) { Tag = tag; }
-            }
-
-            // Event 1: 1 attribute = 1 registration
-            [SignalTag(Tag = "single")]
-            public record SingleTagEvent(Guid Id);
-
-            // Event 2: 2 attributes = 2 registrations
-            [SignalTag(Tag = "double-a")]
-            [CustomTag1("double-b")]
-            public record DoubleTagEvent(Guid Id);
-
-            // Event 3: 3 attributes = 3 registrations
-            [SignalTag(Tag = "triple-a")]
-            [CustomTag1("triple-b")]
-            [CustomTag2("triple-c")]
-            public record TripleTagEvent(Guid Id);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
-    await Assert.That(code).IsNotNull();
-
-    // Count the registrations - should be 1 + 2 + 3 = 6 total
-    // Each "new MessageTagRegistration {" indicates a registration
-    var registrationCount = code!.Split("new MessageTagRegistration {").Length - 1;
-    await Assert.That(registrationCount).IsEqualTo(6);
-
-    // Verify all tags are present
-    await Assert.That(code).Contains("single");
-    await Assert.That(code).Contains("double-a");
-    await Assert.That(code).Contains("double-b");
-    await Assert.That(code).Contains("triple-a");
-    await Assert.That(code).Contains("triple-b");
-    await Assert.That(code).Contains("triple-c");
-  }
-
-  // ============================================================================
-  // Phase 2: Dispatcher Generation Tests
-  // Custom attributes need generated dispatchers for AOT-compatible hook invocation
-  // ============================================================================
-
-  /// <summary>
-  /// Test that generator generates a dispatcher for custom (non-built-in) attribute types.
-  /// This enables AOT-compatible hook invocation without reflection.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithCustomAttributes_GeneratesDispatcherAsync() {
-    // Arrange - Custom attribute that isn't a built-in Whizbang attribute
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            /// <summary>
-            /// Custom tag attribute (not a built-in Whizbang type).
-            /// </summary>
-            public class TenantTagAttribute : MessageTagAttribute {
-              public TenantTagAttribute(string tag) {
-                Tag = tag;
-              }
-            }
-
-            [TenantTag("tenants")]
-            public record TenantCreatedEvent(Guid TenantId, string Name);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert - Should generate dispatcher file in addition to registry
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNotNull();
-
-    // Dispatcher should implement IMessageTagHookDispatcher
-    await Assert.That(dispatcherCode!).Contains("IMessageTagHookDispatcher");
-
-    // Dispatcher should handle TenantTagAttribute
-    await Assert.That(dispatcherCode).Contains("TenantTagAttribute");
-
-    // Should have module initializer for registration
-    await Assert.That(dispatcherCode).Contains("[ModuleInitializer]");
-    await Assert.That(dispatcherCode).Contains("MessageTagHookDispatcherRegistry.Register");
-  }
-
-  /// <summary>
-  /// Test that generator does NOT generate dispatcher when only built-in attributes are used.
-  /// Built-in attributes (NotificationTag, TelemetryTag, MetricTag) are handled directly by the processor.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithOnlyBuiltInAttributes_DoesNotGenerateDispatcherAsync() {
-    // Arrange - Only using built-in Whizbang attributes
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-            using Whizbang.Core.Tags;
-
-            namespace TestApp;
-
-            [SignalTag(Tag = "orders")]
-            public record OrderCreatedEvent(Guid OrderId);
-
-            [TelemetryTag(Tag = "telemetry", SpanName = "CreateOrder", Kind = SpanKind.Internal)]
-            public record OrderProcessedEvent(Guid OrderId);
-
-            [MetricTag(Tag = "metrics", MetricName = "orders.count", Type = MetricType.Counter)]
-            public record OrderCountedEvent(Guid OrderId);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert - Should NOT generate dispatcher file (built-in types handled directly)
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNull();
-
-    // Registry should still be generated
-    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
-    await Assert.That(registryCode).IsNotNull();
-  }
-
-  /// <summary>
-  /// Test that generated dispatcher's TryCreateContext method returns typed context for custom attribute.
-  /// This is critical for type-safe hook invocation.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task GeneratedDispatcher_TryCreateContext_ReturnsTypedContextAsync() {
-    // Arrange - Multiple custom attributes
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            /// <summary>
-            /// First custom attribute.
-            /// </summary>
-            public class CategoryTagAttribute : MessageTagAttribute {
-              public CategoryTagAttribute(string tag) { Tag = tag; }
-            }
-
-            /// <summary>
-            /// Second custom attribute.
-            /// </summary>
-            public class EntityIdTagAttribute : MessageTagAttribute {
-              public EntityIdTagAttribute(string tag) { Tag = tag; }
-              public string EntityIdProperty { get; set; } = "";
-            }
-
-            [CategoryTag("users")]
-            [EntityIdTag("user", EntityIdProperty = "UserId")]
-            public record UserCreatedEvent(Guid UserId, string Email);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNotNull();
-
-    // TryCreateContext should handle CategoryTagAttribute
-    await Assert.That(dispatcherCode!).Contains("typeof(global::TestApp.CategoryTagAttribute)");
-    await Assert.That(dispatcherCode).Contains("TagContext<global::TestApp.CategoryTagAttribute>");
-
-    // TryCreateContext should handle EntityIdTagAttribute
-    await Assert.That(dispatcherCode).Contains("typeof(global::TestApp.EntityIdTagAttribute)");
-    await Assert.That(dispatcherCode).Contains("TagContext<global::TestApp.EntityIdTagAttribute>");
-  }
-
-  /// <summary>
-  /// Test that generated dispatcher's TryDispatchAsync method invokes typed hooks.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task GeneratedDispatcher_TryDispatchAsync_InvokesHookAsync() {
-    // Arrange - Custom attribute with hook invocation pattern
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            /// <summary>
-            /// Custom tag attribute requiring hook dispatch.
-            /// </summary>
-            public class AuditTagAttribute : MessageTagAttribute {
-              public AuditTagAttribute(string tag) { Tag = tag; }
-              public string Level { get; set; } = "Info";
-            }
-
-            [AuditTag("security", Level = "Critical")]
-            public record SecurityAuditEvent(Guid EventId, string Action);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNotNull();
-
-    // TryDispatchAsync should check hook type
-    await Assert.That(dispatcherCode!).Contains("IMessageTagHook<global::TestApp.AuditTagAttribute>");
-
-    // Should call OnTaggedMessageAsync on the hook
-    await Assert.That(dispatcherCode).Contains("OnTaggedMessageAsync");
-
-    // Should be async ValueTask<JsonElement?>
-    await Assert.That(dispatcherCode).Contains("ValueTask<JsonElement?>");
-  }
-
-  /// <summary>
-  /// Test that dispatcher generation handles multiple custom attributes from different namespaces.
-  /// This simulates a real-world scenario like JDNext with multiple custom attribute types.
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task Generator_WithMultipleCustomNamespaces_GeneratesDispatcherForAllAsync() {
-    // Arrange - Custom attributes in different namespaces (like JDNext)
-    // Note: Using block-scoped namespaces since C# only allows one file-scoped namespace per file
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace App.Notifications {
-              /// <summary>
-              /// Notification tag attribute.
-              /// </summary>
-              public class SignalTagAttribute : MessageTagAttribute {
-                public SignalTagAttribute(string tag) { Tag = tag; }
-              }
-            }
-
-            namespace App.Tracking {
-              /// <summary>
-              /// Tracking tag attribute.
-              /// </summary>
-              public class TrackingTagAttribute : MessageTagAttribute {
-                public TrackingTagAttribute(string tag) { Tag = tag; }
-              }
-            }
-
-            namespace App.Events {
-              [App.Notifications.SignalTag("users")]
-              [App.Tracking.TrackingTag("user-activity")]
-              public record AccountCreatedEvent(Guid AccountId, string Email);
-            }
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNotNull();
-
-    // Should handle SignalTagAttribute from App.Notifications
-    await Assert.That(dispatcherCode!).Contains("global::App.Notifications.SignalTagAttribute");
-
-    // Should handle TrackingTagAttribute from App.Tracking
-    await Assert.That(dispatcherCode).Contains("global::App.Tracking.TrackingTagAttribute");
-  }
-
-  /// <summary>
-  /// Test that generated dispatcher code is AOT-compatible (no reflection).
-  /// </summary>
-  [Test]
-  [RequiresAssemblyFiles]
-  public async Task GeneratedDispatcher_IsAotCompatible_NoReflectionAsync() {
-    // Arrange
-    var source = """
-            using System;
-            using Whizbang.Core.Attributes;
-
-            namespace TestApp;
-
-            public class CustomTagAttribute : MessageTagAttribute {
-              public CustomTagAttribute(string tag) { Tag = tag; }
-            }
-
-            [CustomTag("test")]
-            public record TestEvent(Guid Id);
-            """;
-
-    // Act
-    var result = GeneratorTestHelper.RunGenerator<MessageTagDiscoveryGenerator>(source);
-
-    // Assert
-    var dispatcherCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagHookDispatcher.g.cs");
-    await Assert.That(dispatcherCode).IsNotNull();
-
-    // Should NOT use reflection APIs
-    await Assert.That(dispatcherCode!.Contains("GetMethod")).IsFalse();
-    await Assert.That(dispatcherCode.Contains("Activator.CreateInstance")).IsFalse();
-    await Assert.That(dispatcherCode.Contains("Invoke(")).IsFalse();
-    await Assert.That(dispatcherCode.Contains("MakeGenericType")).IsFalse();
-    await Assert.That(dispatcherCode.Contains("MakeGenericMethod")).IsFalse();
-
-    // Should use direct type comparisons with typeof()
-    await Assert.That(dispatcherCode).Contains("typeof(");
   }
 }

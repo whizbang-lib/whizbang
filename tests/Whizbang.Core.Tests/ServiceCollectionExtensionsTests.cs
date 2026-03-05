@@ -275,7 +275,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
     });
     var provider = services.BuildServiceProvider();
 
@@ -311,7 +311,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
       options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
     });
     var provider = services.BuildServiceProvider();
@@ -336,7 +336,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
     });
     var provider = services.BuildServiceProvider();
 
@@ -389,7 +389,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
       options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
       options.Tags.UseHook<MetricTagAttribute, TestMetricHook>();
       options.Tags.UseUniversalHook<TestUniversalHook>();
@@ -419,7 +419,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
     });
     var provider = services.BuildServiceProvider();
 
@@ -427,159 +427,6 @@ public class ServiceCollectionExtensionsTests {
     using var scope = provider.CreateScope();
     var resolvedHook = scope.ServiceProvider.GetService<TestNotificationHook>();
     await Assert.That(resolvedHook).IsSameReferenceAs(existingHook);
-  }
-
-  [Test]
-  public async Task AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act - First call registers hooks
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
-    });
-
-    // Second call without hooks (like JDNext's pattern)
-    _ = services.AddWhizbang();
-
-    var provider = services.BuildServiceProvider();
-
-    // Assert - hooks from first call should be preserved
-    var tagOptions = provider.GetRequiredService<TagOptions>();
-    await Assert.That(tagOptions.HookRegistrations.Count).IsEqualTo(2);
-
-    var notificationHook = tagOptions.HookRegistrations
-        .FirstOrDefault(h => h.AttributeType == typeof(SignalTagAttribute));
-    var telemetryHook = tagOptions.HookRegistrations
-        .FirstOrDefault(h => h.AttributeType == typeof(TelemetryTagAttribute));
-
-    await Assert.That(notificationHook).IsNotNull();
-    await Assert.That(telemetryHook).IsNotNull();
-  }
-
-  [Test]
-  public async Task AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act - First call registers notification hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    // Second call registers telemetry hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
-    });
-
-    var provider = services.BuildServiceProvider();
-
-    // Assert - hooks from both calls should be present
-    var tagOptions = provider.GetRequiredService<TagOptions>();
-    await Assert.That(tagOptions.HookRegistrations.Count).IsEqualTo(2);
-
-    var notificationHook = tagOptions.HookRegistrations
-        .FirstOrDefault(h => h.AttributeType == typeof(SignalTagAttribute));
-    var telemetryHook = tagOptions.HookRegistrations
-        .FirstOrDefault(h => h.AttributeType == typeof(TelemetryTagAttribute));
-
-    await Assert.That(notificationHook).IsNotNull();
-    await Assert.That(telemetryHook).IsNotNull();
-  }
-
-  [Test]
-  public async Task AddWhizbang_CalledMultipleTimes_DoesNotDuplicateHooks_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act - Both calls register the same hook
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    var provider = services.BuildServiceProvider();
-
-    // Assert - hook should not be duplicated
-    var tagOptions = provider.GetRequiredService<TagOptions>();
-    var notificationHooks = tagOptions.HookRegistrations
-        .Where(h => h.AttributeType == typeof(SignalTagAttribute) && h.HookType == typeof(TestNotificationHook))
-        .ToList();
-
-    await Assert.That(notificationHooks.Count).IsEqualTo(1);
-  }
-
-  [Test]
-  public async Task AddWhizbang_CalledMultipleTimes_ProcessorUsesFirstTagOptions_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act - First call registers hooks
-    _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    // Second call without hooks
-    _ = services.AddWhizbang();
-
-    var provider = services.BuildServiceProvider();
-
-    // Assert - processor should have access to hooks from first call
-    var processor = provider.GetRequiredService<IMessageTagProcessor>() as MessageTagProcessor;
-    await Assert.That(processor).IsNotNull();
-
-    // Indirectly verify by checking TagOptions has the hook
-    var tagOptions = provider.GetRequiredService<TagOptions>();
-    var hooks = tagOptions.GetHooksFor<SignalTagAttribute>().ToList();
-    await Assert.That(hooks.Count).IsEqualTo(1);
-  }
-
-  [Test]
-  public async Task AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    // Assert - Verify ImplementationInstance is set correctly
-    // This is critical for the multiple-call merge logic to work
-    var descriptor = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
-    await Assert.That(descriptor).IsNotNull();
-    await Assert.That(descriptor!.ImplementationInstance).IsNotNull();
-    await Assert.That(descriptor.ImplementationInstance).IsTypeOf<TagOptions>();
-
-    var tagOptions = (TagOptions)descriptor.ImplementationInstance!;
-    await Assert.That(tagOptions.HookRegistrations.Count).IsEqualTo(1);
-  }
-
-  [Test]
-  public async Task AddWhizbang_CalledMultipleTimes_ImplementationInstancePreserved_Async() {
-    // Arrange
-    var services = new ServiceCollection();
-
-    // Act - First call with hooks
-    services.AddWhizbang(options => {
-      options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
-    });
-
-    // Second call without hooks (should find existing via ImplementationInstance)
-    services.AddWhizbang();
-
-    // Assert - Verify ImplementationInstance is still accessible
-    var descriptor = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
-    await Assert.That(descriptor).IsNotNull();
-    await Assert.That(descriptor!.ImplementationInstance).IsNotNull();
-
-    // The key assertion: hooks should still be there
-    var tagOptions = (TagOptions)descriptor.ImplementationInstance!;
-    await Assert.That(tagOptions.HookRegistrations.Count).IsEqualTo(1);
   }
 
   // ==========================================================================
@@ -762,9 +609,9 @@ public class ServiceCollectionExtensionsTests {
   // Test Hook Implementations for Options Lambda Tests
   // ==========================================================================
 
-  private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
+  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<SignalTagAttribute> _,
+        TagContext<NotificationTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
