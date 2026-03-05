@@ -25,13 +25,13 @@ public class SignalRNotificationHookTests {
     var mockHubContext = new MockHubContext<TestHub>(mockClients);
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "test-notification",
-      Priority = NotificationPriority.Normal
+      Priority = SignalPriority.Normal
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),
@@ -55,14 +55,14 @@ public class SignalRNotificationHookTests {
     var mockHubContext = new MockHubContext<TestHub>(mockClients);
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "order-shipped",
       Group = "customer-group",
-      Priority = NotificationPriority.High
+      Priority = SignalPriority.High
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 250m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),
@@ -87,14 +87,14 @@ public class SignalRNotificationHookTests {
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
     var customerId = Guid.NewGuid();
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "order-update",
       Group = "customer-{CustomerId}",
-      Priority = NotificationPriority.Normal
+      Priority = SignalPriority.Normal
     };
     var message = new TestCustomerEvent { CustomerId = customerId, Name = "Test Customer" };
     var payload = JsonSerializer.SerializeToElement(message);
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestCustomerEvent),
@@ -116,17 +116,17 @@ public class SignalRNotificationHookTests {
     var mockHubContext = new MockHubContext<TestHub>(mockClients);
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "tenant-notification",
       Group = "tenant-{TenantId}",
-      Priority = NotificationPriority.Normal
+      Priority = SignalPriority.Normal
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
     var scope = new Dictionary<string, object?> {
       { "TenantId", "tenant-123" }
     };
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),
@@ -149,13 +149,13 @@ public class SignalRNotificationHookTests {
     var mockHubContext = new MockHubContext<TestHub>(mockClients);
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "critical-alert",
-      Priority = NotificationPriority.Critical
+      Priority = SignalPriority.Critical
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),
@@ -178,13 +178,13 @@ public class SignalRNotificationHookTests {
     var mockHubContext = new MockHubContext<TestHub>(mockClients);
     var hook = new SignalRNotificationHook<TestHub>(mockHubContext);
 
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "test-tag",
-      Priority = NotificationPriority.Normal
+      Priority = SignalPriority.Normal
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),

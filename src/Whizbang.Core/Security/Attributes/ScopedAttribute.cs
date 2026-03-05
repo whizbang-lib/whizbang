@@ -18,22 +18,9 @@ namespace Whizbang.Core.Security.Attributes;
 /// }
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
-public sealed class ScopedAttribute : Attribute {
+public sealed class ScopedAttribute(ScopeFilter filter = ScopeFilter.Tenant) : Attribute {
   /// <summary>
   /// The scope filter to apply for this property.
   /// </summary>
-  public ScopeFilter Filter { get; }
-
-  /// <summary>
-  /// Creates a scoped attribute with tenant-level filtering (default).
-  /// </summary>
-  public ScopedAttribute() : this(ScopeFilter.Tenant) { }
-
-  /// <summary>
-  /// Creates a scoped attribute with the specified filter.
-  /// </summary>
-  /// <param name="filter">The scope filter to apply.</param>
-  public ScopedAttribute(ScopeFilter filter) {
-    Filter = filter;
-  }
+  public ScopeFilter Filter { get; } = filter;
 }

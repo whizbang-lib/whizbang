@@ -9,25 +9,25 @@ using Whizbang.Core.Tags;
 namespace Whizbang.Core.Tests.Tags;
 
 /// <summary>
-/// Tests for <see cref="NotificationTagAttribute"/>.
+/// Tests for <see cref="SignalTagAttribute"/>.
 /// Validates real-time notification tagging for SignalR/WebSocket integration.
 /// </summary>
-/// <tests>Whizbang.Core/Attributes/NotificationTagAttribute.cs</tests>
+/// <tests>Whizbang.Core/Attributes/SignalTagAttribute.cs</tests>
 [Category("Core")]
 [Category("Attributes")]
 [Category("Tags")]
-public class NotificationTagAttributeTests {
+public class SignalTagAttributeTests {
 
   [Test]
-  public async Task NotificationTagAttribute_InheritsFromMessageTagAttributeAsync() {
+  public async Task SignalTagAttribute_InheritsFromMessageTagAttributeAsync() {
     // Assert
-    await Assert.That(typeof(NotificationTagAttribute).BaseType).IsEqualTo(typeof(MessageTagAttribute));
+    await Assert.That(typeof(SignalTagAttribute).BaseType).IsEqualTo(typeof(MessageTagAttribute));
   }
 
   [Test]
-  public async Task NotificationTagAttribute_AttributeUsage_AllowsClassTargetAsync() {
+  public async Task SignalTagAttribute_AttributeUsage_AllowsClassTargetAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(NotificationTagAttribute)
+    var attributeUsage = typeof(SignalTagAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -38,9 +38,9 @@ public class NotificationTagAttributeTests {
   }
 
   [Test]
-  public async Task NotificationTagAttribute_AttributeUsage_AllowsStructTargetAsync() {
+  public async Task SignalTagAttribute_AttributeUsage_AllowsStructTargetAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(NotificationTagAttribute)
+    var attributeUsage = typeof(SignalTagAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -51,9 +51,9 @@ public class NotificationTagAttributeTests {
   }
 
   [Test]
-  public async Task NotificationTagAttribute_AttributeUsage_AllowsMultipleAsync() {
+  public async Task SignalTagAttribute_AttributeUsage_AllowsMultipleAsync() {
     // Arrange & Act
-    var attributeUsage = typeof(NotificationTagAttribute)
+    var attributeUsage = typeof(SignalTagAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
       .Cast<AttributeUsageAttribute>()
       .FirstOrDefault();
@@ -64,27 +64,27 @@ public class NotificationTagAttributeTests {
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Tag_CanBeSetAsync() {
+  public async Task SignalTagAttribute_Tag_CanBeSetAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute { Tag = "order-shipped" };
+    var attribute = new SignalTagAttribute { Tag = "order-shipped" };
 
     // Assert
     await Assert.That(attribute.Tag).IsEqualTo("order-shipped");
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Group_IsNullByDefaultAsync() {
+  public async Task SignalTagAttribute_Group_IsNullByDefaultAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute { Tag = "test-tag" };
+    var attribute = new SignalTagAttribute { Tag = "test-tag" };
 
     // Assert
     await Assert.That(attribute.Group).IsNull();
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Group_CanBeSetAsync() {
+  public async Task SignalTagAttribute_Group_CanBeSetAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "order-shipped",
       Group = "customer-{CustomerId}"
     };
@@ -94,60 +94,60 @@ public class NotificationTagAttributeTests {
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Priority_DefaultsToNormalAsync() {
+  public async Task SignalTagAttribute_Priority_DefaultsToNormalAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute { Tag = "test-tag" };
+    var attribute = new SignalTagAttribute { Tag = "test-tag" };
 
     // Assert
-    await Assert.That(attribute.Priority).IsEqualTo(NotificationPriority.Normal);
+    await Assert.That(attribute.Priority).IsEqualTo(SignalPriority.Normal);
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Priority_CanBeSetToHighAsync() {
+  public async Task SignalTagAttribute_Priority_CanBeSetToHighAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "urgent-alert",
-      Priority = NotificationPriority.High
+      Priority = SignalPriority.High
     };
 
     // Assert
-    await Assert.That(attribute.Priority).IsEqualTo(NotificationPriority.High);
+    await Assert.That(attribute.Priority).IsEqualTo(SignalPriority.High);
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Priority_CanBeSetToCriticalAsync() {
+  public async Task SignalTagAttribute_Priority_CanBeSetToCriticalAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "system-failure",
-      Priority = NotificationPriority.Critical
+      Priority = SignalPriority.Critical
     };
 
     // Assert
-    await Assert.That(attribute.Priority).IsEqualTo(NotificationPriority.Critical);
+    await Assert.That(attribute.Priority).IsEqualTo(SignalPriority.Critical);
   }
 
   [Test]
-  public async Task NotificationTagAttribute_Priority_CanBeSetToLowAsync() {
+  public async Task SignalTagAttribute_Priority_CanBeSetToLowAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "background-update",
-      Priority = NotificationPriority.Low
+      Priority = SignalPriority.Low
     };
 
     // Assert
-    await Assert.That(attribute.Priority).IsEqualTo(NotificationPriority.Low);
+    await Assert.That(attribute.Priority).IsEqualTo(SignalPriority.Low);
   }
 
   [Test]
-  public async Task NotificationTagAttribute_InheritsBasePropertiesAsync() {
+  public async Task SignalTagAttribute_InheritsBasePropertiesAsync() {
     // Arrange & Act
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "order-updated",
       Properties = ["OrderId", "Status"],
       IncludeEvent = true,
       ExtraJson = """{"source": "api"}""",
       Group = "tenant-{TenantId}",
-      Priority = NotificationPriority.High
+      Priority = SignalPriority.High
     };
 
     // Assert - Base properties work
@@ -157,34 +157,34 @@ public class NotificationTagAttributeTests {
     await Assert.That(attribute.IncludeEvent).IsTrue();
     await Assert.That(attribute.ExtraJson).IsEqualTo("""{"source": "api"}""");
 
-    // Assert - NotificationTag-specific properties work
+    // Assert - SignalTag-specific properties work
     await Assert.That(attribute.Group).IsEqualTo("tenant-{TenantId}");
-    await Assert.That(attribute.Priority).IsEqualTo(NotificationPriority.High);
+    await Assert.That(attribute.Priority).IsEqualTo(SignalPriority.High);
   }
 
   [Test]
-  public async Task NotificationTagAttribute_CanBeAppliedToEventAsync() {
+  public async Task SignalTagAttribute_CanBeAppliedToEventAsync() {
     // Arrange
     var targetType = typeof(TestOrderShippedEvent);
 
     // Act
     var attributes = targetType
-      .GetCustomAttributes(typeof(NotificationTagAttribute), true)
-      .Cast<NotificationTagAttribute>()
+      .GetCustomAttributes(typeof(SignalTagAttribute), true)
+      .Cast<SignalTagAttribute>()
       .ToArray();
 
     // Assert
     await Assert.That(attributes.Length).IsEqualTo(1);
     await Assert.That(attributes[0].Tag).IsEqualTo("order-shipped");
     await Assert.That(attributes[0].Group).IsEqualTo("customer-{CustomerId}");
-    await Assert.That(attributes[0].Priority).IsEqualTo(NotificationPriority.High);
+    await Assert.That(attributes[0].Priority).IsEqualTo(SignalPriority.High);
   }
 
   // Test helper type
-  [NotificationTag(
+  [SignalTag(
     Tag = "order-shipped",
     Properties = ["OrderId", "CustomerId", "TrackingNumber"],
     Group = "customer-{CustomerId}",
-    Priority = NotificationPriority.High)]
+    Priority = SignalPriority.High)]
   private sealed record TestOrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber);
 }

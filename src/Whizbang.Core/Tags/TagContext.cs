@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tags;
 /// <example>
 /// <code>
 /// public async ValueTask&lt;JsonElement?&gt; OnTaggedMessageAsync(
-///     TagContext&lt;NotificationTagAttribute&gt; context,
+///     TagContext&lt;SignalTagAttribute&gt; context,
 ///     CancellationToken ct) {
 ///   // Access the attribute
 ///   var group = context.Attribute.Group;

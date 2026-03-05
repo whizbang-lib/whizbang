@@ -24,7 +24,9 @@
     <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
       <Aliases>shared</Aliases>
     </ProjectReference>
-    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj">
+      <Aliases>global,postgres_generators</Aliases>
+    </ProjectReference>
     <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
     <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->

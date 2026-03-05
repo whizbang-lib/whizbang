@@ -10,7 +10,7 @@ namespace Whizbang.SignalR.DependencyInjection;
 /// </summary>
 public static class SignalRTagExtensions {
   /// <summary>
-  /// Adds SignalR notification support for <see cref="NotificationTagAttribute"/> tags.
+  /// Adds SignalR notification support for <see cref="SignalTagAttribute"/> tags.
   /// </summary>
   /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
   /// <param name="options">The tag options.</param>
@@ -24,7 +24,7 @@ public static class SignalRTagExtensions {
   /// </example>
   public static TagOptions UseSignalR<THub>(this TagOptions options)
       where THub : Hub {
-    options.UseHook<NotificationTagAttribute, SignalRNotificationHook<THub>>();
+    options.UseHook<SignalTagAttribute, SignalRNotificationHook<THub>>();
     return options;
   }
 
@@ -37,7 +37,7 @@ public static class SignalRTagExtensions {
   /// <returns>The tag options for chaining.</returns>
   public static TagOptions UseSignalR<THub>(this TagOptions options, int priority)
       where THub : Hub {
-    options.UseHook<NotificationTagAttribute, SignalRNotificationHook<THub>>(priority);
+    options.UseHook<SignalTagAttribute, SignalRNotificationHook<THub>>(priority);
     return options;
   }
 }

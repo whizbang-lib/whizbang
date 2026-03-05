@@ -73,8 +73,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
-    // Check if interface name contains "IPerspectiveFor" (case-sensitive)
+    // Look for all perspective interfaces (IPerspectiveFor, IPerspectiveWithActionsFor, etc.)
+    // Check if interface name contains "IPerspectiveFor" (matches both IPerspectiveFor and IPerspectiveWithActionsFor)
     // Skip the marker base interface (has only 1 type argument)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {

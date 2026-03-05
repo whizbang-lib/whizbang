@@ -1,3 +1,4 @@
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
@@ -52,13 +53,27 @@ public class MessageContext : IMessageContext {
 
   /// <summary>
   /// Creates a new context with new identifiers.
+  /// If security context is available via <see cref="ScopeContextAccessor.CurrentContext"/>,
+  /// automatically inherits UserId and TenantId from the current scope.
+  /// This ensures security context propagates through LocalInvokeAsync calls.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesAllNewIdentifiersAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync</tests>
   public static MessageContext New() {
+    // Read security context from current scope (AsyncLocal)
+    string? userId = null;
+    string? tenantId = null;
+    var scopeContext = ScopeContextAccessor.CurrentContext;
+    if (scopeContext is not null) {
+      userId = scopeContext.Scope.UserId;
+      tenantId = scopeContext.Scope.TenantId;
+    }
+
     return new MessageContext {
       CorrelationId = CorrelationId.New(),
-      CausationId = MessageId.New()
+      CausationId = MessageId.New(),
+      UserId = userId,
+      TenantId = tenantId
     };
   }
 }

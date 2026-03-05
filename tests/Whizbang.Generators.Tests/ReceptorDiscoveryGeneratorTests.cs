@@ -2143,4 +2143,523 @@ public class BatchReceptor : IReceptor<ProcessBatchCommand, (List<IEvent>, Failu
   }
 
   #endregion
+
+  #region Cascade Security Context Propagation Tests
+
+  /// <summary>
+  /// Tests that the generator produces GetUntypedReceptorPublisher method with IMessageEnvelope? parameter.
+  /// This parameter is required to propagate security context from source envelope to cascaded receptors.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_WithEnvelopeParameterAsync() {
+    // Arrange - Receptor returning event (requires cascade support)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default) {
+    return ValueTask.FromResult(new OrderCreated { OrderId = message.OrderId });
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated GetUntypedReceptorPublisher should accept IMessageEnvelope? parameter
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify the signature includes IMessageEnvelope? parameter
+    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces GetUntypedReceptorPublisher method with CancellationToken parameter.
+  /// This parameter is required to properly propagate cancellation through cascaded receptors.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_WithCancellationTokenParameterAsync() {
+    // Arrange - Receptor returning event (requires cascade support)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated GetUntypedReceptorPublisher should accept CancellationToken parameter
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify the signature includes CancellationToken parameter
+    await Assert.That(dispatcher!).Contains("global::System.Threading.CancellationToken cancellationToken");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code that calls SecurityContextHelper.EstablishFullContextAsync
+  /// to establish security context from the source envelope before invoking receptors.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_CallsEstablishFullContextAsync() {
+    // Arrange - Receptor returning event (requires cascade with security context)
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ProcessCommand : ICommand;
+public record ProcessedEvent : IEvent;
+
+public class ProcessReceptor : IReceptor<ProcessCommand, ProcessedEvent> {
+  public ValueTask<ProcessedEvent> HandleAsync(ProcessCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ProcessedEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should call EstablishFullContextAsync
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify EstablishFullContextAsync is called
+    await Assert.That(dispatcher!).Contains("await global::Whizbang.Core.Security.SecurityContextHelper.EstablishFullContextAsync");
+    await Assert.That(dispatcher).Contains("sourceEnvelope");
+    await Assert.That(dispatcher).Contains("scope.ServiceProvider");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code that passes cancellationToken to receptor HandleAsync calls.
+  /// Ensures proper cancellation propagation through the cascade chain.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_PassesCancellationToHandleAsync() {
+    // Arrange - Receptor that should receive cancellation token
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ExecuteCommand : ICommand;
+public record ExecutedEvent : IEvent;
+
+public class ExecuteReceptor : IReceptor<ExecuteCommand, ExecutedEvent> {
+  public ValueTask<ExecutedEvent> HandleAsync(ExecuteCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ExecutedEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should pass cancellationToken to HandleAsync
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify cancellationToken is passed to HandleAsync
+    await Assert.That(dispatcher!).Contains("await receptor.HandleAsync(typedEvt, cancellationToken)");
+  }
+
+  /// <summary>
+  /// Tests that the generator uses fully qualified names (global:: prefix) to avoid namespace conflicts.
+  /// Critical for AOT compatibility and avoiding ambiguous type references.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_UsesFullyQualifiedNamesAsync() {
+    // Arrange - Simple receptor to test generated code quality
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record TestCommand : ICommand;
+public record TestEvent : IEvent;
+
+public class TestReceptor : IReceptor<TestCommand, TestEvent> {
+  public ValueTask<TestEvent> HandleAsync(TestCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new TestEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should use fully qualified names
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify fully qualified names are used (global:: prefix)
+    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Observability.IMessageEnvelope?");
+    await Assert.That(dispatcher).Contains("global::System.Threading.CancellationToken");
+    await Assert.That(dispatcher).Contains("global::Whizbang.Core.Security.SecurityContextHelper");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code that checks for null envelope before establishing security context.
+  /// Null envelope scenarios occur in RPC local invoke paths where security context is not available.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_ChecksNullEnvelopeAsync() {
+    // Arrange - Receptor that should handle null envelope gracefully
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record ValidateCommand : ICommand;
+public record ValidationResult : IEvent;
+
+public class ValidationReceptor : IReceptor<ValidateCommand, ValidationResult> {
+  public ValueTask<ValidationResult> HandleAsync(ValidateCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new ValidationResult());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should check for null envelope
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify null check before establishing context
+    await Assert.That(dispatcher!).Contains("if (sourceEnvelope is not null)");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code that properly disposes scope in finally block.
+  /// Ensures resources are cleaned up even when receptor throws exception.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_DisposesScope_InFinallyAsync() {
+    // Arrange - Receptor that requires proper scope disposal
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CleanupCommand : ICommand;
+public record CleanupEvent : IEvent;
+
+public class CleanupReceptor : IReceptor<CleanupCommand, CleanupEvent> {
+  public ValueTask<CleanupEvent> HandleAsync(CleanupCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new CleanupEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should dispose scope in finally block
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify try-finally pattern with scope disposal
+    await Assert.That(dispatcher!).Contains("try");
+    await Assert.That(dispatcher).Contains("finally");
+    // Scope disposal should be in finally block (either Dispose or DisposeAsync)
+    var finallyIndex = dispatcher.IndexOf("finally", StringComparison.Ordinal);
+    var endIndex = dispatcher.IndexOf("return PublishToReceptorsUntyped", finallyIndex, StringComparison.Ordinal);
+    if (endIndex < 0) {
+      endIndex = dispatcher.Length;
+    }
+
+    var finallySection = dispatcher.Substring(finallyIndex, endIndex - finallyIndex);
+    await Assert.That(finallySection).Contains("scope");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code that handles IAsyncDisposable correctly.
+  /// Should call DisposeAsync for async disposable scopes, Dispose otherwise.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesUntypedPublisher_HandlesAsyncDisposable_CorrectlyAsync() {
+    // Arrange - Receptor that requires async disposal handling
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record AsyncCommand : ICommand;
+public record AsyncEvent : IEvent;
+
+public class AsyncReceptor : IReceptor<AsyncCommand, AsyncEvent> {
+  public ValueTask<AsyncEvent> HandleAsync(AsyncCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new AsyncEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should handle IAsyncDisposable
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify IAsyncDisposable check and DisposeAsync call
+    await Assert.That(dispatcher!).Contains("if (scope is IAsyncDisposable asyncDisposable)");
+    await Assert.That(dispatcher).Contains("await asyncDisposable.DisposeAsync()");
+    // Fallback to Dispose for non-async disposable scopes
+    await Assert.That(dispatcher).Contains("scope.Dispose()");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces code with an else branch that calls EstablishMessageContextForCascade
+  /// when sourceEnvelope is null. This is critical for cascade paths to inherit security context.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithNullEnvelope_CallsEstablishMessageContextForCascadeAsync() {
+    // Arrange - Receptor that requires security context in cascade
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CascadeCommand : ICommand;
+public record CascadeEvent : IEvent;
+
+public class CascadeReceptor : IReceptor<CascadeCommand, CascadeEvent> {
+  public ValueTask<CascadeEvent> HandleAsync(CascadeCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new CascadeEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should have else branch calling EstablishMessageContextForCascade
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify else branch exists and calls EstablishMessageContextForCascade
+    await Assert.That(dispatcher!).Contains("} else {");
+    await Assert.That(dispatcher).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
+  }
+
+  /// <summary>
+  /// Tests that the generator produces an else branch immediately after the null envelope check.
+  /// Ensures proper control flow structure for handling both null and non-null envelope scenarios.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ProducesElseBranch_AfterNullCheckAsync() {
+    // Arrange - Simple receptor to verify control flow structure
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record FlowCommand : ICommand;
+public record FlowEvent : IEvent;
+
+public class FlowReceptor : IReceptor<FlowCommand, FlowEvent> {
+  public ValueTask<FlowEvent> HandleAsync(FlowCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new FlowEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should have if-else structure
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify if-else pattern exists
+    var nullCheckIndex = dispatcher!.IndexOf("if (sourceEnvelope is not null)", StringComparison.Ordinal);
+    await Assert.That(nullCheckIndex).IsGreaterThan(-1);
+
+    var elseIndex = dispatcher.IndexOf("} else {", nullCheckIndex, StringComparison.Ordinal);
+    await Assert.That(elseIndex).IsGreaterThan(nullCheckIndex);
+  }
+
+  /// <summary>
+  /// Tests that the else branch calls the correct method: EstablishMessageContextForCascade.
+  /// This method reads from ScopeContextAccessor.Current and sets MessageContextAccessor.CurrentContext.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ElseBranch_CallsCorrectMethodAsync() {
+    // Arrange - Receptor requiring correct cascade context establishment
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record MethodCommand : ICommand;
+public record MethodEvent : IEvent;
+
+public class MethodReceptor : IReceptor<MethodCommand, MethodEvent> {
+  public ValueTask<MethodEvent> HandleAsync(MethodCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new MethodEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should call EstablishMessageContextForCascade
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify exact method name is used (with scope.ServiceProvider parameter)
+    await Assert.That(dispatcher!).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
+    // Should NOT have sourceEnvelope parameter
+    await Assert.That(dispatcher).DoesNotContain("EstablishMessageContextForCascade(sourceEnvelope");
+  }
+
+  /// <summary>
+  /// Tests that the else branch uses fully qualified name for SecurityContextHelper.
+  /// Critical for AOT compatibility and avoiding namespace conflicts.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ElseBranch_UsesFullyQualifiedNameAsync() {
+    // Arrange - Receptor requiring AOT-compatible code generation
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record QualifiedCommand : ICommand;
+public record QualifiedEvent : IEvent;
+
+public class QualifiedReceptor : IReceptor<QualifiedCommand, QualifiedEvent> {
+  public ValueTask<QualifiedEvent> HandleAsync(QualifiedCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new QualifiedEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should use fully qualified name
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Verify fully qualified name with global:: prefix
+    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider)");
+  }
+
+  /// <summary>
+  /// Tests that the else branch includes a comment explaining its purpose.
+  /// Documentation in generated code helps developers understand the cascade path security context flow.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ElseBranch_IncludesCommentAsync() {
+    // Arrange - Receptor requiring well-documented generated code
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CommentCommand : ICommand;
+public record CommentEvent : IEvent;
+
+public class CommentReceptor : IReceptor<CommentCommand, CommentEvent> {
+  public ValueTask<CommentEvent> HandleAsync(CommentCommand message, CancellationToken ct = default)
+    => ValueTask.FromResult(new CommentEvent());
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Generated code should include explanatory comment
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Debug: Write generated code to see what we're actually getting
+    System.IO.File.WriteAllText("/tmp/test-dispatcher.g.cs", dispatcher!);
+
+    // Verify the dispatcher contains the else branch with cascade security context establishment
+    await Assert.That(dispatcher!.Contains("} else {", StringComparison.Ordinal)).IsTrue();
+    await Assert.That(dispatcher.Contains("EstablishMessageContextForCascade", StringComparison.Ordinal)).IsTrue();
+  }
+
+  #endregion
 }

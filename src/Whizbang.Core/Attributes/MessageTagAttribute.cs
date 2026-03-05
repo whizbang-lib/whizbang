@@ -50,7 +50,7 @@ public abstract class MessageTagAttribute : Attribute {
   /// </remarks>
   /// <example>
   /// <code>
-  /// [NotificationTag(Tag = "order-shipped", Properties = ["OrderId", "CustomerId", "TrackingNumber"])]
+  /// [SignalTag(Tag = "order-shipped", Properties = ["OrderId", "CustomerId", "TrackingNumber"])]
   /// public sealed record OrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber, DateTime ShippedAt);
   /// // Extracted payload: { "OrderId": "...", "CustomerId": "...", "TrackingNumber": "..." }
   /// </code>

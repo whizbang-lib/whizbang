@@ -13,22 +13,11 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_ReportsErrorAsync</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
-public class TopicFilterAttribute : Attribute {
+public class TopicFilterAttribute(string filter) : Attribute {
   /// <summary>
   /// The topic filter string for routing this command.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithStringFilter_GeneratesRegistryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleStringFilters_GeneratesAllMappingsAsync</tests>
-  public string Filter { get; }
-
-  /// <summary>
-  /// Creates a new topic filter attribute with the specified filter string.
-  /// </summary>
-  /// <param name="filter">The topic filter string (e.g., "orders.create", "payments.process")</param>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithStringFilter_GeneratesRegistryAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleStringFilters_GeneratesAllMappingsAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleCommands_GeneratesAllMappingsAsync</tests>
-  public TopicFilterAttribute(string filter) {
-    Filter = filter ?? throw new ArgumentNullException(nameof(filter));
-  }
+  public string Filter { get; } = filter ?? throw new ArgumentNullException(nameof(filter));
 }

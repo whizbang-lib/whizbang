@@ -395,4 +395,712 @@ public partial class JsonContextRegistryTests {
     await Assert.That(typeInfo).IsNotNull();
     await Assert.That(typeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<TestEvent>));
   }
+
+  // ===========================
+  // Polymorphic Interface Serialization Tests
+  // ===========================
+
+  /// <summary>
+  /// Test event for polymorphic serialization tests - order placed.
+  /// </summary>
+  internal sealed record TestOrderPlacedEvent(Guid OrderId, string CustomerName) : IEvent;
+
+  /// <summary>
+  /// Test event for polymorphic serialization tests - order shipped.
+  /// </summary>
+  internal sealed record TestOrderShippedEvent(Guid OrderId, string TrackingNumber) : IEvent;
+
+  /// <summary>
+  /// Test command for polymorphic serialization tests.
+  /// </summary>
+  internal sealed record TestCreateOrderCommand(string CustomerName, decimal Amount) : ICommand;
+
+  /// <summary>
+  /// Test JsonSerializerContext for polymorphic event types.
+  /// </summary>
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(TestOrderShippedEvent))]
+  [JsonSerializable(typeof(TestCreateOrderCommand))]
+  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithEventType_AddsToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+
+    // Assert - verify derived type is registered
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithMultipleEventTypes_AddsAllToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+
+    // Assert
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderShippedEvent));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithCommandType_AddsToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<ICommand, TestCreateOrderCommand>("TestCreateOrderCommand");
+
+    // Assert
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<ICommand>();
+    await Assert.That(derivedTypes).Contains(typeof(TestCreateOrderCommand));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithNullDiscriminator_UsesTypeNameAsync() {
+    // Act - register without explicit discriminator
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>();
+
+    // Assert - should use type name as discriminator
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+
+    // Verify discriminator defaults to type name
+    var discriminator = JsonContextRegistry.GetDiscriminator<IEvent, TestOrderPlacedEvent>();
+    await Assert.That(discriminator).IsEqualTo(nameof(TestOrderPlacedEvent));
+  }
+
+  [Test]
+  public async Task GetPolymorphicTypeInfo_WithRegisteredTypes_ReturnsPolymorphicInfoAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(IEvent));
+  }
+
+  [Test]
+  public async Task GetPolymorphicTypeInfo_WithNoRegisteredTypes_ReturnsNullAsync() {
+    // Arrange - use a type with no registered derived types
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - IMessage likely has no direct registrations (only IEvent and ICommand do)
+    // We'll check for a type that definitely has no registrations
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IDisposable>(options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task Serialize_IEvent_IncludesTypeDiscriminatorAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    IEvent evt = new TestOrderPlacedEvent(Guid.NewGuid(), "John Doe");
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+    await Assert.That(typeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(evt, typeInfo!);
+
+    // Assert - should include $type discriminator
+    await Assert.That(json).Contains("\"$type\":\"TestOrderPlacedEvent\"");
+    await Assert.That(json).Contains("\"OrderId\":");
+    await Assert.That(json).Contains("\"CustomerName\":\"John Doe\"");
+  }
+
+  [Test]
+  public async Task RoundTrip_IEvent_DeserializesToConcreteTypeAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var orderId = Guid.NewGuid();
+    IEvent original = new TestOrderPlacedEvent(orderId, "Jane Doe");
+
+    // Serialize as IEvent
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+    await Assert.That(typeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(original, typeInfo!);
+
+    // Act - Deserialize as IEvent
+    var deserialized = JsonSerializer.Deserialize<IEvent>(json, typeInfo!);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized).IsTypeOf<TestOrderPlacedEvent>();
+    var concreteEvent = (TestOrderPlacedEvent)deserialized!;
+    await Assert.That(concreteEvent.OrderId).IsEqualTo(orderId);
+    await Assert.That(concreteEvent.CustomerName).IsEqualTo("Jane Doe");
+  }
+
+  [Test]
+  public async Task RoundTrip_ListOfIEvents_DeserializesToConcreteTypesAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    List<IEvent> originalList = [
+      new TestOrderPlacedEvent(orderId, "Customer A"),
+      new TestOrderShippedEvent(orderId, "TRACK123")
+    ];
+
+    // Serialize
+    var listTypeInfo = JsonContextRegistry.GetPolymorphicListTypeInfo<IEvent>(options);
+    await Assert.That(listTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(originalList, listTypeInfo!);
+
+    // Act - Deserialize
+    var deserializedList = JsonSerializer.Deserialize<List<IEvent>>(json, listTypeInfo!);
+
+    // Assert
+    await Assert.That(deserializedList).IsNotNull();
+    await Assert.That(deserializedList!.Count).IsEqualTo(2);
+    await Assert.That(deserializedList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(deserializedList[1]).IsTypeOf<TestOrderShippedEvent>();
+  }
+
+  [Test]
+  public async Task MessageEnvelope_IEvent_SerializesWithPolymorphicPayloadAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var payload = new TestOrderPlacedEvent(orderId, "Test Customer");
+    var envelope = new MessageEnvelope<IEvent>(MessageId.New(), payload, []);
+
+    // Act
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Assert - should include $type in payload
+    await Assert.That(json).Contains("\"$type\":\"TestOrderPlacedEvent\"");
+    await Assert.That(json).Contains("\"MessageId\":");
+    await Assert.That(json).Contains("\"Payload\":");
+  }
+
+  [Test]
+  public async Task MessageEnvelope_IEvent_RoundTripDeserializesToConcretePayloadAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var messageId = MessageId.New();
+    var orderId = Guid.NewGuid();
+    var payload = new TestOrderPlacedEvent(orderId, "Roundtrip Customer");
+    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // Serialize
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Act - Deserialize
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, envelopeTypeInfo!);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Payload).IsTypeOf<TestOrderPlacedEvent>();
+    var concretePayload = (TestOrderPlacedEvent)deserialized.Payload;
+    await Assert.That(concretePayload.OrderId).IsEqualTo(orderId);
+    await Assert.That(concretePayload.CustomerName).IsEqualTo("Roundtrip Customer");
+  }
+
+  // ===========================
+  // Non-Nullable Primitive Lock-In Tests
+  // ===========================
+  // These tests ensure non-nullable primitives can be serialized without relying on
+  // the full resolver chain (which may not be available in standalone contexts).
+
+  /// <summary>
+  /// Test record with non-nullable Guid property.
+  /// </summary>
+  internal sealed record TestRecordWithGuid(string Name, Guid Id) : IEvent;
+
+  /// <summary>
+  /// Test record with various non-nullable primitives.
+  /// </summary>
+  internal sealed record TestRecordWithPrimitives(
+    int IntValue,
+    long LongValue,
+    bool BoolValue,
+    DateTime DateTimeValue,
+    DateTimeOffset DateTimeOffsetValue,
+    TimeSpan TimeSpanValue,
+    decimal DecimalValue,
+    double DoubleValue,
+    float FloatValue,
+    Guid GuidValue
+  ) : IEvent;
+
+  /// <summary>
+  /// Test JsonSerializerContext for non-nullable primitive types.
+  /// </summary>
+  [JsonSerializable(typeof(TestRecordWithGuid))]
+  [JsonSerializable(typeof(TestRecordWithPrimitives))]
+  [JsonSerializable(typeof(MessageEnvelope<TestRecordWithGuid>))]
+  [JsonSerializable(typeof(List<TestRecordWithGuid>))]
+  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task NonNullableGuid_SerializesCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestRecordWithGuid>("TestRecordWithGuid");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var record = new TestRecordWithGuid("Test", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+
+    // Assert
+    await Assert.That(json).Contains($"\"{testGuid}\"");
+    await Assert.That(json).Contains("\"Name\":\"Test\"");
+  }
+
+  [Test]
+  public async Task NonNullableGuid_RoundTrip_PreservesValueAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var original = new TestRecordWithGuid("RoundTrip", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(original, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithGuid>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Id).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Name).IsEqualTo("RoundTrip");
+  }
+
+  [Test]
+  public async Task AllNonNullablePrimitives_RoundTripCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var testDateTime = new DateTime(2025, 6, 15, 12, 30, 45, DateTimeKind.Utc);
+    var testDateTimeOffset = new DateTimeOffset(2025, 6, 15, 12, 30, 45, TimeSpan.FromHours(-5));
+    var testTimeSpan = TimeSpan.FromHours(2.5);
+
+    var record = new TestRecordWithPrimitives(
+      IntValue: 42,
+      LongValue: 9876543210L,
+      BoolValue: true,
+      DateTimeValue: testDateTime,
+      DateTimeOffsetValue: testDateTimeOffset,
+      TimeSpanValue: testTimeSpan,
+      DecimalValue: 123.45m,
+      DoubleValue: 3.14159,
+      FloatValue: 2.71828f,
+      GuidValue: testGuid
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithPrimitives>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.IntValue).IsEqualTo(42);
+    await Assert.That(deserialized.LongValue).IsEqualTo(9876543210L);
+    await Assert.That(deserialized.BoolValue).IsEqualTo(true);
+    await Assert.That(deserialized.DateTimeValue).IsEqualTo(testDateTime);
+    await Assert.That(deserialized.DecimalValue).IsEqualTo(123.45m);
+    await Assert.That(deserialized.DoubleValue).IsEqualTo(3.14159);
+    await Assert.That(deserialized.GuidValue).IsEqualTo(testGuid);
+  }
+
+  [Test]
+  public async Task MessageEnvelope_WithNonNullableGuidPayload_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var payload = new TestRecordWithGuid("EnvelopeTest", testGuid);
+    var envelope = new MessageEnvelope<TestRecordWithGuid>(
+      MessageId.New(),
+      payload,
+      []
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(envelope, options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<TestRecordWithGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNotNull();
+    await Assert.That(deserialized.Payload.Id).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Payload.Name).IsEqualTo("EnvelopeTest");
+  }
+
+  [Test]
+  public async Task ListOfRecords_WithNonNullableGuid_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var list = new List<TestRecordWithGuid> {
+      new("First", Guid.NewGuid()),
+      new("Second", Guid.NewGuid()),
+      new("Third", Guid.NewGuid())
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(list, options);
+    var deserialized = JsonSerializer.Deserialize<List<TestRecordWithGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Count).IsEqualTo(3);
+    await Assert.That(deserialized[0].Name).IsEqualTo("First");
+    await Assert.That(deserialized[1].Name).IsEqualTo("Second");
+    await Assert.That(deserialized[2].Name).IsEqualTo("Third");
+  }
+
+  // ===========================
+  // Nullable Primitive Lock-In Tests
+  // ===========================
+  // These tests ensure nullable primitives can be serialized without relying on
+  // the full resolver chain (which may not be available in standalone contexts).
+
+  /// <summary>
+  /// Test record with nullable Guid property.
+  /// </summary>
+  internal sealed record TestRecordWithNullableGuid(string Name, Guid? OptionalId) : IEvent;
+
+  /// <summary>
+  /// Test record with various nullable primitives.
+  /// </summary>
+  internal sealed record TestRecordWithNullablePrimitives(
+    int? OptionalInt,
+    long? OptionalLong,
+    bool? OptionalBool,
+    DateTime? OptionalDateTime,
+    DateTimeOffset? OptionalDateTimeOffset,
+    TimeSpan? OptionalTimeSpan,
+    decimal? OptionalDecimal,
+    double? OptionalDouble,
+    float? OptionalFloat,
+    Guid? OptionalGuid
+  ) : IEvent;
+
+  /// <summary>
+  /// Test JsonSerializerContext for nullable primitive types.
+  /// </summary>
+  [JsonSerializable(typeof(TestRecordWithNullableGuid))]
+  [JsonSerializable(typeof(TestRecordWithNullablePrimitives))]
+  [JsonSerializable(typeof(MessageEnvelope<TestRecordWithNullableGuid>))]
+  [JsonSerializable(typeof(MessageEnvelope<TestRecordWithNullablePrimitives>))]
+  [JsonSerializable(typeof(List<TestRecordWithNullableGuid>))]
+  [JsonSerializable(typeof(TestRecordWithNullableGuid[]))]
+  internal sealed partial class NullablePrimitiveTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task NullableGuid_WithValue_SerializesCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestRecordWithNullableGuid>("TestRecordWithNullableGuid");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var record = new TestRecordWithNullableGuid("Test", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+
+    // Assert
+    await Assert.That(json).Contains($"\"{testGuid}\"");
+    await Assert.That(json).Contains("\"Name\":\"Test\"");
+  }
+
+  [Test]
+  public async Task NullableGuid_WithNull_SerializesCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var record = new TestRecordWithNullableGuid("Test", null);
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+
+    // Assert - WhenWritingNull should omit null values
+    await Assert.That(json).DoesNotContain("\"OptionalId\"");
+    await Assert.That(json).Contains("\"Name\":\"Test\"");
+  }
+
+  [Test]
+  public async Task NullableGuid_RoundTrip_PreservesValueAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var original = new TestRecordWithNullableGuid("RoundTrip", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(original, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullableGuid>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.OptionalId).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Name).IsEqualTo("RoundTrip");
+  }
+
+  [Test]
+  public async Task NullableGuid_RoundTrip_PreservesNullAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var original = new TestRecordWithNullableGuid("RoundTripNull", null);
+
+    // Act
+    var json = JsonSerializer.Serialize(original, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullableGuid>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.OptionalId).IsNull();
+    await Assert.That(deserialized.Name).IsEqualTo("RoundTripNull");
+  }
+
+  [Test]
+  public async Task AllNullablePrimitives_WithValues_SerializeCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var testDateTime = new DateTime(2025, 6, 15, 12, 30, 45, DateTimeKind.Utc);
+    var testDateTimeOffset = new DateTimeOffset(2025, 6, 15, 12, 30, 45, TimeSpan.FromHours(-5));
+    var testTimeSpan = TimeSpan.FromHours(2.5);
+
+    var record = new TestRecordWithNullablePrimitives(
+      OptionalInt: 42,
+      OptionalLong: 9876543210L,
+      OptionalBool: true,
+      OptionalDateTime: testDateTime,
+      OptionalDateTimeOffset: testDateTimeOffset,
+      OptionalTimeSpan: testTimeSpan,
+      OptionalDecimal: 123.45m,
+      OptionalDouble: 3.14159,
+      OptionalFloat: 2.71828f,
+      OptionalGuid: testGuid
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullablePrimitives>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.OptionalInt).IsEqualTo(42);
+    await Assert.That(deserialized.OptionalLong).IsEqualTo(9876543210L);
+    await Assert.That(deserialized.OptionalBool).IsEqualTo(true);
+    await Assert.That(deserialized.OptionalDateTime).IsEqualTo(testDateTime);
+    await Assert.That(deserialized.OptionalDecimal).IsEqualTo(123.45m);
+    await Assert.That(deserialized.OptionalDouble).IsEqualTo(3.14159);
+    await Assert.That(deserialized.OptionalGuid).IsEqualTo(testGuid);
+  }
+
+  [Test]
+  public async Task AllNullablePrimitives_WithNulls_SerializeCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var record = new TestRecordWithNullablePrimitives(
+      OptionalInt: null,
+      OptionalLong: null,
+      OptionalBool: null,
+      OptionalDateTime: null,
+      OptionalDateTimeOffset: null,
+      OptionalTimeSpan: null,
+      OptionalDecimal: null,
+      OptionalDouble: null,
+      OptionalFloat: null,
+      OptionalGuid: null
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullablePrimitives>(json, options);
+
+    // Assert - all nulls should deserialize back to nulls
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.OptionalInt).IsNull();
+    await Assert.That(deserialized.OptionalLong).IsNull();
+    await Assert.That(deserialized.OptionalBool).IsNull();
+    await Assert.That(deserialized.OptionalDateTime).IsNull();
+    await Assert.That(deserialized.OptionalDateTimeOffset).IsNull();
+    await Assert.That(deserialized.OptionalTimeSpan).IsNull();
+    await Assert.That(deserialized.OptionalDecimal).IsNull();
+    await Assert.That(deserialized.OptionalDouble).IsNull();
+    await Assert.That(deserialized.OptionalFloat).IsNull();
+    await Assert.That(deserialized.OptionalGuid).IsNull();
+  }
+
+  // ===========================
+  // MessageEnvelope Wrapper Lock-In Tests
+  // ===========================
+
+  [Test]
+  public async Task MessageEnvelope_WithNullableGuidPayload_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var payload = new TestRecordWithNullableGuid("EnvelopeTest", testGuid);
+    var envelope = new MessageEnvelope<TestRecordWithNullableGuid>(
+      MessageId.New(),
+      payload,
+      []
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(envelope, options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<TestRecordWithNullableGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNotNull();
+    await Assert.That(deserialized.Payload.OptionalId).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Payload.Name).IsEqualTo("EnvelopeTest");
+  }
+
+  [Test]
+  public async Task MessageEnvelope_WithHops_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var payload = new TestRecordWithNullableGuid("HopTest", Guid.NewGuid());
+    var messageId = MessageId.New();
+    var instanceId = Guid.NewGuid();
+    var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = instanceId,
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = CorrelationId.New()
+    };
+    var envelope = new MessageEnvelope<TestRecordWithNullableGuid>(messageId, payload, [hop]);
+
+    // Act
+    var json = JsonSerializer.Serialize(envelope, options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<TestRecordWithNullableGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Hops.Count).IsEqualTo(1);
+    await Assert.That(deserialized.Hops[0].ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(deserialized.Hops[0].ServiceInstance.InstanceId).IsEqualTo(instanceId);
+  }
+
+  // ===========================
+  // Collection Type Lock-In Tests
+  // ===========================
+
+  [Test]
+  public async Task ListOfRecords_WithNullableGuid_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var list = new List<TestRecordWithNullableGuid> {
+      new("First", Guid.NewGuid()),
+      new("Second", null),
+      new("Third", Guid.NewGuid())
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(list, options);
+    var deserialized = JsonSerializer.Deserialize<List<TestRecordWithNullableGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Count).IsEqualTo(3);
+    await Assert.That(deserialized[0].Name).IsEqualTo("First");
+    await Assert.That(deserialized[0].OptionalId).IsNotNull();
+    await Assert.That(deserialized[1].Name).IsEqualTo("Second");
+    await Assert.That(deserialized[1].OptionalId).IsNull();
+    await Assert.That(deserialized[2].Name).IsEqualTo("Third");
+    await Assert.That(deserialized[2].OptionalId).IsNotNull();
+  }
+
+  [Test]
+  public async Task ArrayOfRecords_WithNullableGuid_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var array = new TestRecordWithNullableGuid[] {
+      new("ArrayFirst", Guid.NewGuid()),
+      new("ArraySecond", null)
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(array, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullableGuid[]>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Length).IsEqualTo(2);
+    await Assert.That(deserialized[0].Name).IsEqualTo("ArrayFirst");
+    await Assert.That(deserialized[0].OptionalId).IsNotNull();
+    await Assert.That(deserialized[1].Name).IsEqualTo("ArraySecond");
+    await Assert.That(deserialized[1].OptionalId).IsNull();
+  }
+
+  [Test]
+  public async Task EmptyList_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var list = new List<TestRecordWithNullableGuid>();
+
+    // Act
+    var json = JsonSerializer.Serialize(list, options);
+    var deserialized = JsonSerializer.Deserialize<List<TestRecordWithNullableGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task EmptyArray_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var array = Array.Empty<TestRecordWithNullableGuid>();
+
+    // Act
+    var json = JsonSerializer.Serialize(array, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithNullableGuid[]>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Length).IsEqualTo(0);
+  }
 }

@@ -113,7 +113,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
 
     // Assert - Command accepted (doesn't throw)
     // Note: This only tests publishing, not receiving
-    Console.WriteLine($"[SANITY] ✅ Message published successfully without throwing");
+    Console.WriteLine("[SANITY] ✅ Message published successfully without throwing");
   }
 
   /// <summary>
@@ -163,7 +163,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(10);
 
-    Console.WriteLine($"[SANITY] ✅ InventoryWorker perspectives materialized successfully");
+    Console.WriteLine("[SANITY] ✅ InventoryWorker perspectives materialized successfully");
   }
 
   /// <summary>
@@ -210,13 +210,13 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Assert - Verify InventoryWorker perspective (should always work)
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
     await Assert.That(inventoryProduct).IsNotNull();
-    Console.WriteLine($"[SANITY] ✅ InventoryWorker perspective: Product found");
+    Console.WriteLine("[SANITY] ✅ InventoryWorker perspective: Product found");
 
     // Assert - Verify BFF perspective (THIS IS THE CRITICAL TEST)
     var bffProduct = await fixture.BffProductLens.GetByIdAsync(testProductId);
     if (bffProduct == null) {
-      Console.WriteLine($"[SANITY] ❌ BFF perspective: Product NOT found");
-      Console.WriteLine($"[SANITY] This means ServiceBusConsumerWorker is NOT receiving messages from Service Bus");
+      Console.WriteLine("[SANITY] ❌ BFF perspective: Product NOT found");
+      Console.WriteLine("[SANITY] This means ServiceBusConsumerWorker is NOT receiving messages from Service Bus");
 
       // Additional diagnostics
       await using var connection = new NpgsqlConnection(fixture.ConnectionString);
@@ -242,7 +242,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(15);
 
-    Console.WriteLine($"[SANITY] ✅ BFF perspectives materialized successfully from Service Bus");
+    Console.WriteLine("[SANITY] ✅ BFF perspectives materialized successfully from Service Bus");
   }
 
   /// <summary>
@@ -349,12 +349,12 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for all event processing to complete (all perspectives across both hosts)
-    Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
+    Console.WriteLine("[SANITY-PROPAGATION] Waiting for event processing...");
     await productWaiter.WaitAsync(timeoutMilliseconds: 30000);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
-    Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
+    Console.WriteLine("[SANITY-PROPAGATION] Event processing completed!");
 
-    Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");
+    Console.WriteLine("[SANITY-PROPAGATION] Starting assertions...");
 
     // Assert - Check InventoryWorker perspective has correct data
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
@@ -446,7 +446,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
         ORDER BY message_type, target_name";
 
       await using var reader3 = await cmd3.ExecuteReaderAsync();
-      Console.WriteLine($"[SANITY-PROPAGATION] Perspective associations in inventory schema:");
+      Console.WriteLine("[SANITY-PROPAGATION] Perspective associations in inventory schema:");
       while (await reader3.ReadAsync()) {
         var messageType = reader3.GetString(0);
         var associationType = reader3.GetString(1);

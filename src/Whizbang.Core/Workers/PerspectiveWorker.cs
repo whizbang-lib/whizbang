@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 
@@ -309,14 +310,14 @@ public partial class PerspectiveWorker(
     // Diagnostic logging for perspective work batch
     var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     if (_diagnosticLogging) {
-      Console.WriteLine($"[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
+      Console.WriteLine("[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
       Console.WriteLine($"[PerspectiveWorker DIAG]   PerspectiveWork count: {workBatch.PerspectiveWork.Count}");
       Console.WriteLine($"[PerspectiveWorker DIAG]   Grouped into {groupedWork.Count} unique (StreamId, PerspectiveName) pairs");
       foreach (var g in groupedWork) {
         Console.WriteLine($"[PerspectiveWorker DIAG]     - {g.Key.PerspectiveName}/{g.Key.StreamId}: {g.Count()} work items");
       }
       if (workBatch.PerspectiveWork.Count == 0) {
-        Console.WriteLine($"[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
+        Console.WriteLine("[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
       }
     }
 #pragma warning restore CA1848
@@ -602,6 +603,26 @@ public partial class PerspectiveWorker(
               LogSkippingPostPerspectiveInlineNoInvoker(_logger);
               if (_logger.IsEnabled(LogLevel.Debug)) {
                 LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
+              }
+            }
+          }
+
+          // Phase 3e: Process message tags at PostPerspectiveInline stage
+          // This enables notification hooks to fire after events are persisted
+          // (e.g., BffService firing SignalR notifications after event consumption)
+          if (processedEvents.Count > 0) {
+            var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+            if (tagProcessor is not null) {
+              foreach (var envelope in processedEvents) {
+                var eventPayload = envelope.Payload;
+                var eventType = eventPayload.GetType();
+                await tagProcessor.ProcessTagsAsync(
+                  eventPayload,
+                  eventType,
+                  LifecycleStage.PostPerspectiveInline,
+                  scope: null,
+                  cancellationToken
+                ).ConfigureAwait(false);
               }
             }
           }

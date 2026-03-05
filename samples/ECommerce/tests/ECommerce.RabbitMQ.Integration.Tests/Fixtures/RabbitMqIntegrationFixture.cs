@@ -544,13 +544,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   private async Task _initializeDatabaseSchemasAsync(CancellationToken ct) {
     // Create both per-test databases (each host gets its own database to eliminate lock contention)
-    Console.WriteLine($"[RabbitMqFixture] Creating Inventory database...");
+    Console.WriteLine("[RabbitMqFixture] Creating Inventory database...");
     await _createDatabaseAsync(_inventoryPostgresConnection, ct);
-    Console.WriteLine($"[RabbitMqFixture] Inventory database created!");
+    Console.WriteLine("[RabbitMqFixture] Inventory database created!");
 
-    Console.WriteLine($"[RabbitMqFixture] Creating BFF database...");
+    Console.WriteLine("[RabbitMqFixture] Creating BFF database...");
     await _createDatabaseAsync(_bffPostgresConnection, ct);
-    Console.WriteLine($"[RabbitMqFixture] BFF database created!");
+    Console.WriteLine("[RabbitMqFixture] BFF database created!");
 
     // Initialize Inventory database
     // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
@@ -763,7 +763,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     try {
       using var connection = new Npgsql.NpgsqlConnection(connectionString);
       Npgsql.NpgsqlConnection.ClearPool(connection);
-      Console.WriteLine($"[RabbitMqFixture] Cleared connection pool");
+      Console.WriteLine("[RabbitMqFixture] Cleared connection pool");
     } catch (Exception ex) {
       // Log but don't throw - cleanup failures shouldn't break tests
       Console.WriteLine($"[RabbitMqFixture] Warning: Failed to clear connection pool: {ex.Message}");

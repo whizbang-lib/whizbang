@@ -128,7 +128,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (_diagnosticLogging) {
         Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: ReadPolymorphicAsync returned {events.Count} events");
         if (events.Count == 0) {
-          Console.WriteLine($"[PerspectiveRunner DIAG] ⚠️ NO EVENTS FOUND - perspective will return None status");
+          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ NO EVENTS FOUND - perspective will return None status");
         }
       }
 
@@ -345,7 +345,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       if (_diagnosticLogging) {
         Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: Returning status={resultStatus}, eventsProcessed={eventsProcessed}, lastEventId={lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty}");
         if (resultStatus == PerspectiveProcessingStatus.None) {
-          Console.WriteLine($"[PerspectiveRunner DIAG] ⚠️ Status is NONE - PostPerspectiveInline will NOT fire from PerspectiveWorker");
+          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ Status is NONE - PostPerspectiveInline will NOT fire from PerspectiveWorker");
         }
       }
 
