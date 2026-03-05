@@ -817,6 +817,53 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
+    // Primitive types - delegate to GetOrCreateTypeInfo helper which handles these AOT-compatibly
+    // This is critical for serialization when message types contain primitive properties
+    sb.AppendLine("  // Primitive types (common property types in messages)");
+    sb.AppendLine("  // Delegate to GetOrCreateTypeInfo which creates them AOT-compatibly");
+    sb.AppendLine("  if (type == typeof(string)) return GetOrCreateTypeInfo<string>(options);");
+    sb.AppendLine("  if (type == typeof(int)) return GetOrCreateTypeInfo<int>(options);");
+    sb.AppendLine("  if (type == typeof(long)) return GetOrCreateTypeInfo<long>(options);");
+    sb.AppendLine("  if (type == typeof(bool)) return GetOrCreateTypeInfo<bool>(options);");
+    sb.AppendLine("  if (type == typeof(Guid)) return GetOrCreateTypeInfo<Guid>(options);");
+    sb.AppendLine("  if (type == typeof(DateTime)) return GetOrCreateTypeInfo<DateTime>(options);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return GetOrCreateTypeInfo<DateTimeOffset>(options);");
+    sb.AppendLine("  if (type == typeof(TimeSpan)) return GetOrCreateTypeInfo<TimeSpan>(options);");
+    sb.AppendLine("  if (type == typeof(DateOnly)) return GetOrCreateTypeInfo<DateOnly>(options);");
+    sb.AppendLine("  if (type == typeof(TimeOnly)) return GetOrCreateTypeInfo<TimeOnly>(options);");
+    sb.AppendLine("  if (type == typeof(decimal)) return GetOrCreateTypeInfo<decimal>(options);");
+    sb.AppendLine("  if (type == typeof(double)) return GetOrCreateTypeInfo<double>(options);");
+    sb.AppendLine("  if (type == typeof(float)) return GetOrCreateTypeInfo<float>(options);");
+    sb.AppendLine("  if (type == typeof(byte)) return GetOrCreateTypeInfo<byte>(options);");
+    sb.AppendLine("  if (type == typeof(sbyte)) return GetOrCreateTypeInfo<sbyte>(options);");
+    sb.AppendLine("  if (type == typeof(short)) return GetOrCreateTypeInfo<short>(options);");
+    sb.AppendLine("  if (type == typeof(ushort)) return GetOrCreateTypeInfo<ushort>(options);");
+    sb.AppendLine("  if (type == typeof(uint)) return GetOrCreateTypeInfo<uint>(options);");
+    sb.AppendLine("  if (type == typeof(ulong)) return GetOrCreateTypeInfo<ulong>(options);");
+    sb.AppendLine("  if (type == typeof(char)) return GetOrCreateTypeInfo<char>(options);");
+    sb.AppendLine();
+    sb.AppendLine("  // Nullable primitive types");
+    sb.AppendLine("  if (type == typeof(int?)) return GetOrCreateTypeInfo<int?>(options);");
+    sb.AppendLine("  if (type == typeof(long?)) return GetOrCreateTypeInfo<long?>(options);");
+    sb.AppendLine("  if (type == typeof(bool?)) return GetOrCreateTypeInfo<bool?>(options);");
+    sb.AppendLine("  if (type == typeof(Guid?)) return GetOrCreateTypeInfo<Guid?>(options);");
+    sb.AppendLine("  if (type == typeof(DateTime?)) return GetOrCreateTypeInfo<DateTime?>(options);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) return GetOrCreateTypeInfo<DateTimeOffset?>(options);");
+    sb.AppendLine("  if (type == typeof(TimeSpan?)) return GetOrCreateTypeInfo<TimeSpan?>(options);");
+    sb.AppendLine("  if (type == typeof(DateOnly?)) return GetOrCreateTypeInfo<DateOnly?>(options);");
+    sb.AppendLine("  if (type == typeof(TimeOnly?)) return GetOrCreateTypeInfo<TimeOnly?>(options);");
+    sb.AppendLine("  if (type == typeof(decimal?)) return GetOrCreateTypeInfo<decimal?>(options);");
+    sb.AppendLine("  if (type == typeof(double?)) return GetOrCreateTypeInfo<double?>(options);");
+    sb.AppendLine("  if (type == typeof(float?)) return GetOrCreateTypeInfo<float?>(options);");
+    sb.AppendLine("  if (type == typeof(byte?)) return GetOrCreateTypeInfo<byte?>(options);");
+    sb.AppendLine("  if (type == typeof(sbyte?)) return GetOrCreateTypeInfo<sbyte?>(options);");
+    sb.AppendLine("  if (type == typeof(short?)) return GetOrCreateTypeInfo<short?>(options);");
+    sb.AppendLine("  if (type == typeof(ushort?)) return GetOrCreateTypeInfo<ushort?>(options);");
+    sb.AppendLine("  if (type == typeof(uint?)) return GetOrCreateTypeInfo<uint?>(options);");
+    sb.AppendLine("  if (type == typeof(ulong?)) return GetOrCreateTypeInfo<ulong?>(options);");
+    sb.AppendLine("  if (type == typeof(char?)) return GetOrCreateTypeInfo<char?>(options);");
+    sb.AppendLine();
+
     // All discovered types (messages + nested types)
     sb.AppendLine("  // Discovered types (messages + nested types)");
     foreach (var type in allTypes) {
