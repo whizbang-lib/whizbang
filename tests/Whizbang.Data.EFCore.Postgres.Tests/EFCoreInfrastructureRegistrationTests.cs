@@ -181,7 +181,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_RegistersILensQueryAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddDbContext<InfraTestDbContext>(options =>
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
     var tableNames = new Dictionary<Type, string> {
@@ -190,9 +190,8 @@ public class EFCoreInfrastructureRegistrationTests {
     };
 
     // Act
-    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
       services,
-      typeof(InfraTestDbContext),
       tableNames);
 
     // Assert
@@ -205,7 +204,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddDbContext<InfraTestDbContext>(options =>
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
     var tableNames = new Dictionary<Type, string> {
@@ -213,9 +212,8 @@ public class EFCoreInfrastructureRegistrationTests {
       { typeof(CustomerModel), "customer_perspective" }
     };
 
-    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
       services,
-      typeof(InfraTestDbContext),
       tableNames);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -232,7 +230,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_CreatesCorrectTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddDbContext<InfraTestDbContext>(options =>
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
     var tableNames = new Dictionary<Type, string> {
@@ -240,9 +238,8 @@ public class EFCoreInfrastructureRegistrationTests {
       { typeof(CustomerModel), "customer_perspective" }
     };
 
-    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
       services,
-      typeof(InfraTestDbContext),
       tableNames);
 
     // Assert
@@ -256,7 +253,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_ThreeGeneric_RegistersILensQueryAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddDbContext<InfraTestDbContext>(options =>
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
     var tableNames = new Dictionary<Type, string> {
@@ -266,9 +263,8 @@ public class EFCoreInfrastructureRegistrationTests {
     };
 
     // Act
-    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>(
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel, ProductModel>(
       services,
-      typeof(InfraTestDbContext),
       tableNames);
 
     // Assert
@@ -281,7 +277,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_ThreeGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddDbContext<InfraTestDbContext>(options =>
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
     var tableNames = new Dictionary<Type, string> {
@@ -290,9 +286,8 @@ public class EFCoreInfrastructureRegistrationTests {
       { typeof(ProductModel), "product_perspective" }
     };
 
-    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>(
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel, ProductModel>(
       services,
-      typeof(InfraTestDbContext),
       tableNames);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -306,6 +301,41 @@ public class EFCoreInfrastructureRegistrationTests {
   }
 
   [Test]
+  public async Task RegisterMultiLensQuery_TwoGeneric_EachInstanceGetsDifferentDbContextAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
+      services,
+      tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act - resolve two instances
+    var query1 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+    var query2 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+
+    // Assert - use reflection to verify different DbContext instances
+    // This is critical for HotChocolate parallel resolver safety
+    var contextField = typeof(EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>)
+        .GetField("_context", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+    var context1 = contextField?.GetValue(query1);
+    var context2 = contextField?.GetValue(query2);
+
+    await Assert.That(context1).IsNotNull();
+    await Assert.That(context2).IsNotNull();
+    await Assert.That(context1).IsNotSameReferenceAs(context2);
+  }
+
+  [Test]
   public async Task RegisterMultiLensQuery_WithNullServices_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var tableNames = new Dictionary<Type, string> {
@@ -315,26 +345,7 @@ public class EFCoreInfrastructureRegistrationTests {
 
     // Act & Assert
     await Assert.That(() =>
-        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
-          null!,
-          typeof(InfraTestDbContext),
-          tableNames))
-        .Throws<ArgumentNullException>();
-  }
-
-  [Test]
-  public async Task RegisterMultiLensQuery_WithNullDbContextType_ThrowsArgumentNullExceptionAsync() {
-    // Arrange
-    var services = new ServiceCollection();
-    var tableNames = new Dictionary<Type, string> {
-      { typeof(SamplePerspectiveModel), "sample_perspective" },
-      { typeof(CustomerModel), "customer_perspective" }
-    };
-
-    // Act & Assert
-    await Assert.That(() =>
-        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
-          services,
+        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
           null!,
           tableNames))
         .Throws<ArgumentNullException>();
@@ -347,9 +358,8 @@ public class EFCoreInfrastructureRegistrationTests {
 
     // Act & Assert
     await Assert.That(() =>
-        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
           services,
-          typeof(InfraTestDbContext),
           null!))
         .Throws<ArgumentNullException>();
   }
