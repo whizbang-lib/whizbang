@@ -58,8 +58,7 @@ jobs:
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
-          versionSpec: '6.x'
-          preferLatestVersion: true
+          versionSpec: '6.0.x'
 
       - name: Display Git Info
         run: |
