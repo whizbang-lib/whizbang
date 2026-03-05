@@ -40,6 +40,18 @@ namespace Whizbang.Core.Attributes;
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class PersistenceStrategyAttribute : Attribute {
   /// <summary>
+  /// The persistence mode when using a built-in strategy.
+  /// Null when using a named custom strategy.
+  /// </summary>
+  public PersistenceMode? Mode { get; }
+
+  /// <summary>
+  /// The name of a custom strategy configured in appsettings.json.
+  /// Null when using a built-in persistence mode.
+  /// </summary>
+  public string? StrategyName { get; }
+
+  /// <summary>
   /// Creates a persistence strategy attribute with the specified mode.
   /// </summary>
   /// <param name="mode">The persistence mode to use for this receptor.</param>
@@ -74,16 +86,4 @@ public sealed class PersistenceStrategyAttribute : Attribute {
   public PersistenceStrategyAttribute(string strategyName) {
     StrategyName = strategyName ?? throw new ArgumentNullException(nameof(strategyName));
   }
-
-  /// <summary>
-  /// The persistence mode when using a built-in strategy.
-  /// Null when using a named custom strategy.
-  /// </summary>
-  public PersistenceMode? Mode { get; }
-
-  /// <summary>
-  /// The name of a custom strategy configured in appsettings.json.
-  /// Null when using a built-in persistence mode.
-  /// </summary>
-  public string? StrategyName { get; }
 }

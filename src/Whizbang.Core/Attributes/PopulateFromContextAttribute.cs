@@ -29,17 +29,9 @@ namespace Whizbang.Core.Attributes;
 /// <docs>attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromContextAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class PopulateFromContextAttribute : Attribute {
+public sealed class PopulateFromContextAttribute(ContextKind kind) : Attribute {
   /// <summary>
   /// Gets the kind of context value to populate.
   /// </summary>
-  public ContextKind Kind { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="PopulateFromContextAttribute"/> class.
-  /// </summary>
-  /// <param name="kind">The kind of context value to populate.</param>
-  public PopulateFromContextAttribute(ContextKind kind) {
-    Kind = kind;
-  }
+  public ContextKind Kind { get; } = kind;
 }

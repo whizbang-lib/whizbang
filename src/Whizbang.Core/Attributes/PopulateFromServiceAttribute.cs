@@ -30,17 +30,9 @@ namespace Whizbang.Core.Attributes;
 /// <docs>attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromServiceAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class PopulateFromServiceAttribute : Attribute {
+public sealed class PopulateFromServiceAttribute(ServiceKind kind) : Attribute {
   /// <summary>
   /// Gets the kind of service value to populate.
   /// </summary>
-  public ServiceKind Kind { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="PopulateFromServiceAttribute"/> class.
-  /// </summary>
-  /// <param name="kind">The kind of service value to populate.</param>
-  public PopulateFromServiceAttribute(ServiceKind kind) {
-    Kind = kind;
-  }
+  public ServiceKind Kind { get; } = kind;
 }

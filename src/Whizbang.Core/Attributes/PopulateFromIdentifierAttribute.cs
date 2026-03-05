@@ -29,17 +29,9 @@ namespace Whizbang.Core.Attributes;
 /// <docs>attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class PopulateFromIdentifierAttribute : Attribute {
+public sealed class PopulateFromIdentifierAttribute(IdentifierKind kind) : Attribute {
   /// <summary>
   /// Gets the kind of identifier to populate.
   /// </summary>
-  public IdentifierKind Kind { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="PopulateFromIdentifierAttribute"/> class.
-  /// </summary>
-  /// <param name="kind">The kind of identifier to populate.</param>
-  public PopulateFromIdentifierAttribute(IdentifierKind kind) {
-    Kind = kind;
-  }
+  public IdentifierKind Kind { get; } = kind;
 }
