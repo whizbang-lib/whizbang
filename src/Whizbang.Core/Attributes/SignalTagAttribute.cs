@@ -3,13 +3,13 @@ using Whizbang.Core.Tags;
 namespace Whizbang.Core.Attributes;
 
 /// <summary>
-/// Tags a message for real-time notification delivery (SignalR, WebSockets, etc.).
+/// Tags a message for real-time signal delivery (SignalR, WebSockets, etc.).
 /// Discovered by MessageTagDiscoveryGenerator for AOT-compatible registration.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Notifications are delivered through registered <c>IMessageTagHook&lt;NotificationTagAttribute&gt;</c>
-/// implementations. The built-in SignalRNotificationHook (in Whizbang.Observability) sends notifications
+/// Signals are delivered through registered <c>IMessageTagHook&lt;SignalTagAttribute&gt;</c>
+/// implementations. The built-in SignalRNotificationHook (in Whizbang.SignalR) sends signals
 /// to the specified group with the constructed payload.
 /// </para>
 /// <para>
@@ -19,17 +19,17 @@ namespace Whizbang.Core.Attributes;
 /// </remarks>
 /// <example>
 /// <code>
-/// [NotificationTag(
+/// [SignalTag(
 ///     Tag = "order-shipped",
 ///     Properties = ["OrderId", "CustomerId", "TrackingNumber"],
 ///     Group = "customer-{CustomerId}",
-///     Priority = NotificationPriority.High)]
+///     Priority = SignalPriority.High)]
 /// public sealed record OrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#notification-tag</docs>
+/// <docs>core-concepts/message-tags#signal-tag</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
-public sealed class NotificationTagAttribute : MessageTagAttribute {
+public sealed class SignalTagAttribute : MessageTagAttribute {
   /// <summary>
   /// Gets or sets the target group/channel for the notification.
   /// Supports {PropertyName} placeholders for dynamic group resolution.
@@ -46,12 +46,12 @@ public sealed class NotificationTagAttribute : MessageTagAttribute {
   public string? Group { get; init; }
 
   /// <summary>
-  /// Gets or sets the notification priority.
-  /// Defaults to <see cref="NotificationPriority.Normal"/>.
+  /// Gets or sets the signal priority.
+  /// Defaults to <see cref="SignalPriority.Normal"/>.
   /// </summary>
   /// <remarks>
-  /// Higher priority notifications may receive different visual treatment,
+  /// Higher priority signals may receive different visual treatment,
   /// bypass quiet hours, or trigger additional delivery channels.
   /// </remarks>
-  public NotificationPriority Priority { get; init; } = NotificationPriority.Normal;
+  public SignalPriority Priority { get; init; } = SignalPriority.Normal;
 }

@@ -1684,4 +1684,353 @@ namespace TestNamespace {
     // Should extract TenantId from security context
     await Assert.That(runnerSource!).Contains("TenantId = securityContext?.TenantId");
   }
+
+  #region IPerspectiveWithActionsFor Integration Tests
+
+  /// <summary>
+  /// Tests that IPerspectiveWithActionsFor interface generates a runner correctly.
+  /// This is the primary integration test for the new strongly-typed deletion interface.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_IPerspectiveWithActionsFor_GeneratesRunnerAsync() {
+    // Arrange - Perspective implementing IPerspectiveWithActionsFor (returns ApplyResult<TModel>)
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderDeletedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeletedEvent @event) {
+      return ApplyResult<OrderModel>.Delete();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("OrderPerspectiveRunner");
+    await Assert.That(runnerSource!).Contains("OrderDeletedEvent");
+    await Assert.That(runnerSource!).Contains("ModelAction");
+  }
+
+  /// <summary>
+  /// Tests that a class can implement both IPerspectiveFor and IPerspectiveWithActionsFor
+  /// for different event types on the same class.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_MixedInterfaces_BothDetectedAsync() {
+    // Arrange - Class implementing both IPerspectiveFor and IPerspectiveWithActionsFor
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderUpdatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string NewStatus { get; init; } = """";
+  }
+
+  public record OrderDeletedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderPurgedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective :
+    IPerspectiveFor<OrderModel, OrderCreatedEvent>,           // Returns TModel
+    IPerspectiveFor<OrderModel, OrderUpdatedEvent>,           // Returns TModel
+    IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent>, // Returns ApplyResult<TModel>
+    IPerspectiveWithActionsFor<OrderModel, OrderPurgedEvent> { // Returns ApplyResult<TModel>
+
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return new OrderModel { OrderId = @event.OrderId, Status = ""Created"" };
+    }
+
+    public OrderModel Apply(OrderModel currentData, OrderUpdatedEvent @event) {
+      return currentData with { Status = @event.NewStatus };
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeletedEvent @event) {
+      return ApplyResult<OrderModel>.Delete();
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderPurgedEvent @event) {
+      return ApplyResult<OrderModel>.Purge();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner handling all 4 event types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // All event types should be handled
+    await Assert.That(runnerSource!).Contains("OrderCreatedEvent");
+    await Assert.That(runnerSource!).Contains("OrderUpdatedEvent");
+    await Assert.That(runnerSource!).Contains("OrderDeletedEvent");
+    await Assert.That(runnerSource!).Contains("OrderPurgedEvent");
+
+    // Should have ModelAction handling for Delete and Purge
+    await Assert.That(runnerSource!).Contains("ModelAction.Delete");
+    await Assert.That(runnerSource!).Contains("ModelAction.Purge");
+  }
+
+  /// <summary>
+  /// Tests that IPerspectiveWithActionsFor with multiple event types generates correctly.
+  /// Uses IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> variant.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_IPerspectiveWithActionsFor_MultipleEventVariant_GeneratesRunnerAsync() {
+    // Arrange - Using IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2>
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCancelledEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderArchivedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderCancelledEvent, OrderArchivedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCancelledEvent @event) {
+      return ApplyResult<OrderModel>.Delete();
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderArchivedEvent @event) {
+      return ApplyResult<OrderModel>.Purge();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner handling both events
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("OrderCancelledEvent");
+    await Assert.That(runnerSource!).Contains("OrderArchivedEvent");
+  }
+
+  /// <summary>
+  /// Tests that the generated runner correctly handles Delete action flow.
+  /// Delete should: keep model (with DeletedAt set by perspective), set action to Delete.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_DeleteAction_GeneratesCorrectHandlingAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderDeletedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public DateTimeOffset? DeletedAt { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeletedEvent @event) {
+      return ApplyResult<OrderModel>.Delete();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should have Delete case handling
+    await Assert.That(runnerSource!).Contains("case global::Whizbang.Core.Perspectives.ModelAction.Delete:");
+  }
+
+  /// <summary>
+  /// Tests that the generated runner correctly handles Purge action flow.
+  /// Purge should: set pendingPurge = true, set model to null for hard delete.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_PurgeAction_GeneratesCorrectHandlingAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderPurgedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderPurgedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderPurgedEvent @event) {
+      return ApplyResult<OrderModel>.Purge();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should have Purge case handling with pendingPurge flag
+    await Assert.That(runnerSource!).Contains("case global::Whizbang.Core.Perspectives.ModelAction.Purge:");
+    await Assert.That(runnerSource!).Contains("pendingPurge = true");
+  }
+
+  /// <summary>
+  /// Tests that IPerspectiveWithActionsFor-only class (no IPerspectiveFor) generates correctly.
+  /// This ensures the interface works standalone without requiring IPerspectiveFor.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_IPerspectiveWithActionsForOnly_GeneratesRunnerAsync() {
+    // Arrange - Class implementing only IPerspectiveWithActionsFor (no IPerspectiveFor)
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public decimal Amount { get; init; }
+  }
+
+  public record OrderUpdatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string NewStatus { get; init; } = """";
+  }
+
+  public record OrderDeletedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+    public decimal Amount { get; init; }
+  }
+
+  public class OrderPerspective :
+    IPerspectiveWithActionsFor<OrderModel, OrderCreatedEvent>,
+    IPerspectiveWithActionsFor<OrderModel, OrderUpdatedEvent>,
+    IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent> {
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      // Implicit conversion from TModel to ApplyResult<TModel>
+      return new OrderModel { OrderId = @event.OrderId, Status = ""Created"", Amount = @event.Amount };
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderUpdatedEvent @event) {
+      // Explicit Update factory method
+      return ApplyResult<OrderModel>.Update(currentData with { Status = @event.NewStatus });
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeletedEvent @event) {
+      return ApplyResult<OrderModel>.Delete();
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate runner for IPerspectiveWithActionsFor-only class
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
+
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+    await Assert.That(runnerSource!).Contains("OrderCreatedEvent");
+    await Assert.That(runnerSource!).Contains("OrderUpdatedEvent");
+    await Assert.That(runnerSource!).Contains("OrderDeletedEvent");
+  }
+
+  #endregion
 }

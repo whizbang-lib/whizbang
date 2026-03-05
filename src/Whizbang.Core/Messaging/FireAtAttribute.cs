@@ -47,17 +47,9 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>core-concepts/lifecycle-receptors</docs>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
-public sealed class FireAtAttribute : Attribute {
+public sealed class FireAtAttribute(LifecycleStage stage) : Attribute {
   /// <summary>
   /// Gets the lifecycle stage at which the receptor should be invoked.
   /// </summary>
-  public LifecycleStage Stage { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="FireAtAttribute"/> class.
-  /// </summary>
-  /// <param name="stage">The lifecycle stage at which to invoke the receptor.</param>
-  public FireAtAttribute(LifecycleStage stage) {
-    Stage = stage;
-  }
+  public LifecycleStage Stage { get; } = stage;
 }

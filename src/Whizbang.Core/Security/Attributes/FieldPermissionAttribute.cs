@@ -18,28 +18,16 @@ namespace Whizbang.Core.Security.Attributes;
 /// }
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
-public sealed class FieldPermissionAttribute : Attribute {
+public sealed class FieldPermissionAttribute(string permission, MaskingStrategy masking = MaskingStrategy.Hide) : Attribute {
   /// <summary>
   /// The permission required to view this field.
   /// </summary>
-  public Permission Permission { get; }
+  public Permission Permission { get; } = new Permission(permission);
 
   /// <summary>
   /// The masking strategy to apply when permission is not granted.
   /// </summary>
-  public MaskingStrategy Masking { get; }
-
-  /// <summary>
-  /// Creates a field permission attribute.
-  /// </summary>
-  /// <param name="permission">The permission string in resource:action format.</param>
-  /// <param name="masking">The masking strategy (defaults to Hide).</param>
-  public FieldPermissionAttribute(
-    string permission,
-    MaskingStrategy masking = MaskingStrategy.Hide) {
-    Permission = new Permission(permission);
-    Masking = masking;
-  }
+  public MaskingStrategy Masking { get; } = masking;
 }
 
 /// <summary>

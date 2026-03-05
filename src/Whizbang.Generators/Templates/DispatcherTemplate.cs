@@ -97,7 +97,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>
   [DebuggerStepThrough]
-  protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+  protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
     // Generated routing - zero reflection!
     #region UNTYPED_PUBLISH_ROUTING
     // This region will be replaced with generated untyped publish routing code

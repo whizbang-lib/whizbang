@@ -27,19 +27,19 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Constructor_SetsAttributeTypeAsync() {
     // Act
     var registration = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook)
     );
 
     // Assert
-    await Assert.That(registration.AttributeType).IsEqualTo(typeof(NotificationTagAttribute));
+    await Assert.That(registration.AttributeType).IsEqualTo(typeof(SignalTagAttribute));
   }
 
   [Test]
   public async Task TagHookRegistration_Constructor_SetsHookTypeAsync() {
     // Act
     var registration = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook)
     );
 
@@ -51,7 +51,7 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Constructor_DefaultsPriorityToMinusOneHundredAsync() {
     // Act
     var registration = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook)
     );
 
@@ -63,7 +63,7 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Constructor_AcceptsCustomPriorityAsync() {
     // Act
     var registration = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: 50
     );
@@ -76,7 +76,7 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Constructor_AcceptsNegativePriorityAsync() {
     // Act
     var registration = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: -10
     );
@@ -89,12 +89,12 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Equality_WorksForSameValuesAsync() {
     // Arrange
     var registration1 = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: 10
     );
     var registration2 = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: 10
     );
@@ -107,12 +107,12 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Inequality_DifferentPriorityAsync() {
     // Arrange
     var registration1 = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: 10
     );
     var registration2 = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook),
       Priority: 20
     );
@@ -125,7 +125,7 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_Inequality_DifferentAttributeTypeAsync() {
     // Arrange
     var registration1 = new TagHookRegistration(
-      typeof(NotificationTagAttribute),
+      typeof(SignalTagAttribute),
       typeof(TestNotificationHook)
     );
     var registration2 = new TagHookRegistration(
@@ -141,10 +141,10 @@ public class TagHookRegistrationTests {
   public async Task TagHookRegistration_CanSortByPriorityAsync() {
     // Arrange
     var registrations = new[] {
-      new TagHookRegistration(typeof(NotificationTagAttribute), typeof(TestNotificationHook), Priority: 500),
-      new TagHookRegistration(typeof(NotificationTagAttribute), typeof(TestNotificationHook), Priority: -100),
-      new TagHookRegistration(typeof(NotificationTagAttribute), typeof(TestNotificationHook), Priority: 30),
-      new TagHookRegistration(typeof(NotificationTagAttribute), typeof(TestNotificationHook), Priority: -10)
+      new TagHookRegistration(typeof(SignalTagAttribute), typeof(TestNotificationHook), Priority: 500),
+      new TagHookRegistration(typeof(SignalTagAttribute), typeof(TestNotificationHook), Priority: -100),
+      new TagHookRegistration(typeof(SignalTagAttribute), typeof(TestNotificationHook), Priority: 30),
+      new TagHookRegistration(typeof(SignalTagAttribute), typeof(TestNotificationHook), Priority: -10)
     };
 
     // Act
@@ -158,9 +158,9 @@ public class TagHookRegistrationTests {
   }
 
   // Test helper hook implementation
-  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken ct) {
       return ValueTask.FromResult<JsonElement?>(null);
     }

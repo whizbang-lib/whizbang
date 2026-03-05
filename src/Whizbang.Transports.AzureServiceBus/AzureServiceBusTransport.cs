@@ -408,7 +408,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessMessageAsync invoked! MessageId={args.Message.MessageId}, IsActive={subscription.IsActive}");
 
         if (!subscription.IsActive) {
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
+          Console.WriteLine("[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
           _logger.LogWarning(
             "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
             args.Message.MessageId,

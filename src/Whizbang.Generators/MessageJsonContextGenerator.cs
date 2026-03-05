@@ -463,7 +463,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateInterfaceProperties(assembly, allTypes));
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
@@ -495,6 +495,49 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
     }
+
+    // Generate MessageJsonContextInitializer with RegisterDerivedType calls for polymorphic serialization
+    {
+      var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
+      initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
+      initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
+
+      // Generate RegisterDerivedType calls for each message type
+      var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
+      initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+
+      context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
+    }
+  }
+
+  /// <summary>
+  /// Generates RegisterDerivedType calls for all discovered message types.
+  /// Each event type is registered with IEvent, each command type with ICommand.
+  /// Uses fully qualified type name as discriminator to avoid collisions when
+  /// multiple types have the same simple name in different namespaces.
+  /// </summary>
+  private static string _generateDerivedTypeRegistrations(ImmutableArray<JsonMessageTypeInfo> messages) {
+    var sb = new System.Text.StringBuilder();
+
+    foreach (var message in messages) {
+      // Use fully qualified name without global:: prefix for discriminator to ensure uniqueness
+      var discriminator = message.FullyQualifiedName.Replace("global::", "");
+
+      if (message.IsEvent) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IEvent, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+
+      if (message.IsCommand) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.ICommand, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+
+      // All message types (events and commands) are also IMessage
+      if (message.IsEvent || message.IsCommand) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IMessage, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+    }
+
+    return sb.ToString();
   }
 
   private static string _generateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
@@ -541,6 +584,66 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(field);
     }
+    sb.AppendLine();
+
+    // Interface lazy fields - always generate for IEvent, ICommand, IMessage
+    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (hasEvents || hasCommands) {
+      var interfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_INTERFACE");
+      var messageEnvelopeInterfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_MESSAGE_ENVELOPE_INTERFACE");
+      var listInterfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_LIST_INTERFACE");
+
+      sb.AppendLine("  // Interface lazy fields for polymorphic serialization");
+
+      // IMessage (always if we have any messages)
+      sb.AppendLine(interfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(listInterfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+
+      // IEvent (only if we have events)
+      if (hasEvents) {
+        sb.AppendLine(interfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(listInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+      }
+
+      // ICommand (only if we have commands)
+      if (hasCommands) {
+        sb.AppendLine(interfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(listInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+      }
+    }
 
     // Restore CS0169 warning
     sb.AppendLine();
@@ -549,6 +652,77 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Generates interface properties that delegate to JsonContextRegistry for polymorphic serialization.
+  /// Properties are generated for IEvent, ICommand, IMessage and their MessageEnvelope/List variants.
+  /// </summary>
+  private static string _generateInterfaceProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var sb = new StringBuilder();
+
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (!hasEvents && !hasCommands) {
+      sb.AppendLine("// No message types discovered - interface properties not generated");
+      return sb.ToString();
+    }
+
+    var interfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "INTERFACE_PROPERTY");
+    var messageEnvelopeInterfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "MESSAGE_ENVELOPE_INTERFACE_PROPERTY");
+    var listInterfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "LIST_INTERFACE_PROPERTY");
+
+    sb.AppendLine("// Interface properties for polymorphic serialization");
+    sb.AppendLine("// These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+    sb.AppendLine();
+
+    // IMessage (always if we have any messages)
+    sb.AppendLine(interfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+    sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+    sb.AppendLine(listInterfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+
+    // IEvent (only if we have events)
+    if (hasEvents) {
+      sb.AppendLine(interfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+      sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+      sb.AppendLine(listInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+    }
+
+    // ICommand (only if we have commands)
+    if (hasCommands) {
+      sb.AppendLine(interfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+      sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+      sb.AppendLine(listInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+    }
+
+    return sb.ToString();
+  }
 
   private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
@@ -641,6 +815,100 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
     sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
     sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
+    sb.AppendLine();
+
+    // Primitive types - create directly using JsonMetadataServices (AOT-compatible)
+    // IMPORTANT: Do NOT delegate to GetOrCreateTypeInfo<T>() here because the caller
+    // (IJsonTypeInfoResolver.GetTypeInfo) has already added this type to TypesBeingCreated,
+    // which would trigger a false "circular reference" error in GetOrCreateTypeInfo.
+    sb.AppendLine("  // Primitive types (common property types in messages)");
+    sb.AppendLine("  // Create directly using JsonMetadataServices - do NOT use GetOrCreateTypeInfo to avoid false circular reference detection");
+    sb.AppendLine("  if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    sb.AppendLine("  if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("  if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("  if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("  if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("  if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("  if (type == typeof(TimeSpan)) return JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
+    sb.AppendLine("  if (type == typeof(DateOnly)) return JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(TimeOnly)) return JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("  if (type == typeof(double)) return JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("  if (type == typeof(float)) return JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("  if (type == typeof(byte)) return JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);");
+    sb.AppendLine("  if (type == typeof(sbyte)) return JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);");
+    sb.AppendLine("  if (type == typeof(short)) return JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);");
+    sb.AppendLine("  if (type == typeof(ushort)) return JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);");
+    sb.AppendLine("  if (type == typeof(uint)) return JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);");
+    sb.AppendLine("  if (type == typeof(ulong)) return JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);");
+    sb.AppendLine("  if (type == typeof(char)) return JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);");
+    sb.AppendLine();
+    sb.AppendLine("  // Nullable primitive types - create underlying type info first, then wrap with nullable converter");
+    sb.AppendLine("  if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(double?)) { var u = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(float?)) { var u = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(byte?)) { var u = JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(short?)) { var u = JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ushort?)) { var u = JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(uint?)) { var u = JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ulong?)) { var u = JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(char?)) { var u = JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine();
+
+    // List<primitive> types - needed for nested collections like List<List<string>>
+    // When List<List<string>> is created, it needs JsonTypeInfo for List<string> as element type
+    sb.AppendLine("  // List<primitive> types - enables nested collections like List<List<string>>");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<string>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<string>, string>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<string>> { ObjectCreator = static () => new global::System.Collections.Generic.List<string>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<int>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<int>, int>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<int>> { ObjectCreator = static () => new global::System.Collections.Generic.List<int>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<long>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<long>, long>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<long>> { ObjectCreator = static () => new global::System.Collections.Generic.List<long>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<bool>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<bool>, bool>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<bool>> { ObjectCreator = static () => new global::System.Collections.Generic.List<bool>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<Guid>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<Guid>, Guid>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<Guid>> { ObjectCreator = static () => new global::System.Collections.Generic.List<Guid>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTime>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTime>, DateTime>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTime>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTime>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTimeOffset>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTimeOffset>, DateTimeOffset>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTimeOffset>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTimeOffset>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<decimal>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<decimal>, decimal>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<decimal>> { ObjectCreator = static () => new global::System.Collections.Generic.List<decimal>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<double>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<double>, double>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<double>> { ObjectCreator = static () => new global::System.Collections.Generic.List<double>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<float>)) {");
+    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<float>, float>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<float>> { ObjectCreator = static () => new global::System.Collections.Generic.List<float>(), ElementInfo = elementInfo });");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
     // All discovered types (messages + nested types)
@@ -745,6 +1013,69 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             .Replace("__BASE_TYPE__", polyType.BaseTypeName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
         sb.AppendLine(check);
+        sb.AppendLine();
+      }
+    }
+
+    // Interface types for polymorphic serialization (IEvent, ICommand, IMessage)
+    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (hasEvents || hasCommands) {
+      var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_INTERFACE");
+      var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
+      var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_LIST_INTERFACE");
+
+      sb.AppendLine("  // Interface types for polymorphic serialization");
+      sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+
+      // IMessage (always if we have any messages)
+      sb.AppendLine(interfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(listInterfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine();
+
+      // IEvent (only if we have events)
+      if (hasEvents) {
+        sb.AppendLine(interfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(listInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine();
+      }
+
+      // ICommand (only if we have commands)
+      if (hasCommands) {
+        sb.AppendLine(interfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(listInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
         sb.AppendLine();
       }
     }

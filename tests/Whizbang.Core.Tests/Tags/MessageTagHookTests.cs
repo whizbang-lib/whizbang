@@ -68,13 +68,13 @@ public class MessageTagHookTests {
   public async Task Hook_CanAccessAttributePropertiesAsync() {
     // Arrange
     var hook = new AttributeAccessingHook();
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "order-created",
       Group = "customer-{CustomerId}",
-      Priority = NotificationPriority.High,
+      Priority = SignalPriority.High,
       Properties = ["OrderId", "CustomerId"]
     };
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = new TestOrderEvent(Guid.NewGuid(), Guid.NewGuid()),
       MessageType = typeof(TestOrderEvent),
@@ -87,7 +87,7 @@ public class MessageTagHookTests {
     // Assert
     await Assert.That(hook.LastReceivedTag).IsEqualTo("order-created");
     await Assert.That(hook.LastReceivedGroup).IsEqualTo("customer-{CustomerId}");
-    await Assert.That(hook.LastReceivedPriority).IsEqualTo(NotificationPriority.High);
+    await Assert.That(hook.LastReceivedPriority).IsEqualTo(SignalPriority.High);
   }
 
   [Test]
@@ -98,8 +98,8 @@ public class MessageTagHookTests {
       ["TenantId"] = "tenant-123",
       ["UserId"] = "user-456"
     };
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestOrderEvent(Guid.NewGuid(), Guid.NewGuid()),
       MessageType = typeof(TestOrderEvent),
       Payload = JsonSerializer.SerializeToElement(new { }),
@@ -119,8 +119,8 @@ public class MessageTagHookTests {
     // Arrange
     var hook = new MessageAccessingHook();
     var message = new TestOrderEvent(Guid.NewGuid(), Guid.NewGuid());
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = message,
       MessageType = typeof(TestOrderEvent),
       Payload = JsonSerializer.SerializeToElement(new { })
@@ -201,9 +201,9 @@ public class MessageTagHookTests {
   }
 
   // Helper method to create test context
-  private static TagContext<NotificationTagAttribute> _createContext(string tag, object payloadData) {
-    return new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = tag },
+  private static TagContext<SignalTagAttribute> _createContext(string tag, object payloadData) {
+    return new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = tag },
       Message = payloadData,
       MessageType = payloadData.GetType(),
       Payload = JsonSerializer.SerializeToElement(payloadData)
@@ -214,17 +214,17 @@ public class MessageTagHookTests {
   private sealed record TestOrderEvent(Guid OrderId, Guid CustomerId);
 
   // Test hook implementations
-  private sealed class PassThroughHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class PassThroughHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class PayloadModifyingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class PayloadModifyingHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       var modified = new Dictionary<string, object> {
         ["original"] = context.Payload,
@@ -234,13 +234,13 @@ public class MessageTagHookTests {
     }
   }
 
-  private sealed class AttributeAccessingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class AttributeAccessingHook : IMessageTagHook<SignalTagAttribute> {
     public string? LastReceivedTag { get; private set; }
     public string? LastReceivedGroup { get; private set; }
-    public NotificationPriority LastReceivedPriority { get; private set; }
+    public SignalPriority LastReceivedPriority { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       LastReceivedTag = context.Attribute.Tag;
       LastReceivedGroup = context.Attribute.Group;
@@ -249,12 +249,12 @@ public class MessageTagHookTests {
     }
   }
 
-  private sealed class ScopeAccessingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class ScopeAccessingHook : IMessageTagHook<SignalTagAttribute> {
     public string? LastReceivedTenantId { get; private set; }
     public string? LastReceivedUserId { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       LastReceivedTenantId = context.Scope?["TenantId"]?.ToString();
       LastReceivedUserId = context.Scope?["UserId"]?.ToString();
@@ -262,12 +262,12 @@ public class MessageTagHookTests {
     }
   }
 
-  private sealed class MessageAccessingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class MessageAccessingHook : IMessageTagHook<SignalTagAttribute> {
     public object? LastReceivedMessage { get; private set; }
     public Type? LastReceivedMessageType { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       LastReceivedMessage = context.Message;
       LastReceivedMessageType = context.MessageType;
@@ -275,11 +275,11 @@ public class MessageTagHookTests {
     }
   }
 
-  private sealed class CancellationAwareHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class CancellationAwareHook : IMessageTagHook<SignalTagAttribute> {
     public CancellationToken LastReceivedCancellationToken { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken ct) {
       LastReceivedCancellationToken = ct;
       return ValueTask.FromResult<JsonElement?>(null);

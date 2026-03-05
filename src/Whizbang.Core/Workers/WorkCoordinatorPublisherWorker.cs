@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -26,6 +27,7 @@ namespace Whizbang.Core.Workers;
 /// - Marks completed/failed messages
 /// - Claims and processes orphaned work (outbox and inbox)
 /// </summary>
+/// <docs>workers/work-coordinator-publisher-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ConsecutiveBuffers_TracksCountAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ExceedsThreshold_LogsWarningAsync</tests>
@@ -53,6 +55,10 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_ProcessesReturnedWorkFromCompletionsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_MultipleIterationsProcessAllWorkAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_LoopTerminatesWhenNoWorkAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_EstablishesSecurityContext_BeforeInvokingReceptorsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_SetsMessageContext_WithUserIdAndTenantIdAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurityInEnvelope_DoesNotThrowAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurity_StillSetsMessageContextAsync</tests>
 /// <remarks>
 /// <para>
 /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from a per-work-item scope
@@ -282,6 +288,15 @@ public partial class WorkCoordinatorPublisherWorker(
         // Following MediatR/MassTransit pattern: handlers are scoped, resolved from message processing scope
         await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
         var receptorInvoker = lifecycleScope.ServiceProvider.GetService<IReceptorInvoker>();
+
+        // Establish security context from envelope before invoking lifecycle receptors.
+        // This sets IScopeContextAccessor.Current and IMessageContextAccessor.Current,
+        // enabling receptors to inject IMessageContext and access UserId/TenantId.
+        // Security context cascades to any commands/events dispatched by these receptors.
+        await SecurityContextHelper.EstablishFullContextAsync(
+          work.Envelope,
+          lifecycleScope.ServiceProvider,
+          stoppingToken);
 
         // Extract trace context from envelope hops FIRST to parent all lifecycle spans
         // This ensures all outbox processing appears as children of the original request trace

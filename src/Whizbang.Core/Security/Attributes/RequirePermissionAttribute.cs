@@ -19,17 +19,9 @@ namespace Whizbang.Core.Security.Attributes;
 /// }
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
-public sealed class RequirePermissionAttribute : Attribute {
+public sealed class RequirePermissionAttribute(string permission) : Attribute {
   /// <summary>
   /// The required permission.
   /// </summary>
-  public Permission Permission { get; }
-
-  /// <summary>
-  /// Creates a require permission attribute.
-  /// </summary>
-  /// <param name="permission">The permission string in resource:action format.</param>
-  public RequirePermissionAttribute(string permission) {
-    Permission = new Permission(permission);
-  }
+  public Permission Permission { get; } = new Permission(permission);
 }

@@ -383,6 +383,9 @@ public class TestDbContext : DbContext {
 
     // Configure PerspectiveRow<StoreTestModel> as entity (for store tests)
     ConfigurePerspectiveRow<StoreTestModel>(modelBuilder);
+
+    // Configure PerspectiveRow<SoftDeletableModel> as entity (for soft delete tests)
+    ConfigurePerspectiveRow<SoftDeletableModel>(modelBuilder);
   }
 
   private static void ConfigurePerspectiveRow<TModel>(ModelBuilder modelBuilder)

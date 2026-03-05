@@ -62,7 +62,7 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       messageId1.Value
     ).FirstOrDefaultAsync();
 
-    Console.WriteLine($"After STEP 1:");
+    Console.WriteLine("After STEP 1:");
     Console.WriteLine($"  message_id: {msg1AfterStore?.MessageId}");
     Console.WriteLine($"  status: {msg1AfterStore?.Status}");
     Console.WriteLine($"  instance_id: {msg1AfterStore?.InstanceId}");
@@ -117,14 +117,14 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       messageId2.Value
     ).FirstOrDefaultAsync();
 
-    Console.WriteLine($"\nAfter STEP 2:");
+    Console.WriteLine("\nAfter STEP 2:");
     Console.WriteLine($"messageId1 ({messageId1.Value}):");
     if (msg1AfterCompletion != null) {
       Console.WriteLine($"  status: {msg1AfterCompletion.Status}");
       Console.WriteLine($"  instance_id: {msg1AfterCompletion.InstanceId}");
       Console.WriteLine($"  lease_expiry: {msg1AfterCompletion.LeaseExpiry}");
     } else {
-      Console.WriteLine($"  DELETED from database");
+      Console.WriteLine("  DELETED from database");
     }
 
     Console.WriteLine($"messageId2 ({messageId2.Value}):");
