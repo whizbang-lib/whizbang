@@ -1,5 +1,10 @@
 namespace Whizbang.Core.Lenses;
 
+#pragma warning disable S2326 // Unused type parameters should be removed
+// T1, T2, T3, etc. are intentionally declared at the interface level to document which model types
+// are valid for the Query<T>() and GetByIdAsync<T>() methods. The runtime implementation enforces
+// that T must be one of the declared types. This pattern enables multi-model queries with shared DbContext.
+
 /// <summary>
 /// Non-generic marker interface for lens query types.
 /// Used by <see cref="IScopedLensFactory"/> to constrain generic type parameters.
