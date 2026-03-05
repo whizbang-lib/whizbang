@@ -35,8 +35,8 @@ jobs:
     name: Calculate Version
     runs-on: ubuntu-latest
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer }}
-      fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
+      semver: ${{ steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
+      fullsemver: ${{ steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
       major: ${{ steps.gitversion.outputs.major }}
       minor: ${{ steps.gitversion.outputs.minor }}
       patch: ${{ steps.gitversion.outputs.patch }}
@@ -50,33 +50,45 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.ref || github.ref }}
 
+      - name: Fetch tags
+        run: |
+          git fetch --tags --force
+          git tag --list | head -20
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          versionSpec: '6.x'
+          preferLatestVersion: true
+
+      - name: Display Git Info
+        run: |
+          echo "Current branch: $(git branch --show-current)"
+          echo "Current commit: $(git rev-parse HEAD)"
+          echo "Recent tags:"
+          git tag --list --sort=-version:refname | head -10
+
       - name: Determine Version
         id: gitversion
-        run: |
-          # Extract version from branch name or use GitVersion
-          BRANCH_NAME="${{ inputs.ref || github.ref_name }}"
-          echo "Branch: $BRANCH_NAME"
+        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+        continue-on-error: true
 
-          # For release branches like "release/v0.9.0-alpha.136", extract the version
+      - name: Fallback Version (if GitVersion fails)
+        if: steps.gitversion.outcome == 'failure'
+        id: fallback
+        run: |
+          echo "GitVersion failed, using branch name extraction"
+          BRANCH_NAME="${{ inputs.ref || github.ref_name }}"
           if [[ "$BRANCH_NAME" =~ ^release[/-]v?([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?)$ ]]; then
             VERSION="${BASH_REMATCH[1]}"
-            echo "Extracted version from release branch: $VERSION"
-            echo "semVer=$VERSION" >> $GITHUB_OUTPUT
-            echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
-            if [[ "$VERSION" =~ -([a-zA-Z0-9.]+)$ ]]; then
-              echo "preReleaseTag=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            else
-              echo "preReleaseTag=" >> $GITHUB_OUTPUT
-            fi
           else
-            # For other branches, use a default version
-            # TODO: Implement GitVersion for develop/main branches
             VERSION="0.9.1-alpha.999"
-            echo "Using default version: $VERSION"
-            echo "semVer=$VERSION" >> $GITHUB_OUTPUT
-            echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
-            echo "preReleaseTag=alpha.999" >> $GITHUB_OUTPUT
           fi
+          echo "semVer=$VERSION" >> $GITHUB_OUTPUT
+          echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Display Version
         run: |
