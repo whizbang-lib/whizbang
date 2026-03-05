@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.Attributes;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tags;
 
@@ -22,7 +21,7 @@ namespace Whizbang.Core.Tags;
 /// <example>
 /// <code>
 /// services.AddWhizbang(options => {
-///   options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
+///   options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
 ///   options.Tags.UseHook&lt;TelemetryTagAttribute, OpenTelemetrySpanHook&gt;(priority: -10);
 ///   options.Tags.UseHook&lt;MetricTagAttribute, MetricsPublishHook&gt;(priority: 30);
 /// });
@@ -44,25 +43,20 @@ public sealed class TagOptions {
   /// <typeparam name="TAttribute">The tag attribute type to handle.</typeparam>
   /// <typeparam name="THook">The hook implementation type.</typeparam>
   /// <param name="priority">Execution priority. Lower values execute first. Default is -100.</param>
-  /// <param name="fireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
   /// <returns>This options instance for chaining.</returns>
   /// <example>
   /// <code>
-  /// options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
+  /// options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
   /// options.Tags.UseHook&lt;AuditTagAttribute, AuditLogHook&gt;(priority: -10);
-  /// options.Tags.UseHook&lt;NotificationTagAttribute, NotificationHook&gt;(fireAt: LifecycleStage.PostPerspectiveInline);
   /// </code>
   /// </example>
-  public TagOptions UseHook<TAttribute, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
-      int priority = -100,
-      LifecycleStage fireAt = LifecycleStage.AfterReceptorCompletion)
+  public TagOptions UseHook<TAttribute, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(int priority = -100)
     where TAttribute : MessageTagAttribute
     where THook : class, IMessageTagHook<TAttribute> {
     var registration = new TagHookRegistration(
       AttributeType: typeof(TAttribute),
       HookType: typeof(THook),
-      Priority: priority,
-      FireAt: fireAt
+      Priority: priority
     );
 
     _hookRegistrations.Add(registration);
@@ -75,7 +69,6 @@ public sealed class TagOptions {
   /// </summary>
   /// <typeparam name="THook">The hook implementation type.</typeparam>
   /// <param name="priority">Execution priority. Lower values execute first. Default is -100.</param>
-  /// <param name="fireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
   /// <returns>This options instance for chaining.</returns>
   /// <example>
   /// <code>
@@ -83,11 +76,9 @@ public sealed class TagOptions {
   /// options.Tags.UseUniversalHook&lt;UniversalTagLoggerHook&gt;();
   /// </code>
   /// </example>
-  public TagOptions UseUniversalHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(
-      int priority = -100,
-      LifecycleStage fireAt = LifecycleStage.AfterReceptorCompletion)
+  public TagOptions UseUniversalHook<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THook>(int priority = -100)
     where THook : class, IMessageTagHook<MessageTagAttribute> {
-    return UseHook<MessageTagAttribute, THook>(priority, fireAt);
+    return UseHook<MessageTagAttribute, THook>(priority);
   }
 
   /// <summary>
@@ -113,20 +104,6 @@ public sealed class TagOptions {
   }
 
   /// <summary>
-  /// Gets all hook registrations for a specific attribute type that fire at the specified lifecycle stage.
-  /// </summary>
-  /// <typeparam name="TAttribute">The attribute type to get hooks for.</typeparam>
-  /// <param name="stage">The lifecycle stage to filter by.</param>
-  /// <returns>Hook registrations for the specified attribute type and stage.</returns>
-  public IEnumerable<TagHookRegistration> GetHooksFor<TAttribute>(LifecycleStage stage)
-    where TAttribute : MessageTagAttribute {
-    var targetType = typeof(TAttribute);
-    return _hookRegistrations
-      .Where(r => (r.AttributeType == targetType || r.AttributeType == typeof(MessageTagAttribute)) && r.FireAt == stage)
-      .OrderBy(r => r.Priority);
-  }
-
-  /// <summary>
   /// Gets all hook registrations for a specific attribute type (non-generic).
   /// </summary>
   /// <param name="attributeType">The attribute type to get hooks for.</param>
@@ -136,29 +113,5 @@ public sealed class TagOptions {
     return _hookRegistrations
       .Where(r => r.AttributeType == attributeType || r.AttributeType == typeof(MessageTagAttribute))
       .OrderBy(r => r.Priority);
-  }
-
-  /// <summary>
-  /// Gets all hook registrations for a specific attribute type that fire at the specified lifecycle stage (non-generic).
-  /// </summary>
-  /// <param name="attributeType">The attribute type to get hooks for.</param>
-  /// <param name="stage">The lifecycle stage to filter by.</param>
-  /// <returns>Hook registrations for the specified attribute type and stage.</returns>
-  public IEnumerable<TagHookRegistration> GetHooksFor(Type attributeType, LifecycleStage stage) {
-    ArgumentNullException.ThrowIfNull(attributeType);
-    return _hookRegistrations
-      .Where(r => (r.AttributeType == attributeType || r.AttributeType == typeof(MessageTagAttribute)) && r.FireAt == stage)
-      .OrderBy(r => r.Priority);
-  }
-
-  /// <summary>
-  /// Registers a hook using an existing registration record.
-  /// Used internally for merging hooks when AddWhizbang() is called multiple times.
-  /// </summary>
-  /// <param name="registration">The hook registration to add.</param>
-  /// <returns>This options instance for chaining.</returns>
-  internal TagOptions UseHookRegistration(TagHookRegistration registration) {
-    _hookRegistrations.Add(registration);
-    return this;
   }
 }

@@ -1,8 +1,6 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core.Lenses;
-using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests;
@@ -135,98 +133,5 @@ public class MessageContextTests {
     await Assert.That(context.Timestamp).IsEqualTo(timestamp);
     await Assert.That(context.UserId).IsEqualTo(userId);
     await Assert.That(context.TenantId).IsEqualTo(tenantId);
-  }
-
-  [Test]
-  public async Task New_WithNoScopeContext_CreatesContextWithoutSecurityAsync() {
-    // Arrange - Ensure no scope context is set
-    ScopeContextAccessor.CurrentContext = null;
-
-    // Act
-    var context = MessageContext.New();
-
-    // Assert - No security context inherited
-    await Assert.That(context.UserId).IsNull();
-    await Assert.That(context.TenantId).IsNull();
-    await Assert.That(context.MessageId.Value).IsNotEqualTo(Guid.Empty);
-    await Assert.That(context.CorrelationId.Value).IsNotEqualTo(Guid.Empty);
-    await Assert.That(context.CausationId.Value).IsNotEqualTo(Guid.Empty);
-  }
-
-  [Test]
-  public async Task New_WithScopeContext_InheritsUserIdAndTenantIdAsync() {
-    // Arrange - Set scope context with security
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
-
-    var scopeContext = new TestScopeContext(testUserId, testTenantId);
-    ScopeContextAccessor.CurrentContext = scopeContext;
-
-    try {
-      // Act
-      var context = MessageContext.New();
-
-      // Assert - Security context inherited from scope
-      await Assert.That(context.UserId).IsEqualTo(testUserId);
-      await Assert.That(context.TenantId).IsEqualTo(testTenantId);
-      await Assert.That(context.MessageId.Value).IsNotEqualTo(Guid.Empty);
-      await Assert.That(context.CorrelationId.Value).IsNotEqualTo(Guid.Empty);
-      await Assert.That(context.CausationId.Value).IsNotEqualTo(Guid.Empty);
-    } finally {
-      // Cleanup - Reset scope context
-      ScopeContextAccessor.CurrentContext = null;
-    }
-  }
-
-  [Test]
-  public async Task New_WithScopeContextButNoUserId_InheritsTenantIdOnlyAsync() {
-    // Arrange - Set scope context with only TenantId
-    var testTenantId = "test-tenant-123";
-
-    var scopeContext = new TestScopeContext(userId: null, testTenantId);
-    ScopeContextAccessor.CurrentContext = scopeContext;
-
-    try {
-      // Act
-      var context = MessageContext.New();
-
-      // Assert
-      await Assert.That(context.UserId).IsNull();
-      await Assert.That(context.TenantId).IsEqualTo(testTenantId);
-    } finally {
-      // Cleanup
-      ScopeContextAccessor.CurrentContext = null;
-    }
-  }
-
-  /// <summary>
-  /// Test implementation of IScopeContext for testing MessageContext.New() security propagation.
-  /// </summary>
-  private sealed class TestScopeContext : IScopeContext {
-    public TestScopeContext(string? userId, string? tenantId) {
-      Scope = new PerspectiveScope {
-        UserId = userId,
-        TenantId = tenantId
-      };
-    }
-
-    public PerspectiveScope Scope { get; }
-    public IReadOnlyDictionary<string, string> Claims => new Dictionary<string, string>();
-    public IReadOnlySet<string> Roles => new HashSet<string>();
-    public IReadOnlySet<Permission> Permissions => new HashSet<Permission>();
-    public IReadOnlySet<SecurityPrincipalId> SecurityPrincipals => new HashSet<SecurityPrincipalId>();
-    public string? ActualPrincipal => null;
-    public string? EffectivePrincipal => null;
-    public SecurityContextType ContextType => SecurityContextType.User;
-    public string? Source => "test";
-    public bool PropagateToOutgoingMessages => true;
-
-    public bool HasPermission(Permission permission) => false;
-    public bool HasAnyPermission(params Permission[] permissions) => false;
-    public bool HasAllPermissions(params Permission[] permissions) => false;
-    public bool HasRole(string role) => false;
-    public bool HasAnyRole(params string[] roles) => false;
-    public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
-    public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
   }
 }

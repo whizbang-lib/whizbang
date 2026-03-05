@@ -78,7 +78,7 @@ namespace Whizbang.Data.EFCore.Custom;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class WhizbangDbContextAttribute(params string[]? keys) : Attribute {
+public sealed class WhizbangDbContextAttribute : Attribute {
   /// <summary>
   /// Gets the keys that identify which perspectives should be included in this DbContext.
   /// Multiple keys enable shared configuration across contexts.
@@ -99,7 +99,7 @@ public sealed class WhizbangDbContextAttribute(params string[]? keys) : Attribut
   /// <item>Empty or null keys parameter defaults to [""] (unnamed/default key)</item>
   /// </list>
   /// </remarks>
-  public string[] Keys { get; } = keys?.Length > 0 ? keys : [""];
+  public string[] Keys { get; }
 
   /// <summary>
   /// Gets or sets the PostgreSQL schema name for this DbContext's tables.
@@ -148,4 +148,58 @@ public sealed class WhizbangDbContextAttribute(params string[]? keys) : Attribut
   /// </example>
   /// <docs>features/vector-search#turnkey-setup</docs>
   public string? ConnectionStringName { get; set; }
+
+  /// <summary>
+  /// Initializes a new instance of the <see cref="WhizbangDbContextAttribute"/> class
+  /// with the default unnamed key.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
+  /// <remarks>
+  /// Equivalent to <c>[WhizbangDbContext("")]</c>. Matches perspectives with no [WhizbangPerspective] attribute.
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [WhizbangDbContext]  // Keys = [""]
+  /// public partial class BffDbContext : DbContext { }
+  /// </code>
+  /// </example>
+  public WhizbangDbContextAttribute() {
+    Keys = new[] { "" };
+  }
+
+  /// <summary>
+  /// Initializes a new instance of the <see cref="WhizbangDbContextAttribute"/> class
+  /// with the specified keys.
+  /// </summary>
+  /// <param name="keys">
+  /// One or more keys that identify which perspectives should be included in this DbContext.
+  /// Pass empty or null to use the default unnamed key ("").
+  /// </param>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
+  /// <remarks>
+  /// <para>
+  /// <strong>Key Naming Conventions:</strong>
+  /// </para>
+  /// <list type="bullet">
+  /// <item>Use lowercase for consistency (e.g., "catalog", "orders", "products")</item>
+  /// <item>Use descriptive names that reflect domain boundaries or aggregates</item>
+  /// <item>Reserved key: "" (empty string) is the default/unnamed key</item>
+  /// </list>
+  /// </remarks>
+  /// <example>
+  /// <para><strong>Single key:</strong></para>
+  /// <code>
+  /// [WhizbangDbContext("catalog")]
+  /// public partial class CatalogDbContext : DbContext { }
+  /// </code>
+  /// <para><strong>Multiple keys (shared configuration):</strong></para>
+  /// <code>
+  /// [WhizbangDbContext("catalog", "products", "inventory")]
+  /// public partial class CatalogDbContext : DbContext { }
+  /// </code>
+  /// </example>
+  public WhizbangDbContextAttribute(params string[] keys) {
+    Keys = keys?.Length > 0 ? keys : new[] { "" };
+  }
 }

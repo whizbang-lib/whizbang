@@ -92,29 +92,13 @@ public static class TypeNameUtilities {
   /// <summary>
   /// Gets a name suitable for table name generation (input to snake_case conversion).
   /// For nested "Parent.Model", returns "ParentModel".
-  /// For nested "Parent.ParentModel" (nested starts with containing), returns "Parent" to avoid duplication.
   /// For top-level "Order", returns "Order".
   /// </summary>
-  /// <remarks>
-  /// Handles the common pattern where nested perspective models have names that start with
-  /// the containing class name (e.g., ActiveAccount.ActiveAccount or ActiveAccount.ActiveAccountModel).
-  /// In these cases, using just the containing name avoids redundant table names like
-  /// "wh_per_active_account_active_account".
-  /// </remarks>
+  /// <remarks>New utility for EFCoreServiceRegistrationGenerator to fix nested class table naming.</remarks>
   public static string GetTableBaseName(ITypeSymbol typeSymbol) {
     if (typeSymbol.ContainingType != null) {
-      var containingName = typeSymbol.ContainingType.Name;
-      var nestedName = typeSymbol.Name;
-
-      // If nested starts with containing, use just containing to avoid duplication
-      // e.g., ActiveAccount.ActiveAccount -> ActiveAccount
-      // e.g., ActiveAccount.ActiveAccountModel -> ActiveAccount
-      if (nestedName.StartsWith(containingName, StringComparison.Ordinal)) {
-        return containingName;
-      }
-
-      // Different names: concatenate containing + nested
-      return containingName + nestedName;
+      // Nested class: concatenate containing type name + nested type name
+      return typeSymbol.ContainingType.Name + typeSymbol.Name;
     }
     // Top-level class: just the type name
     return typeSymbol.Name;

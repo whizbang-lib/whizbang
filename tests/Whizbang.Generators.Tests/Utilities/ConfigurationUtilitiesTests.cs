@@ -194,30 +194,5 @@ public class ConfigurationUtilitiesTests {
     await Assert.That(value).IsEqualTo("build_property.WhizbangTableNameSuffixesToStrip");
   }
 
-  [Test]
-  public async Task MAX_IDENTIFIER_LENGTH_PROPERTY_HasCorrectValueAsync() {
-    // Arrange - store constant in variable to satisfy TUnit assertion rules
-    var value = ConfigurationUtilities.MAX_IDENTIFIER_LENGTH_PROPERTY;
-
-    // Assert
-    await Assert.That(value).IsEqualTo("build_property.WhizbangMaxIdentifierLength");
-  }
-
-  #endregion
-
-  #region GetMaxIdentifierLengthOverride Tests
-
-  [Test]
-  public async Task GetMaxIdentifierLengthOverride_NullOptions_ReturnsNullAsync() {
-    // Arrange
-    Microsoft.CodeAnalysis.Diagnostics.AnalyzerConfigOptions? options = null;
-
-    // Act
-    var result = ConfigurationUtilities.GetMaxIdentifierLengthOverride(options!);
-
-    // Assert
-    await Assert.That(result).IsNull();
-  }
-
   #endregion
 }

@@ -17,11 +17,6 @@
     Increment the prerelease version number before packing to avoid NuGet cache issues.
     For example: 0.5.1-alpha.2 -> 0.5.1-alpha.3
 
-.PARAMETER Version
-    Explicit version to use for all packages. When specified, this takes precedence
-    over -IncrementVersion. Useful for testing specific versions or matching CI builds.
-    For example: 0.9.0-alpha.119
-
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
     Packs all packages in Debug configuration.
@@ -33,10 +28,6 @@
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1 -IncrementVersion
     Increments the prerelease version and packs all packages.
-
-.EXAMPLE
-    ./scripts/Pack-LocalPackages.ps1 -Version 0.9.0-alpha.119
-    Uses the specified version for all packages (no auto-increment).
 #>
 
 param(
@@ -45,9 +36,7 @@ param(
 
     [switch]$Clean = $true,
 
-    [switch]$IncrementVersion = $true,
-
-    [string]$Version
+    [switch]$IncrementVersion = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,24 +48,11 @@ if (-not $scriptDir) {
 }
 $repoRoot = Split-Path $scriptDir -Parent
 
-# Handle version: explicit -Version takes precedence over -IncrementVersion
-$propsFile = Join-Path $repoRoot "Directory.Build.props"
-$propsContent = Get-Content $propsFile -Raw
+# Increment version if requested
+if ($IncrementVersion) {
+    $propsFile = Join-Path $repoRoot "Directory.Build.props"
+    $propsContent = Get-Content $propsFile -Raw
 
-if ($Version) {
-    # Use explicit version
-    if ($propsContent -match '<Version>([^<]+)</Version>') {
-        $oldVersion = $Matches[1]
-        $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$Version</Version>"
-        Set-Content $propsFile $propsContent -NoNewline
-
-        Write-Host "Version set: $oldVersion -> $Version" -ForegroundColor Green
-    }
-    else {
-        Write-Host "Could not find version in Directory.Build.props" -ForegroundColor Yellow
-    }
-}
-elseif ($IncrementVersion) {
     # Match version like 0.5.1-alpha.2
     if ($propsContent -match '<Version>(\d+\.\d+\.\d+)-([a-z]+)\.(\d+)</Version>') {
         $baseVersion = $Matches[1]

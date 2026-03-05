@@ -235,7 +235,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
                 }
                 Console.WriteLine($"    Body: {bodyText}");
               } catch {
-                Console.WriteLine("    Body: [Unable to read]");
+                Console.WriteLine($"    Body: [Unable to read]");
               }
             }
           }

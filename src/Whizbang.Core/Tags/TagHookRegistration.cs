@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tags;
 
@@ -25,24 +24,17 @@ namespace Whizbang.Core.Tags;
 /// </remarks>
 /// <docs>core-concepts/message-tags#hook-registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagHookRegistrationTests.cs</tests>
-/// <param name="AttributeType">The tag attribute type this hook handles (e.g., typeof(SignalTagAttribute)).</param>
+/// <param name="AttributeType">The tag attribute type this hook handles (e.g., typeof(NotificationTagAttribute)).</param>
 /// <param name="HookType">The hook implementation type (e.g., typeof(SignalRNotificationHook)).</param>
 /// <param name="Priority">Execution priority. Lower values execute first. Default is -100.</param>
-/// <param name="FireAt">Lifecycle stage when this hook fires. Default is AfterReceptorCompletion.</param>
 public sealed record TagHookRegistration(
   Type AttributeType,
   [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
   Type HookType,
-  int Priority = -100,
-  LifecycleStage FireAt = LifecycleStage.AfterReceptorCompletion
+  int Priority = -100
 ) {
   /// <summary>
   /// Gets the default priority for hooks. Lower values execute first.
   /// </summary>
   public static int DefaultPriority => -100;
-
-  /// <summary>
-  /// Gets the default lifecycle stage for hooks.
-  /// </summary>
-  public static LifecycleStage DefaultFireAt => LifecycleStage.AfterReceptorCompletion;
 }

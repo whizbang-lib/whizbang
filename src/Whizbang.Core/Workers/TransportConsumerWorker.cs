@@ -8,7 +8,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
-using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
@@ -33,7 +32,6 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>components/workers/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 public class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
@@ -332,11 +330,6 @@ public class TransportConsumerWorker : BackgroundService {
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
-
-      // Establish FULL security context FIRST (before any business logic)
-      // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
-      await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
       // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)

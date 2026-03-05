@@ -36,10 +36,10 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
-  private const string RECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
-  private const string SYNC_RECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.ISyncReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
-  private const string IEVENT_INTERFACE_NAME = "global::Whizbang.Core.IEvent";
+  private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
+  private const string SYNC_RECEPTOR_INTERFACE_NAME = "Whizbang.Core.ISyncReceptor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string IEVENT_INTERFACE_NAME = "Whizbang.Core.IEvent";
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
@@ -139,9 +139,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var hasTraceAttribute = _hasWhizbangTraceAttribute(classSymbol);
 
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
+        i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
 
     if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
       // Found IReceptor<TMessage, TResponse> - regular async receptor with response
@@ -163,9 +162,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for IReceptor<TMessage> interface (1 type argument) - void receptor
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var voidReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == RECEPTOR_INTERFACE_NAME + "<TMessage>");
+        i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage>");
 
     if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
       // Found IReceptor<TMessage> - void async receptor with no response
@@ -184,9 +182,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for ISyncReceptor<TMessage, TResponse> interface (2 type arguments) - sync receptor
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var syncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
+        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
 
     if (syncReceptorInterface is not null && syncReceptorInterface.TypeArguments.Length == 2) {
       // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
@@ -208,9 +205,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for ISyncReceptor<TMessage> interface (1 type argument) - void sync receptor
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var voidSyncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage>");
+        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage>");
 
     if (voidSyncReceptorInterface is not null && voidSyncReceptorInterface.TypeArguments.Length == 1) {
       // Found ISyncReceptor<TMessage> - void sync receptor with no response
@@ -239,9 +235,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <param name="typeSymbol">The type symbol to check.</param>
   /// <returns>True if the type implements IEvent, false otherwise.</returns>
   private static bool _implementsIEvent(ITypeSymbol typeSymbol) {
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     return typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == IEVENT_INTERFACE_NAME);
+        i.ToDisplayString() == IEVENT_INTERFACE_NAME);
   }
 
   /// <summary>
@@ -795,9 +790,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IPerspectiveFor<TModel, TEvent, ...> interface (any variant with 2+ type args)
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var hasPerspective = classSymbol.AllInterfaces.Any(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var originalDef = i.OriginalDefinition.ToDisplayString();
       // Check if it starts with our perspective interface name and has at least 2 type arguments (model + events)
       return originalDef.StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal) && i.TypeArguments.Length >= 2;
     });
@@ -1118,18 +1112,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "UNTYPED_PUBLISH_ROUTING_SNIPPET"
     );
 
-    // Extract unique event types from receptor response types
-    // These are the types that will be cascaded (returned from receptors)
-    var eventTypes = _extractUniqueEventTypes(receptors);
-
-    // Combine message types (handled by receptors) + event types (returned by receptors and cascaded)
-    // This ensures cascaded events get proper security context establishment even if no receptor handles them
-    var allTypesForUntypedPublish = allMessageTypes.Union(eventTypes).Distinct().ToList();
-
     // Generate Untyped Publish routing code using snippet template
     // This enables auto-cascade: events extracted from receptor return values are published
     var untypedPublishRouting = new StringBuilder();
-    foreach (var messageType in allTypesForUntypedPublish) {
+    foreach (var messageType in allMessageTypes) {
       // Replace placeholders with actual types
       var generatedCode = untypedPublishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
@@ -1231,8 +1217,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Generate outbox cascade type-switch (for auto-cascading events to outbox)
-    // Reuse event types extracted earlier for untyped publish routing
+    // Collect unique event types from receptor response types
     var outboxCascade = new StringBuilder();
+    var eventTypes = _extractUniqueEventTypes(receptors);
 
     // Separate concrete types from interface types
     // Concrete types use exact typeof() matching; interface types use 'is' pattern matching

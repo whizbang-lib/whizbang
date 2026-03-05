@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
-using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Messaging;
 
@@ -270,15 +269,6 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
         receptorActivity?.SetTag("exception.message", ex.Message);
         throw;
       }
-    }
-
-    // Process message tags after all receptors complete at the current lifecycle stage
-    // This enables notification hooks to fire when events are consumed from transport
-    // (e.g., BffService consuming AccountCreatedEvent from UserService)
-    var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
-    if (tagProcessor is not null) {
-      Console.WriteLine($"[RECEPTOR INVOKER] Processing tags for {messageType.Name} at stage {stage}");
-      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope: null, cancellationToken).ConfigureAwait(false);
     }
   }
 
