@@ -21,4 +21,5 @@ branches:
   pull-request:
     tag: pr
     increment: Inherit
+    regex: ^(pull|pull\-requests|pr)[/-]
     tag-number-pattern: '[/-](?<number>\d+)'
