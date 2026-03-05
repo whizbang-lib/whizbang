@@ -2,6 +2,11 @@ name: Version (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to checkout for version calculation (optional, defaults to merge commit)'
+        required: false
+        type: string
     outputs:
       semver:
         description: 'Semantic version (e.g., 0.2.0 or 0.3.0-alpha.1)'
@@ -43,6 +48,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
