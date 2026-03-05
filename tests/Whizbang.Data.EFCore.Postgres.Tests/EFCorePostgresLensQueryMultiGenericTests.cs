@@ -408,6 +408,60 @@ public class EFCorePostgresLensQueryMultiGenericTests {
         .ThrowsNothing();
   }
 
+  [Test]
+  public async Task Dispose_DisposesDbContextAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(OrderModel), "orders" },
+      { typeof(CustomerModel), "customers" }
+    };
+    var lensQuery = new EFCorePostgresLensQuery<OrderModel, CustomerModel>(context, tableNames);
+
+    // Act
+    lensQuery.Dispose();
+
+    // Assert - Context should be disposed (accessing Set should throw)
+    await Assert.That(() => context.Orders.ToList())
+        .Throws<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task Dispose_WhenCalledTwice_OnlyDisposesOnceAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(OrderModel), "orders" },
+      { typeof(CustomerModel), "customers" }
+    };
+    var lensQuery = new EFCorePostgresLensQuery<OrderModel, CustomerModel>(context, tableNames);
+
+    // Act
+    lensQuery.Dispose();
+
+    // Assert - Second dispose should not throw
+    await Assert.That(() => lensQuery.Dispose())
+        .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task Dispose_ThenDisposeAsync_DoesNotThrowAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(OrderModel), "orders" },
+      { typeof(CustomerModel), "customers" }
+    };
+    var lensQuery = new EFCorePostgresLensQuery<OrderModel, CustomerModel>(context, tableNames);
+
+    // Act - Sync dispose first, then async
+    lensQuery.Dispose();
+
+    // Assert - DisposeAsync after Dispose should not throw
+    await Assert.That(async () => await lensQuery.DisposeAsync())
+        .ThrowsNothing();
+  }
+
   #endregion
 
   #region Three Generic Parameter Tests
