@@ -2,6 +2,8 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -24,7 +26,7 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>core-concepts/message-security#security-context-helper</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs</tests>
-public static class SecurityContextHelper {
+public static partial class SecurityContextHelper {
   /// <summary>
   /// Establishes security context from envelope using IMessageSecurityContextProvider.
   /// Sets IScopeContextAccessor.Current with the established context.
@@ -119,6 +121,8 @@ public static class SecurityContextHelper {
   /// </list>
   /// </remarks>
   /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishFullContextAsync_SetsBothContextsAsync</tests>
+  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+  /// <tests>Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
   public static async ValueTask EstablishFullContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -146,15 +150,89 @@ public static class SecurityContextHelper {
   /// and cannot resolve scoped services.
   /// </para>
   /// </remarks>
+  /// <docs>core-concepts/dispatcher#null-envelope-cascade-paths</docs>
+  /// <docs>core-concepts/message-security#asynclocal-context-flow</docs>
   /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync</tests>
-  public static void EstablishMessageContextForCascade() {
-    string? userId = null;
-    string? tenantId = null;
-    if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
-      userId = ctx.Scope.UserId;
-      tenantId = ctx.Scope.TenantId;
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeNullEnvelopeTests.cs:Cascade_WithNullEnvelope_*</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_*ElseBranch*</tests>
+  public static void EstablishMessageContextForCascade(IServiceProvider? serviceProvider = null) {
+    var logger = serviceProvider?.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Security.SecurityContextHelper");
+
+    // CRITICAL: Always log at Information level to verify method is being called
+    if (logger is not null) {
+#pragma warning disable CA1848 // Temporary diagnostic logging
+      logger.LogInformation("🔧 CASCADE CONTEXT ESTABLISHMENT - Method called (this should always appear)");
+#pragma warning restore CA1848
+      Log.CascadeContextEstablishmentStarted(logger);
+    } else {
+      // If no logger, we have a problem - but at least we know the method was called
+      Console.WriteLine("🔧 CASCADE: EstablishMessageContextForCascade called but logger is NULL");
     }
 
+    string? userId = null;
+    string? tenantId = null;
+
+    // Try to read from parent's MessageContextAccessor (AsyncLocal from parent receptor)
+    var parentMessageContext = MessageContextAccessor.CurrentContext;
+    if (logger is not null) {
+      Log.ParentMessageContextChecked(logger, parentMessageContext is null);
+    }
+
+    if (parentMessageContext is not null) {
+      userId = parentMessageContext.UserId;
+      tenantId = parentMessageContext.TenantId;
+      if (logger is not null) {
+        Log.ReadFromMessageContextAccessor(logger, userId, tenantId);
+      }
+    }
+    // Fallback: try ScopeContextAccessor (for transport workers)
+    else if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
+      userId = ctx.Scope.UserId;
+      tenantId = ctx.Scope.TenantId;
+      if (logger is not null) {
+        Log.ReadFromScopeContextAccessorFallback(logger, userId, tenantId);
+      }
+    }
+
+    if (logger is not null) {
+      Log.ExtractedSecurityValues(logger, userId, tenantId);
+#pragma warning disable CA1873 // !string.IsNullOrEmpty is not expensive to evaluate
+      Log.ContextEstablishmentCondition(logger, !string.IsNullOrEmpty(userId), !string.IsNullOrEmpty(tenantId));
+#pragma warning restore CA1873
+    }
+
+    // CRITICAL: Establish BOTH contexts in cascade scope
+
+    // 1. Set ScopeContextAccessor (for ScopedMessageContext.UserId priority 1)
+    if (!string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(tenantId)) {
+      if (logger is not null) {
+        Log.CreatingScopeContext(logger);
+      }
+      var extraction = new SecurityExtraction {
+        Scope = new PerspectiveScope {
+          TenantId = tenantId,
+          UserId = userId
+        },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Cascade:AsyncLocal"
+      };
+      ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
+        extraction,
+        shouldPropagate: true
+      );
+      if (logger is not null) {
+        Log.ScopeContextEstablished(logger, ScopeContextAccessor.CurrentContext is null);
+      }
+    } else {
+      if (logger is not null) {
+        Log.SkippingScopeContextSetup(logger);
+      }
+    }
+
+    // 2. Set MessageContextAccessor (for fallback + other consumers)
     MessageContextAccessor.CurrentContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
@@ -163,5 +241,84 @@ public static class SecurityContextHelper {
       UserId = userId,
       TenantId = tenantId
     };
+    if (logger is not null) {
+      Log.MessageContextEstablished(logger, userId, tenantId);
+    }
+  }
+
+  /// <summary>
+  /// AOT-compatible logging for cascade security context establishment.
+  /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
+  /// </summary>
+  private static partial class Log {
+    [LoggerMessage(
+      EventId = 1,
+      Level = LogLevel.Debug,
+      Message = "Cascade security context establishment started",
+      SkipEnabledCheck = true)]
+    public static partial void CascadeContextEstablishmentStarted(ILogger logger);
+
+    [LoggerMessage(
+      EventId = 2,
+      Level = LogLevel.Debug,
+      Message = "Parent MessageContextAccessor.CurrentContext is null: {IsNull}",
+      SkipEnabledCheck = true)]
+    public static partial void ParentMessageContextChecked(ILogger logger, bool isNull);
+
+    [LoggerMessage(
+      EventId = 3,
+      Level = LogLevel.Debug,
+      Message = "Read security context from MessageContextAccessor - UserId: {UserId}, TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void ReadFromMessageContextAccessor(ILogger logger, string? userId, string? tenantId);
+
+    [LoggerMessage(
+      EventId = 4,
+      Level = LogLevel.Debug,
+      Message = "Read security context from ScopeContextAccessor fallback - UserId: {UserId}, TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void ReadFromScopeContextAccessorFallback(ILogger logger, string? userId, string? tenantId);
+
+    [LoggerMessage(
+      EventId = 5,
+      Level = LogLevel.Debug,
+      Message = "Extracted security values - UserId: {UserId}, TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void ExtractedSecurityValues(ILogger logger, string? userId, string? tenantId);
+
+    [LoggerMessage(
+      EventId = 6,
+      Level = LogLevel.Debug,
+      Message = "Context establishment condition - HasUserId: {HasUserId}, HasTenantId: {HasTenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void ContextEstablishmentCondition(ILogger logger, bool hasUserId, bool hasTenantId);
+
+    [LoggerMessage(
+      EventId = 7,
+      Level = LogLevel.Debug,
+      Message = "Creating SecurityExtraction and establishing ScopeContextAccessor.CurrentContext",
+      SkipEnabledCheck = true)]
+    public static partial void CreatingScopeContext(ILogger logger);
+
+    [LoggerMessage(
+      EventId = 8,
+      Level = LogLevel.Debug,
+      Message = "ScopeContextAccessor.CurrentContext established - IsNull: {IsNull}",
+      SkipEnabledCheck = true)]
+    public static partial void ScopeContextEstablished(ILogger logger, bool isNull);
+
+    [LoggerMessage(
+      EventId = 9,
+      Level = LogLevel.Debug,
+      Message = "Skipping ScopeContextAccessor setup - both UserId and TenantId are null or empty",
+      SkipEnabledCheck = true)]
+    public static partial void SkippingScopeContextSetup(ILogger logger);
+
+    [LoggerMessage(
+      EventId = 10,
+      Level = LogLevel.Debug,
+      Message = "MessageContextAccessor.CurrentContext established - UserId: {UserId}, TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void MessageContextEstablished(ILogger logger, string? userId, string? tenantId);
   }
 }
