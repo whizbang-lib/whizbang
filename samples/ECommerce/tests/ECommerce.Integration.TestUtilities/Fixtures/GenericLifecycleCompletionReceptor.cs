@@ -112,7 +112,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
 
     // Check if we have lifecycle context (set via SetLifecycleContext before this method)
     if (LastLifecycleContext is not null) {
-      Console.WriteLine($"[RECEPTOR] Lifecycle context available:");
+      Console.WriteLine("[RECEPTOR] Lifecycle context available:");
       Console.WriteLine($"[RECEPTOR]   - Current stage: {LastLifecycleContext.CurrentStage}");
       Console.WriteLine($"[RECEPTOR]   - Perspective type: {LastLifecycleContext.PerspectiveType?.FullName ?? "NULL"}");
       Console.WriteLine($"[RECEPTOR]   - Stream ID: {LastLifecycleContext.StreamId}");
@@ -139,7 +139,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
                               LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeInline;
 
       if (isDistributeStage && LastLifecycleContext.MessageSource == MessageSource.Inbox) {
-        Console.WriteLine($"[RECEPTOR] FILTERED: Distribute stage with MessageSource.Inbox (only count Outbox for Distribute stages)");
+        Console.WriteLine("[RECEPTOR] FILTERED: Distribute stage with MessageSource.Inbox (only count Outbox for Distribute stages)");
         return ValueTask.CompletedTask;
       }
 

@@ -82,7 +82,7 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class WhizbangPerspectiveAttribute : Attribute {
+public sealed class WhizbangPerspectiveAttribute(params string[]? keys) : Attribute {
   /// <summary>
   /// Gets the keys that identify which DbContexts should include this perspective.
   /// Multiple keys enable including the perspective in multiple contexts.
@@ -101,60 +101,5 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// </list>
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
-  public string[] Keys { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="WhizbangPerspectiveAttribute"/> class
-  /// with no keys (matches default DbContext only).
-  /// </summary>
-  /// <remarks>
-  /// Equivalent to not having the attribute at all. The perspective will only be included
-  /// in DbContexts with the default key ("").
-  /// </remarks>
-  /// <example>
-  /// <code>
-  /// [WhizbangPerspective]  // Matches default DbContext only
-  /// public class SomePerspective : IPerspectiveFor&lt;SomeModel, SomeEvent&gt; { }
-  /// </code>
-  /// </example>
-  /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
-  public WhizbangPerspectiveAttribute() {
-    Keys = Array.Empty<string>();
-  }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="WhizbangPerspectiveAttribute"/> class
-  /// with the specified keys.
-  /// </summary>
-  /// <param name="keys">
-  /// One or more keys that identify which DbContexts should include this perspective.
-  /// Pass no arguments or null to match the default DbContext only.
-  /// </param>
-  /// <remarks>
-  /// <para>
-  /// <strong>Key Naming Best Practices:</strong>
-  /// </para>
-  /// <list type="bullet">
-  /// <item>Use lowercase for consistency (e.g., "catalog", "orders", "products")</item>
-  /// <item>Match DbContext key naming conventions</item>
-  /// <item>Use domain-aligned names (bounded contexts, aggregates, services)</item>
-  /// <item>Consider using shared keys for cross-cutting concerns</item>
-  /// </list>
-  /// </remarks>
-  /// <example>
-  /// <para><strong>Single key:</strong></para>
-  /// <code>
-  /// [WhizbangPerspective("catalog")]
-  /// public class ProductPerspective : IPerspectiveFor&lt;ProductModel, ProductEvent&gt; { }
-  /// </code>
-  /// <para><strong>Multiple keys:</strong></para>
-  /// <code>
-  /// [WhizbangPerspective("catalog", "warehouse", "reporting")]
-  /// public class InventoryPerspective : IPerspectiveFor&lt;InventoryModel, InventoryEvent&gt; { }
-  /// </code>
-  /// </example>
-  /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
-  public WhizbangPerspectiveAttribute(params string[] keys) {
-    Keys = keys ?? Array.Empty<string>();
-  }
+  public string[] Keys { get; } = keys ?? Array.Empty<string>();
 }

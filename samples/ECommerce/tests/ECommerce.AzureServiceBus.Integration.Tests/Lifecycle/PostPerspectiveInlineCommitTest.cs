@@ -144,7 +144,7 @@ public class PostPerspectiveInlineCommitTest {
         }
         Console.WriteLine($"[TEST] ✗ Product NOT found on attempt {i + 1}");
         if (i < retryCount - 1) {
-          Console.WriteLine($"[TEST] Retrying after 200ms delay...");
+          Console.WriteLine("[TEST] Retrying after 200ms delay...");
           await Task.Delay(200);
         }
       }

@@ -48,17 +48,9 @@ namespace Whizbang.Core.Dispatch;
 /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DefaultRoutingAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
-public sealed class DefaultRoutingAttribute : Attribute {
+public sealed class DefaultRoutingAttribute(DispatchMode mode) : Attribute {
   /// <summary>
   /// Gets the default dispatch mode for the decorated type.
   /// </summary>
-  public DispatchMode Mode { get; }
-
-  /// <summary>
-  /// Initializes a new instance with the specified dispatch mode.
-  /// </summary>
-  /// <param name="mode">The default dispatch mode for the decorated type.</param>
-  public DefaultRoutingAttribute(DispatchMode mode) {
-    Mode = mode;
-  }
+  public DispatchMode Mode { get; } = mode;
 }
