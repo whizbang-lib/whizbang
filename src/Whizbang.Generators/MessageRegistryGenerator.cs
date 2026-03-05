@@ -63,10 +63,10 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class MessageRegistryGenerator : IIncrementalGenerator {
-  private const string I_COMMAND = "Whizbang.Core.ICommand";
-  private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_RECEPTOR = "Whizbang.Core.IReceptor";
-  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string I_COMMAND = "global::Whizbang.Core.ICommand";
+  private const string I_EVENT = "global::Whizbang.Core.IEvent";
+  private const string I_RECEPTOR = "global::Whizbang.Core.IReceptor";
+  private const string I_PERSPECTIVE_FOR = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "MessageRegistrySnippets.cs";
@@ -240,13 +240,15 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IReceptor<TMessage, TResponse> interface (regular receptor)
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage, TResponse>");
+        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == I_RECEPTOR + "<TMessage, TResponse>");
 
     // If not found, look for IReceptor<TMessage> interface (void receptor)
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var voidReceptorInterface = receptorInterface is null
         ? classSymbol.AllInterfaces.FirstOrDefault(i =>
-            i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage>")
+            i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == I_RECEPTOR + "<TMessage>")
         : null;
 
     // Return null if neither interface is implemented
