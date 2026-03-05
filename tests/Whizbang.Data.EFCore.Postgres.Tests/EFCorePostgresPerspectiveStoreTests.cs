@@ -415,6 +415,78 @@ public class EFCorePostgresPerspectiveStoreTests {
     var afterPurge = await store.GetByPartitionKeyAsync(partitionKey);
     await Assert.That(afterPurge).IsNull();
   }
+
+  #region Soft Delete Tests - IPerspectiveWithActionsFor Integration
+
+  /// <summary>
+  /// Tests that soft delete (setting DeletedAt) is preserved by upsert.
+  /// This verifies the ModelAction.Delete behavior where the perspective
+  /// sets DeletedAt and the store preserves it.
+  /// </summary>
+  [Test]
+  public async Task UpsertAsync_WithDeletedAt_PreservesDeletedAtTimestampAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<SoftDeletableModel>(context, "soft_delete_perspective", strategy);
+    var streamId = _idProvider.NewGuid();
+    var deletedAt = DateTimeOffset.UtcNow;
+
+    // Create a record with DeletedAt set (simulating ModelAction.Delete)
+    var model = new SoftDeletableModel {
+      Name = "SoftDeleted",
+      Value = 123,
+      DeletedAt = deletedAt
+    };
+
+    // Act
+    await store.UpsertAsync(streamId, model);
+
+    // Assert - DeletedAt should be preserved
+    var row = await context.Set<PerspectiveRow<SoftDeletableModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.DeletedAt).IsNotNull();
+    // Verify timestamp is within 1 second of expected value
+    var difference = Math.Abs((row.Data.DeletedAt!.Value - deletedAt).TotalSeconds);
+    await Assert.That(difference).IsLessThanOrEqualTo(1);
+  }
+
+  /// <summary>
+  /// Tests that a soft-deleted record can be hard-deleted via PurgeAsync.
+  /// This simulates the scenario where ModelAction.Delete is followed by
+  /// ModelAction.Purge in a later event.
+  /// </summary>
+  [Test]
+  public async Task PurgeAsync_AfterSoftDelete_RemovesSoftDeletedRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<SoftDeletableModel>(context, "soft_delete_perspective", strategy);
+    var streamId = _idProvider.NewGuid();
+
+    // Create and soft-delete
+    await store.UpsertAsync(streamId, new SoftDeletableModel {
+      Name = "ToSoftDelete",
+      Value = 456,
+      DeletedAt = DateTimeOffset.UtcNow
+    });
+
+    // Verify soft-deleted record exists
+    var beforePurge = await store.GetByStreamIdAsync(streamId);
+    await Assert.That(beforePurge).IsNotNull();
+    await Assert.That(beforePurge!.DeletedAt).IsNotNull();
+
+    // Act - hard delete
+    await store.PurgeAsync(streamId);
+
+    // Assert - record should be permanently gone
+    var afterPurge = await store.GetByStreamIdAsync(streamId);
+    await Assert.That(afterPurge).IsNull();
+  }
+
+  #endregion
 }
 
 /// <summary>
@@ -423,4 +495,14 @@ public class EFCorePostgresPerspectiveStoreTests {
 public class StoreTestModel {
   public required string Name { get; init; }
   public required int Value { get; init; }
+}
+
+/// <summary>
+/// Test model with soft delete support (DeletedAt property).
+/// Used to test ModelAction.Delete behavior.
+/// </summary>
+public class SoftDeletableModel {
+  public required string Name { get; init; }
+  public required int Value { get; init; }
+  public DateTimeOffset? DeletedAt { get; init; }
 }
