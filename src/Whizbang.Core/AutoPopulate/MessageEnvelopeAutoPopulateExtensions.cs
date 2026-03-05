@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core.Observability;
@@ -83,7 +84,7 @@ public static class MessageEnvelopeAutoPopulateExtensions {
     }
 
     value = _deserializeElement<T>(element.Value);
-    return value != null;
+    return !EqualityComparer<T>.Default.Equals(value, default);
   }
 
   /// <summary>
