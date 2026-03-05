@@ -37,7 +37,7 @@
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <!-- Version for local development packaging - CI overrides this with GitVersion via /p:Version=X.Y.Z -->
-    <Version>0.9.0-local</Version>
+    <Version>0.9.0-local.1</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
