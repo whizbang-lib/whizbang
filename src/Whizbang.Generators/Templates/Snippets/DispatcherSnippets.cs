@@ -3,9 +3,11 @@
 // and used as templates during code generation.
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Generators.Templates.Placeholders;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Generators.Templates.Snippets;
 
@@ -106,11 +108,11 @@ public class DispatcherSnippets {
   /// Example method showing snippet structure for untyped Publish routing.
   /// Used by auto-cascade to publish events extracted from receptor return values.
   /// </summary>
-  protected Func<object, Task>? UntypedPublishRoutingExample(Type eventType) {
+  protected Func<object, IMessageEnvelope?, CancellationToken, Task>? UntypedPublishRoutingExample(Type eventType) {
     #region UNTYPED_PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
       [System.Diagnostics.DebuggerStepThrough]
-      async Task PublishToReceptorsUntyped(object evt) {
+      async Task PublishToReceptorsUntyped(object evt, IMessageEnvelope? envelope, CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {

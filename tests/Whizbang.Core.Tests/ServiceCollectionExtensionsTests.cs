@@ -275,7 +275,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
     });
     var provider = services.BuildServiceProvider();
 
@@ -311,7 +311,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
       options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
     });
     var provider = services.BuildServiceProvider();
@@ -320,9 +320,9 @@ public class ServiceCollectionExtensionsTests {
     using var scope1 = provider.CreateScope();
     using var scope2 = provider.CreateScope();
 
-    var hook1a = scope1.ServiceProvider.GetService<TestNotificationHook>();
-    var hook1b = scope1.ServiceProvider.GetService<TestNotificationHook>();
-    var hook2 = scope2.ServiceProvider.GetService<TestNotificationHook>();
+    var hook1a = scope1.ServiceProvider.GetService<TestSignalHook>();
+    var hook1b = scope1.ServiceProvider.GetService<TestSignalHook>();
+    var hook2 = scope2.ServiceProvider.GetService<TestSignalHook>();
 
     await Assert.That(hook1a).IsNotNull();
     await Assert.That(hook1a).IsSameReferenceAs(hook1b); // Same within scope
@@ -336,7 +336,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
     });
     var provider = services.BuildServiceProvider();
 
@@ -389,7 +389,7 @@ public class ServiceCollectionExtensionsTests {
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
       options.Tags.UseHook<TelemetryTagAttribute, TestTelemetryHook>();
       options.Tags.UseHook<MetricTagAttribute, TestMetricHook>();
       options.Tags.UseUniversalHook<TestUniversalHook>();
@@ -399,12 +399,12 @@ public class ServiceCollectionExtensionsTests {
     // Assert - all hooks should be resolvable
     using var scope = provider.CreateScope();
 
-    var notificationHook = scope.ServiceProvider.GetService<TestNotificationHook>();
+    var signalHook = scope.ServiceProvider.GetService<TestSignalHook>();
     var telemetryHook = scope.ServiceProvider.GetService<TestTelemetryHook>();
     var metricHook = scope.ServiceProvider.GetService<TestMetricHook>();
     var universalHook = scope.ServiceProvider.GetService<TestUniversalHook>();
 
-    await Assert.That(notificationHook).IsNotNull();
+    await Assert.That(signalHook).IsNotNull();
     await Assert.That(telemetryHook).IsNotNull();
     await Assert.That(metricHook).IsNotNull();
     await Assert.That(universalHook).IsNotNull();
@@ -414,18 +414,18 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddWhizbang_WithHooksTryAddScoped_DoesNotOverrideExisting_Async() {
     // Arrange
     var services = new ServiceCollection();
-    var existingHook = new TestNotificationHook();
+    var existingHook = new TestSignalHook();
     services.AddScoped(_ => existingHook); // Pre-register
 
     // Act
     _ = services.AddWhizbang(options => {
-      options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+      options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
     });
     var provider = services.BuildServiceProvider();
 
     // Assert - TryAddScoped should not override existing registration
     using var scope = provider.CreateScope();
-    var resolvedHook = scope.ServiceProvider.GetService<TestNotificationHook>();
+    var resolvedHook = scope.ServiceProvider.GetService<TestSignalHook>();
     await Assert.That(resolvedHook).IsSameReferenceAs(existingHook);
   }
 
@@ -609,9 +609,9 @@ public class ServiceCollectionExtensionsTests {
   // Test Hook Implementations for Options Lambda Tests
   // ==========================================================================
 
-  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TestSignalHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }

@@ -1226,7 +1226,7 @@ public abstract class Dispatcher(
         }
         var publisher = GetUntypedReceptorPublisher(msgType);
         if (publisher != null) {
-          await publisher(msg);
+          await publisher(msg, null, default);
         }
       }
 
@@ -2249,7 +2249,7 @@ public abstract class Dispatcher(
         if (publisher != null) {
           // Establish message context for cascade: propagates UserId from parent scope
           Security.SecurityContextHelper.EstablishMessageContextForCascade();
-          await publisher(msg);
+          await publisher(msg, null, default);
         }
       }
 
@@ -2566,7 +2566,7 @@ public abstract class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        await publisher(message);
+        await publisher(message, null, default);
       }
     }
 
@@ -3709,7 +3709,7 @@ public abstract class Dispatcher(
   /// </summary>
   /// <param name="eventType">The runtime type of the event (e.g., typeof(OrderCreatedEvent))</param>
   /// <returns>A delegate that publishes the event to all registered receptors, or null if no receptors registered</returns>
-  protected abstract Func<object, Task>? GetUntypedReceptorPublisher(Type eventType);
+  protected abstract Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType);
 
   /// <summary>
   /// Implemented by generated code - returns a sync delegate for invoking a sync receptor.

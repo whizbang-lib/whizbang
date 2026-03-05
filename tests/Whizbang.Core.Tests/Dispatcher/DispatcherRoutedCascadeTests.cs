@@ -372,7 +372,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       };
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return evt => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
@@ -474,7 +474,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return _ => Task.CompletedTask;
     }
 
@@ -656,7 +656,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return _ => Task.CompletedTask;
     }
 
@@ -775,7 +775,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
       return _ => Task.CompletedTask;
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return _ => Task.CompletedTask;
     }
 
