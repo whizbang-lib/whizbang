@@ -236,6 +236,121 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).Contains("return Create_CorrelationId(options);");
   }
 
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for primitive types like Guid, int, string.
+  /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid)) during envelope serialization.
+  /// Primitives are handled directly using JsonMetadataServices (not GetOrCreateTypeInfo) to avoid
+  /// false circular reference detection since the caller has already added the type to TypesBeingCreated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate primitive type handling in GetTypeInfoInternal using JsonMetadataServices directly
+    // (NOT GetOrCreateTypeInfo to avoid false circular reference detection)
+    await Assert.That(code!).Contains("if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    await Assert.That(code).Contains("if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    await Assert.That(code).Contains("if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    await Assert.That(code).Contains("if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    await Assert.That(code).Contains("if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    await Assert.That(code).Contains("if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+  }
+
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for nullable primitive types like Guid?, int?.
+  /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid?)) during envelope serialization.
+  /// Nullable primitives create the underlying type info first, then wrap with nullable converter.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesNullablePrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate nullable primitive type handling that creates underlying type first, then wraps
+    await Assert.That(code!).Contains("if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+  }
+
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for List&lt;primitive&gt; types like List&lt;string&gt;.
+  /// This is critical for nested collections like List&lt;List&lt;string&gt;&gt; - when STJ creates the
+  /// outer list, it needs JsonTypeInfo for List&lt;string&gt; as the element type.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesListOfPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record ProcessData(string Name) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate List<primitive> handling in GetTypeInfoInternal
+    // These enable nested collections like List<List<string>> to work
+    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<string>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<int>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<long>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<bool>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<Guid>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<DateTime>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<decimal>))");
+
+    // Should use JsonMetadataServices.CreateListInfo (not GetOrCreateTypeInfo to avoid false circular reference)
+    await Assert.That(code).Contains("JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<string>, string>");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ImplementsIJsonTypeInfoResolverAsync() {
@@ -5571,6 +5686,167 @@ public record CatalogEvent : IEvent {
 
     // Should use the correct API for IReadOnlyList
     await Assert.That(code).Contains("CreateIReadOnlyList_");
+  }
+
+  #endregion
+
+  #region Polymorphic Interface Support Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithEvent_GeneratesDerivedTypeRegistrationAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Should generate MessageJsonContextInitializer with derived type registration
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithCommand_GeneratesDerivedTypeRegistrationAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(Guid OrderId, string CustomerName) : ICommand;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Should generate MessageJsonContextInitializer with derived type registration
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.Commands.CreateOrder>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleEvents_GeneratesAllDerivedTypeRegistrationsAsync() {
+    // Arrange - multiple event types
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+public record OrderShipped(Guid OrderId, string TrackingNumber) : IEvent;
+public record OrderDelivered(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should register all event types
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderShipped>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderDelivered>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
+    // Arrange - mix of commands and events
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp;
+
+public record CreateOrder(Guid OrderId) : ICommand;
+public record OrderCreated(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should register command with ICommand base type
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.CreateOrder>");
+
+    // Should register event with IEvent base type
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.OrderCreated>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DerivedTypeRegistration_UsesFullyQualifiedNameAsDiscriminatorAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should use fully qualified type name as discriminator to avoid collisions
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>(\"MyApp.Events.OrderPlaced\")");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_Initializer_HasModuleInitializerAttributeAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should have ModuleInitializer attribute
+    await Assert.That(initializerCode!).Contains("[ModuleInitializer]");
+    await Assert.That(initializerCode).Contains("public static void Initialize()");
   }
 
   #endregion

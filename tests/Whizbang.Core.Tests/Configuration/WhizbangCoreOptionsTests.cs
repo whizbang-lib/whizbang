@@ -124,12 +124,12 @@ public class WhizbangCoreOptionsTests {
     var options = new WhizbangCoreOptions();
 
     // Act
-    options.Tags.UseHook<SignalTagAttribute, TestSignalHook>();
+    options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Assert
     await Assert.That(options.Tags.HookRegistrations.Count).IsEqualTo(1);
     await Assert.That(options.Tags.HookRegistrations[0].AttributeType).IsEqualTo(typeof(SignalTagAttribute));
-    await Assert.That(options.Tags.HookRegistrations[0].HookType).IsEqualTo(typeof(TestSignalHook));
+    await Assert.That(options.Tags.HookRegistrations[0].HookType).IsEqualTo(typeof(TestNotificationHook));
   }
 
   [Test]
@@ -139,7 +139,7 @@ public class WhizbangCoreOptionsTests {
 
     // Act
     options.Tags
-      .UseHook<SignalTagAttribute, TestSignalHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>()
       .UseHook<MetricTagAttribute, TestMetricHook>();
 
@@ -272,7 +272,7 @@ public class WhizbangCoreOptionsTests {
 
   #region Test Hook Implementations
 
-  private sealed class TestSignalHook : IMessageTagHook<SignalTagAttribute> {
+  private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
         CancellationToken __) {

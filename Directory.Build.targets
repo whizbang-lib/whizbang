@@ -66,37 +66,6 @@
     </RetryFileOperation>
   </Target>
 
-  <!-- Inline task to extract message registry JSON from generated C# (cross-platform) -->
-  <UsingTask TaskName="ExtractMessageRegistryJson" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
-    <ParameterGroup>
-      <SourceFile ParameterType="System.String" Required="true" />
-      <OutputFile ParameterType="System.String" Required="true" />
-    </ParameterGroup>
-    <Task>
-      <Using Namespace="System" />
-      <Using Namespace="System.IO" />
-      <Code Type="Fragment" Language="cs">
-        <![CDATA[
-        var content = File.ReadAllText(SourceFile);
-        var marker = "internal const string Json = @\"";
-        var start = content.IndexOf(marker);
-        if (start < 0) {
-            Log.LogError("Could not find JSON marker in " + SourceFile);
-            return false;
-        }
-        start += marker.Length;
-        var end = content.IndexOf("\";", start);
-        if (end < 0) {
-            Log.LogError("Could not find end of JSON string in " + SourceFile);
-            return false;
-        }
-        var json = content.Substring(start, end - start).Replace("\"\"", "\"");
-        File.WriteAllText(OutputFile, json);
-        ]]>
-      </Code>
-    </Task>
-  </UsingTask>
-
   <!-- Post-build task to extract message registry JSON from generated C# file -->
   <Target Name="ExtractMessageRegistry" AfterTargets="Build">
     <PropertyGroup>
@@ -108,11 +77,11 @@
     <!-- Create .whizbang directory if it doesn't exist -->
     <MakeDir Directories="$(WhizbangDir)" Condition="!Exists('$(WhizbangDir)')" />
 
-    <!-- Extract JSON from generated C# file (cross-platform) -->
-    <ExtractMessageRegistryJson
-      SourceFile="$(GeneratedCSharpFile)"
-      OutputFile="$(RegistryJsonFile)"
-      Condition="Exists('$(GeneratedCSharpFile)')" />
+    <!-- Extract JSON from generated C# file using PowerShell/bash -->
+    <Exec
+      Command="bash -c 'sed -n &quot;/internal const string Json = @\&quot;/,/^\&quot;;/p&quot; &quot;$(GeneratedCSharpFile)&quot; | sed &quot;1s/.*@\&quot;//;/^\&quot;;/d&quot; | sed &quot;s/\&quot;\&quot;/\&quot;/g&quot; &gt; &quot;$(RegistryJsonFile)&quot;'"
+      Condition="Exists('$(GeneratedCSharpFile)')"
+      IgnoreExitCode="false" />
 
     <Message
       Text="Whizbang: Message registry extracted to $(RegistryJsonFile)"

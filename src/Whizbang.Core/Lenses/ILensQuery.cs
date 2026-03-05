@@ -66,7 +66,7 @@ public interface ILensQuery<TModel> : ILensQuery where TModel : class {
 /// <typeparam name="T2">Second read model type</typeparam>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class {
   /// <summary>
@@ -90,7 +90,7 @@ public interface ILensQuery<T1, T2> : ILensQuery, IAsyncDisposable, IDisposable
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class {
@@ -112,7 +112,7 @@ public interface ILensQuery<T1, T2, T3> : ILensQuery, IAsyncDisposable, IDisposa
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -135,7 +135,7 @@ public interface ILensQuery<T1, T2, T3, T4> : ILensQuery, IAsyncDisposable, IDis
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -159,7 +159,7 @@ public interface ILensQuery<T1, T2, T3, T4, T5> : ILensQuery, IAsyncDisposable, 
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -184,7 +184,7 @@ public interface ILensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery, IAsyncDisposab
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -210,7 +210,7 @@ public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQuery, IAsyncDisp
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -237,7 +237,7 @@ public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : ILensQuery, IAsync
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class
@@ -265,7 +265,7 @@ public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> : ILensQuery, IA
 /// </summary>
 /// <docs>core-concepts/lenses</docs>
 /// <docs>lenses/multi-model-queries</docs>
-public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> : ILensQuery, IAsyncDisposable, IDisposable
+public interface ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> : ILensQuery, IAsyncDisposable
     where T1 : class
     where T2 : class
     where T3 : class

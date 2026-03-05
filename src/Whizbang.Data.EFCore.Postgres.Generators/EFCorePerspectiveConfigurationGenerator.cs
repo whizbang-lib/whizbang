@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Data.EFCore.Postgres.Generators.Limits;
+using Whizbang.Generators.Shared.Limits;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
@@ -44,6 +46,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         ConfigurationUtilities.SelectTableNameConfig
     );
 
+    // Read optional max identifier length override from MSBuild properties
+    var maxIdLengthOverride = context.AnalyzerConfigOptionsProvider.Select(
+        ConfigurationUtilities.SelectMaxIdentifierLengthOverride
+    );
+
     // Discover classes implementing IPerspectiveFor<TModel>
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
@@ -56,8 +63,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractDbContextSchema(ctx, ct)
     ).Where(static schema => schema is not null);
 
-    // Combine perspective candidates with table name configuration
-    var perspectivesWithConfig = perspectiveCandidates.Collect().Combine(tableNameConfig);
+    // Combine perspective candidates with table name configuration and max identifier length override
+    var perspectivesWithConfig = perspectiveCandidates.Collect()
+        .Combine(tableNameConfig)
+        .Combine(maxIdLengthOverride);
 
     //  Combine with DbContext schema and compilation
     var allData = perspectivesWithConfig
@@ -68,8 +77,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         allData,
         static (ctx, data) => {
-          var candidates = data.Left.Left.Left;
-          var config = data.Left.Left.Right;
+          var candidates = data.Left.Left.Left.Left;
+          var config = data.Left.Left.Left.Right;
+          var maxIdOverride = data.Left.Left.Right;
           var dbContextSchemas = data.Left.Right;
           var compilation = data.Right;
 
@@ -79,11 +89,80 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
             return;
           }
 
+          // Get provider limits - use override if configured, otherwise PostgreSQL defaults
+          IDbProviderLimits limits = maxIdOverride.HasValue
+              ? new OverriddenPostgresLimits(maxIdOverride.Value)
+              : PostgresLimits.Instance;
+
           // Build PerspectiveInfo with table names using config
-          var perspectives = candidates
+          var allPerspectives = candidates
               .Where(c => c is not null)
               .Select(c => _buildPerspectiveInfo(c!, config))
-              .ToImmutableArray();
+              .ToList();
+
+          // Validate identifier lengths and report diagnostics
+          var validPerspectives = new List<PerspectiveInfo>();
+          foreach (var perspective in allPerspectives) {
+            var hasError = false;
+
+            // Validate table name
+            var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
+            if (tableError is not null) {
+              ctx.ReportDiagnostic(Diagnostic.Create(
+                  DiagnosticDescriptors.TableNameExceedsLimit,
+                  Location.None,
+                  perspective.ModelTypeName,
+                  perspective.TableName,
+                  IdentifierValidation.GetByteCount(perspective.TableName),
+                  limits.ProviderName,
+                  limits.MaxTableNameBytes
+              ));
+              hasError = true;
+            }
+
+            // Validate physical field column and index names
+            foreach (var field in perspective.PhysicalFields) {
+              var columnError = IdentifierValidation.ValidateColumnName(field.ColumnName, limits);
+              if (columnError is not null) {
+                ctx.ReportDiagnostic(Diagnostic.Create(
+                    DiagnosticDescriptors.ColumnNameExceedsLimit,
+                    Location.None,
+                    field.PropertyName,
+                    perspective.ModelTypeName,
+                    field.ColumnName,
+                    IdentifierValidation.GetByteCount(field.ColumnName),
+                    limits.ProviderName,
+                    limits.MaxColumnNameBytes
+                ));
+                hasError = true;
+              }
+
+              // Validate index name if indexed
+              if (field.IsIndexed || field.IsUnique) {
+                var indexName = $"ix_{perspective.TableName}_{field.ColumnName}";
+                var indexError = IdentifierValidation.ValidateIndexName(indexName, limits);
+                if (indexError is not null) {
+                  ctx.ReportDiagnostic(Diagnostic.Create(
+                      DiagnosticDescriptors.IndexNameExceedsLimit,
+                      Location.None,
+                      indexName,
+                      field.PropertyName,
+                      perspective.ModelTypeName,
+                      IdentifierValidation.GetByteCount(indexName),
+                      limits.ProviderName,
+                      limits.MaxIndexNameBytes
+                  ));
+                  hasError = true;
+                }
+              }
+            }
+
+            if (!hasError) {
+              validPerspectives.Add(perspective);
+            }
+          }
+
+          var perspectives = validPerspectives.ToImmutableArray();
 
           // Extract schema from first DbContext (typically one per project)
           // If no DbContext found or no schema specified, defaults to null and generator will derive from namespace
@@ -92,6 +171,22 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
           _generateModelBuilderExtension(ctx, perspectives, schema);
         }
     );
+  }
+
+  /// <summary>
+  /// Helper class for overriding PostgreSQL limits via MSBuild property.
+  /// </summary>
+  private sealed class OverriddenPostgresLimits : IDbProviderLimits {
+    private readonly int _maxLength;
+
+    public OverriddenPostgresLimits(int maxLength) {
+      _maxLength = maxLength;
+    }
+
+    public int MaxTableNameBytes => _maxLength;
+    public int MaxColumnNameBytes => _maxLength;
+    public int MaxIndexNameBytes => _maxLength;
+    public string ProviderName => $"PostgreSQL (override: {_maxLength})";
   }
 
   /// <summary>

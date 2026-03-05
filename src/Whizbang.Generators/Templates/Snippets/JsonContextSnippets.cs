@@ -244,6 +244,66 @@ __DERIVED_TYPE_REGISTRATIONS__
   polyOptions.DerivedTypes.Add(new JsonDerivedType(typeof(__DERIVED_TYPE__), "__DERIVED_TYPE_DISCRIMINATOR__"));
 #endregion
 
+#region LAZY_FIELD_INTERFACE
+private JsonTypeInfo<__INTERFACE_TYPE__>? ___INTERFACE_NAME__;
+#endregion
+
+#region INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for __INTERFACE_TYPE__ with polymorphic support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<__INTERFACE_TYPE__> __INTERFACE_NAME__ => ___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_INTERFACE
+if (type == typeof(__INTERFACE_TYPE__)) {
+  return __INTERFACE_NAME__;
+}
+#endregion
+
+#region LAZY_FIELD_MESSAGE_ENVELOPE_INTERFACE
+private JsonTypeInfo<global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>>? _MessageEnvelope___INTERFACE_NAME__;
+#endregion
+
+#region MESSAGE_ENVELOPE_INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for MessageEnvelope&lt;__INTERFACE_TYPE__&gt; with polymorphic payload support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>> MessageEnvelope___INTERFACE_NAME__ => _MessageEnvelope___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE
+if (type == typeof(global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>)) {
+  return MessageEnvelope___INTERFACE_NAME__;
+}
+#endregion
+
+#region LAZY_FIELD_LIST_INTERFACE
+private JsonTypeInfo<global::System.Collections.Generic.List<__INTERFACE_TYPE__>>? _List___INTERFACE_NAME__;
+#endregion
+
+#region LIST_INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for List&lt;__INTERFACE_TYPE__&gt; with polymorphic element support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<global::System.Collections.Generic.List<__INTERFACE_TYPE__>> List___INTERFACE_NAME__ => _List___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicListTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_LIST_INTERFACE
+if (type == typeof(global::System.Collections.Generic.List<__INTERFACE_TYPE__>)) {
+  return List___INTERFACE_NAME__;
+}
+#endregion
+
 #region HELPER_CREATE_PROPERTY
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,
@@ -432,6 +492,105 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
 
     if (type == typeof(char)) {
       return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
+    }
+
+    // Handle nullable primitive types (Guid?, int?, etc.)
+    // These are common in message types and must be handled without relying on resolver chain.
+    // IMPORTANT: Use the overload that takes JsonTypeInfo<T> to avoid options lookup,
+    // which fails when the base type isn't registered in the resolver chain.
+    if (type == typeof(Guid?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(int?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(long?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(bool?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(DateTime?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(DateTimeOffset?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(TimeSpan?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(DateOnly?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(TimeOnly?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(decimal?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(double?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(float?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(byte?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(sbyte?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(short?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(ushort?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(uint?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(ulong?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
+    }
+
+    if (type == typeof(char?)) {
+      var underlyingInfo = JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(underlyingInfo));
     }
 
     // For complex types (List, Dictionary, etc.), query the full resolver chain

@@ -3,11 +3,9 @@
 // and used as templates during code generation.
 
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Generators.Templates.Placeholders;
 using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.Observability;
 
 namespace Whizbang.Generators.Templates.Snippets;
 
@@ -42,6 +40,10 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
           // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
@@ -83,6 +85,10 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
           var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
           var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
           foreach (var receptor in receptors) {
@@ -107,23 +113,37 @@ public class DispatcherSnippets {
   /// <summary>
   /// Example method showing snippet structure for untyped Publish routing.
   /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// Establishes security context from source envelope before invoking receptors.
   /// </summary>
   protected Func<object, IMessageEnvelope?, CancellationToken, Task>? UntypedPublishRoutingExample(Type eventType) {
     #region UNTYPED_PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
       [System.Diagnostics.DebuggerStepThrough]
-      async Task PublishToReceptorsUntyped(object evt, IMessageEnvelope? envelope, CancellationToken cancellationToken) {
+      async Task PublishToReceptorsUntyped(object evt, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope, global::System.Threading.CancellationToken cancellationToken) {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish security context from source envelope before invoking receptors
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          if (sourceEnvelope is not null) {
+            await global::Whizbang.Core.Security.SecurityContextHelper.EstablishFullContextAsync(
+                sourceEnvelope,
+                scope.ServiceProvider,
+                cancellationToken);
+          } else {
+            // Cascade path: Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+            // This enables cascaded receptors to access UserId, TenantId via IMessageContext
+            global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+          }
+
           var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
           var voidReceptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
           var typedEvt = (__MESSAGE_TYPE__)evt;
           foreach (var receptor in receptors) {
-            await receptor.HandleAsync(typedEvt);
+            await receptor.HandleAsync(typedEvt, cancellationToken);
           }
           foreach (var voidReceptor in voidReceptors) {
-            await voidReceptor.HandleAsync(typedEvt);
+            await voidReceptor.HandleAsync(typedEvt, cancellationToken);
           }
         } finally {
           if (scope is IAsyncDisposable asyncDisposable) {
@@ -190,6 +210,10 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
           // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
@@ -234,6 +258,10 @@ public class DispatcherSnippets {
       TResult InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
+        // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+        // This enables receptors to access UserId, TenantId via IMessageContext
+        global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                     ?? scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
@@ -275,6 +303,10 @@ public class DispatcherSnippets {
       void InvokeReceptor(object msg) {
         // Create scope for each invocation to properly handle scoped services
         using var scope = _scopeFactory.CreateScope();
+        // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+        // This enables receptors to access UserId, TenantId via IMessageContext
+        global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
         // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
         var receptor = scope.ServiceProvider.GetKeyedService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                     ?? scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
@@ -351,6 +383,10 @@ public class DispatcherSnippets {
     #region LIFECYCLE_ROUTING_VOID_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
       using var scope = _scopeFactory.CreateScope();
+      // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+      // This enables receptors to access UserId, TenantId via IMessageContext
+      global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
       // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
       var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                   ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
@@ -371,6 +407,10 @@ public class DispatcherSnippets {
     #region LIFECYCLE_ROUTING_RESPONSE_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
       using var scope = _scopeFactory.CreateScope();
+      // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+      // This enables receptors to access UserId, TenantId via IMessageContext
+      global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
       // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
       var receptor = scope.ServiceProvider.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                   ?? scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
@@ -609,6 +649,10 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
           // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
@@ -660,6 +704,10 @@ public class DispatcherSnippets {
         // Create scope for each invocation to properly handle scoped services
         var scope = _scopeFactory.CreateScope();
         try {
+          // Establish message context from ambient AsyncLocal (ScopeContextAccessor)
+          // This enables receptors to access UserId, TenantId via IMessageContext
+          global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider);
+
           // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
           __SYNC_AWAIT_CODE__
           // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)

@@ -38,6 +38,17 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PolicyDecisionTrail))]
 [JsonSerializable(typeof(List<PolicyDecision>))]
 [JsonSerializable(typeof(PolicyDecision))]
+// Non-nullable primitive types for AOT compatibility
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(decimal))]
+[JsonSerializable(typeof(DateTime))]
+[JsonSerializable(typeof(DateTimeOffset))]
+[JsonSerializable(typeof(Guid))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(float))]
 // Nullable primitive types for AOT compatibility (value types only)
 [JsonSerializable(typeof(decimal?))]
 [JsonSerializable(typeof(int?))]
