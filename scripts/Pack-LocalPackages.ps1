@@ -15,7 +15,10 @@
 
 .PARAMETER IncrementVersion
     Increment the prerelease version number before packing to avoid NuGet cache issues.
-    For example: 0.5.1-alpha.2 -> 0.5.1-alpha.3
+    Handles multiple formats:
+    - 0.9.0-local -> 0.9.0-local.1 (local dev version)
+    - 0.5.1-alpha.2 -> 0.5.1-alpha.3 (numbered prerelease)
+    - 0.5.1 -> 0.5.1-alpha.1 (stable to prerelease)
 
 .PARAMETER Version
     Explicit version to use for all packages. When specified, this takes precedence
@@ -73,7 +76,8 @@ if ($Version) {
         Write-Host "Version set: $oldVersion -> $Version" -ForegroundColor Green
     }
     else {
-        Write-Host "Could not find version in Directory.Build.props" -ForegroundColor Yellow
+        Write-Error "Could not find <Version> element in Directory.Build.props"
+        exit 1
     }
 }
 elseif ($IncrementVersion) {
@@ -85,6 +89,18 @@ elseif ($IncrementVersion) {
         $newPrereleaseNum = $prereleaseNum + 1
         $oldVersion = "$baseVersion-$prerelease.$prereleaseNum"
         $newVersion = "$baseVersion-$prerelease.$newPrereleaseNum"
+
+        $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$newVersion</Version>"
+        Set-Content $propsFile $propsContent -NoNewline
+
+        Write-Host "Version incremented: $oldVersion -> $newVersion" -ForegroundColor Green
+    }
+    elseif ($propsContent -match '<Version>(\d+\.\d+\.\d+)-([a-z]+)</Version>') {
+        # Match version like 0.9.0-local (prerelease without number)
+        $baseVersion = $Matches[1]
+        $prerelease = $Matches[2]
+        $oldVersion = "$baseVersion-$prerelease"
+        $newVersion = "$baseVersion-$prerelease.1"
 
         $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$newVersion</Version>"
         Set-Content $propsFile $propsContent -NoNewline
@@ -104,6 +120,7 @@ elseif ($IncrementVersion) {
     }
     else {
         Write-Host "Could not parse version from Directory.Build.props" -ForegroundColor Yellow
+        Write-Host "Expected format: X.Y.Z, X.Y.Z-prerelease, or X.Y.Z-prerelease.N" -ForegroundColor Yellow
     }
 }
 
