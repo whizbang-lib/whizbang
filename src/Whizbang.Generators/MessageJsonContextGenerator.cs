@@ -817,51 +817,53 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
-    // Primitive types - delegate to GetOrCreateTypeInfo helper which handles these AOT-compatibly
-    // This is critical for serialization when message types contain primitive properties
+    // Primitive types - create directly using JsonMetadataServices (AOT-compatible)
+    // IMPORTANT: Do NOT delegate to GetOrCreateTypeInfo<T>() here because the caller
+    // (IJsonTypeInfoResolver.GetTypeInfo) has already added this type to TypesBeingCreated,
+    // which would trigger a false "circular reference" error in GetOrCreateTypeInfo.
     sb.AppendLine("  // Primitive types (common property types in messages)");
-    sb.AppendLine("  // Delegate to GetOrCreateTypeInfo which creates them AOT-compatibly");
-    sb.AppendLine("  if (type == typeof(string)) return GetOrCreateTypeInfo<string>(options);");
-    sb.AppendLine("  if (type == typeof(int)) return GetOrCreateTypeInfo<int>(options);");
-    sb.AppendLine("  if (type == typeof(long)) return GetOrCreateTypeInfo<long>(options);");
-    sb.AppendLine("  if (type == typeof(bool)) return GetOrCreateTypeInfo<bool>(options);");
-    sb.AppendLine("  if (type == typeof(Guid)) return GetOrCreateTypeInfo<Guid>(options);");
-    sb.AppendLine("  if (type == typeof(DateTime)) return GetOrCreateTypeInfo<DateTime>(options);");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return GetOrCreateTypeInfo<DateTimeOffset>(options);");
-    sb.AppendLine("  if (type == typeof(TimeSpan)) return GetOrCreateTypeInfo<TimeSpan>(options);");
-    sb.AppendLine("  if (type == typeof(DateOnly)) return GetOrCreateTypeInfo<DateOnly>(options);");
-    sb.AppendLine("  if (type == typeof(TimeOnly)) return GetOrCreateTypeInfo<TimeOnly>(options);");
-    sb.AppendLine("  if (type == typeof(decimal)) return GetOrCreateTypeInfo<decimal>(options);");
-    sb.AppendLine("  if (type == typeof(double)) return GetOrCreateTypeInfo<double>(options);");
-    sb.AppendLine("  if (type == typeof(float)) return GetOrCreateTypeInfo<float>(options);");
-    sb.AppendLine("  if (type == typeof(byte)) return GetOrCreateTypeInfo<byte>(options);");
-    sb.AppendLine("  if (type == typeof(sbyte)) return GetOrCreateTypeInfo<sbyte>(options);");
-    sb.AppendLine("  if (type == typeof(short)) return GetOrCreateTypeInfo<short>(options);");
-    sb.AppendLine("  if (type == typeof(ushort)) return GetOrCreateTypeInfo<ushort>(options);");
-    sb.AppendLine("  if (type == typeof(uint)) return GetOrCreateTypeInfo<uint>(options);");
-    sb.AppendLine("  if (type == typeof(ulong)) return GetOrCreateTypeInfo<ulong>(options);");
-    sb.AppendLine("  if (type == typeof(char)) return GetOrCreateTypeInfo<char>(options);");
+    sb.AppendLine("  // Create directly using JsonMetadataServices - do NOT use GetOrCreateTypeInfo to avoid false circular reference detection");
+    sb.AppendLine("  if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    sb.AppendLine("  if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("  if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("  if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("  if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("  if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("  if (type == typeof(TimeSpan)) return JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
+    sb.AppendLine("  if (type == typeof(DateOnly)) return JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(TimeOnly)) return JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("  if (type == typeof(double)) return JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("  if (type == typeof(float)) return JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("  if (type == typeof(byte)) return JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);");
+    sb.AppendLine("  if (type == typeof(sbyte)) return JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);");
+    sb.AppendLine("  if (type == typeof(short)) return JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);");
+    sb.AppendLine("  if (type == typeof(ushort)) return JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);");
+    sb.AppendLine("  if (type == typeof(uint)) return JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);");
+    sb.AppendLine("  if (type == typeof(ulong)) return JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);");
+    sb.AppendLine("  if (type == typeof(char)) return JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);");
     sb.AppendLine();
-    sb.AppendLine("  // Nullable primitive types");
-    sb.AppendLine("  if (type == typeof(int?)) return GetOrCreateTypeInfo<int?>(options);");
-    sb.AppendLine("  if (type == typeof(long?)) return GetOrCreateTypeInfo<long?>(options);");
-    sb.AppendLine("  if (type == typeof(bool?)) return GetOrCreateTypeInfo<bool?>(options);");
-    sb.AppendLine("  if (type == typeof(Guid?)) return GetOrCreateTypeInfo<Guid?>(options);");
-    sb.AppendLine("  if (type == typeof(DateTime?)) return GetOrCreateTypeInfo<DateTime?>(options);");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) return GetOrCreateTypeInfo<DateTimeOffset?>(options);");
-    sb.AppendLine("  if (type == typeof(TimeSpan?)) return GetOrCreateTypeInfo<TimeSpan?>(options);");
-    sb.AppendLine("  if (type == typeof(DateOnly?)) return GetOrCreateTypeInfo<DateOnly?>(options);");
-    sb.AppendLine("  if (type == typeof(TimeOnly?)) return GetOrCreateTypeInfo<TimeOnly?>(options);");
-    sb.AppendLine("  if (type == typeof(decimal?)) return GetOrCreateTypeInfo<decimal?>(options);");
-    sb.AppendLine("  if (type == typeof(double?)) return GetOrCreateTypeInfo<double?>(options);");
-    sb.AppendLine("  if (type == typeof(float?)) return GetOrCreateTypeInfo<float?>(options);");
-    sb.AppendLine("  if (type == typeof(byte?)) return GetOrCreateTypeInfo<byte?>(options);");
-    sb.AppendLine("  if (type == typeof(sbyte?)) return GetOrCreateTypeInfo<sbyte?>(options);");
-    sb.AppendLine("  if (type == typeof(short?)) return GetOrCreateTypeInfo<short?>(options);");
-    sb.AppendLine("  if (type == typeof(ushort?)) return GetOrCreateTypeInfo<ushort?>(options);");
-    sb.AppendLine("  if (type == typeof(uint?)) return GetOrCreateTypeInfo<uint?>(options);");
-    sb.AppendLine("  if (type == typeof(ulong?)) return GetOrCreateTypeInfo<ulong?>(options);");
-    sb.AppendLine("  if (type == typeof(char?)) return GetOrCreateTypeInfo<char?>(options);");
+    sb.AppendLine("  // Nullable primitive types - create underlying type info first, then wrap with nullable converter");
+    sb.AppendLine("  if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(double?)) { var u = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(float?)) { var u = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(byte?)) { var u = JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(short?)) { var u = JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ushort?)) { var u = JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(uint?)) { var u = JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ulong?)) { var u = JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(char?)) { var u = JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     sb.AppendLine();
 
     // All discovered types (messages + nested types)
