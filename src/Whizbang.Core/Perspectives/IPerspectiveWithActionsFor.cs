@@ -1,5 +1,10 @@
 namespace Whizbang.Core.Perspectives;
 
+#pragma warning disable S2436 // Reduce the number of type parameters in the generic type
+// TModel and TEvent1-TEvent10 are intentionally declared at the interface level to document
+// which model and event types are valid. The runtime implementation enforces type constraints.
+// Supporting up to 10 event types allows complex event handling scenarios while maintaining type safety.
+
 /// <summary>
 /// Base marker interface for perspectives that return ApplyResult with action support.
 /// Use this interface when your perspective needs to express deletion operations
