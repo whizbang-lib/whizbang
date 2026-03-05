@@ -311,6 +311,46 @@ public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICo
     await Assert.That(code).Contains("if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
   }
 
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for List&lt;primitive&gt; types like List&lt;string&gt;.
+  /// This is critical for nested collections like List&lt;List&lt;string&gt;&gt; - when STJ creates the
+  /// outer list, it needs JsonTypeInfo for List&lt;string&gt; as the element type.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesListOfPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record ProcessData(string Name) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate List<primitive> handling in GetTypeInfoInternal
+    // These enable nested collections like List<List<string>> to work
+    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<string>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<int>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<long>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<bool>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<Guid>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<DateTime>))");
+    await Assert.That(code).Contains("if (type == typeof(global::System.Collections.Generic.List<decimal>))");
+
+    // Should use JsonMetadataServices.CreateListInfo (not GetOrCreateTypeInfo to avoid false circular reference)
+    await Assert.That(code).Contains("JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<string>, string>");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ImplementsIJsonTypeInfoResolverAsync() {
