@@ -463,7 +463,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateInterfaceProperties(assembly, allTypes));
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes, polymorphicTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
@@ -495,6 +495,49 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
     }
+
+    // Generate MessageJsonContextInitializer with RegisterDerivedType calls for polymorphic serialization
+    {
+      var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
+      initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
+      initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
+
+      // Generate RegisterDerivedType calls for each message type
+      var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
+      initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+
+      context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
+    }
+  }
+
+  /// <summary>
+  /// Generates RegisterDerivedType calls for all discovered message types.
+  /// Each event type is registered with IEvent, each command type with ICommand.
+  /// Uses fully qualified type name as discriminator to avoid collisions when
+  /// multiple types have the same simple name in different namespaces.
+  /// </summary>
+  private static string _generateDerivedTypeRegistrations(ImmutableArray<JsonMessageTypeInfo> messages) {
+    var sb = new System.Text.StringBuilder();
+
+    foreach (var message in messages) {
+      // Use fully qualified name without global:: prefix for discriminator to ensure uniqueness
+      var discriminator = message.FullyQualifiedName.Replace("global::", "");
+
+      if (message.IsEvent) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IEvent, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+
+      if (message.IsCommand) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.ICommand, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+
+      // All message types (events and commands) are also IMessage
+      if (message.IsEvent || message.IsCommand) {
+        sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IMessage, {message.FullyQualifiedName}>(\"{discriminator}\");");
+      }
+    }
+
+    return sb.ToString();
   }
 
   private static string _generateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
@@ -541,6 +584,66 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(field);
     }
+    sb.AppendLine();
+
+    // Interface lazy fields - always generate for IEvent, ICommand, IMessage
+    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (hasEvents || hasCommands) {
+      var interfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_INTERFACE");
+      var messageEnvelopeInterfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_MESSAGE_ENVELOPE_INTERFACE");
+      var listInterfaceFieldSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "LAZY_FIELD_LIST_INTERFACE");
+
+      sb.AppendLine("  // Interface lazy fields for polymorphic serialization");
+
+      // IMessage (always if we have any messages)
+      sb.AppendLine(interfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(listInterfaceFieldSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+
+      // IEvent (only if we have events)
+      if (hasEvents) {
+        sb.AppendLine(interfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(listInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+      }
+
+      // ICommand (only if we have commands)
+      if (hasCommands) {
+        sb.AppendLine(interfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(listInterfaceFieldSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+      }
+    }
 
     // Restore CS0169 warning
     sb.AppendLine();
@@ -549,6 +652,77 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Generates interface properties that delegate to JsonContextRegistry for polymorphic serialization.
+  /// Properties are generated for IEvent, ICommand, IMessage and their MessageEnvelope/List variants.
+  /// </summary>
+  private static string _generateInterfaceProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var sb = new StringBuilder();
+
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (!hasEvents && !hasCommands) {
+      sb.AppendLine("// No message types discovered - interface properties not generated");
+      return sb.ToString();
+    }
+
+    var interfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "INTERFACE_PROPERTY");
+    var messageEnvelopeInterfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "MESSAGE_ENVELOPE_INTERFACE_PROPERTY");
+    var listInterfacePropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "LIST_INTERFACE_PROPERTY");
+
+    sb.AppendLine("// Interface properties for polymorphic serialization");
+    sb.AppendLine("// These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+    sb.AppendLine();
+
+    // IMessage (always if we have any messages)
+    sb.AppendLine(interfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+    sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+    sb.AppendLine(listInterfacePropertySnippet
+        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+        .Replace("__INTERFACE_NAME__", "IMessage"));
+
+    // IEvent (only if we have events)
+    if (hasEvents) {
+      sb.AppendLine(interfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+      sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+      sb.AppendLine(listInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+          .Replace("__INTERFACE_NAME__", "IEvent"));
+    }
+
+    // ICommand (only if we have commands)
+    if (hasCommands) {
+      sb.AppendLine(interfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+      sb.AppendLine(messageEnvelopeInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+      sb.AppendLine(listInterfacePropertySnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+          .Replace("__INTERFACE_NAME__", "ICommand"));
+    }
+
+    return sb.ToString();
+  }
 
   private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
@@ -745,6 +919,69 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             .Replace("__BASE_TYPE__", polyType.BaseTypeName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
         sb.AppendLine(check);
+        sb.AppendLine();
+      }
+    }
+
+    // Interface types for polymorphic serialization (IEvent, ICommand, IMessage)
+    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
+    var hasEvents = allTypes.Any(t => t.IsEvent);
+    var hasCommands = allTypes.Any(t => t.IsCommand);
+
+    if (hasEvents || hasCommands) {
+      var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_INTERFACE");
+      var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
+      var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          TEMPLATE_SNIPPET_FILE,
+          "GET_TYPE_INFO_LIST_INTERFACE");
+
+      sb.AppendLine("  // Interface types for polymorphic serialization");
+      sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+
+      // IMessage (always if we have any messages)
+      sb.AppendLine(interfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine(listInterfaceCheckSnippet
+          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
+          .Replace("__INTERFACE_NAME__", "IMessage"));
+      sb.AppendLine();
+
+      // IEvent (only if we have events)
+      if (hasEvents) {
+        sb.AppendLine(interfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine(listInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
+            .Replace("__INTERFACE_NAME__", "IEvent"));
+        sb.AppendLine();
+      }
+
+      // ICommand (only if we have commands)
+      if (hasCommands) {
+        sb.AppendLine(interfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
+        sb.AppendLine(listInterfaceCheckSnippet
+            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
+            .Replace("__INTERFACE_NAME__", "ICommand"));
         sb.AppendLine();
       }
     }

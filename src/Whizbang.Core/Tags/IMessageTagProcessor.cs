@@ -1,3 +1,5 @@
+using Whizbang.Core.Messaging;
+
 namespace Whizbang.Core.Tags;
 
 /// <summary>
@@ -17,27 +19,30 @@ namespace Whizbang.Core.Tags;
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public interface IMessageTagProcessor {
   /// <summary>
-  /// Processes all tags for a message after successful handling.
+  /// Processes all tags for a message at the specified lifecycle stage.
   /// </summary>
   /// <param name="message">The processed message.</param>
   /// <param name="messageType">The message type.</param>
+  /// <param name="stage">The lifecycle stage at which tags are being processed.</param>
   /// <param name="scope">Optional scope data from message context (tenant, user, etc.).</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>A task representing the asynchronous operation.</returns>
   /// <remarks>
   /// <para>
-  /// This method is called by the Dispatcher after a receptor successfully
-  /// handles a message. It discovers tags on the message type and invokes
-  /// the appropriate hooks.
+  /// This method is called at various lifecycle stages (AfterReceptorCompletion,
+  /// PostInbox, PostPerspective, PostOutbox, etc.) to invoke hooks configured
+  /// for that specific stage.
   /// </para>
   /// <para>
-  /// If no hooks are registered or tag processing is disabled, this method
-  /// returns immediately without performing any work.
+  /// Only hooks registered for the specified lifecycle stage will be invoked.
+  /// If no hooks are registered for the stage or tag processing is disabled,
+  /// this method returns immediately without performing any work.
   /// </para>
   /// </remarks>
   ValueTask ProcessTagsAsync(
       object message,
       Type messageType,
+      LifecycleStage stage,
       IReadOnlyDictionary<string, object?>? scope = null,
       CancellationToken ct = default);
 }

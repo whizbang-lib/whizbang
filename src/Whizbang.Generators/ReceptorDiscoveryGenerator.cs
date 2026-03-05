@@ -1112,10 +1112,18 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "UNTYPED_PUBLISH_ROUTING_SNIPPET"
     );
 
+    // Extract unique event types from receptor response types
+    // These are the types that will be cascaded (returned from receptors)
+    var eventTypes = _extractUniqueEventTypes(receptors);
+
+    // Combine message types (handled by receptors) + event types (returned by receptors and cascaded)
+    // This ensures cascaded events get proper security context establishment even if no receptor handles them
+    var allTypesForUntypedPublish = allMessageTypes.Union(eventTypes).Distinct().ToList();
+
     // Generate Untyped Publish routing code using snippet template
     // This enables auto-cascade: events extracted from receptor return values are published
     var untypedPublishRouting = new StringBuilder();
-    foreach (var messageType in allMessageTypes) {
+    foreach (var messageType in allTypesForUntypedPublish) {
       // Replace placeholders with actual types
       var generatedCode = untypedPublishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
@@ -1217,9 +1225,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Generate outbox cascade type-switch (for auto-cascading events to outbox)
-    // Collect unique event types from receptor response types
+    // Reuse event types extracted earlier for untyped publish routing
     var outboxCascade = new StringBuilder();
-    var eventTypes = _extractUniqueEventTypes(receptors);
 
     // Separate concrete types from interface types
     // Concrete types use exact typeof() matching; interface types use 'is' pattern matching

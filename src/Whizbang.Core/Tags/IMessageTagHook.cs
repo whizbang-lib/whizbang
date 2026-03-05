@@ -22,14 +22,14 @@ namespace Whizbang.Core.Tags;
 /// <code>
 /// // Registration
 /// services.AddWhizbang(options => {
-///   options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
+///   options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
 ///   options.Tags.UseHook&lt;AuditTagAttribute, AuditLogHook&gt;(priority: -10);
 /// });
 ///
 /// // Hook implementation
-/// public sealed class SignalRNotificationHook : IMessageTagHook&lt;NotificationTagAttribute&gt; {
+/// public sealed class SignalRNotificationHook : IMessageTagHook&lt;SignalTagAttribute&gt; {
 ///   public async ValueTask&lt;JsonElement?&gt; OnTaggedMessageAsync(
-///       TagContext&lt;NotificationTagAttribute&gt; context,
+///       TagContext&lt;SignalTagAttribute&gt; context,
 ///       CancellationToken ct) {
 ///     // Process the tagged message
 ///     await SendNotificationAsync(context.Attribute.Group, context.Payload, ct);

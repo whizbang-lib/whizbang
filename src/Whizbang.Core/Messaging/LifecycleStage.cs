@@ -21,6 +21,16 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 public enum LifecycleStage {
   /// <summary>
+  /// Special value for tag hooks: Fire immediately after receptor completes in Dispatcher.
+  /// This is the default for backward compatibility and is NOT a true lifecycle stage.
+  /// </summary>
+  /// <remarks>
+  /// Use this stage for hooks that should fire synchronously after the receptor handles
+  /// a message, before any lifecycle stages are invoked.
+  /// </remarks>
+  AfterReceptorCompletion = -1,
+
+  /// <summary>
   /// Executed immediately from dispatcher channel (default).
   /// Async processing, does not block message flow.
   /// Best for: Most receptors, fire-and-forget patterns.

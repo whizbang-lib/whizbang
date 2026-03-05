@@ -395,4 +395,230 @@ public partial class JsonContextRegistryTests {
     await Assert.That(typeInfo).IsNotNull();
     await Assert.That(typeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<TestEvent>));
   }
+
+  // ===========================
+  // Polymorphic Interface Serialization Tests
+  // ===========================
+
+  /// <summary>
+  /// Test event for polymorphic serialization tests - order placed.
+  /// </summary>
+  internal sealed record TestOrderPlacedEvent(Guid OrderId, string CustomerName) : IEvent;
+
+  /// <summary>
+  /// Test event for polymorphic serialization tests - order shipped.
+  /// </summary>
+  internal sealed record TestOrderShippedEvent(Guid OrderId, string TrackingNumber) : IEvent;
+
+  /// <summary>
+  /// Test command for polymorphic serialization tests.
+  /// </summary>
+  internal sealed record TestCreateOrderCommand(string CustomerName, decimal Amount) : ICommand;
+
+  /// <summary>
+  /// Test JsonSerializerContext for polymorphic event types.
+  /// </summary>
+  [JsonSerializable(typeof(TestOrderPlacedEvent))]
+  [JsonSerializable(typeof(TestOrderShippedEvent))]
+  [JsonSerializable(typeof(TestCreateOrderCommand))]
+  internal sealed partial class PolymorphicTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithEventType_AddsToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+
+    // Assert - verify derived type is registered
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithMultipleEventTypes_AddsAllToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+
+    // Assert
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderShippedEvent));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithCommandType_AddsToRegistryAsync() {
+    // Act
+    JsonContextRegistry.RegisterDerivedType<ICommand, TestCreateOrderCommand>("TestCreateOrderCommand");
+
+    // Assert
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<ICommand>();
+    await Assert.That(derivedTypes).Contains(typeof(TestCreateOrderCommand));
+  }
+
+  [Test]
+  public async Task RegisterDerivedType_WithNullDiscriminator_UsesTypeNameAsync() {
+    // Act - register without explicit discriminator
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>();
+
+    // Assert - should use type name as discriminator
+    var derivedTypes = JsonContextRegistry.GetRegisteredDerivedTypes<IEvent>();
+    await Assert.That(derivedTypes).Contains(typeof(TestOrderPlacedEvent));
+
+    // Verify discriminator defaults to type name
+    var discriminator = JsonContextRegistry.GetDiscriminator<IEvent, TestOrderPlacedEvent>();
+    await Assert.That(discriminator).IsEqualTo(nameof(TestOrderPlacedEvent));
+  }
+
+  [Test]
+  public async Task GetPolymorphicTypeInfo_WithRegisteredTypes_ReturnsPolymorphicInfoAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(IEvent));
+  }
+
+  [Test]
+  public async Task GetPolymorphicTypeInfo_WithNoRegisteredTypes_ReturnsNullAsync() {
+    // Arrange - use a type with no registered derived types
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - IMessage likely has no direct registrations (only IEvent and ICommand do)
+    // We'll check for a type that definitely has no registrations
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IDisposable>(options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task Serialize_IEvent_IncludesTypeDiscriminatorAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    IEvent evt = new TestOrderPlacedEvent(Guid.NewGuid(), "John Doe");
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+    await Assert.That(typeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(evt, typeInfo!);
+
+    // Assert - should include $type discriminator
+    await Assert.That(json).Contains("\"$type\":\"TestOrderPlacedEvent\"");
+    await Assert.That(json).Contains("\"OrderId\":");
+    await Assert.That(json).Contains("\"CustomerName\":\"John Doe\"");
+  }
+
+  [Test]
+  public async Task RoundTrip_IEvent_DeserializesToConcreteTypeAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var orderId = Guid.NewGuid();
+    IEvent original = new TestOrderPlacedEvent(orderId, "Jane Doe");
+
+    // Serialize as IEvent
+    var typeInfo = JsonContextRegistry.GetPolymorphicTypeInfo<IEvent>(options);
+    await Assert.That(typeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(original, typeInfo!);
+
+    // Act - Deserialize as IEvent
+    var deserialized = JsonSerializer.Deserialize<IEvent>(json, typeInfo!);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized).IsTypeOf<TestOrderPlacedEvent>();
+    var concreteEvent = (TestOrderPlacedEvent)deserialized!;
+    await Assert.That(concreteEvent.OrderId).IsEqualTo(orderId);
+    await Assert.That(concreteEvent.CustomerName).IsEqualTo("Jane Doe");
+  }
+
+  [Test]
+  public async Task RoundTrip_ListOfIEvents_DeserializesToConcreteTypesAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderShippedEvent>("TestOrderShippedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    List<IEvent> originalList = [
+      new TestOrderPlacedEvent(orderId, "Customer A"),
+      new TestOrderShippedEvent(orderId, "TRACK123")
+    ];
+
+    // Serialize
+    var listTypeInfo = JsonContextRegistry.GetPolymorphicListTypeInfo<IEvent>(options);
+    await Assert.That(listTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(originalList, listTypeInfo!);
+
+    // Act - Deserialize
+    var deserializedList = JsonSerializer.Deserialize<List<IEvent>>(json, listTypeInfo!);
+
+    // Assert
+    await Assert.That(deserializedList).IsNotNull();
+    await Assert.That(deserializedList!.Count).IsEqualTo(2);
+    await Assert.That(deserializedList[0]).IsTypeOf<TestOrderPlacedEvent>();
+    await Assert.That(deserializedList[1]).IsTypeOf<TestOrderShippedEvent>();
+  }
+
+  [Test]
+  public async Task MessageEnvelope_IEvent_SerializesWithPolymorphicPayloadAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var orderId = Guid.NewGuid();
+    var payload = new TestOrderPlacedEvent(orderId, "Test Customer");
+    var envelope = new MessageEnvelope<IEvent>(MessageId.New(), payload, []);
+
+    // Act
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Assert - should include $type in payload
+    await Assert.That(json).Contains("\"$type\":\"TestOrderPlacedEvent\"");
+    await Assert.That(json).Contains("\"MessageId\":");
+    await Assert.That(json).Contains("\"Payload\":");
+  }
+
+  [Test]
+  public async Task MessageEnvelope_IEvent_RoundTripDeserializesToConcretePayloadAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var messageId = MessageId.New();
+    var orderId = Guid.NewGuid();
+    var payload = new TestOrderPlacedEvent(orderId, "Roundtrip Customer");
+    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // Serialize
+    var envelopeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, envelopeTypeInfo!);
+
+    // Act - Deserialize
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, envelopeTypeInfo!);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Payload).IsTypeOf<TestOrderPlacedEvent>();
+    var concretePayload = (TestOrderPlacedEvent)deserialized.Payload;
+    await Assert.That(concretePayload.OrderId).IsEqualTo(orderId);
+    await Assert.That(concretePayload.CustomerName).IsEqualTo("Roundtrip Customer");
+  }
 }

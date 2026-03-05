@@ -157,4 +157,202 @@ public class EFCoreInfrastructureRegistrationTests {
 
     await Assert.That(query).IsAssignableTo<EFCorePostgresLensQuery<SamplePerspectiveModel>>();
   }
+
+  #region Multi-Generic ILensQuery Registration Tests
+
+  /// <summary>
+  /// Test model for multi-generic registration tests.
+  /// </summary>
+  public class CustomerModel {
+    public required Guid Id { get; init; }
+    public required string Name { get; init; }
+  }
+
+  /// <summary>
+  /// Test model for multi-generic registration tests.
+  /// </summary>
+  public class ProductModel {
+    public required Guid Id { get; init; }
+    public required string Sku { get; init; }
+    public required decimal Price { get; init; }
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_TwoGeneric_RegistersILensQueryAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    // Act
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+      services,
+      typeof(InfraTestDbContext),
+      tableNames);
+
+    // Assert
+    var serviceProvider = services.BuildServiceProvider();
+    var query = serviceProvider.GetService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+    await Assert.That(query).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_TwoGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+      services,
+      typeof(InfraTestDbContext),
+      tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query1 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+    var query2 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+
+    // Assert - Transient means different instances each time
+    await Assert.That(query1).IsNotSameReferenceAs(query2);
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_TwoGeneric_CreatesCorrectTypeAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+      services,
+      typeof(InfraTestDbContext),
+      tableNames);
+
+    // Assert
+    var serviceProvider = services.BuildServiceProvider();
+    var query = serviceProvider.GetService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+
+    await Assert.That(query).IsAssignableTo<EFCorePostgresLensQuery<SamplePerspectiveModel, CustomerModel>>();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_ThreeGeneric_RegistersILensQueryAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" },
+      { typeof(ProductModel), "product_perspective" }
+    };
+
+    // Act
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>(
+      services,
+      typeof(InfraTestDbContext),
+      tableNames);
+
+    // Assert
+    var serviceProvider = services.BuildServiceProvider();
+    var query = serviceProvider.GetService<ILensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>>();
+    await Assert.That(query).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_ThreeGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" },
+      { typeof(ProductModel), "product_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>(
+      services,
+      typeof(InfraTestDbContext),
+      tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query1 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>>();
+    var query2 = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>>();
+
+    // Assert - Transient means different instances each time
+    await Assert.That(query1).IsNotSameReferenceAs(query2);
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_WithNullServices_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    // Act & Assert
+    await Assert.That(() =>
+        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+          null!,
+          typeof(InfraTestDbContext),
+          tableNames))
+        .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_WithNullDbContextType_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    // Act & Assert
+    await Assert.That(() =>
+        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+          services,
+          null!,
+          tableNames))
+        .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_WithNullTableNames_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act & Assert
+    await Assert.That(() =>
+        EFCoreInfrastructureRegistration.RegisterMultiLensQuery<SamplePerspectiveModel, CustomerModel>(
+          services,
+          typeof(InfraTestDbContext),
+          null!))
+        .Throws<ArgumentNullException>();
+  }
+
+  #endregion
 }

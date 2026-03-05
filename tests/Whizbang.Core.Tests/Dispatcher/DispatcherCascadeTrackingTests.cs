@@ -145,8 +145,8 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
       };
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return evt => {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return (evt, envelope, ct) => {
         lock (_lock) {
           _localInvocations.Add(evt);
         }
