@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 
@@ -26,11 +25,6 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   private readonly TagOptions _options;
   private readonly Func<Type, object?>? _hookResolver;
   private readonly IServiceScopeFactory? _scopeFactory;
-
-  // Logger for diagnostic tracing - NullLogger when not explicitly provided
-  // Note: We don't use scope factory to get logger because it would create extra scopes
-  // that interfere with scope counting for hook processing
-  private readonly Microsoft.Extensions.Logging.Abstractions.NullLogger _tagLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 
   /// <summary>
   /// Creates a new message tag processor.
@@ -63,25 +57,18 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       LifecycleStage stage,
       IReadOnlyDictionary<string, object?>? scope = null,
       CancellationToken ct = default) {
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-      _tagLogger.LogDebug("[TAG PROCESSOR] ProcessTagsAsync called for {MessageType} at stage {Stage}", messageType.Name, stage);
-    }
+    Console.WriteLine($"[TAG PROCESSOR] ProcessTagsAsync called for {messageType.Name} at stage {stage}");
 
     // Early return if no hook resolver or scope factory configured
     if (_hookResolver is null && _scopeFactory is null) {
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] No hook resolver or scope factory - returning early");
-      }
+      Console.WriteLine("[TAG PROCESSOR] No hook resolver or scope factory - returning early");
       return;
     }
 
     // Early return if no tags registered for this message type
     // Check before creating scope to avoid unnecessary scope creation
     var tags = MessageTagRegistry.GetTagsFor(messageType).ToList();
-    if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-      _tagLogger.LogDebug("[TAG PROCESSOR] Found {TagCount} tag registrations for {MessageType}", tags.Count, messageType.Name);
-    }
+    Console.WriteLine($"[TAG PROCESSOR] Found {tags.Count} tag registrations for {messageType.Name}");
     if (tags.Count == 0) {
       return;
     }
@@ -89,19 +76,14 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     // If using scope factory, create a scope for this entire ProcessTagsAsync call
     // All hooks resolved during this call will share the same scope
     if (_scopeFactory is not null) {
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Using scope factory to create scope");
-      }
+      Console.WriteLine("[TAG PROCESSOR] Using scope factory to create scope");
       await using var serviceScope = _scopeFactory.CreateAsyncScope();
       Func<Type, object?> scopedResolver = type => serviceScope.ServiceProvider.GetService(type);
       await _processAllTagsAsync(message, messageType, stage, scope, scopedResolver, ct);
     } else {
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Using direct hook resolver");
-      }
+      Console.WriteLine("[TAG PROCESSOR] Using direct hook resolver");
       await _processAllTagsAsync(message, messageType, stage, scope, _hookResolver!, ct);
     }
-#pragma warning restore CA1848
   }
 
   /// <summary>
@@ -142,49 +124,33 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     // Get hooks that match this attribute type AND the specified lifecycle stage
     var attributeType = attribute.GetType();
     var hooks = _options.GetHooksFor(attributeType, stage).ToList();
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-      _tagLogger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, stage, hooks.Count);
-    }
+    Console.WriteLine($"[TAG PROCESSOR] Processing attribute {attributeType.Name} at stage {stage}, found {hooks.Count} hooks");
 
     var currentPayload = payload;
 
     foreach (var registration in hooks) {
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Resolving hook {HookType}", registration.HookType.Name);
-      }
+      Console.WriteLine($"[TAG PROCESSOR] Resolving hook {registration.HookType.Name}");
       var hookInstance = hookResolver(registration.HookType);
       if (hookInstance is null) {
-        if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-          _tagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved to NULL - skipping", registration.HookType.Name);
-        }
+        Console.WriteLine($"[TAG PROCESSOR] Hook {registration.HookType.Name} resolved to NULL - skipping");
         continue;
       }
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", registration.HookType.Name);
-      }
+      Console.WriteLine($"[TAG PROCESSOR] Hook {registration.HookType.Name} resolved successfully");
 
       // Create context based on attribute type
       var hookContext = _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope);
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", hookContext.GetType().Name);
-      }
+      Console.WriteLine($"[TAG PROCESSOR] Created hook context of type {hookContext.GetType().Name}");
 
       // Invoke the hook
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Invoking hook...");
-      }
+      Console.WriteLine("[TAG PROCESSOR] Invoking hook...");
       var result = await _invokeHookAsync(hookInstance, hookContext, registration.AttributeType, ct);
-      if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-        _tagLogger.LogDebug("[TAG PROCESSOR] Hook invocation complete, result: {Result}", result.HasValue ? "modified payload" : "null");
-      }
+      Console.WriteLine($"[TAG PROCESSOR] Hook invocation complete, result: {(result.HasValue ? "modified payload" : "null")}");
 
       // Update payload if hook returned a modified one
       if (result.HasValue) {
         currentPayload = result.Value;
       }
     }
-#pragma warning restore CA1848
   }
 
   private static object _createHookContextForAttribute(
@@ -302,7 +268,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     };
   }
 
-  private async ValueTask<JsonElement?> _invokeHookAsync(
+  private static async ValueTask<JsonElement?> _invokeHookAsync(
       object hookInstance,
       object context,
       Type attributeType,
@@ -335,16 +301,10 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
     // Try dispatcher registry for custom attribute types
     // Source-generated dispatchers handle AOT-compatible dispatch without reflection
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-      _tagLogger.LogDebug("[TAG PROCESSOR] Trying dispatcher registry for {AttributeType}", attributeType.Name);
-    }
+    Console.WriteLine($"[TAG PROCESSOR] Trying dispatcher registry for {attributeType.Name}");
     var dispatchResult = await MessageTagHookDispatcherRegistry.TryDispatchAsync(
         hookInstance, context, attributeType, ct);
-    if (_tagLogger.IsEnabled(LogLevel.Debug)) {
-      _tagLogger.LogDebug("[TAG PROCESSOR] Dispatcher registry result: {Result}", dispatchResult.HasValue ? "success" : "null");
-    }
-#pragma warning restore CA1848
+    Console.WriteLine($"[TAG PROCESSOR] Dispatcher registry result: {(dispatchResult.HasValue ? "success" : "null")}");
     return dispatchResult;
   }
 }
