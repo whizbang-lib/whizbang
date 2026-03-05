@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -122,6 +123,8 @@ public abstract class Dispatcher(
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+  // Auto-populate processor - populates message properties from envelope context
+  private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
@@ -2086,6 +2089,10 @@ public abstract class Dispatcher(
     };
 
     envelope.AddHop(hop);
+
+    // Process auto-populate attributes to store values in envelope metadata
+    _autoPopulateProcessor.ProcessAutoPopulate(envelope, typeof(TMessage));
+
     return envelope;
   }
 
@@ -2127,6 +2134,10 @@ public abstract class Dispatcher(
     };
 
     envelope.AddHop(hop);
+
+    // Process auto-populate attributes to store values in envelope metadata
+    _autoPopulateProcessor.ProcessAutoPopulate(envelope, messageType);
+
     return envelope;
   }
 
