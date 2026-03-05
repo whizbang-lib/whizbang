@@ -1,11 +1,5 @@
 namespace Whizbang.Core.Perspectives;
 
-#pragma warning disable S2326 // Unused type parameters should be removed
-#pragma warning disable S2436 // Reduce the number of type parameters in the generic type
-// TModel, TPartitionKey, and TEvent1-TEvent3 are intentionally declared at the interface level
-// to document which model and event types are valid. The runtime implementation enforces type constraints.
-// Supporting multiple event types allows complex multi-stream event handling while maintaining type safety.
-
 /// <summary>
 /// Base marker interface for multi-stream (global) perspectives.
 /// Multi-stream perspectives aggregate events from multiple streams based on a partition key.

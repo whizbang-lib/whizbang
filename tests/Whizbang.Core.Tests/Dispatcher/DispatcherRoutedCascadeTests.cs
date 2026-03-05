@@ -373,7 +373,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return evt => {
+      return (evt, envelope, ct) => {
         RoutedCascadeTracker.TrackLocal(evt);
         return Task.CompletedTask;
       };
@@ -475,7 +475,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return _ => Task.CompletedTask;
+      return (_, __, ___) => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
@@ -657,7 +657,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return _ => Task.CompletedTask;
+      return (_, __, ___) => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
@@ -776,7 +776,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
-      return _ => Task.CompletedTask;
+      return (_, __, ___) => Task.CompletedTask;
     }
 
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
@@ -67,7 +68,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
-public abstract class Dispatcher(
+public abstract partial class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
@@ -122,6 +123,8 @@ public abstract class Dispatcher(
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+  // Auto-populate processor - populates message properties from envelope context
+  private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
@@ -135,8 +138,10 @@ public abstract class Dispatcher(
 
   // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
   private ILogger? _cascadeLogger;
+  private ILogger? _securityLogger;
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger CascadeLogger => _cascadeLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+  private ILogger SecurityLogger => _securityLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Security") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #pragma warning restore IDE1006
 
   /// <summary>
@@ -153,7 +158,7 @@ public abstract class Dispatcher(
   /// </summary>
   /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
-  private static SecurityContext? _getSecurityContextForPropagation() {
+  private SecurityContext? _getSecurityContextForPropagation() {
     // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
     if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
       return null;
@@ -163,8 +168,15 @@ public abstract class Dispatcher(
       return null;
     }
 
+    var userId = ctx.Scope.UserId;
+
+    // Warn if propagating an empty GUID as UserId - this indicates the source didn't have proper user context
+    if (!string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var parsedUserId) && parsedUserId == Guid.Empty) {
+      Log.EmptyGuidUserIdPropagated(SecurityLogger, ctx.Scope.TenantId);
+    }
+
     return new SecurityContext {
-      UserId = ctx.Scope.UserId,
+      UserId = userId,
       TenantId = ctx.Scope.TenantId
     };
   }
@@ -929,6 +941,10 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Set message context accessor so receptors can inject IMessageContext
+    // This enables cascaded receptors to access UserId, TenantId, MessageId, etc.
+    MessageContextAccessor.CurrentContext = context;
+
     // Unwrap Routed<T> if needed - users can call LocalInvokeAsync(Route.Local(event))
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
@@ -1362,6 +1378,10 @@ public abstract class Dispatcher(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
+    // Set message context accessor so receptors can inject IMessageContext
+    // This enables cascaded receptors to access UserId, TenantId, MessageId, etc.
+    MessageContextAccessor.CurrentContext = context;
+
     // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
     // We need to use runtime type to get the actual inner message type
     object actualMessage = message;
@@ -1538,6 +1558,10 @@ public abstract class Dispatcher(
 
     ArgumentNullException.ThrowIfNull(context);
 
+    // Set message context accessor so receptors can inject IMessageContext
+    // This enables cascaded receptors to access UserId, TenantId, MessageId, etc.
+    MessageContextAccessor.CurrentContext = context;
+
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
@@ -1703,6 +1727,10 @@ public abstract class Dispatcher(
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
+
+    // Set message context accessor so receptors can inject IMessageContext
+    // This enables cascaded receptors to access UserId, TenantId, MessageId, etc.
+    MessageContextAccessor.CurrentContext = context;
 
     // Unwrap Routed<T> if needed - the generic TMessage may be Routed<T>
     // We need to use runtime type to get the actual inner message type
@@ -2070,6 +2098,10 @@ public abstract class Dispatcher(
     };
 
     envelope.AddHop(hop);
+
+    // Process auto-populate attributes to store values in envelope metadata
+    _autoPopulateProcessor.ProcessAutoPopulate(envelope, typeof(TMessage));
+
     return envelope;
   }
 
@@ -2111,6 +2143,10 @@ public abstract class Dispatcher(
     };
 
     envelope.AddHop(hop);
+
+    // Process auto-populate attributes to store values in envelope metadata
+    _autoPopulateProcessor.ProcessAutoPopulate(envelope, messageType);
+
     return envelope;
   }
 
@@ -2247,8 +2283,8 @@ public abstract class Dispatcher(
         }
         var publisher = GetUntypedReceptorPublisher(messageType);
         if (publisher != null) {
-          // Establish message context for cascade: propagates UserId from parent scope
-          Security.SecurityContextHelper.EstablishMessageContextForCascade();
+          // Security context is now established inside publisher via EstablishFullContextAsync
+          // No need for EstablishMessageContextForCascade here
           await publisher(msg, null, default);
         }
       }
@@ -2311,24 +2347,31 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/message-tags#processing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
   private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
+    Console.WriteLine($"[DISPATCHER] _processTagsIfEnabledAsync called for {messageType.Name}");
+
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
+      Console.WriteLine("[DISPATCHER] Tag processing is DISABLED - returning early");
       return;
     }
 
     // Skip immediate processing if using lifecycle stage mode
     if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
+      Console.WriteLine($"[DISPATCHER] TagProcessingMode is {_coreOptions.TagProcessingMode}, not AfterReceptorCompletion - returning early");
       return;
     }
 
     // Skip if no processor is registered
     if (_messageTagProcessor is null) {
+      Console.WriteLine("[DISPATCHER] No IMessageTagProcessor registered - returning early");
       return;
     }
 
+    Console.WriteLine("[DISPATCHER] Calling ProcessTagsAsync at AfterReceptorCompletion...");
     // Pass scope as null for now - scope extraction can be enhanced in future phases
     // The processor can access ambient scope via ScopeContextAccessor if needed
-    await _messageTagProcessor.ProcessTagsAsync(message, messageType, scope: null, ct);
+    await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope: null, ct);
+    Console.WriteLine("[DISPATCHER] ProcessTagsAsync completed");
   }
 
   /// <summary>
@@ -2419,6 +2462,9 @@ public abstract class Dispatcher(
     // Invoke local handlers - zero reflection, strongly typed
     await publisher(eventData);
 
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(eventData, eventType);
+
     // Publish event for cross-service delivery if work coordinator strategy is available
     // process_work_batch will store events to wh_event_store and create perspective events atomically
     await PublishToOutboxAsync(eventData, eventType, messageId);
@@ -2461,6 +2507,9 @@ public abstract class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
     await publisher(eventData);
 
+    // Process tags after successful receptor completion
+    await _processTagsIfEnabledAsync(eventData, eventType);
+
     await PublishToOutboxAsync(eventData, eventType, messageId);
 
     // Extract stream ID from [StreamId] attribute for delivery receipt
@@ -2481,6 +2530,7 @@ public abstract class Dispatcher(
   /// Called by IEventCascader after resolving routing from wrappers and attributes.
   /// </summary>
   /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  /// <docs>core-concepts/message-security#security-context-in-event-cascades</docs>
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
@@ -2566,7 +2616,7 @@ public abstract class Dispatcher(
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
       if (publisher != null) {
-        await publisher(message, null, default);
+        await publisher(message, sourceEnvelope, cancellationToken);
       }
     }
 
@@ -3673,7 +3723,7 @@ public abstract class Dispatcher(
     // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
     // Wrap GUID string in quotes for valid JSON string value
     // Note: Key is "AggregateId" for backward compatibility with existing envelopes
-    var jsonString = "\"" + streamId.Value + "\"";
+    var jsonString = $"\"{streamId.Value}\"";
     using var doc = JsonDocument.Parse(jsonString);
     var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
 
@@ -3704,11 +3754,27 @@ public abstract class Dispatcher(
   /// <summary>
   /// Implemented by generated code - returns a type-erased delegate for publishing events.
   /// Used by auto-cascade to publish events extracted from receptor return values.
-  /// The delegate accepts an object and internally casts to the correct event type.
+  /// The delegate accepts an object, source envelope, and cancellation token, and internally casts to the correct event type.
   /// AOT-compatible because the generated code knows all event types at compile time.
   /// </summary>
   /// <param name="eventType">The runtime type of the event (e.g., typeof(OrderCreatedEvent))</param>
-  /// <returns>A delegate that publishes the event to all registered receptors, or null if no receptors registered</returns>
+  /// <returns>
+  /// A delegate that publishes the event to all registered receptors with proper security context propagation.
+  /// The delegate signature: Func&lt;object, IMessageEnvelope?, CancellationToken, Task&gt;.
+  /// Returns null if no receptors registered for this event type.
+  /// </returns>
+  /// <remarks>
+  /// The generated delegate:
+  /// <list type="number">
+  /// <item>Creates a new DI scope for receptor resolution</item>
+  /// <item>Establishes security context from source envelope (if provided)</item>
+  /// <item>Resolves all receptors for the event type</item>
+  /// <item>Invokes each receptor with the event</item>
+  /// <item>Disposes the scope</item>
+  /// </list>
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#cascade-security-context</docs>
+  /// <docs>core-concepts/message-security#security-context-in-event-cascades</docs>
   protected abstract Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType);
 
   /// <summary>
@@ -3758,4 +3824,26 @@ public abstract class Dispatcher(
   /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
   protected abstract Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType);
+
+  /// <summary>
+  /// AOT-compatible logging for security-related dispatcher events.
+  /// Uses compile-time LoggerMessage source generator for zero-allocation, high-performance logging.
+  /// </summary>
+  private static partial class Log {
+    [LoggerMessage(
+      EventId = 1,
+      Level = LogLevel.Warning,
+      Message = "Security context is being propagated with empty GUID (00000000-0000-0000-0000-000000000000) as UserId. " +
+                "This may indicate the original request didn't capture the user's identity correctly. TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void EmptyGuidUserIdPropagated(ILogger logger, string? tenantId);
+
+    [LoggerMessage(
+      EventId = 2,
+      Level = LogLevel.Warning,
+      Message = "Explicit security context (AsSystem/RunAs) created with empty GUID (00000000-0000-0000-0000-000000000000) as UserId. " +
+                "This may indicate the originating request didn't have proper user context. ContextType: {ContextType}, TenantId: {TenantId}",
+      SkipEnabledCheck = true)]
+    public static partial void EmptyGuidUserIdInExplicitContext(ILogger logger, string? contextType, string? tenantId);
+  }
 }

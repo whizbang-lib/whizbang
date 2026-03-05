@@ -120,7 +120,7 @@ public class MessageIdConverter : JsonConverter<MessageId> {
   public override MessageId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
-      throw new JsonException("Invalid MessageId format");
+      throw new JsonException($"Invalid MessageId format");
     }
     return MessageId.From(guid);
   }
@@ -137,7 +137,7 @@ public class CorrelationIdConverter : JsonConverter<CorrelationId> {
   public override CorrelationId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
-      throw new JsonException("Invalid CorrelationId format");
+      throw new JsonException($"Invalid CorrelationId format");
     }
     return CorrelationId.From(guid);
   }

@@ -13,9 +13,27 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_HasTwentyValuesAsync() {
+  public async Task LifecycleStage_HasTwentyOneValuesAsync() {
+    // 20 lifecycle stages + 1 special AfterReceptorCompletion for tag hooks
     var values = Enum.GetValues<LifecycleStage>();
-    await Assert.That(values.Length).IsEqualTo(20);
+    await Assert.That(values.Length).IsEqualTo(21);
+  }
+
+  // ==========================================================================
+  // Special tag hook stage
+  // ==========================================================================
+
+  [Test]
+  public async Task LifecycleStage_AfterReceptorCompletion_IsDefinedAsync() {
+    var value = LifecycleStage.AfterReceptorCompletion;
+    await Assert.That(Enum.IsDefined(value)).IsTrue();
+  }
+
+  [Test]
+  public async Task LifecycleStage_AfterReceptorCompletion_HasNegativeValueAsync() {
+    // AfterReceptorCompletion is -1 to distinguish it from real lifecycle stages
+    var value = (int)LifecycleStage.AfterReceptorCompletion;
+    await Assert.That(value).IsEqualTo(-1);
   }
 
   // ==========================================================================
