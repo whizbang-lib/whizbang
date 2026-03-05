@@ -8,10 +8,11 @@ branches:
     regex: ^develop$
   release:
     tag: ''
-    increment: None
+    increment: Patch
     prevent-increment-of-merged-branch-version: false
     track-merge-target: false
     regex: ^releases?[/-]
+    is-release-branch: true
   main:
     tag: ''
     increment: Patch
