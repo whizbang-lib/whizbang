@@ -22,7 +22,8 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// WHIZ400 error to prevent runtime failures.
 /// </para>
 /// </remarks>
-/// <tests>LensQueryTypeArgumentAnalyzerTests.cs</tests>
+/// <docs>diagnostics/WHIZ400</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>
@@ -60,6 +61,12 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
     // Get the type argument passed to Query<T>() or GetByIdAsync<T>()
     var methodTypeArg = method.TypeArguments.FirstOrDefault();
     if (methodTypeArg == null) {
+      return;
+    }
+
+    // Skip if the type argument is itself a type parameter (e.g., inside generic methods)
+    // These are validated at the call site, not in the implementation
+    if (methodTypeArg.TypeKind == TypeKind.TypeParameter) {
       return;
     }
 

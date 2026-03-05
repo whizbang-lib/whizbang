@@ -70,6 +70,8 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
 /// </summary>
 /// <typeparam name="T1">First model type</typeparam>
 /// <typeparam name="T2">Second model type</typeparam>
+/// <docs>lenses/multi-model-queries</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryMultiGenericTests.cs</tests>
 public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
     where T1 : class
     where T2 : class {
@@ -125,6 +127,8 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3}"/> for PostgreSQL.
 /// </summary>
+/// <docs>lenses/multi-model-queries</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryMultiGenericTests.cs</tests>
 public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
     where T1 : class
     where T2 : class

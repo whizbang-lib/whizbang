@@ -2500,7 +2500,7 @@ public class CascadeReceptor : IReceptor<CascadeCommand, CascadeEvent> {
 
     // Verify else branch exists and calls EstablishMessageContextForCascade
     await Assert.That(dispatcher!).Contains("} else {");
-    await Assert.That(dispatcher).Contains("EstablishMessageContextForCascade()");
+    await Assert.That(dispatcher).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
   }
 
   /// <summary>
@@ -2577,9 +2577,9 @@ public class MethodReceptor : IReceptor<MethodCommand, MethodEvent> {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
 
-    // Verify exact method name is used
-    await Assert.That(dispatcher!).Contains("EstablishMessageContextForCascade()");
-    // Should NOT have any parameters (it's a parameterless method)
+    // Verify exact method name is used (with scope.ServiceProvider parameter)
+    await Assert.That(dispatcher!).Contains("EstablishMessageContextForCascade(scope.ServiceProvider)");
+    // Should NOT have sourceEnvelope parameter
     await Assert.That(dispatcher).DoesNotContain("EstablishMessageContextForCascade(sourceEnvelope");
   }
 
@@ -2617,7 +2617,7 @@ public class QualifiedReceptor : IReceptor<QualifiedCommand, QualifiedEvent> {
     await Assert.That(dispatcher).IsNotNull();
 
     // Verify fully qualified name with global:: prefix
-    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade()");
+    await Assert.That(dispatcher!).Contains("global::Whizbang.Core.Security.SecurityContextHelper.EstablishMessageContextForCascade(scope.ServiceProvider)");
   }
 
   /// <summary>
