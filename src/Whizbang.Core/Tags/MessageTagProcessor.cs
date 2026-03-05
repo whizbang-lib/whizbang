@@ -141,9 +141,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       JsonElement payload,
       IReadOnlyDictionary<string, object?>? scope) {
     // Create the appropriate typed context based on attribute type
-    if (attribute is NotificationTagAttribute notificationAttr) {
-      return new TagContext<NotificationTagAttribute> {
-        Attribute = notificationAttr,
+    if (attribute is SignalTagAttribute signalAttr) {
+      return new TagContext<SignalTagAttribute> {
+        Attribute = signalAttr,
         Message = message,
         MessageType = messageType,
         Payload = payload,
@@ -255,10 +255,10 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       return await universalHook.OnTaggedMessageAsync(universalContext, ct);
     }
 
-    if (attributeType == typeof(NotificationTagAttribute) &&
-        hookInstance is IMessageTagHook<NotificationTagAttribute> notificationHook &&
-        context is TagContext<NotificationTagAttribute> notificationContext) {
-      return await notificationHook.OnTaggedMessageAsync(notificationContext, ct);
+    if (attributeType == typeof(SignalTagAttribute) &&
+        hookInstance is IMessageTagHook<SignalTagAttribute> signalHook &&
+        context is TagContext<SignalTagAttribute> signalContext) {
+      return await signalHook.OnTaggedMessageAsync(signalContext, ct);
     }
 
     if (attributeType == typeof(TelemetryTagAttribute) &&

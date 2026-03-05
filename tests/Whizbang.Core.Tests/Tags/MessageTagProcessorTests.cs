@@ -27,8 +27,8 @@ public class MessageTagProcessorTests {
     // Arrange
     var options = new TagOptions();
     var processor = new MessageTagProcessor(options);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { OrderId = "123" }
     );
 
@@ -41,10 +41,10 @@ public class MessageTagProcessorTests {
     // Arrange
     var hook = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "order-created" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "order-created" },
       new { OrderId = "123" }
     );
 
@@ -63,8 +63,8 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseHook<TelemetryTagAttribute, TelemetryTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(TelemetryTrackingHook) ? telemetryHook : null);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -82,8 +82,8 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseUniversalHook<UniversalTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(UniversalTrackingHook) ? universalHook : null);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -104,9 +104,9 @@ public class MessageTagProcessorTests {
 
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 500)   // Last
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: -100)  // First
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 50);   // Middle
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: 500)   // Last
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: -100)  // First
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: 50);   // Middle
 
     // Hooks execute in priority order: -100, 50, 500
     // So resolver returns in that order: Hook2 (-100), Hook3 (50), Hook1 (500)
@@ -114,8 +114,8 @@ public class MessageTagProcessorTests {
     var hooks = new[] { hook2, hook3, hook1 };
     var processor = new MessageTagProcessor(options, _ => hooks[hookIndex++]);
 
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -137,15 +137,15 @@ public class MessageTagProcessorTests {
 
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, PayloadModifyingHook>(priority: -100)  // First
-      .UseHook<NotificationTagAttribute, PayloadReceivingHook>(priority: 100);   // Second
+      .UseHook<SignalTagAttribute, PayloadModifyingHook>(priority: -100)  // First
+      .UseHook<SignalTagAttribute, PayloadReceivingHook>(priority: 100);   // Second
 
     var hookIndex = 0;
     object?[] hooks = [payloadModifyingHook, receivingHook];
     var processor = new MessageTagProcessor(options, _ => hooks[hookIndex++]);
 
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { Original = true }
     );
 
@@ -163,11 +163,11 @@ public class MessageTagProcessorTests {
     // Arrange
     var hook = new CancellationTrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, CancellationTrackingHook>();
+    options.UseHook<SignalTagAttribute, CancellationTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(CancellationTrackingHook) ? hook : null);
     var cts = new CancellationTokenSource();
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -183,11 +183,11 @@ public class MessageTagProcessorTests {
     // Arrange
     var hook = new ScopeTrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, ScopeTrackingHook>();
+    options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
     var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-123" };
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { },
       scope
     );
@@ -209,16 +209,16 @@ public class MessageTagProcessorTests {
 
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, PassThroughHook>(priority: -100)
-      .UseHook<NotificationTagAttribute, PayloadReceivingHook>(priority: 100);
+      .UseHook<SignalTagAttribute, PassThroughHook>(priority: -100)
+      .UseHook<SignalTagAttribute, PayloadReceivingHook>(priority: 100);
 
     var hookIndex = 0;
     object?[] hooks = [passThroughHook, receivingHook];
     var processor = new MessageTagProcessor(options, _ => hooks[hookIndex++]);
 
     var originalPayload = new { Original = true };
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       originalPayload
     );
 
@@ -247,12 +247,12 @@ public class MessageTagProcessorTests {
   }
 
   // Test hook implementations
-  private sealed class TrackingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TrackingHook : IMessageTagHook<SignalTagAttribute> {
     public int InvokedCount { get; private set; }
-    public TagContext<NotificationTagAttribute>? LastContext { get; private set; }
+    public TagContext<SignalTagAttribute>? LastContext { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       InvokedCount++;
       LastContext = context;
@@ -282,7 +282,7 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class OrderTrackingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class OrderTrackingHook : IMessageTagHook<SignalTagAttribute> {
     private readonly string _name;
     private readonly List<string> _executionOrder;
 
@@ -292,58 +292,58 @@ public class MessageTagProcessorTests {
     }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       _executionOrder.Add(_name);
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class PayloadModifyingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class PayloadModifyingHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       var modified = new { Modified = true };
       return ValueTask.FromResult<JsonElement?>(JsonSerializer.SerializeToElement(modified));
     }
   }
 
-  private sealed class PayloadReceivingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class PayloadReceivingHook : IMessageTagHook<SignalTagAttribute> {
     public JsonElement? ReceivedPayload { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       ReceivedPayload = context.Payload;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class CancellationTrackingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class CancellationTrackingHook : IMessageTagHook<SignalTagAttribute> {
     public CancellationToken ReceivedToken { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken ct) {
       ReceivedToken = ct;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class ScopeTrackingHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class ScopeTrackingHook : IMessageTagHook<SignalTagAttribute> {
     public IReadOnlyDictionary<string, object?>? ReceivedScope { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> context,
+        TagContext<SignalTagAttribute> context,
         CancellationToken _) {
       ReceivedScope = context.Scope;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class PassThroughHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class PassThroughHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -371,11 +371,11 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, hookResolver: null);
     var message = new TaggedTestMessage("123");
 
@@ -397,7 +397,7 @@ public class MessageTagProcessorTests {
 
     var hook = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
     var message = new TaggedTestMessage("123");
 
@@ -414,12 +414,12 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "order-created");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "order-created");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
     var message = new TaggedTestMessage("123");
 
@@ -437,14 +437,14 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "order-created");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "order-created");
     registry.AddRegistration(typeof(TaggedTestMessage), typeof(MetricTagAttribute), "order-metric", metricName: "orders.created");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var notificationHook = new TrackingHook();
     var metricHook = new MetricTrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     options.UseHook<MetricTagAttribute, MetricTrackingHook>();
 
     var processor = new MessageTagProcessor(options, type => {
@@ -473,12 +473,12 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook = new PayloadReceivingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, PayloadReceivingHook>();
+    options.UseHook<SignalTagAttribute, PayloadReceivingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(PayloadReceivingHook) ? hook : null);
     var message = new TaggedTestMessage("order-123");
 
@@ -497,12 +497,12 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook = new ScopeTrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, ScopeTrackingHook>();
+    options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
     var message = new TaggedTestMessage("123");
     var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-456" };
@@ -521,7 +521,7 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var executionOrder = new List<string>();
@@ -531,9 +531,9 @@ public class MessageTagProcessorTests {
 
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 500)
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: -100)
-      .UseHook<NotificationTagAttribute, OrderTrackingHook>(priority: 50);
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: 500)
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: -100)
+      .UseHook<SignalTagAttribute, OrderTrackingHook>(priority: 50);
 
     var hookIndex = 0;
     var hooks = new[] { hook2, hook3, hook1 }; // Order by priority: -100, 50, 500
@@ -576,8 +576,8 @@ public class MessageTagProcessorTests {
           return JsonSerializer.SerializeToElement(props);
         },
         AttributeFactory = () => {
-          if (attributeType == typeof(NotificationTagAttribute)) {
-            return new NotificationTagAttribute { Tag = tag };
+          if (attributeType == typeof(SignalTagAttribute)) {
+            return new SignalTagAttribute { Tag = tag };
           }
           if (attributeType == typeof(MetricTagAttribute)) {
             return new MetricTagAttribute { Tag = tag, MetricName = metricName ?? tag };
@@ -642,10 +642,10 @@ public class MessageTagProcessorTests {
   public async Task ProcessAsync_WithNullHookResolver_CompletesWithoutErrorAsync() {
     // Arrange - covers null resolver early return path
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, hookResolver: null);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -660,10 +660,10 @@ public class MessageTagProcessorTests {
   public async Task ProcessAsync_WhenHookResolverReturnsNull_SkipsHookAsync() {
     // Arrange - covers null hookInstance continue path
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
     var processor = new MessageTagProcessor(options, _ => null);
-    var context = _createProcessContext<NotificationTagAttribute>(
-      new NotificationTagAttribute { Tag = "test" },
+    var context = _createProcessContext<SignalTagAttribute>(
+      new SignalTagAttribute { Tag = "test" },
       new { }
     );
 
@@ -701,12 +701,12 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
 
     // Create a mock scope factory that tracks scope creation
     var scopeFactory = new TrackingScopeFactory(hook);
@@ -727,12 +727,12 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    options.UseHook<SignalTagAttribute, TrackingHook>();
 
     var scopeFactory = new TrackingScopeFactory(hook);
     var processor = new MessageTagProcessor(options, scopeFactory);
@@ -751,14 +751,14 @@ public class MessageTagProcessorTests {
     // Arrange
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();
-    registry.AddRegistration(typeof(TaggedTestMessage), typeof(NotificationTagAttribute), "test-tag");
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
     MessageTagRegistry.Register(registry, priority: 100);
 
     var hook1 = new TrackingHook();
     var hook2 = new TrackingHook();
     var options = new TagOptions();
-    options.UseHook<NotificationTagAttribute, TrackingHook>(priority: 0);
-    options.UseHook<NotificationTagAttribute, TrackingHook>(priority: 10);
+    options.UseHook<SignalTagAttribute, TrackingHook>(priority: 0);
+    options.UseHook<SignalTagAttribute, TrackingHook>(priority: 10);
 
     var hookIndex = 0;
     var hooks = new[] { hook1, hook2 };
