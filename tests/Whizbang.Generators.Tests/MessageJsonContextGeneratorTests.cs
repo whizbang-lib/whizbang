@@ -236,6 +236,78 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).Contains("return Create_CorrelationId(options);");
   }
 
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for primitive types like Guid, int, string.
+  /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid)) during envelope serialization.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesPrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate primitive type handling in GetTypeInfoInternal
+    // These allow STJ to resolve primitive types during serialization
+    await Assert.That(code!).Contains("if (type == typeof(string)) return GetOrCreateTypeInfo<string>(options);");
+    await Assert.That(code).Contains("if (type == typeof(int)) return GetOrCreateTypeInfo<int>(options);");
+    await Assert.That(code).Contains("if (type == typeof(Guid)) return GetOrCreateTypeInfo<Guid>(options);");
+    await Assert.That(code).Contains("if (type == typeof(long)) return GetOrCreateTypeInfo<long>(options);");
+    await Assert.That(code).Contains("if (type == typeof(bool)) return GetOrCreateTypeInfo<bool>(options);");
+    await Assert.That(code).Contains("if (type == typeof(DateTime)) return GetOrCreateTypeInfo<DateTime>(options);");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return GetOrCreateTypeInfo<DateTimeOffset>(options);");
+    await Assert.That(code).Contains("if (type == typeof(decimal)) return GetOrCreateTypeInfo<decimal>(options);");
+  }
+
+  /// <summary>
+  /// Tests that GetTypeInfoInternal includes handling for nullable primitive types like Guid?, int?.
+  /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid?)) during envelope serialization.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesNullablePrimitiveTypeHandlingInGetTypeInfoInternalAsync() {
+    // Arrange
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate nullable primitive type handling in GetTypeInfoInternal
+    await Assert.That(code!).Contains("if (type == typeof(int?)) return GetOrCreateTypeInfo<int?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(Guid?)) return GetOrCreateTypeInfo<Guid?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(long?)) return GetOrCreateTypeInfo<long?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(bool?)) return GetOrCreateTypeInfo<bool?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(DateTime?)) return GetOrCreateTypeInfo<DateTime?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) return GetOrCreateTypeInfo<DateTimeOffset?>(options);");
+    await Assert.That(code).Contains("if (type == typeof(decimal?)) return GetOrCreateTypeInfo<decimal?>(options);");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ImplementsIJsonTypeInfoResolverAsync() {
