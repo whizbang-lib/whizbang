@@ -44,17 +44,9 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
-public sealed class PerspectiveStorageAttribute : Attribute {
+public sealed class PerspectiveStorageAttribute(FieldStorageMode mode) : Attribute {
   /// <summary>
   /// The storage mode for physical fields in this model.
   /// </summary>
-  public FieldStorageMode Mode { get; }
-
-  /// <summary>
-  /// Creates a perspective storage attribute with the specified mode.
-  /// </summary>
-  /// <param name="mode">The storage mode for physical fields.</param>
-  public PerspectiveStorageAttribute(FieldStorageMode mode) {
-    Mode = mode;
-  }
+  public FieldStorageMode Mode { get; } = mode;
 }

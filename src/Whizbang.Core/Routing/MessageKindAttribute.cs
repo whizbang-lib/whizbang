@@ -11,17 +11,9 @@ namespace Whizbang.Core.Routing;
 /// </example>
 /// <docs>core-concepts/routing#message-kind</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
-public sealed class MessageKindAttribute : Attribute {
+public sealed class MessageKindAttribute(MessageKind kind) : Attribute {
   /// <summary>
   /// Gets the message kind for this type.
   /// </summary>
-  public MessageKind Kind { get; }
-
-  /// <summary>
-  /// Creates a new message kind attribute.
-  /// </summary>
-  /// <param name="kind">The message kind to assign to this type.</param>
-  public MessageKindAttribute(MessageKind kind) {
-    Kind = kind;
-  }
+  public MessageKind Kind { get; } = kind;
 }

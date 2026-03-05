@@ -61,7 +61,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 
     // Early return if no hook resolver or scope factory configured
     if (_hookResolver is null && _scopeFactory is null) {
-      Console.WriteLine($"[TAG PROCESSOR] No hook resolver or scope factory - returning early");
+      Console.WriteLine("[TAG PROCESSOR] No hook resolver or scope factory - returning early");
       return;
     }
 
@@ -76,12 +76,12 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     // If using scope factory, create a scope for this entire ProcessTagsAsync call
     // All hooks resolved during this call will share the same scope
     if (_scopeFactory is not null) {
-      Console.WriteLine($"[TAG PROCESSOR] Using scope factory to create scope");
+      Console.WriteLine("[TAG PROCESSOR] Using scope factory to create scope");
       await using var serviceScope = _scopeFactory.CreateAsyncScope();
       Func<Type, object?> scopedResolver = type => serviceScope.ServiceProvider.GetService(type);
       await _processAllTagsAsync(message, messageType, stage, scope, scopedResolver, ct);
     } else {
-      Console.WriteLine($"[TAG PROCESSOR] Using direct hook resolver");
+      Console.WriteLine("[TAG PROCESSOR] Using direct hook resolver");
       await _processAllTagsAsync(message, messageType, stage, scope, _hookResolver!, ct);
     }
   }
@@ -142,7 +142,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Console.WriteLine($"[TAG PROCESSOR] Created hook context of type {hookContext.GetType().Name}");
 
       // Invoke the hook
-      Console.WriteLine($"[TAG PROCESSOR] Invoking hook...");
+      Console.WriteLine("[TAG PROCESSOR] Invoking hook...");
       var result = await _invokeHookAsync(hookInstance, hookContext, registration.AttributeType, ct);
       Console.WriteLine($"[TAG PROCESSOR] Hook invocation complete, result: {(result.HasValue ? "modified payload" : "null")}");
 
