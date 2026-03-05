@@ -244,6 +244,66 @@ __DERIVED_TYPE_REGISTRATIONS__
   polyOptions.DerivedTypes.Add(new JsonDerivedType(typeof(__DERIVED_TYPE__), "__DERIVED_TYPE_DISCRIMINATOR__"));
 #endregion
 
+#region LAZY_FIELD_INTERFACE
+private JsonTypeInfo<__INTERFACE_TYPE__>? ___INTERFACE_NAME__;
+#endregion
+
+#region INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for __INTERFACE_TYPE__ with polymorphic support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<__INTERFACE_TYPE__> __INTERFACE_NAME__ => ___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_INTERFACE
+if (type == typeof(__INTERFACE_TYPE__)) {
+  return __INTERFACE_NAME__;
+}
+#endregion
+
+#region LAZY_FIELD_MESSAGE_ENVELOPE_INTERFACE
+private JsonTypeInfo<global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>>? _MessageEnvelope___INTERFACE_NAME__;
+#endregion
+
+#region MESSAGE_ENVELOPE_INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for MessageEnvelope&lt;__INTERFACE_TYPE__&gt; with polymorphic payload support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>> MessageEnvelope___INTERFACE_NAME__ => _MessageEnvelope___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE
+if (type == typeof(global::Whizbang.Core.Observability.MessageEnvelope<__INTERFACE_TYPE__>)) {
+  return MessageEnvelope___INTERFACE_NAME__;
+}
+#endregion
+
+#region LAZY_FIELD_LIST_INTERFACE
+private JsonTypeInfo<global::System.Collections.Generic.List<__INTERFACE_TYPE__>>? _List___INTERFACE_NAME__;
+#endregion
+
+#region LIST_INTERFACE_PROPERTY
+/// <summary>
+/// Gets JsonTypeInfo for List&lt;__INTERFACE_TYPE__&gt; with polymorphic element support.
+/// Delegates to JsonContextRegistry to aggregate derived types from all assemblies.
+/// </summary>
+public JsonTypeInfo<global::System.Collections.Generic.List<__INTERFACE_TYPE__>> List___INTERFACE_NAME__ => _List___INTERFACE_NAME__ ??=
+  global::Whizbang.Core.Serialization.JsonContextRegistry.GetPolymorphicListTypeInfo<__INTERFACE_TYPE__>(Options)
+  ?? throw new InvalidOperationException("No __INTERFACE_NAME__ implementations registered. Ensure at least one assembly with message types is loaded.");
+#endregion
+
+#region GET_TYPE_INFO_LIST_INTERFACE
+if (type == typeof(global::System.Collections.Generic.List<__INTERFACE_TYPE__>)) {
+  return List___INTERFACE_NAME__;
+}
+#endregion
+
 #region HELPER_CREATE_PROPERTY
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,

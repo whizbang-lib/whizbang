@@ -5,6 +5,7 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Common;
 using Whizbang.Core.ValueObjects;
 
@@ -249,9 +250,9 @@ public class DispatcherSyncTests : DiagnosticTestBase {
       return null!; // Tests don't use event publishing via this path
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       if (_publishedEvents != null) {
-        return evt => {
+        return (evt, envelope, ct) => {
           _publishedEvents.Add(evt);
           return Task.CompletedTask;
         };

@@ -21,13 +21,13 @@ public class TagContextTests {
   [Test]
   public async Task TagContext_Attribute_CanBeSetAndRetrievedAsync() {
     // Arrange
-    var attribute = new NotificationTagAttribute {
+    var attribute = new SignalTagAttribute {
       Tag = "test-tag",
       Group = "test-group"
     };
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
+    var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
@@ -43,15 +43,15 @@ public class TagContextTests {
   [Test]
   public async Task TagContext_AttributeType_ReturnsCorrectTypeAsync() {
     // Arrange
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { })
     };
 
     // Act & Assert
-    await Assert.That(context.AttributeType).IsEqualTo(typeof(NotificationTagAttribute));
+    await Assert.That(context.AttributeType).IsEqualTo(typeof(SignalTagAttribute));
   }
 
   [Test]
@@ -60,8 +60,8 @@ public class TagContextTests {
     var message = new TestMessage(Guid.NewGuid());
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = message,
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { })
@@ -74,8 +74,8 @@ public class TagContextTests {
   [Test]
   public async Task TagContext_MessageType_CanBeSetAndRetrievedAsync() {
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { })
@@ -92,8 +92,8 @@ public class TagContextTests {
     var payload = JsonSerializer.SerializeToElement(payloadData);
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = payload
@@ -107,8 +107,8 @@ public class TagContextTests {
   [Test]
   public async Task TagContext_Scope_IsNullByDefaultAsync() {
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { })
@@ -128,8 +128,8 @@ public class TagContextTests {
     };
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { }),
@@ -152,8 +152,8 @@ public class TagContextTests {
     };
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test" },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { }),
@@ -197,8 +197,8 @@ public class TagContextTests {
     var payload = JsonSerializer.SerializeToElement(payloadData);
 
     // Act
-    var context = new TagContext<NotificationTagAttribute> {
-      Attribute = new NotificationTagAttribute { Tag = "test", IncludeEvent = true },
+    var context = new TagContext<SignalTagAttribute> {
+      Attribute = new SignalTagAttribute { Tag = "test", IncludeEvent = true },
       Message = eventData,
       MessageType = typeof(TestMessage),
       Payload = payload

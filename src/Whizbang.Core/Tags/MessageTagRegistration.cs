@@ -22,7 +22,7 @@ public sealed record MessageTagRegistration {
   public required Type MessageType { get; init; }
 
   /// <summary>
-  /// The tag attribute type (e.g., NotificationTagAttribute, TelemetryTagAttribute).
+  /// The tag attribute type (e.g., SignalTagAttribute, TelemetryTagAttribute).
   /// </summary>
   public required Type AttributeType { get; init; }
 

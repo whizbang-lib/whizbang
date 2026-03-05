@@ -124,11 +124,11 @@ public class WhizbangCoreOptionsTests {
     var options = new WhizbangCoreOptions();
 
     // Act
-    options.Tags.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    options.Tags.UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Assert
     await Assert.That(options.Tags.HookRegistrations.Count).IsEqualTo(1);
-    await Assert.That(options.Tags.HookRegistrations[0].AttributeType).IsEqualTo(typeof(NotificationTagAttribute));
+    await Assert.That(options.Tags.HookRegistrations[0].AttributeType).IsEqualTo(typeof(SignalTagAttribute));
     await Assert.That(options.Tags.HookRegistrations[0].HookType).IsEqualTo(typeof(TestNotificationHook));
   }
 
@@ -139,7 +139,7 @@ public class WhizbangCoreOptionsTests {
 
     // Act
     options.Tags
-      .UseHook<NotificationTagAttribute, TestNotificationHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>()
       .UseHook<MetricTagAttribute, TestMetricHook>();
 
@@ -272,9 +272,9 @@ public class WhizbangCoreOptionsTests {
 
   #region Test Hook Implementations
 
-  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
     }

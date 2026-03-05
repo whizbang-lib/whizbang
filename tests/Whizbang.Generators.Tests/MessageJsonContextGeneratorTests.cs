@@ -5574,4 +5574,165 @@ public record CatalogEvent : IEvent {
   }
 
   #endregion
+
+  #region Polymorphic Interface Support Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithEvent_GeneratesDerivedTypeRegistrationAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Should generate MessageJsonContextInitializer with derived type registration
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithCommand_GeneratesDerivedTypeRegistrationAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(Guid OrderId, string CustomerName) : ICommand;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Should generate MessageJsonContextInitializer with derived type registration
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.Commands.CreateOrder>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMultipleEvents_GeneratesAllDerivedTypeRegistrationsAsync() {
+    // Arrange - multiple event types
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+public record OrderShipped(Guid OrderId, string TrackingNumber) : IEvent;
+public record OrderDelivered(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should register all event types
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderShipped>");
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderDelivered>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithMixedMessageTypes_GeneratesCorrectBaseTypeRegistrationsAsync() {
+    // Arrange - mix of commands and events
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp;
+
+public record CreateOrder(Guid OrderId) : ICommand;
+public record OrderCreated(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should register command with ICommand base type
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.ICommand, global::MyApp.CreateOrder>");
+
+    // Should register event with IEvent base type
+    await Assert.That(initializerCode).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.OrderCreated>");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DerivedTypeRegistration_UsesFullyQualifiedNameAsDiscriminatorAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should use fully qualified type name as discriminator to avoid collisions
+    await Assert.That(initializerCode!).Contains("RegisterDerivedType<global::Whizbang.Core.IEvent, global::MyApp.Events.OrderPlaced>(\"MyApp.Events.OrderPlaced\")");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_Initializer_HasModuleInitializerAttributeAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Events;
+
+public record OrderPlaced(Guid OrderId) : IEvent;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var initializerCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContextInitializer.g.cs");
+    await Assert.That(initializerCode).IsNotNull();
+
+    // Should have ModuleInitializer attribute
+    await Assert.That(initializerCode!).Contains("[ModuleInitializer]");
+    await Assert.That(initializerCode).Contains("public static void Initialize()");
+  }
+
+  #endregion
 }

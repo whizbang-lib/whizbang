@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.ValueObjects;
 
@@ -602,6 +603,26 @@ public partial class PerspectiveWorker(
               LogSkippingPostPerspectiveInlineNoInvoker(_logger);
               if (_logger.IsEnabled(LogLevel.Debug)) {
                 LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
+              }
+            }
+          }
+
+          // Phase 3e: Process message tags at PostPerspectiveInline stage
+          // This enables notification hooks to fire after events are persisted
+          // (e.g., BffService firing SignalR notifications after event consumption)
+          if (processedEvents.Count > 0) {
+            var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+            if (tagProcessor is not null) {
+              foreach (var envelope in processedEvents) {
+                var eventPayload = envelope.Payload;
+                var eventType = eventPayload.GetType();
+                await tagProcessor.ProcessTagsAsync(
+                  eventPayload,
+                  eventType,
+                  LifecycleStage.PostPerspectiveInline,
+                  scope: null,
+                  cancellationToken
+                ).ConfigureAwait(false);
               }
             }
           }

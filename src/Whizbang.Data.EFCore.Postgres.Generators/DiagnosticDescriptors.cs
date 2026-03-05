@@ -69,4 +69,20 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Abstract types in perspective models are serialized using System.Text.Json polymorphic serialization. For efficient database queries on type discriminators, add a [PolymorphicDiscriminator] attribute to a string property that stores the type name."
   );
+
+  /// <summary>
+  /// WHIZ400: Error - Invalid type argument for ILensQuery Query/GetByIdAsync methods.
+  /// The type argument must be one of the interface's type parameters.
+  /// </summary>
+  /// <tests>LensQueryTypeArgumentAnalyzerTests.cs:Query_WithInvalidType_ReportsWHIZ400Async</tests>
+  /// <tests>LensQueryTypeArgumentAnalyzerTests.cs:GetByIdAsync_WithInvalidType_ReportsWHIZ400Async</tests>
+  public static readonly DiagnosticDescriptor InvalidLensQueryTypeArgument = new(
+      id: "WHIZ400",
+      title: "Invalid type argument for ILensQuery",
+      messageFormat: "Type '{0}' is not valid for ILensQuery<{1}>. Valid types are: {2}.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "When using ILensQuery<T1, T2, ...> the type argument to Query<T>() and GetByIdAsync<T>() must be one of the interface's type parameters (T1, T2, etc). Using an unregistered type will cause a runtime ArgumentException."
+  );
 }

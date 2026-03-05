@@ -7,7 +7,7 @@ namespace Whizbang.SignalR.Hooks;
 
 /// <summary>
 /// Message tag hook that sends SignalR notifications for events
-/// marked with <see cref="NotificationTagAttribute"/>.
+/// marked with <see cref="SignalTagAttribute"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,7 +18,7 @@ namespace Whizbang.SignalR.Hooks;
 /// Registration example:
 /// <code>
 /// services.AddWhizbang(options => {
-///   options.Tags.UseHook&lt;NotificationTagAttribute, SignalRNotificationHook&gt;();
+///   options.Tags.UseHook&lt;SignalTagAttribute, SignalRNotificationHook&gt;();
 /// });
 /// </code>
 /// </para>
@@ -26,18 +26,18 @@ namespace Whizbang.SignalR.Hooks;
 /// <example>
 /// <code>
 /// // Notification to specific group
-/// [NotificationTag(Tag = "order-shipped", Group = "customer-{CustomerId}", Priority = NotificationPriority.High)]
+/// [SignalTag(Tag = "order-shipped", Group = "customer-{CustomerId}", Priority = SignalPriority.High)]
 /// public record OrderShippedEvent(Guid OrderId, Guid CustomerId, string TrackingNumber) : IEvent;
 ///
 /// // Broadcast notification
-/// [NotificationTag(Tag = "system-announcement", Priority = NotificationPriority.Critical)]
+/// [SignalTag(Tag = "system-announcement", Priority = SignalPriority.Critical)]
 /// public record SystemAnnouncementEvent(string Message) : IEvent;
 /// </code>
 /// </example>
 /// <docs>signalr/notification-hooks</docs>
 /// <tests>Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
 /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
-public sealed class SignalRNotificationHook<THub> : IMessageTagHook<NotificationTagAttribute>
+public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAttribute>
     where THub : Hub {
   private readonly IHubContext<THub> _hubContext;
 
@@ -53,7 +53,7 @@ public sealed class SignalRNotificationHook<THub> : IMessageTagHook<Notification
   /// Sends a SignalR notification for the tagged message.
   /// </summary>
   public async ValueTask<JsonElement?> OnTaggedMessageAsync(
-      TagContext<NotificationTagAttribute> context,
+      TagContext<SignalTagAttribute> context,
       CancellationToken ct) {
     var attribute = context.Attribute;
     var groupName = _resolveGroup(attribute.Group, context.Payload, context.Scope);

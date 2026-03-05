@@ -446,7 +446,7 @@ public class DispatcherTransportBridgeTests {
       return async (evt) => { await Task.CompletedTask; };
     }
 
-    protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return null;
     }
 

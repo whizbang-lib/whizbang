@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -33,11 +34,11 @@ public class TagOptionsTests {
     var options = new TagOptions();
 
     // Act
-    options.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    options.UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Assert
     await Assert.That(options.HookRegistrations.Count).IsEqualTo(1);
-    await Assert.That(options.HookRegistrations[0].AttributeType).IsEqualTo(typeof(NotificationTagAttribute));
+    await Assert.That(options.HookRegistrations[0].AttributeType).IsEqualTo(typeof(SignalTagAttribute));
     await Assert.That(options.HookRegistrations[0].HookType).IsEqualTo(typeof(TestNotificationHook));
   }
 
@@ -47,7 +48,7 @@ public class TagOptionsTests {
     var options = new TagOptions();
 
     // Act
-    options.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    options.UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Assert
     await Assert.That(options.HookRegistrations[0].Priority).IsEqualTo(-100);
@@ -59,7 +60,7 @@ public class TagOptionsTests {
     var options = new TagOptions();
 
     // Act
-    options.UseHook<NotificationTagAttribute, TestNotificationHook>(priority: 50);
+    options.UseHook<SignalTagAttribute, TestNotificationHook>(priority: 50);
 
     // Assert
     await Assert.That(options.HookRegistrations[0].Priority).IsEqualTo(50);
@@ -71,7 +72,7 @@ public class TagOptionsTests {
     var options = new TagOptions();
 
     // Act
-    var result = options.UseHook<NotificationTagAttribute, TestNotificationHook>();
+    var result = options.UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Assert
     await Assert.That(result).IsEqualTo(options);
@@ -84,8 +85,8 @@ public class TagOptionsTests {
 
     // Act
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>()
-      .UseHook<NotificationTagAttribute, TestNotificationHook2>();
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook2>();
 
     // Assert
     await Assert.That(options.HookRegistrations.Count).IsEqualTo(2);
@@ -98,7 +99,7 @@ public class TagOptionsTests {
 
     // Act
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>()
       .UseHook<MetricTagAttribute, TestMetricHook>();
 
@@ -123,10 +124,10 @@ public class TagOptionsTests {
     // Arrange
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>(priority: 500)
+      .UseHook<SignalTagAttribute, TestNotificationHook>(priority: 500)
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>(priority: -100)
       .UseHook<MetricTagAttribute, TestMetricHook>(priority: 30)
-      .UseHook<NotificationTagAttribute, TestNotificationHook2>(priority: -10);
+      .UseHook<SignalTagAttribute, TestNotificationHook2>(priority: -10);
 
     // Act
     var sorted = options.GetHooksInExecutionOrder().ToArray();
@@ -143,16 +144,16 @@ public class TagOptionsTests {
     // Arrange
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>()
-      .UseHook<NotificationTagAttribute, TestNotificationHook2>();
+      .UseHook<SignalTagAttribute, TestNotificationHook2>();
 
     // Act
-    var hooks = options.GetHooksFor<NotificationTagAttribute>().ToArray();
+    var hooks = options.GetHooksFor<SignalTagAttribute>().ToArray();
 
     // Assert
     await Assert.That(hooks.Length).IsEqualTo(2);
-    await Assert.That(hooks.All(h => h.AttributeType == typeof(NotificationTagAttribute))).IsTrue();
+    await Assert.That(hooks.All(h => h.AttributeType == typeof(SignalTagAttribute))).IsTrue();
   }
 
   [Test]
@@ -161,10 +162,10 @@ public class TagOptionsTests {
     var options = new TagOptions();
     options
       .UseUniversalHook<TestUniversalHook>()
-      .UseHook<NotificationTagAttribute, TestNotificationHook>();
+      .UseHook<SignalTagAttribute, TestNotificationHook>();
 
     // Act
-    var hooks = options.GetHooksFor<NotificationTagAttribute>().ToArray();
+    var hooks = options.GetHooksFor<SignalTagAttribute>().ToArray();
 
     // Assert
     await Assert.That(hooks.Length).IsEqualTo(2);
@@ -175,7 +176,7 @@ public class TagOptionsTests {
     // Arrange
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>()
+      .UseHook<SignalTagAttribute, TestNotificationHook>()
       .UseHook<TelemetryTagAttribute, TestTelemetryHook>();
 
     // Act - Using non-generic intentionally to test that overload
@@ -207,11 +208,11 @@ public class TagOptionsTests {
     // Arrange
     var options = new TagOptions();
     options
-      .UseHook<NotificationTagAttribute, TestNotificationHook>(priority: 100)
-      .UseHook<NotificationTagAttribute, TestNotificationHook2>(priority: -50);
+      .UseHook<SignalTagAttribute, TestNotificationHook>(priority: 100)
+      .UseHook<SignalTagAttribute, TestNotificationHook2>(priority: -50);
 
     // Act
-    var hooks = options.GetHooksFor<NotificationTagAttribute>().ToArray();
+    var hooks = options.GetHooksFor<SignalTagAttribute>().ToArray();
 
     // Assert
     await Assert.That(hooks[0].Priority).IsEqualTo(-50);
@@ -219,17 +220,17 @@ public class TagOptionsTests {
   }
 
   // Test hook implementations
-  private sealed class TestNotificationHook : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TestNotificationHook : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
 
-  private sealed class TestNotificationHook2 : IMessageTagHook<NotificationTagAttribute> {
+  private sealed class TestNotificationHook2 : IMessageTagHook<SignalTagAttribute> {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
-        TagContext<NotificationTagAttribute> _,
+        TagContext<SignalTagAttribute> _,
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
@@ -257,5 +258,110 @@ public class TagOptionsTests {
         CancellationToken __) {
       return ValueTask.FromResult<JsonElement?>(null);
     }
+  }
+
+  // ============================================
+  // Lifecycle-Based Tag Processing Tests (TDD)
+  // ============================================
+
+  [Test]
+  public async Task UseHook_UsesDefaultFireAtAfterReceptorCompletionAsync() {
+    // Arrange
+    var options = new TagOptions();
+
+    // Act
+    options.UseHook<SignalTagAttribute, TestNotificationHook>();
+
+    // Assert
+    await Assert.That(options.HookRegistrations[0].FireAt).IsEqualTo(LifecycleStage.AfterReceptorCompletion);
+  }
+
+  [Test]
+  public async Task UseHook_AcceptsCustomFireAtAsync() {
+    // Arrange
+    var options = new TagOptions();
+
+    // Act
+    options.UseHook<SignalTagAttribute, TestNotificationHook>(fireAt: LifecycleStage.PostPerspectiveInline);
+
+    // Assert
+    await Assert.That(options.HookRegistrations[0].FireAt).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  public async Task UseHook_AcceptsBothPriorityAndFireAtAsync() {
+    // Arrange
+    var options = new TagOptions();
+
+    // Act
+    options.UseHook<SignalTagAttribute, TestNotificationHook>(priority: 50, fireAt: LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(options.HookRegistrations[0].Priority).IsEqualTo(50);
+    await Assert.That(options.HookRegistrations[0].FireAt).IsEqualTo(LifecycleStage.PostInboxInline);
+  }
+
+  [Test]
+  public async Task GetHooksFor_WithStage_ReturnsOnlyMatchingStageAsync() {
+    // Arrange
+    var options = new TagOptions();
+    options
+      .UseHook<SignalTagAttribute, TestNotificationHook>(fireAt: LifecycleStage.PostPerspectiveInline)
+      .UseHook<SignalTagAttribute, TestNotificationHook2>(fireAt: LifecycleStage.AfterReceptorCompletion);
+
+    // Act
+    var hooks = options.GetHooksFor<SignalTagAttribute>(LifecycleStage.PostPerspectiveInline).ToArray();
+
+    // Assert
+    await Assert.That(hooks.Length).IsEqualTo(1);
+    await Assert.That(hooks[0].FireAt).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  [Test]
+  public async Task GetHooksFor_WithStage_IncludesUniversalHooksForThatStageAsync() {
+    // Arrange
+    var options = new TagOptions();
+    options
+      .UseUniversalHook<TestUniversalHook>(fireAt: LifecycleStage.PostPerspectiveInline)
+      .UseHook<SignalTagAttribute, TestNotificationHook>(fireAt: LifecycleStage.PostPerspectiveInline);
+
+    // Act
+    var hooks = options.GetHooksFor<SignalTagAttribute>(LifecycleStage.PostPerspectiveInline).ToArray();
+
+    // Assert
+    await Assert.That(hooks.Length).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task GetHooksFor_WithStage_ExcludesHooksForOtherStagesAsync() {
+    // Arrange
+    var options = new TagOptions();
+    options
+      .UseHook<SignalTagAttribute, TestNotificationHook>(fireAt: LifecycleStage.PostPerspectiveInline)
+      .UseHook<SignalTagAttribute, TestNotificationHook2>(fireAt: LifecycleStage.PostOutboxInline);
+
+    // Act
+    var hooks = options.GetHooksFor<SignalTagAttribute>(LifecycleStage.PostPerspectiveInline).ToArray();
+
+    // Assert
+    await Assert.That(hooks.Length).IsEqualTo(1);
+    await Assert.That(hooks[0].HookType).IsEqualTo(typeof(TestNotificationHook));
+  }
+
+  [Test]
+  public async Task GetHooksFor_NonGeneric_WithStage_FiltersCorrectlyAsync() {
+    // Arrange
+    var options = new TagOptions();
+    options
+      .UseHook<TelemetryTagAttribute, TestTelemetryHook>(fireAt: LifecycleStage.PostInboxInline)
+      .UseHook<TelemetryTagAttribute, TestTelemetryHook>(fireAt: LifecycleStage.AfterReceptorCompletion);
+
+    // Act
+#pragma warning disable CA2263
+    var hooks = options.GetHooksFor(typeof(TelemetryTagAttribute), LifecycleStage.PostInboxInline).ToArray();
+#pragma warning restore CA2263
+
+    // Assert
+    await Assert.That(hooks.Length).IsEqualTo(1);
   }
 }
