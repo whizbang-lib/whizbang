@@ -115,6 +115,15 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
   }
 
   /// <inheritdoc/>
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
+  }
+
+  /// <inheritdoc/>
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
@@ -165,6 +174,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -219,6 +236,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -279,6 +304,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
@@ -337,6 +370,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -401,6 +442,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -469,6 +518,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -541,6 +598,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {
@@ -617,6 +682,14 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
   public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
     var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
+  }
+
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+    GC.SuppressFinalize(this);
   }
 
   public async ValueTask DisposeAsync() {

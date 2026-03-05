@@ -66,6 +66,18 @@ public class ILensQueryMultiGenericTests {
   }
 
   [Test]
+  public async Task ILensQuery_TwoGeneric_ImplementsIDisposableAsync() {
+    // Arrange
+    var type = typeof(ILensQuery<Model1, Model2>);
+
+    // Act
+    var implementsIDisposable = typeof(IDisposable).IsAssignableFrom(type);
+
+    // Assert
+    await Assert.That(implementsIDisposable).IsTrue();
+  }
+
+  [Test]
   public async Task ILensQuery_TwoGeneric_HasQueryMethodAsync() {
     // Arrange
     var type = typeof(ILensQuery<Model1, Model2>);
@@ -150,6 +162,18 @@ public class ILensQueryMultiGenericTests {
   }
 
   [Test]
+  public async Task ILensQuery_ThreeGeneric_ImplementsIDisposableAsync() {
+    // Arrange
+    var type = typeof(ILensQuery<Model1, Model2, Model3>);
+
+    // Act
+    var implementsIDisposable = typeof(IDisposable).IsAssignableFrom(type);
+
+    // Assert
+    await Assert.That(implementsIDisposable).IsTrue();
+  }
+
+  [Test]
   public async Task ILensQuery_ThreeGeneric_HasQueryMethodAsync() {
     // Arrange
     var type = typeof(ILensQuery<Model1, Model2, Model3>);
@@ -203,6 +227,18 @@ public class ILensQueryMultiGenericTests {
     await Assert.That(implementsIAsyncDisposable).IsTrue();
   }
 
+  [Test]
+  public async Task ILensQuery_FourGeneric_ImplementsIDisposableAsync() {
+    // Arrange
+    var type = typeof(ILensQuery<Model1, Model2, Model3, Model4>);
+
+    // Act
+    var implementsIDisposable = typeof(IDisposable).IsAssignableFrom(type);
+
+    // Assert
+    await Assert.That(implementsIDisposable).IsTrue();
+  }
+
   #endregion
 
   #region Five Generic Parameters - ILensQuery<T1, T2, T3, T4, T5>
@@ -229,6 +265,18 @@ public class ILensQueryMultiGenericTests {
 
     // Assert
     await Assert.That(implementsIAsyncDisposable).IsTrue();
+  }
+
+  [Test]
+  public async Task ILensQuery_FiveGeneric_ImplementsIDisposableAsync() {
+    // Arrange
+    var type = typeof(ILensQuery<Model1, Model2, Model3, Model4, Model5>);
+
+    // Act
+    var implementsIDisposable = typeof(IDisposable).IsAssignableFrom(type);
+
+    // Assert
+    await Assert.That(implementsIDisposable).IsTrue();
   }
 
   #endregion
