@@ -494,6 +494,84 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
       return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
     }
 
+    // Handle nullable primitive types (Guid?, int?, etc.)
+    // These are common in message types and must be handled without relying on resolver chain
+    if (type == typeof(Guid?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter<Guid>(options));
+    }
+
+    if (type == typeof(int?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter<int>(options));
+    }
+
+    if (type == typeof(long?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter<long>(options));
+    }
+
+    if (type == typeof(bool?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter<bool>(options));
+    }
+
+    if (type == typeof(DateTime?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter<DateTime>(options));
+    }
+
+    if (type == typeof(DateTimeOffset?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter<DateTimeOffset>(options));
+    }
+
+    if (type == typeof(TimeSpan?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter<TimeSpan>(options));
+    }
+
+    if (type == typeof(DateOnly?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter<DateOnly>(options));
+    }
+
+    if (type == typeof(TimeOnly?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter<TimeOnly>(options));
+    }
+
+    if (type == typeof(decimal?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter<decimal>(options));
+    }
+
+    if (type == typeof(double?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter<double>(options));
+    }
+
+    if (type == typeof(float?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter<float>(options));
+    }
+
+    if (type == typeof(byte?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter<byte>(options));
+    }
+
+    if (type == typeof(sbyte?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter<sbyte>(options));
+    }
+
+    if (type == typeof(short?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter<short>(options));
+    }
+
+    if (type == typeof(ushort?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter<ushort>(options));
+    }
+
+    if (type == typeof(uint?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter<uint>(options));
+    }
+
+    if (type == typeof(ulong?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter<ulong>(options));
+    }
+
+    if (type == typeof(char?)) {
+      return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter<char>(options));
+    }
+
     // For complex types (List, Dictionary, etc.), query the full resolver chain
     // This will check InfrastructureJsonContext and user-provided resolvers
     var chainTypeInfo = options.GetTypeInfo(type);
