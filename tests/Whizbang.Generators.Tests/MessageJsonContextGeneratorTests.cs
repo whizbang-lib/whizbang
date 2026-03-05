@@ -239,6 +239,8 @@ public record CreateOrder(string OrderId) : ICommand;
   /// <summary>
   /// Tests that GetTypeInfoInternal includes handling for primitive types like Guid, int, string.
   /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid)) during envelope serialization.
+  /// Primitives are handled directly using JsonMetadataServices (not GetOrCreateTypeInfo) to avoid
+  /// false circular reference detection since the caller has already added the type to TypesBeingCreated.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -261,21 +263,22 @@ public record CreateOrder(string Name, int Quantity, System.Guid OrderId) : ICom
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate primitive type handling in GetTypeInfoInternal
-    // These allow STJ to resolve primitive types during serialization
-    await Assert.That(code!).Contains("if (type == typeof(string)) return GetOrCreateTypeInfo<string>(options);");
-    await Assert.That(code).Contains("if (type == typeof(int)) return GetOrCreateTypeInfo<int>(options);");
-    await Assert.That(code).Contains("if (type == typeof(Guid)) return GetOrCreateTypeInfo<Guid>(options);");
-    await Assert.That(code).Contains("if (type == typeof(long)) return GetOrCreateTypeInfo<long>(options);");
-    await Assert.That(code).Contains("if (type == typeof(bool)) return GetOrCreateTypeInfo<bool>(options);");
-    await Assert.That(code).Contains("if (type == typeof(DateTime)) return GetOrCreateTypeInfo<DateTime>(options);");
-    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return GetOrCreateTypeInfo<DateTimeOffset>(options);");
-    await Assert.That(code).Contains("if (type == typeof(decimal)) return GetOrCreateTypeInfo<decimal>(options);");
+    // Should generate primitive type handling in GetTypeInfoInternal using JsonMetadataServices directly
+    // (NOT GetOrCreateTypeInfo to avoid false circular reference detection)
+    await Assert.That(code!).Contains("if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    await Assert.That(code).Contains("if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    await Assert.That(code).Contains("if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    await Assert.That(code).Contains("if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    await Assert.That(code).Contains("if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    await Assert.That(code).Contains("if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
   }
 
   /// <summary>
   /// Tests that GetTypeInfoInternal includes handling for nullable primitive types like Guid?, int?.
   /// This is critical for serialization when STJ calls GetTypeInfo(typeof(Guid?)) during envelope serialization.
+  /// Nullable primitives create the underlying type info first, then wrap with nullable converter.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -298,14 +301,14 @@ public record ProcessOrder(System.Guid? OptionalId, int? OptionalQuantity) : ICo
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate nullable primitive type handling in GetTypeInfoInternal
-    await Assert.That(code!).Contains("if (type == typeof(int?)) return GetOrCreateTypeInfo<int?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(Guid?)) return GetOrCreateTypeInfo<Guid?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(long?)) return GetOrCreateTypeInfo<long?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(bool?)) return GetOrCreateTypeInfo<bool?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(DateTime?)) return GetOrCreateTypeInfo<DateTime?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) return GetOrCreateTypeInfo<DateTimeOffset?>(options);");
-    await Assert.That(code).Contains("if (type == typeof(decimal?)) return GetOrCreateTypeInfo<decimal?>(options);");
+    // Should generate nullable primitive type handling that creates underlying type first, then wraps
+    await Assert.That(code!).Contains("if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    await Assert.That(code).Contains("if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
   }
 
   [Test]
