@@ -15,7 +15,29 @@ concurrency:
 jobs:
   version:
     name: Version
-    uses: ./.github/workflows/reusable-version.yml
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.version.outputs.semver }}
+      fullsemver: ${{ steps.version.outputs.fullsemver }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Calculate Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # For PRs, use fixed validation version
+            VERSION="0.0.0-pr.${{ github.event.pull_request.number }}"
+            echo "semver=$VERSION" >> $GITHUB_OUTPUT
+            echo "fullsemver=$VERSION" >> $GITHUB_OUTPUT
+            echo "prerelease=pr.${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "Using PR validation version: $VERSION"
+          else
+            # For pushes to branches, use GitVersion
+            echo "Use GitVersion for branch pushes (not implemented yet)"
+            echo "semver=0.9.1-alpha.999" >> $GITHUB_OUTPUT
+            echo "fullsemver=0.9.1-alpha.999" >> $GITHUB_OUTPUT
+            echo "prerelease=alpha.999" >> $GITHUB_OUTPUT
+          fi
 
   build:
     name: Build
