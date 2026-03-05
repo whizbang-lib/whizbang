@@ -746,9 +746,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
 
       sb.AppendLine("using Microsoft.EntityFrameworkCore;");
-      sb.AppendLine("using Whizbang.Core.Lenses;");
-      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Generated;");
-      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Configuration;");
+      sb.AppendLine("using global::Whizbang.Core.Lenses;");
+      sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Generated;");
+      sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
       sb.AppendLine($"namespace {dbContext.Namespace};");
@@ -897,8 +897,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
     sb.AppendLine("using Microsoft.Extensions.Logging;");
-    sb.AppendLine("using Whizbang.Core.Lenses;");
-    sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
+    sb.AppendLine("using global::Whizbang.Core.Lenses;");
+    sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
     // Add pgvector usings if ANY DbContext has vector fields
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
@@ -1176,7 +1176,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
       sb.AppendLine();
       sb.AppendLine("    // Configure JSON serialization using Whizbang's combined options");
-      sb.AppendLine("    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+      sb.AppendLine("    var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
       sb.AppendLine("    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
       sb.AppendLine("    dataSourceBuilder.EnableDynamicJson();");
       sb.AppendLine();
@@ -1215,11 +1215,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
       sb.AppendLine($"    // avoiding scope validation issues that AddPooledDbContextFactory causes");
       sb.AppendLine($"    services.AddSingleton<IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
-      sb.AppendLine($"      new ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+      sb.AppendLine($"      new global::Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
       sb.AppendLine($"        sp.GetRequiredService<IServiceScopeFactory>()));");
       sb.AppendLine();
       sb.AppendLine("    // Register JsonSerializerOptions for Whizbang components");
-      sb.AppendLine("    services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+      sb.AppendLine("    services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
       sb.AppendLine();
       sb.AppendLine("    return services;");
       sb.AppendLine("  }");
@@ -1276,7 +1276,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
     sb.AppendLine();
     sb.AppendLine("      // Configure JSON serialization using Whizbang's combined options");
-    sb.AppendLine("      var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+    sb.AppendLine("      var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
     sb.AppendLine("      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
     sb.AppendLine("      dataSourceBuilder.EnableDynamicJson();");
     sb.AppendLine();
@@ -1328,11 +1328,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
     sb.AppendLine($"      // avoiding scope validation issues that AddPooledDbContextFactory causes");
     sb.AppendLine($"      services.AddSingleton<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
-    sb.AppendLine($"        new Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+    sb.AppendLine($"        new global::Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
     sb.AppendLine($"          sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));");
     sb.AppendLine();
     sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
-    sb.AppendLine("      services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+    sb.AppendLine("      services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
     sb.AppendLine("    });");
     sb.AppendLine();
     sb.AppendLine($"    // Register initialization callback for EnsureWhizbangInitializedAsync()");

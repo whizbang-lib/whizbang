@@ -27,9 +27,9 @@ namespace Whizbang.Generators;
 /// <docs>core-concepts/routing#event-namespace-registry</docs>
 [Generator]
 public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
-  private const string IEVENT_INTERFACE = "Whizbang.Core.IEvent";
-  private const string IRECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
+  private const string IRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover event namespaces from IPerspectiveFor implementations
@@ -78,8 +78,9 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     }
 
     // Look for IPerspectiveFor<TModel, TEvent1, TEvent2, ...> interface
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var perspectiveInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString().StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal));
+        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal));
 
     if (perspectiveInterface is null) {
       return null;
@@ -94,7 +95,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
       var eventType = typeArguments[i];
 
       // Verify it's an IEvent implementation
-      if (!eventType.AllInterfaces.Any(iface => iface.ToDisplayString() == IEVENT_INTERFACE)) {
+      // Use FullyQualifiedFormat to include global:: prefix which matches our constant
+      if (!eventType.AllInterfaces.Any(iface => iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == IEVENT_INTERFACE)) {
         continue;
       }
 
@@ -134,8 +136,9 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     }
 
     // Look for IReceptor<TMessage> or IReceptor<TMessage, TResponse> interface
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString().StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal));
+        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal));
 
     if (receptorInterface is null) {
       return null;

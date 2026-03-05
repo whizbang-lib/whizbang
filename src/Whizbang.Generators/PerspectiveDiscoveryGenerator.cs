@@ -31,7 +31,7 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Filter for classes that have a base list (potential interface implementations)
