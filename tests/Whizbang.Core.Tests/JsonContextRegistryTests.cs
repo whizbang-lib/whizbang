@@ -623,6 +623,163 @@ public partial class JsonContextRegistryTests {
   }
 
   // ===========================
+  // Non-Nullable Primitive Lock-In Tests
+  // ===========================
+  // These tests ensure non-nullable primitives can be serialized without relying on
+  // the full resolver chain (which may not be available in standalone contexts).
+
+  /// <summary>
+  /// Test record with non-nullable Guid property.
+  /// </summary>
+  internal sealed record TestRecordWithGuid(string Name, Guid Id) : IEvent;
+
+  /// <summary>
+  /// Test record with various non-nullable primitives.
+  /// </summary>
+  internal sealed record TestRecordWithPrimitives(
+    int IntValue,
+    long LongValue,
+    bool BoolValue,
+    DateTime DateTimeValue,
+    DateTimeOffset DateTimeOffsetValue,
+    TimeSpan TimeSpanValue,
+    decimal DecimalValue,
+    double DoubleValue,
+    float FloatValue,
+    Guid GuidValue
+  ) : IEvent;
+
+  /// <summary>
+  /// Test JsonSerializerContext for non-nullable primitive types.
+  /// </summary>
+  [JsonSerializable(typeof(TestRecordWithGuid))]
+  [JsonSerializable(typeof(TestRecordWithPrimitives))]
+  [JsonSerializable(typeof(MessageEnvelope<TestRecordWithGuid>))]
+  [JsonSerializable(typeof(List<TestRecordWithGuid>))]
+  internal sealed partial class NonNullablePrimitiveTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task NonNullableGuid_SerializesCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    JsonContextRegistry.RegisterDerivedType<IEvent, TestRecordWithGuid>("TestRecordWithGuid");
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var record = new TestRecordWithGuid("Test", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+
+    // Assert
+    await Assert.That(json).Contains($"\"{testGuid}\"");
+    await Assert.That(json).Contains("\"Name\":\"Test\"");
+  }
+
+  [Test]
+  public async Task NonNullableGuid_RoundTrip_PreservesValueAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var original = new TestRecordWithGuid("RoundTrip", testGuid);
+
+    // Act
+    var json = JsonSerializer.Serialize(original, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithGuid>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Id).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Name).IsEqualTo("RoundTrip");
+  }
+
+  [Test]
+  public async Task AllNonNullablePrimitives_RoundTripCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var testDateTime = new DateTime(2025, 6, 15, 12, 30, 45, DateTimeKind.Utc);
+    var testDateTimeOffset = new DateTimeOffset(2025, 6, 15, 12, 30, 45, TimeSpan.FromHours(-5));
+    var testTimeSpan = TimeSpan.FromHours(2.5);
+
+    var record = new TestRecordWithPrimitives(
+      IntValue: 42,
+      LongValue: 9876543210L,
+      BoolValue: true,
+      DateTimeValue: testDateTime,
+      DateTimeOffsetValue: testDateTimeOffset,
+      TimeSpanValue: testTimeSpan,
+      DecimalValue: 123.45m,
+      DoubleValue: 3.14159,
+      FloatValue: 2.71828f,
+      GuidValue: testGuid
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(record, options);
+    var deserialized = JsonSerializer.Deserialize<TestRecordWithPrimitives>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.IntValue).IsEqualTo(42);
+    await Assert.That(deserialized.LongValue).IsEqualTo(9876543210L);
+    await Assert.That(deserialized.BoolValue).IsEqualTo(true);
+    await Assert.That(deserialized.DateTimeValue).IsEqualTo(testDateTime);
+    await Assert.That(deserialized.DecimalValue).IsEqualTo(123.45m);
+    await Assert.That(deserialized.DoubleValue).IsEqualTo(3.14159);
+    await Assert.That(deserialized.GuidValue).IsEqualTo(testGuid);
+  }
+
+  [Test]
+  public async Task MessageEnvelope_WithNonNullableGuidPayload_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var testGuid = Guid.NewGuid();
+    var payload = new TestRecordWithGuid("EnvelopeTest", testGuid);
+    var envelope = new MessageEnvelope<TestRecordWithGuid>(
+      MessageId.New(),
+      payload,
+      []
+    );
+
+    // Act
+    var json = JsonSerializer.Serialize(envelope, options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<TestRecordWithGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNotNull();
+    await Assert.That(deserialized.Payload.Id).IsEqualTo(testGuid);
+    await Assert.That(deserialized.Payload.Name).IsEqualTo("EnvelopeTest");
+  }
+
+  [Test]
+  public async Task ListOfRecords_WithNonNullableGuid_RoundTripsCorrectlyAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterContext(NonNullablePrimitiveTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var list = new List<TestRecordWithGuid> {
+      new("First", Guid.NewGuid()),
+      new("Second", Guid.NewGuid()),
+      new("Third", Guid.NewGuid())
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(list, options);
+    var deserialized = JsonSerializer.Deserialize<List<TestRecordWithGuid>>(json, options);
+
+    // Assert
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Count).IsEqualTo(3);
+    await Assert.That(deserialized[0].Name).IsEqualTo("First");
+    await Assert.That(deserialized[1].Name).IsEqualTo("Second");
+    await Assert.That(deserialized[2].Name).IsEqualTo("Third");
+  }
+
+  // ===========================
   // Nullable Primitive Lock-In Tests
   // ===========================
   // These tests ensure nullable primitives can be serialized without relying on
