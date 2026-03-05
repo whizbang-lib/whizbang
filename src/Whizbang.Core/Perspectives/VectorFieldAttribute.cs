@@ -34,12 +34,12 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
-public sealed class VectorFieldAttribute : Attribute {
+public sealed class VectorFieldAttribute(int dimensions) : Attribute {
   /// <summary>
   /// The number of dimensions in the vector (e.g., 1536 for OpenAI text-embedding-ada-002).
   /// Must be a positive integer.
   /// </summary>
-  public int Dimensions { get; }
+  public int Dimensions { get; } = dimensions >= 1 ? dimensions : throw new ArgumentOutOfRangeException(nameof(dimensions), dimensions, "Dimensions must be at least 1");
 
   /// <summary>
   /// The distance metric for similarity queries. Defaults to <see cref="VectorDistanceMetric.Cosine"/>.
@@ -69,14 +69,4 @@ public sealed class VectorFieldAttribute : Attribute {
   /// Optional custom column name. Defaults to snake_case of property name.
   /// </summary>
   public string? ColumnName { get; init; }
-
-  /// <summary>
-  /// Creates a vector field attribute with the specified dimensions.
-  /// </summary>
-  /// <param name="dimensions">Number of dimensions (e.g., 1536 for OpenAI embeddings, 768 for sentence-transformers).</param>
-  /// <exception cref="ArgumentOutOfRangeException">Thrown when dimensions is less than 1.</exception>
-  public VectorFieldAttribute(int dimensions) {
-    ArgumentOutOfRangeException.ThrowIfLessThan(dimensions, 1);
-    Dimensions = dimensions;
-  }
 }

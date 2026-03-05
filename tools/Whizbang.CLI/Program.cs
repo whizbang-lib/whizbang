@@ -81,7 +81,7 @@ async Task<int> _migrateAnalyzeAsync(string[] commandArgs) {
   Console.WriteLine("Analysis Results:");
   Console.WriteLine($"  Wolverine handlers found:  {result.WolverineHandlerCount}");
   Console.WriteLine($"  Marten projections found:  {result.MartenProjectionCount}");
-  Console.WriteLine($"  ─────────────────────────");
+  Console.WriteLine("  ─────────────────────────");
   Console.WriteLine($"  Total migration items:     {result.TotalMigrationItems}");
   Console.WriteLine();
 

@@ -90,7 +90,7 @@ public class CreateProductWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);  // BFF has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(command);
-    Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
+    Console.WriteLine("[TEST] Command sent, waiting for perspective processing...");
 
     // Wait for perspective processing to complete (deterministic, no race condition!)
     // Longer timeout for workflow tests (45s) due to per-test container initialization

@@ -86,7 +86,7 @@ public sealed class PerspectiveCompletionReceptor<TEvent> : IReceptor<TEvent>
     }
 
     // Signal completion (use TrySetResult to handle multiple events)
-    Console.WriteLine($"[TestReceptor] SIGNALING COMPLETION!");
+    Console.WriteLine("[TestReceptor] SIGNALING COMPLETION!");
     var result = _completionSource.TrySetResult(true);
     Console.WriteLine($"[TestReceptor] TrySetResult returned: {result}");
     return ValueTask.CompletedTask;

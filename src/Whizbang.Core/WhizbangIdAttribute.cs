@@ -96,7 +96,7 @@ namespace Whizbang.Core;
   AttributeTargets.Struct | AttributeTargets.Property | AttributeTargets.Parameter,
   AllowMultiple = false,
   Inherited = false)]
-public sealed class WhizbangIdAttribute : Attribute {
+public sealed class WhizbangIdAttribute(string? targetNamespace = null) : Attribute {
   /// <summary>
   /// Gets or sets the namespace where the ID type should be generated.
   /// If not specified, the ID is generated in the same namespace as the declaring type.
@@ -112,7 +112,7 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// public readonly partial struct ProductId;
   /// </code>
   /// </example>
-  public string? Namespace { get; set; }
+  public string? Namespace { get; set; } = targetNamespace;
 
   /// <summary>
   /// Gets or sets whether to suppress the WHIZ024 warning when multiple ID types
@@ -136,29 +136,4 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// </code>
   /// </example>
   public bool SuppressDuplicateWarning { get; set; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="WhizbangIdAttribute"/> class.
-  /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_DefaultConstructor_HasNullNamespaceAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_DefaultConstructor_HasFalseSuppressDuplicateWarningAsync</tests>
-  public WhizbangIdAttribute() { }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="WhizbangIdAttribute"/> class
-  /// with the specified target namespace.
-  /// </summary>
-  /// <param name="targetNamespace">
-  /// The namespace where the ID type should be generated.
-  /// </param>
-  /// <example>
-  /// <code>
-  /// [WhizbangId("MyApp.Domain.Ids")]
-  /// public readonly partial struct ProductId;
-  /// </code>
-  /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_ConstructorWithNamespace_SetsNamespacePropertyAsync</tests>
-  public WhizbangIdAttribute(string? targetNamespace) {
-    Namespace = targetNamespace;
-  }
 }

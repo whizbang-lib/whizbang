@@ -81,7 +81,7 @@ public class LifecycleDeserializationTests {
       await Assert.That(receivedEvent.Description).IsEqualTo(command.Description);
       await Assert.That(receivedEvent.Price).IsEqualTo(command.Price);
 
-      Console.WriteLine($"[TEST SUCCESS] Event successfully deserialized at PostDistributeInline stage");
+      Console.WriteLine("[TEST SUCCESS] Event successfully deserialized at PostDistributeInline stage");
     } finally {
       // Cleanup
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
