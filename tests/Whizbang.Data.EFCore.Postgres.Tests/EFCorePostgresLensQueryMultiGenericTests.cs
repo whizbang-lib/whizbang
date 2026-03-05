@@ -249,8 +249,11 @@ public class EFCorePostgresLensQueryMultiGenericTests {
     var lensQuery = new EFCorePostgresLensQuery<OrderModel, CustomerModel>(context, tableNames);
 
     // Act & Assert
+    // Note: WHIZ400 analyzer catches this at compile time, but we also test runtime behavior
+#pragma warning disable WHIZ400 // Intentional invalid type for runtime exception testing
     await Assert.That(() => lensQuery.Query<ProductModel>())
         .Throws<ArgumentException>();
+#pragma warning restore WHIZ400
   }
 
   [Test]
@@ -266,7 +269,9 @@ public class EFCorePostgresLensQueryMultiGenericTests {
     // Act
     ArgumentException? caught = null;
     try {
+#pragma warning disable WHIZ400 // Intentional invalid type for runtime exception testing
       lensQuery.Query<ProductModel>();
+#pragma warning restore WHIZ400
     } catch (ArgumentException ex) {
       caught = ex;
     }
@@ -356,8 +361,11 @@ public class EFCorePostgresLensQueryMultiGenericTests {
     var lensQuery = new EFCorePostgresLensQuery<OrderModel, CustomerModel>(context, tableNames);
 
     // Act & Assert
+    // Note: WHIZ400 analyzer catches this at compile time, but we also test runtime behavior
+#pragma warning disable WHIZ400 // Intentional invalid type for runtime exception testing
     await Assert.That(async () => await lensQuery.GetByIdAsync<ProductModel>(Guid.NewGuid()))
         .Throws<ArgumentException>();
+#pragma warning restore WHIZ400
   }
 
   #endregion

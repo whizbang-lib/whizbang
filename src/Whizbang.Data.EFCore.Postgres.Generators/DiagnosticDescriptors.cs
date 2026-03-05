@@ -74,8 +74,8 @@ internal static class DiagnosticDescriptors {
   /// WHIZ400: Error - Invalid type argument for ILensQuery Query/GetByIdAsync methods.
   /// The type argument must be one of the interface's type parameters.
   /// </summary>
-  /// <tests>LensQueryTypeArgumentAnalyzerTests.cs:Query_WithInvalidType_ReportsWHIZ400Async</tests>
-  /// <tests>LensQueryTypeArgumentAnalyzerTests.cs:GetByIdAsync_WithInvalidType_ReportsWHIZ400Async</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs:Query_WithInvalidType_ReportsWHIZ400Async</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs:GetByIdAsync_WithInvalidType_ReportsWHIZ400Async</tests>
   public static readonly DiagnosticDescriptor InvalidLensQueryTypeArgument = new(
       id: "WHIZ400",
       title: "Invalid type argument for ILensQuery",
@@ -84,5 +84,50 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "When using ILensQuery<T1, T2, ...> the type argument to Query<T>() and GetByIdAsync<T>() must be one of the interface's type parameters (T1, T2, etc). Using an unregistered type will cause a runtime ArgumentException."
+  );
+
+  /// <summary>
+  /// WHIZ820: Error - Table name exceeds database provider limit.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ820</docs>
+  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongTableName_EmitsWHIZ820ErrorAsync</tests>
+  public static readonly DiagnosticDescriptor TableNameExceedsLimit = new(
+      id: "WHIZ820",
+      title: "Table name exceeds database limit",
+      messageFormat: "Perspective model '{0}' generates table name '{1}' ({2} bytes) which exceeds {3} limit of {4} bytes. Shorten the model name or configure suffix stripping.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The generated table name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Consider shortening the model name, enabling suffix stripping, or using a custom table name."
+  );
+
+  /// <summary>
+  /// WHIZ821: Error - Column name exceeds database provider limit.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ821</docs>
+  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongColumnName_EmitsWHIZ821ErrorAsync</tests>
+  public static readonly DiagnosticDescriptor ColumnNameExceedsLimit = new(
+      id: "WHIZ821",
+      title: "Column name exceeds database limit",
+      messageFormat: "Physical field '{0}' on perspective model '{1}' generates column name '{2}' ({3} bytes) which exceeds {4} limit of {5} bytes. Shorten the property name.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The generated column name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Consider shortening the property name."
+  );
+
+  /// <summary>
+  /// WHIZ822: Error - Index name exceeds database provider limit.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ822</docs>
+  /// <tests>EFCorePerspectiveConfigurationGeneratorTests.cs:Generator_WithLongIndexName_EmitsWHIZ822ErrorAsync</tests>
+  public static readonly DiagnosticDescriptor IndexNameExceedsLimit = new(
+      id: "WHIZ822",
+      title: "Index name exceeds database limit",
+      messageFormat: "Index '{0}' for physical field '{1}' on perspective model '{2}' ({3} bytes) exceeds {4} limit of {5} bytes. Shorten the table or column name.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The generated index name exceeds the database provider's maximum identifier length. PostgreSQL allows 63 bytes. Index names follow the pattern 'ix_{table}_{column}'. Consider shortening the table or column name."
   );
 }
