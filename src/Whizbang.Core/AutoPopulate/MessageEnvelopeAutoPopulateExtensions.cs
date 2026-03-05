@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text.Json;
 using Whizbang.Core.Observability;
 
@@ -85,7 +83,7 @@ public static class MessageEnvelopeAutoPopulateExtensions {
     }
 
     value = _deserializeElement<T>(element.Value);
-    return !EqualityComparer<T>.Default.Equals(value, default);
+    return value != null;
   }
 
   /// <summary>
@@ -114,7 +112,7 @@ public static class MessageEnvelopeAutoPopulateExtensions {
   public static IEnumerable<string> GetAllAutoPopulatedKeys(this IMessageEnvelope envelope) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    const string prefix = AutoPopulateProcessor.METADATA_PREFIX;
+    var prefix = AutoPopulateProcessor.METADATA_PREFIX;
     var keys = new HashSet<string>();
 
     // Scan all current hops for auto-populate metadata
@@ -124,8 +122,10 @@ public static class MessageEnvelopeAutoPopulateExtensions {
         continue;
       }
 
-      foreach (var key in hop.Metadata.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal))) {
-        keys.Add(key[prefix.Length..]);
+      foreach (var key in hop.Metadata.Keys) {
+        if (key.StartsWith(prefix, StringComparison.Ordinal)) {
+          keys.Add(key[prefix.Length..]);
+        }
       }
     }
 

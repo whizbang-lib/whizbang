@@ -28,9 +28,17 @@ namespace Whizbang.Core.Attributes;
 /// <docs>attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateTimestampAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class PopulateTimestampAttribute(TimestampKind kind) : Attribute {
+public sealed class PopulateTimestampAttribute : Attribute {
   /// <summary>
   /// Gets the kind of timestamp to populate.
   /// </summary>
-  public TimestampKind Kind { get; } = kind;
+  public TimestampKind Kind { get; }
+
+  /// <summary>
+  /// Initializes a new instance of the <see cref="PopulateTimestampAttribute"/> class.
+  /// </summary>
+  /// <param name="kind">The kind of timestamp to populate.</param>
+  public PopulateTimestampAttribute(TimestampKind kind) {
+    Kind = kind;
+  }
 }
