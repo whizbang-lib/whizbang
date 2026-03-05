@@ -189,7 +189,7 @@ public partial class ServiceBusConsumerWorker(
             Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   - Perspective: {pw.PerspectiveName}, StreamId: {pw.StreamId}, LastProcessedEventId: {pw.LastProcessedEventId}");
           }
         } else {
-          Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
+          Console.WriteLine("[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
         }
       }
 

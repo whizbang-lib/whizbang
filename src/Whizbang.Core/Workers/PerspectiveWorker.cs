@@ -310,14 +310,14 @@ public partial class PerspectiveWorker(
     // Diagnostic logging for perspective work batch
     var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     if (_diagnosticLogging) {
-      Console.WriteLine($"[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
+      Console.WriteLine("[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
       Console.WriteLine($"[PerspectiveWorker DIAG]   PerspectiveWork count: {workBatch.PerspectiveWork.Count}");
       Console.WriteLine($"[PerspectiveWorker DIAG]   Grouped into {groupedWork.Count} unique (StreamId, PerspectiveName) pairs");
       foreach (var g in groupedWork) {
         Console.WriteLine($"[PerspectiveWorker DIAG]     - {g.Key.PerspectiveName}/{g.Key.StreamId}: {g.Count()} work items");
       }
       if (workBatch.PerspectiveWork.Count == 0) {
-        Console.WriteLine($"[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
+        Console.WriteLine("[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
       }
     }
 #pragma warning restore CA1848
