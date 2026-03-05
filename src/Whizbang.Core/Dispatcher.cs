@@ -2342,7 +2342,7 @@ public abstract class Dispatcher(
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
-      Console.WriteLine($"[DISPATCHER] Tag processing is DISABLED - returning early");
+      Console.WriteLine("[DISPATCHER] Tag processing is DISABLED - returning early");
       return;
     }
 
@@ -2354,15 +2354,15 @@ public abstract class Dispatcher(
 
     // Skip if no processor is registered
     if (_messageTagProcessor is null) {
-      Console.WriteLine($"[DISPATCHER] No IMessageTagProcessor registered - returning early");
+      Console.WriteLine("[DISPATCHER] No IMessageTagProcessor registered - returning early");
       return;
     }
 
-    Console.WriteLine($"[DISPATCHER] Calling ProcessTagsAsync at AfterReceptorCompletion...");
+    Console.WriteLine("[DISPATCHER] Calling ProcessTagsAsync at AfterReceptorCompletion...");
     // Pass scope as null for now - scope extraction can be enhanced in future phases
     // The processor can access ambient scope via ScopeContextAccessor if needed
     await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope: null, ct);
-    Console.WriteLine($"[DISPATCHER] ProcessTagsAsync completed");
+    Console.WriteLine("[DISPATCHER] ProcessTagsAsync completed");
   }
 
   /// <summary>

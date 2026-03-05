@@ -17,11 +17,6 @@ public sealed class TopicAttribute : Attribute {
   /// </summary>
   public string TopicName { get; }
 
-  /// <summary>
-  /// Creates a new topic attribute.
-  /// </summary>
-  /// <param name="topicName">The base topic name (e.g., "products", "inventory")</param>
-  /// <exception cref="ArgumentException">Thrown if topicName is null or whitespace</exception>
   public TopicAttribute(string topicName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
     TopicName = topicName;
