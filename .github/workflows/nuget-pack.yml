@@ -5,38 +5,45 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  version:
+    name: Calculate Version
+    uses: ./.github/workflows/reusable-version.yml
+    with:
+      # For PRs, use the source branch for version calculation
+      ref: ${{ github.event.pull_request.head.ref }}
+
   pack:
     name: Pack NuGet Packages
     runs-on: ubuntu-latest
+    needs: version
 
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
 
     - name: Setup .NET
       uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0 # v4.3.1
       with:
         dotnet-version: '10.0.x'
 
-    - name: Set PR Version
-      id: pr_version
+    - name: Display Version
       run: |
-        # For PRs, use a fixed validation version format
-        PR_VERSION="0.0.0-pr.${{ github.event.pull_request.number }}"
-        echo "version=$PR_VERSION" >> $GITHUB_OUTPUT
-        echo "Using PR validation version: $PR_VERSION"
+        echo "Packing version: ${{ needs.version.outputs.semver }}"
+        echo "Full SemVer: ${{ needs.version.outputs.fullsemver }}"
 
     - name: Restore dependencies
       run: dotnet restore
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore -maxcpucount:1 /p:Version=${{ steps.pr_version.outputs.version }}
+      run: dotnet build --configuration Release --no-restore -maxcpucount:1 /p:Version=${{ needs.version.outputs.semver }}
 
     - name: Pack NuGet packages
       run: |
         # Pack may return non-zero due to NU5017 false positive for analyzer packages
         # The packages are still created successfully, so we verify they exist
-        # Use PR validation version (not for publishing, just build validation)
-        dotnet pack --configuration Release --no-build --output ./packages /p:Version=${{ steps.pr_version.outputs.version }} || true
+        # Override version with GitVersion output
+        dotnet pack --configuration Release --no-build --output ./packages /p:Version=${{ needs.version.outputs.semver }} || true
 
     - name: Verify packages created
       run: |
