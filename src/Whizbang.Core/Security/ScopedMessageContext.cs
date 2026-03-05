@@ -40,14 +40,9 @@ internal sealed class ScopedMessageContext : IMessageContext {
   /// UserId is read from the security scope context (populated from envelope hop SecurityContext).
   /// Falls back to the message context's UserId if scope context is not available.
   /// </remarks>
-  public string? UserId {
-    get {
-      var scopeUserId = _scopeContextAccessor.Current?.Scope.UserId;
-      var msgUserId = _messageContextAccessor.Current?.UserId;
-      System.Diagnostics.Debug.WriteLine($"[ScopedMessageContext.UserId] ScopeContextAccessor.Current={(_scopeContextAccessor.Current == null ? "NULL" : "set")}, Scope.UserId={scopeUserId}, MessageContextAccessor.Current={(_messageContextAccessor.Current == null ? "NULL" : "set")}, UserId={msgUserId}");
-      return scopeUserId ?? msgUserId;
-    }
-  }
+  public string? UserId =>
+    _scopeContextAccessor.Current?.Scope.UserId
+    ?? _messageContextAccessor.Current?.UserId;
 
   /// <inheritdoc />
   /// <remarks>
