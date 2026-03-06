@@ -2,6 +2,11 @@ name: Version (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to checkout for version calculation (optional, defaults to merge commit)'
+        required: false
+        type: string
     outputs:
       semver:
         description: 'Semantic version (e.g., 0.2.0 or 0.3.0-alpha.1)'
@@ -30,8 +35,8 @@ jobs:
     name: Calculate Version
     runs-on: ubuntu-latest
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer }}
-      fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
+      semver: ${{ steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
+      fullsemver: ${{ steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
       major: ${{ steps.gitversion.outputs.major }}
       minor: ${{ steps.gitversion.outputs.minor }}
       patch: ${{ steps.gitversion.outputs.patch }}
@@ -43,11 +48,24 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Fetch tags
+        run: |
+          git fetch --tags --force
+          git tag --list | head -20
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           versionSpec: '6.0.x'
+
+      - name: Display Git Info
+        run: |
+          echo "Current branch: $(git branch --show-current)"
+          echo "Current commit: $(git rev-parse HEAD)"
+          echo "Recent tags:"
+          git tag --list --sort=-version:refname | head -10
 
       - name: Determine Version
         id: gitversion
@@ -55,6 +73,21 @@ jobs:
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
+        continue-on-error: true
+
+      - name: Fallback Version (if GitVersion fails)
+        if: steps.gitversion.outcome == 'failure'
+        id: fallback
+        run: |
+          echo "GitVersion failed, using branch name extraction"
+          BRANCH_NAME="${{ inputs.ref || github.ref_name }}"
+          if [[ "$BRANCH_NAME" =~ ^release[/-]v?([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            VERSION="0.9.1-alpha.999"
+          fi
+          echo "semVer=$VERSION" >> $GITHUB_OUTPUT
+          echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Display Version
         run: |
