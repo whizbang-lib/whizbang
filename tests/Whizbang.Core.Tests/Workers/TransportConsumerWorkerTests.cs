@@ -110,54 +110,6 @@ public class TransportConsumerWorkerTests {
   }
 
   [Test]
-  [Skip("Complex unit test - better covered by integration tests. Skipping to focus on integration test debugging.")]
-  public async Task HandleMessage_DispatchesEnvelope_ToDispatcherAsync() {
-    // Arrange
-    var transport = new FakeTransport();
-    var dispatcher = new FakeDispatcher();
-    var options = new TransportConsumerOptions();
-    options.Destinations.Add(new TransportDestination("topic1"));
-
-    var serviceCollection = new ServiceCollection();
-    serviceCollection.AddSingleton<IDispatcher>(dispatcher);
-    serviceCollection.AddScoped<Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => new FakeWorkCoordinatorStrategy());
-    var serviceProvider = serviceCollection.BuildServiceProvider();
-    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-    var jsonOptions = new JsonSerializerOptions();
-    var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
-
-    var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
-      lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
-
-    using var cts = new CancellationTokenSource();
-
-    // Act
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Give time for subscription
-
-    // Simulate message received
-    var envelope = new FakeMessageEnvelope(MessageId.New(), CorrelationId.New());
-    await transport.SimulateMessageReceivedAsync(envelope, "MessageEnvelope[[FakeMessage, FakeAssembly]]");
-
-    await Task.Delay(200); // Give time for processing
-
-    // Assert
-    await Assert.That(dispatcher.DispatchCallCount).IsGreaterThanOrEqualTo(1)
-      .Because("Worker should dispatch received message to dispatcher");
-
-    cts.Cancel();
-  }
-
-  [Test]
   public async Task PauseAllSubscriptionsAsync_PausesAllActiveSubscriptionsAsync() {
     // Arrange
     var transport = new FakeTransport();

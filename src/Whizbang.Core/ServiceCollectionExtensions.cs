@@ -139,6 +139,13 @@ public static class ServiceCollectionExtensions {
     // Register perspective synchronization services
     _registerPerspectiveSyncServices(services);
 
+    // Auto-invoke generated service registration callbacks
+    // These are set by source-generated module initializers in consumer assemblies
+    ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
+
+    // Auto-invoke WhizbangId provider DI callbacks if any were registered
+    WhizbangIdProviderRegistry.InvokeDICallbacks(services);
+
     return new WhizbangBuilder(services);
   }
 
