@@ -101,5 +101,5 @@ public sealed class WhizbangPerspectiveAttribute(params string[]? keys) : Attrib
   /// </list>
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
-  public string[] Keys { get; } = keys ?? Array.Empty<string>();
+  public string[] Keys { get; } = keys ?? [];
 }

@@ -9,6 +9,7 @@ using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -63,11 +64,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class MessageRegistryGenerator : IIncrementalGenerator {
-  private const string I_COMMAND = "Whizbang.Core.ICommand";
-  private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_RECEPTOR = "Whizbang.Core.IReceptor";
-  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
-
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "MessageRegistrySnippets.cs";
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
@@ -151,8 +147,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var typeSymbol = RoslynGuards.GetTypeSymbolFromNode(typeDeclaration, semanticModel, cancellationToken);
 
     // Check if implements ICommand or IEvent
-    var isCommand = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString() == I_COMMAND);
-    var isEvent = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString() == I_EVENT);
+    var isCommand = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND);
+    var isEvent = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
 
     if (!isCommand && !isEvent) {
       return null;
@@ -162,7 +158,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var lineSpan = location.GetLineSpan();
 
     return new MessageTypeInfo(
-        TypeName: typeSymbol.ToDisplayString(),
+        TypeName: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         IsCommand: isCommand,
         IsEvent: isEvent,
         FilePath: lineSpan.Path,
@@ -218,8 +214,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var lineSpan = location.GetLineSpan();
 
     return new DispatcherLocationInfo(
-        MessageType: messageType.ToDisplayString(),
-        ClassName: classSymbol.ToDisplayString(),
+        MessageType: TypeNameHelper.GetFullyQualifiedName(messageType),
+        ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
         MethodName: containingMethod?.Identifier.Text ?? "<unknown>",
         FilePath: lineSpan.Path,
         LineNumber: lineSpan.StartLinePosition.Line + 1,
@@ -240,13 +236,14 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IReceptor<TMessage, TResponse> interface (regular receptor)
-    var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage, TResponse>");
+    var receptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
+        classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
     // If not found, look for IReceptor<TMessage> interface (void receptor)
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var voidReceptorInterface = receptorInterface is null
-        ? classSymbol.AllInterfaces.FirstOrDefault(i =>
-            i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage>")
+        ? TypeNameHelper.FindInterfaceByOriginalDefinition(
+            classSymbol, StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION)
         : null;
 
     // Return null if neither interface is implemented
@@ -260,11 +257,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     if (receptorInterface is not null) {
       // Regular receptor with response - defensive guard
       RoslynGuards.ValidateTypeArgumentCount(receptorInterface, 2, "IReceptor<TMessage, TResponse>");
-      messageType = receptorInterface.TypeArguments[0].ToDisplayString();
+      messageType = TypeNameHelper.GetFullyQualifiedName(receptorInterface.TypeArguments[0]);
     } else {
       // Void receptor - defensive guard
       RoslynGuards.ValidateTypeArgumentCount(voidReceptorInterface!, 1, "IReceptor<TMessage>");
-      messageType = voidReceptorInterface!.TypeArguments[0].ToDisplayString();
+      messageType = TypeNameHelper.GetFullyQualifiedName(voidReceptorInterface!.TypeArguments[0]);
     }
 
     // Find the HandleAsync method
@@ -277,7 +274,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     return new ReceptorLocationInfo(
         MessageType: messageType,
-        ClassName: classSymbol.ToDisplayString(),
+        ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
         MethodName: "HandleAsync",
         FilePath: lineSpan.Path,
         LineNumber: handleMethod?.GetLocation().GetLineSpan().StartLinePosition.Line + 1 ?? lineSpan.StartLinePosition.Line + 1,
@@ -301,11 +298,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Must match the base marker interface or any event-handling variant
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameHelper.GetOriginalDefinitionName(i);
           // Check for base marker or event-handling variants (with or without space after comma)
-          return originalDef == I_PERSPECTIVE_FOR + "<TModel>" ||
-                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||
-                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal);
+          return originalDef == StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel>" ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||
+                 originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal);
         })
         .ToList();
 
@@ -323,7 +320,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var events = perspectiveInterfaces
         .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
         .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
-        .Select(t => t.ToDisplayString())
+        .Select(TypeNameHelper.GetFullyQualifiedName)
         .Distinct()
         .ToArray();
 
@@ -333,7 +330,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     }
 
     return new PerspectiveLocationInfo(
-        ClassName: classSymbol.ToDisplayString(),
+        ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
         EventTypes: events,
         FilePath: lineSpan.Path,
         LineNumber: lineSpan.StartLinePosition.Line + 1,

@@ -64,12 +64,6 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Skip if the type argument is itself a type parameter (e.g., inside generic methods)
-    // These are validated at the call site, not in the implementation
-    if (methodTypeArg.TypeKind == TypeKind.TypeParameter) {
-      return;
-    }
-
     // Check if the type argument is one of the interface's type parameters
     var validTypes = lensQueryInterface.TypeArguments;
     if (_isValidTypeArgument(methodTypeArg, validTypes)) {

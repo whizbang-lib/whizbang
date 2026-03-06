@@ -202,11 +202,8 @@ public class PerspectiveModelConsistencyAnalyzerTests {
     // Arrange
     var source = """
             using System;
-            using System.Threading;
-            using System.Threading.Tasks;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
-            using Whizbang.Core.Lenses;
 
             namespace TestApp;
 
@@ -220,11 +217,8 @@ public class PerspectiveModelConsistencyAnalyzerTests {
                 IPerspectiveFor<OrderView, OrderCreated>,
                 IPerspectiveWithActionsFor<ProductView, ProductDeleted> {
               public OrderView Apply(OrderView current, OrderCreated @event) => current;
-              public ProductView Apply(ProductView current, ProductDeleted @event) => current;
-              public ValueTask<PerspectiveActionResult> OnAppliedAsync(
-                  ProductView before, ProductView after, ProductDeleted @event,
-                  ILensWriter<ProductView> writer, CancellationToken ct) =>
-                  new(PerspectiveActionResult.Success);
+              public ApplyResult<ProductView> Apply(ProductView current, ProductDeleted @event)
+                => ApplyResult<ProductView>.Update(current);
             }
             """;
 

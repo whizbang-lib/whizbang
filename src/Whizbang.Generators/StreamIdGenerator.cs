@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -29,11 +30,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class StreamIdGenerator : IIncrementalGenerator {
-  private const string IEVENT_INTERFACE = "Whizbang.Core.IEvent";
-  private const string ICOMMAND_INTERFACE = "Whizbang.Core.ICommand";
-  private const string STREAMID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
-  private const string STREAMID_ATTRIBUTE_NAME = "StreamIdAttribute";
-  private const string STREAMID_SHORT_NAME = "StreamId";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IEvent types with [StreamId] attribute
@@ -91,11 +87,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Check if implements IEvent
-    var implementsIEvent = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == IEVENT_INTERFACE ||
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{IEVENT_INTERFACE}");
-
-    if (!implementsIEvent) {
+    if (!TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT)) {
       return null;
     }
 
@@ -105,16 +97,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
           var hasStreamIdAttr = property.GetAttributes().Any(a =>
-              a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-              a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-              a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
+              a.AttributeClass is not null &&
+              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
 
           if (hasStreamIdAttr) {
             return new StreamIdInfo(
-                EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
                 IsPropertyValueType: property.Type.IsValueType
             );
           }
@@ -128,10 +118,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
     foreach (var ctor in constructors) {
       foreach (var parameter in ctor.Parameters) {
         var hasStreamIdAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-            a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-            a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
+            a.AttributeClass is not null &&
+            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
 
         if (hasStreamIdAttr) {
           // Find corresponding property (records create properties from constructor parameters)
@@ -140,9 +128,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
           if (property is not null) {
             return new StreamIdInfo(
-                EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
                 IsPropertyValueType: property.Type.IsValueType
             );
           }
@@ -168,11 +156,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Check if implements IEvent
-    var implementsIEvent = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == IEVENT_INTERFACE ||
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{IEVENT_INTERFACE}");
-
-    if (!implementsIEvent) {
+    if (!TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT)) {
       return null;
     }
 
@@ -182,10 +166,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
     while (checkType is not null && !hasStreamIdOnProperty) {
       hasStreamIdOnProperty = checkType.GetMembers().OfType<IPropertySymbol>().Any(p =>
           p.GetAttributes().Any(a =>
-              a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-              a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-              a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}"));
+              a.AttributeClass is not null &&
+              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE));
       checkType = checkType.BaseType;
     }
 
@@ -196,10 +178,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var hasStreamIdOnParameter = typeSymbol.Constructors.Any(ctor =>
         ctor.Parameters.Any(param =>
             param.GetAttributes().Any(a =>
-                a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-                a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-                a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-                a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}")));
+                a.AttributeClass is not null &&
+                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE)));
 
     if (hasStreamIdOnParameter) {
       return null;
@@ -207,7 +187,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // IEvent without [StreamId] - return type name and location
     return new EventWithoutStreamIdInfo(
-        EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
         Location: context.Node.GetLocation()
     );
   }
@@ -225,11 +205,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Check if implements ICommand
-    var implementsICommand = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == ICOMMAND_INTERFACE ||
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{ICOMMAND_INTERFACE}");
-
-    if (!implementsICommand) {
+    if (!TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND)) {
       return null;
     }
 
@@ -239,16 +215,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
       foreach (var member in currentType.GetMembers()) {
         if (member is IPropertySymbol property) {
           var hasStreamIdAttr = property.GetAttributes().Any(a =>
-              a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-              a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-              a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
+              a.AttributeClass is not null &&
+              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
 
           if (hasStreamIdAttr) {
             return new CommandStreamIdInfo(
-                CommandType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
                 IsPropertyValueType: property.Type.IsValueType
             );
           }
@@ -262,10 +236,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
     foreach (var ctor in constructors) {
       foreach (var parameter in ctor.Parameters) {
         var hasStreamIdAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == STREAMID_ATTRIBUTE_NAME ||
-            a.AttributeClass?.Name == STREAMID_SHORT_NAME ||
-            a.AttributeClass?.ToDisplayString() == STREAMID_ATTRIBUTE ||
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMID_ATTRIBUTE}");
+            a.AttributeClass is not null &&
+            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
 
         if (hasStreamIdAttr) {
           // Find corresponding property (records create properties from constructor parameters)
@@ -274,9 +246,9 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
           if (property is not null) {
             return new CommandStreamIdInfo(
-                CommandType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
-                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
                 IsPropertyValueType: property.Type.IsValueType
             );
           }
