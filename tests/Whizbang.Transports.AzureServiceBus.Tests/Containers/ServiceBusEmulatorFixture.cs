@@ -95,7 +95,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
 
       // Wait for emulator to be ready
       Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
-      var containerName = $"servicebus-emulator-test-{_port}";
+      var containerName = $"whizbang-test-servicebus-{_port}";
       var maxWaitSeconds = 180;
       var pollIntervalSeconds = 5;
       var elapsed = 0;
@@ -262,7 +262,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     // - topic-01 with sub-01-a subscription
     return $@"services:
   servicebus-emulator:
-    container_name: servicebus-emulator-test-{_port}
+    container_name: whizbang-test-servicebus-{_port}
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     ports:
       - ""{_port}:5672""
@@ -278,7 +278,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     mem_limit: 4g
 
   mssql:
-    container_name: mssql-servicebus-test-{_port}
+    container_name: whizbang-test-mssql-{_port}
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports:
       - ""{_port + 10000}:1433""
@@ -446,8 +446,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   /// </summary>
   private async Task _forceCleanupContainersAsync(CancellationToken cancellationToken = default) {
     var containerNames = new[] {
-      $"servicebus-emulator-test-{_port}",
-      $"mssql-servicebus-test-{_port}"
+      $"whizbang-test-servicebus-{_port}",
+      $"whizbang-test-mssql-{_port}"
     };
 
     foreach (var containerName in containerNames) {

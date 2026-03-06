@@ -151,8 +151,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var typeSymbol = RoslynGuards.GetTypeSymbolFromNode(typeDeclaration, semanticModel, cancellationToken);
 
     // Check if implements ICommand or IEvent
-    var isCommand = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString() == I_COMMAND);
-    var isEvent = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString() == I_EVENT);
+    var isCommand = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == I_COMMAND);
+    var isEvent = typeSymbol.AllInterfaces.Any(i => i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == I_EVENT);
 
     if (!isCommand && !isEvent) {
       return null;
@@ -301,7 +301,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Must match the base marker interface or any event-handling variant
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
           // Check for base marker or event-handling variants (with or without space after comma)
           return originalDef == I_PERSPECTIVE_FOR + "<TModel>" ||
                  originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||

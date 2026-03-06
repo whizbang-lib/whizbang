@@ -11,11 +11,14 @@ namespace Whizbang.Core.Attributes;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
-public sealed class TopicAttribute(string topicName) : Attribute {
+public sealed class TopicAttribute : Attribute {
   /// <summary>
   /// Gets the base topic name for this message type.
   /// </summary>
-  public string TopicName { get; } = !string.IsNullOrWhiteSpace(topicName)
-    ? topicName
-    : throw new ArgumentException("Topic name cannot be null or whitespace.", nameof(topicName));
+  public string TopicName { get; }
+
+  public TopicAttribute(string topicName) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+    TopicName = topicName;
+  }
 }
