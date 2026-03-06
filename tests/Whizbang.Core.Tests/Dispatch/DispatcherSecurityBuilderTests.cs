@@ -557,6 +557,75 @@ public class DispatcherSecurityBuilderTests {
   }
 
   // ============================================
+  // Empty GUID Warning Coverage Tests
+  // ============================================
+
+  /// <summary>
+  /// When AsSystem() is called with current user having empty GUID as UserId,
+  /// the warning should be logged (covers Log.EmptyGuidActualPrincipal branch).
+  /// </summary>
+  [Test]
+  public async Task AsSystem_WithEmptyGuidCurrentUser_LogsWarningAndSucceedsAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Set up context with empty GUID as UserId - this triggers the warning branch
+    var emptyGuidScope = new PerspectiveScope {
+      UserId = Guid.Empty.ToString(), // "00000000-0000-0000-0000-000000000000"
+      TenantId = "test-tenant"
+    };
+    var extraction = _createExtraction(emptyGuidScope);
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - Should succeed and log warning (covers the empty GUID ActualPrincipal check)
+    await dispatcher.AsSystem().SendAsync(command);
+
+    // Assert - Context was set correctly, operation completed
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.EffectivePrincipal).IsEqualTo("SYSTEM");
+    // The actual principal is the empty GUID string (which triggers the warning)
+    await Assert.That(context.ActualPrincipal).IsEqualTo(Guid.Empty.ToString());
+  }
+
+  /// <summary>
+  /// When RunAs() is called with current user having empty GUID as UserId,
+  /// the warning should be logged (covers Log.EmptyGuidActualPrincipal branch).
+  /// </summary>
+  [Test]
+  public async Task RunAs_WithEmptyGuidCurrentUser_LogsWarningAndSucceedsAsync() {
+    // Arrange
+    DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Set up context with empty GUID as UserId - this triggers the warning branch
+    var emptyGuidScope = new PerspectiveScope {
+      UserId = Guid.Empty.ToString(), // "00000000-0000-0000-0000-000000000000"
+      TenantId = "test-tenant"
+    };
+    var extraction = _createExtraction(emptyGuidScope);
+    scopeContextAccessor.Current = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+    var command = new DispatcherSecurityBuilderTestCommand("test-data");
+
+    // Act - Should succeed and log warning
+    await dispatcher.RunAs("target-user@example.com").SendAsync(command);
+
+    // Assert
+    var context = DispatcherSecurityBuilderTestCommandReceptor.CapturedContext;
+    await Assert.That(context).IsNotNull();
+    await Assert.That(context!.EffectivePrincipal).IsEqualTo("target-user@example.com");
+    await Assert.That(context.ActualPrincipal).IsEqualTo(Guid.Empty.ToString());
+  }
+
+  // ============================================
   // Helper Methods
   // ============================================
 

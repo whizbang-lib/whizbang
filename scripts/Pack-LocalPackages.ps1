@@ -29,6 +29,14 @@
     Explicit version to use for all packages. When specified, this takes precedence
     over -IncrementVersion. Useful for testing specific versions or matching CI builds.
     For example: 0.9.0-alpha.119
+<<<<<<< release/v0.9.1-alpha.2
+=======
+
+.PARAMETER Version
+    Explicit version to use for all packages. When specified, this takes precedence
+    over -IncrementVersion. Useful for testing specific versions or matching CI builds.
+    For example: 0.9.0-alpha.119
+>>>>>>> main
 
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
@@ -70,6 +78,7 @@ $repoRoot = Split-Path $scriptDir -Parent
 # Handle version: explicit -Version takes precedence over -IncrementVersion
 $propsFile = Join-Path $repoRoot "Directory.Build.props"
 $propsContent = Get-Content $propsFile -Raw
+<<<<<<< release/v0.9.1-alpha.2
 
 if ($Version) {
     # Use explicit version
@@ -78,6 +87,16 @@ if ($Version) {
         $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$Version</Version>"
         Set-Content $propsFile $propsContent -NoNewline
 
+=======
+
+if ($Version) {
+    # Use explicit version
+    if ($propsContent -match '<Version>([^<]+)</Version>') {
+        $oldVersion = $Matches[1]
+        $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$Version</Version>"
+        Set-Content $propsFile $propsContent -NoNewline
+
+>>>>>>> main
         Write-Host "Version set: $oldVersion -> $Version" -ForegroundColor Green
     }
     else {

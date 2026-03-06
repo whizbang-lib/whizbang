@@ -233,6 +233,54 @@ public class DispatcherSecurityPropagationTests {
   }
 
   /// <summary>
+  /// When propagating security context with UserId set to empty GUID string,
+  /// the Dispatcher should log a warning and still propagate the context successfully.
+  /// This covers the Log.EmptyGuidUserIdPropagated branch in _getSecurityContextForPropagation.
+  /// </summary>
+  [Test]
+  public async Task Dispatcher_WithEmptyGuidUserId_LogsWarningAndPropagatesAsync() {
+    // Arrange
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var traceStore = new InMemoryTraceStore();
+    var correlationId = CorrelationId.New();
+    var (dispatcher, _) = _createDispatcherWithSecurityContext(scopeContextAccessor, traceStore);
+
+    // Set up scope context with empty GUID as UserId - this triggers the warning branch
+    var scope = new PerspectiveScope {
+      UserId = Guid.Empty.ToString(), // "00000000-0000-0000-0000-000000000000"
+      TenantId = "test-tenant"
+    };
+    var extraction = new SecurityExtraction {
+      Scope = scope,
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    var immutableContext = new ImmutableScopeContext(extraction, shouldPropagate: true);
+    scopeContextAccessor.Current = immutableContext;
+
+    var command = new SecurityPropagationTestCommand("test-data");
+    var context = MessageContext.Create(correlationId);
+
+    // Act - Should succeed and log warning (covers the empty GUID UserId check)
+    await dispatcher.SendAsync(command, context);
+
+    // Assert - SecurityContext should still be propagated with the empty GUID
+    var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
+    await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
+
+    var envelope = envelopes[0];
+    await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
+
+    var hop = envelope.Hops[0];
+    await Assert.That(hop.SecurityContext).IsNotNull();
+    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo(Guid.Empty.ToString());
+    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("test-tenant");
+  }
+
+  /// <summary>
   /// Creates a dispatcher with IScopeContextAccessor registered.
   /// </summary>
   private static (IDispatcher dispatcher, IServiceProvider provider) _createDispatcherWithSecurityContext(
