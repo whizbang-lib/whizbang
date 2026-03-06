@@ -169,50 +169,28 @@ public static partial class SecurityContextHelper {
       Console.WriteLine("🔧 CASCADE: EstablishMessageContextForCascade called but logger is NULL");
     }
 
-    // Check if an explicit security context is already set (e.g., by AsSystem/RunAs).
-    // If yes, read from that context rather than AsyncLocal.
-    var scopeAccessor = serviceProvider?.GetService<IScopeContextAccessor>();
-    var explicitContext = scopeAccessor?.Current;
-    var hasExplicitContext = explicitContext is not null;
-
-    if (hasExplicitContext && logger is not null) {
-#pragma warning disable CA1848 // Temporary diagnostic logging
-      logger.LogDebug("CASCADE: Explicit security context found - using it for MessageContextAccessor");
-#pragma warning restore CA1848
-    }
-
     string? userId = null;
     string? tenantId = null;
 
-    // Priority 1: If explicit context exists (AsSystem/RunAs), use it
-    if (hasExplicitContext && explicitContext is ImmutableScopeContext immutableCtx) {
-      userId = immutableCtx.Scope.UserId;
-      tenantId = immutableCtx.Scope.TenantId;
+    // Try to read from parent's MessageContextAccessor (AsyncLocal from parent receptor)
+    var parentMessageContext = MessageContextAccessor.CurrentContext;
+    if (logger is not null) {
+      Log.ParentMessageContextChecked(logger, parentMessageContext is null);
+    }
+
+    if (parentMessageContext is not null) {
+      userId = parentMessageContext.UserId;
+      tenantId = parentMessageContext.TenantId;
       if (logger is not null) {
-        Log.ReadFromExplicitContext(logger, userId, tenantId);
+        Log.ReadFromMessageContextAccessor(logger, userId, tenantId);
       }
     }
-    // Priority 2: Try to read from parent's MessageContextAccessor (AsyncLocal from parent receptor)
-    else {
-      var parentMessageContext = MessageContextAccessor.CurrentContext;
+    // Fallback: try ScopeContextAccessor (for transport workers)
+    else if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
+      userId = ctx.Scope.UserId;
+      tenantId = ctx.Scope.TenantId;
       if (logger is not null) {
-        Log.ParentMessageContextChecked(logger, parentMessageContext is null);
-      }
-
-      if (parentMessageContext is not null) {
-        userId = parentMessageContext.UserId;
-        tenantId = parentMessageContext.TenantId;
-        if (logger is not null) {
-          Log.ReadFromMessageContextAccessor(logger, userId, tenantId);
-        }
-      }
-      // Fallback: try ScopeContextAccessor (for transport workers)
-      else if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
-        userId = ctx.Scope.UserId;
-        tenantId = ctx.Scope.TenantId;
-        if (logger is not null) {
-          Log.ReadFromScopeContextAccessorFallback(logger, userId, tenantId);
-        }
+        Log.ReadFromScopeContextAccessorFallback(logger, userId, tenantId);
       }
     }
 
@@ -226,38 +204,31 @@ public static partial class SecurityContextHelper {
     // CRITICAL: Establish BOTH contexts in cascade scope
 
     // 1. Set ScopeContextAccessor (for ScopedMessageContext.UserId priority 1)
-    // Skip if explicit context already set (AsSystem/RunAs) - don't overwrite it
-    if (!hasExplicitContext) {
-      if (!string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(tenantId)) {
-        if (logger is not null) {
-          Log.CreatingScopeContext(logger);
-        }
-        var extraction = new SecurityExtraction {
-          Scope = new PerspectiveScope {
-            TenantId = tenantId,
-            UserId = userId
-          },
-          Roles = new HashSet<string>(),
-          Permissions = new HashSet<Permission>(),
-          SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
-          Claims = new Dictionary<string, string>(),
-          Source = "Cascade:AsyncLocal"
-        };
-        ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
-          extraction,
-          shouldPropagate: true
-        );
-        if (logger is not null) {
-          Log.ScopeContextEstablished(logger, ScopeContextAccessor.CurrentContext is null);
-        }
-      } else {
-        if (logger is not null) {
-          Log.SkippingScopeContextSetup(logger);
-        }
+    if (!string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(tenantId)) {
+      if (logger is not null) {
+        Log.CreatingScopeContext(logger);
+      }
+      var extraction = new SecurityExtraction {
+        Scope = new PerspectiveScope {
+          TenantId = tenantId,
+          UserId = userId
+        },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Cascade:AsyncLocal"
+      };
+      ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
+        extraction,
+        shouldPropagate: true
+      );
+      if (logger is not null) {
+        Log.ScopeContextEstablished(logger, ScopeContextAccessor.CurrentContext is null);
       }
     } else {
       if (logger is not null) {
-        Log.SkippingScopeContextDueToExplicit(logger);
+        Log.SkippingScopeContextSetup(logger);
       }
     }
 
@@ -349,19 +320,5 @@ public static partial class SecurityContextHelper {
       Message = "MessageContextAccessor.CurrentContext established - UserId: {UserId}, TenantId: {TenantId}",
       SkipEnabledCheck = true)]
     public static partial void MessageContextEstablished(ILogger logger, string? userId, string? tenantId);
-
-    [LoggerMessage(
-      EventId = 11,
-      Level = LogLevel.Debug,
-      Message = "Read security context from explicit context (AsSystem/RunAs) - UserId: {UserId}, TenantId: {TenantId}",
-      SkipEnabledCheck = true)]
-    public static partial void ReadFromExplicitContext(ILogger logger, string? userId, string? tenantId);
-
-    [LoggerMessage(
-      EventId = 12,
-      Level = LogLevel.Debug,
-      Message = "Skipping ScopeContextAccessor setup - explicit context already set (AsSystem/RunAs)",
-      SkipEnabledCheck = true)]
-    public static partial void SkippingScopeContextDueToExplicit(ILogger logger);
   }
 }
