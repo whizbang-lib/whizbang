@@ -3723,7 +3723,7 @@ public abstract partial class Dispatcher(
     // Create JsonElement for stream ID (AOT-safe approach using JsonDocument.Parse)
     // Wrap GUID string in quotes for valid JSON string value
     // Note: Key is "AggregateId" for backward compatibility with existing envelopes
-    var jsonString = $"\"{streamId.Value}\"";
+    var jsonString = "\"" + streamId.Value + "\"";
     using var doc = JsonDocument.Parse(jsonString);
     var streamIdElement = doc.RootElement.Clone(); // Clone to survive disposal
 

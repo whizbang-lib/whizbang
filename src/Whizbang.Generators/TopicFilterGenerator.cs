@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -27,9 +28,7 @@ namespace Whizbang.Generators;
 /// <docs>source-generators/topic-filter-discovery</docs>
 [Generator]
 public class TopicFilterGenerator : IIncrementalGenerator {
-  private const string ICOMMAND_INTERFACE = "Whizbang.Core.ICommand";
-  private const string TOPIC_FILTER_ATTRIBUTE = "Whizbang.Core.TopicFilterAttribute";
-  private const string DESCRIPTION_ATTRIBUTE = "System.ComponentModel.DescriptionAttribute";
+  private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover ICommand classes with TopicFilter attributes
@@ -83,15 +82,14 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     }
 
     // Check if implements ICommand
-    var implementsICommand = classSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == ICOMMAND_INTERFACE);
+    var implementsICommand = TypeNameHelper.ImplementsInterface(classSymbol, StandardInterfaceNames.I_COMMAND);
 
     if (!implementsICommand) {
       return null;  // Early exit - not a command
     }
 
     // Get fully qualified command type name
-    var commandType = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var commandType = TypeNameHelper.GetFullyQualifiedName(classSymbol);
 
     // Extract all TopicFilter attributes (AllowMultiple = true)
     var attributes = classSymbol.GetAttributes();
@@ -104,9 +102,9 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       // Check if attribute is TopicFilterAttribute or derived from it
       var currentClass = attrClass;
       while (currentClass is not null) {
-        var fullName = currentClass.ToDisplayString();
-        if (fullName == TOPIC_FILTER_ATTRIBUTE ||
-            fullName.StartsWith(TOPIC_FILTER_ATTRIBUTE + "<", StringComparison.Ordinal)) {
+        var fullName = TypeNameHelper.GetFullyQualifiedName(currentClass);
+        if (fullName == StandardInterfaceNames.TOPIC_FILTER_ATTRIBUTE ||
+            fullName.StartsWith(StandardInterfaceNames.TOPIC_FILTER_ATTRIBUTE + "<", StringComparison.Ordinal)) {
           return true;
         }
         currentClass = currentClass.BaseType;
@@ -170,7 +168,8 @@ public class TopicFilterGenerator : IIncrementalGenerator {
 
       // Try to extract Description attribute
       var descriptionAttr = enumField.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == DESCRIPTION_ATTRIBUTE);
+          .FirstOrDefault(a => a.AttributeClass is not null &&
+            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == DESCRIPTION_ATTRIBUTE);
 
       if (descriptionAttr is not null && descriptionAttr.ConstructorArguments.Length > 0) {
         var descriptionValue = descriptionAttr.ConstructorArguments[0].Value;

@@ -87,6 +87,35 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ401: Warning - Multi-model ILensQuery references unknown perspective model.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ401</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_UnknownModel_ReportsWHIZ401Async</tests>
+  public static readonly DiagnosticDescriptor MultiLensQueryUnknownModel = new(
+      id: "WHIZ401",
+      title: "Multi-model ILensQuery references unknown perspective model",
+      messageFormat: "ILensQuery<{0}> in '{1}' references model type '{2}' which is not a known perspective. Ensure an IPerspectiveFor<{2}> exists or register manually.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "All model types in a multi-model ILensQuery must have corresponding perspective implementations for auto-registration."
+  );
+
+  /// <summary>
+  /// WHIZ402: Info - Multi-model ILensQuery auto-detected.
+  /// </summary>
+  /// <docs>diagnostics/WHIZ402</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQueryConstructorParam_GeneratesRegistrationAsync</tests>
+  public static readonly DiagnosticDescriptor MultiLensQueryDiscovered = new(
+      id: "WHIZ402",
+      title: "Multi-model ILensQuery auto-detected",
+      messageFormat: "Auto-detected ILensQuery<{0}> (arity {1}) in '{2}'. Registration will be generated.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true
+  );
+
+  /// <summary>
   /// WHIZ820: Error - Table name exceeds database provider limit.
   /// </summary>
   /// <docs>diagnostics/WHIZ820</docs>

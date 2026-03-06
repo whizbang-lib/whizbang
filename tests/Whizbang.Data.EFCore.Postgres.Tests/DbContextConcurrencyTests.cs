@@ -173,7 +173,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
 
     // Register DbContextFactory for pooled contexts
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     // Register lens as Transient using factory - each gets its own DbContext
@@ -218,7 +219,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -298,7 +300,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var contextInstances = new List<DbContext>();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     // Track context instances
@@ -334,7 +337,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -365,7 +369,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -402,7 +407,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     await using var serviceProvider = services.BuildServiceProvider();
@@ -438,7 +444,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     await using var serviceProvider = services.BuildServiceProvider();
@@ -485,7 +492,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -518,7 +526,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -554,7 +563,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -591,7 +601,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -630,7 +641,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -667,7 +679,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var services = new ServiceCollection();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     services.AddTransient<ILensQuery<Order>>(sp => {
@@ -704,7 +717,8 @@ public class DbContextConcurrencyTests : EFCoreTestBase {
     var capturedContexts = new List<WorkCoordinationDbContext>();
 
     services.AddPooledDbContextFactory<WorkCoordinationDbContext>(options => {
-      options.UseNpgsql(ConnectionString);
+      options.UseNpgsql(ConnectionString)
+        .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     });
 
     // Simulate scoped context from factory - capture each instance

@@ -542,6 +542,130 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
+  public async Task ProcessOutboxFailures_CapsExponentialBackoffAt5MinutesAsync() {
+    // Arrange - Message with high attempts count that would overflow without cap
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert outbox message with high attempt count
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at)
+      VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @highAttempts, @now)",
+      new { messageId, streamId, highAttempts, now });
+
+    // Prepare failure
+    var failures = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
+    });
+
+    // Act - This should NOT throw "22008: interval out of range"
+    await connection.ExecuteAsync(@"
+      SELECT process_outbox_failures(@failures::jsonb, @now)",
+      new { failures, now });
+
+    // Assert - scheduled_for should be capped at approximately 5 minutes
+    var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset>(@"
+      SELECT scheduled_for FROM wh_outbox WHERE message_id = @messageId",
+      new { messageId });
+
+    // Maximum backoff is 30s * 10 = 300s = 5 minutes
+    var maxExpectedScheduledFor = now.AddMinutes(6); // Add a little buffer
+    var minExpectedScheduledFor = now.AddMinutes(4); // Should be close to 5 minutes
+
+    await Assert.That(scheduledFor).IsGreaterThan(minExpectedScheduledFor);
+    await Assert.That(scheduledFor).IsLessThan(maxExpectedScheduledFor);
+  }
+
+  [Test]
+  public async Task ProcessInboxFailures_CapsExponentialBackoffAt5MinutesAsync() {
+    // Arrange - Message with high attempts count that would overflow without cap
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert inbox message with high attempt count
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, attempts, received_at)
+      VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @highAttempts, @now)",
+      new { messageId, streamId, highAttempts, now });
+
+    // Prepare failure
+    var failures = JsonSerializer.Serialize(new[] {
+      new { MessageId = (Guid)messageId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
+    });
+
+    // Act - This should NOT throw "22008: interval out of range"
+    await connection.ExecuteAsync(@"
+      SELECT process_inbox_failures(@failures::jsonb, @now)",
+      new { failures, now });
+
+    // Assert - scheduled_for should be capped at approximately 5 minutes
+    var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset>(@"
+      SELECT scheduled_for FROM wh_inbox WHERE message_id = @messageId",
+      new { messageId });
+
+    // Maximum backoff is 30s * 10 = 300s = 5 minutes
+    var maxExpectedScheduledFor = now.AddMinutes(6);
+    var minExpectedScheduledFor = now.AddMinutes(4);
+
+    await Assert.That(scheduledFor).IsGreaterThan(minExpectedScheduledFor);
+    await Assert.That(scheduledFor).IsLessThan(maxExpectedScheduledFor);
+  }
+
+  [Test]
+  public async Task ProcessPerspectiveEventFailures_CapsExponentialBackoffAt5MinutesAsync() {
+    // Arrange - Event with high attempts count that would overflow without cap
+    var workId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert event in event store first
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, version, created_at)
+      VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', '{}'::jsonb, '{}'::jsonb, nextval('wh_event_sequence'), @now)",
+      new { eventId, streamId, now });
+
+    // Insert perspective event with high attempt count
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
+      VALUES (@workId, @streamId, 'TestPerspective', @eventId, 1, @highAttempts, @now)",
+      new { workId, streamId, eventId, highAttempts, now });
+
+    // Prepare failure
+    var failures = JsonSerializer.Serialize(new[] {
+      new { EventWorkId = (Guid)workId, CompletedStatus = 1, Error = "Test error", FailureReason = 1 }
+    });
+
+    // Act - This should NOT throw "22008: interval out of range"
+    await connection.ExecuteAsync(@"
+      SELECT process_perspective_event_failures(@failures::jsonb, @now)",
+      new { failures, now });
+
+    // Assert - scheduled_for should be capped at approximately 5 minutes
+    var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset>(@"
+      SELECT scheduled_for FROM wh_perspective_events WHERE event_work_id = @workId",
+      new { workId });
+
+    // Maximum backoff is 30s * 10 = 300s = 5 minutes
+    var maxExpectedScheduledFor = now.AddMinutes(6);
+    var minExpectedScheduledFor = now.AddMinutes(4);
+
+    await Assert.That(scheduledFor).IsGreaterThan(minExpectedScheduledFor);
+    await Assert.That(scheduledFor).IsLessThan(maxExpectedScheduledFor);
+  }
+
+  [Test]
   public async Task ProcessPerspectiveEventFailures_SetsFailureFlagsAndSchedulesRetryAsync() {
     // Arrange
     var workId = _idProvider.NewGuid();
