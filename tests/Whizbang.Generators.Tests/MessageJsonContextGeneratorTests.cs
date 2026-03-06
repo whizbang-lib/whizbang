@@ -5850,4 +5850,102 @@ public record OrderPlaced(Guid OrderId) : IEvent;
   }
 
   #endregion
+
+  #region List<List<primitive>> Tests
+
+  /// <summary>
+  /// Verifies that GetOrCreateTypeInfo handles List&lt;List&lt;string&gt;&gt; for AOT serialization.
+  /// STJ in AOT mode requires explicit JsonTypeInfo for nested collections - it does NOT handle them natively.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesListOfListOfStringHandlingAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string OrderId) : ICommand;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate List<List<string>> handling for deeply nested collections
+    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>))");
+    await Assert.That(code).Contains("CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>, global::System.Collections.Generic.List<string>>");
+  }
+
+  /// <summary>
+  /// Verifies that GetOrCreateTypeInfo handles List&lt;List&lt;int&gt;&gt; for AOT serialization.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesListOfListOfIntHandlingAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string OrderId) : ICommand;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate List<List<int>> handling
+    await Assert.That(code!).Contains("if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>))");
+    await Assert.That(code).Contains("CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>, global::System.Collections.Generic.List<int>>");
+  }
+
+  /// <summary>
+  /// Verifies that all primitive List&lt;List&lt;T&gt;&gt; types are generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesAllListOfListOfPrimitiveTypesAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Commands;
+
+public record CreateOrder(string OrderId) : ICommand;
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should generate List<List<T>> handling for all primitive types
+    await Assert.That(code!).Contains("List<global::System.Collections.Generic.List<string>>"); // string
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<int>>"); // int
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<long>>"); // long
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<bool>>"); // bool
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<Guid>>"); // Guid
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<decimal>>"); // decimal
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<double>>"); // double
+    await Assert.That(code).Contains("List<global::System.Collections.Generic.List<float>>"); // float
+  }
+
+  #endregion
 }
