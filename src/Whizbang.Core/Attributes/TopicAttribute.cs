@@ -15,7 +15,9 @@ public sealed class TopicAttribute(string topicName) : Attribute {
   /// <summary>
   /// Gets the base topic name for this message type.
   /// </summary>
-  public string TopicName { get; } = !string.IsNullOrWhiteSpace(topicName)
-    ? topicName
-    : throw new ArgumentException("Topic name cannot be null or whitespace.", nameof(topicName));
+  public string TopicName { get; } = topicName is null
+    ? throw new ArgumentNullException(nameof(topicName))
+    : string.IsNullOrWhiteSpace(topicName)
+      ? throw new ArgumentException("Topic name cannot be empty or whitespace.", nameof(topicName))
+      : topicName;
 }

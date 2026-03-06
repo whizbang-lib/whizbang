@@ -1,5 +1,25 @@
 mode: ContinuousDeployment
-next-version: 0.2.0
+next-version: 0.9.1
 branches:
+  develop:
+    tag: alpha
+    increment: Patch
+    track-merge-target: true
+    regex: ^develop$
+  release:
+    tag: ''
+    increment: Patch
+    prevent-increment-of-merged-branch-version: false
+    track-merge-target: false
+    regex: ^releases?[/-]
+    is-release-branch: true
+  main:
+    tag: ''
+    increment: Patch
+    prevent-increment-of-merged-branch-version: true
+    track-merge-target: false
+    regex: ^master$|^main$
   pull-request:
-    label: pr
+    tag: pr
+    increment: Inherit
+    tag-number-pattern: '[/-](?<number>\d+)'

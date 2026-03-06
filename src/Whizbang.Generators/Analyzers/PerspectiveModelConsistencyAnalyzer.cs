@@ -76,11 +76,14 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
     }
 
     // Find all perspective interfaces (IPerspectiveFor and IPerspectiveWithActionsFor)
+    // Use ToDisplayString() (not OriginalDefinition) to get the constructed type name
+    // e.g., "Whizbang.Core.Perspectives.IPerspectiveFor<OrderView, OrderCreated>"
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var name = i.OriginalDefinition.ToDisplayString();
+          var name = i.ToDisplayString();
           // Match both IPerspectiveFor<TModel, ...> and IPerspectiveWithActionsFor<TModel, ...>
-          return name.Contains("IPerspectiveFor") && i.TypeArguments.Length >= 2;
+          return name.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
+                 name.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal);
         })
         .ToList();
 

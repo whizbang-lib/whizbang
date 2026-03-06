@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -148,7 +149,8 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     var messageType = receptorInterface.TypeArguments[0];
 
     // Check if it's an IEvent implementation
-    var isEvent = messageType.AllInterfaces.Any(iface => iface.ToDisplayString() == IEVENT_INTERFACE);
+    // CRITICAL: Use TypeNameHelper.GetFullyQualifiedName to match the global:: prefixed constant
+    var isEvent = TypeNameHelper.ImplementsInterface(messageType, StandardInterfaceNames.I_EVENT);
     if (!isEvent) {
       return null;  // Not an event receptor
     }
