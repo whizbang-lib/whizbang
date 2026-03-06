@@ -449,8 +449,8 @@ public class LifecycleInvocationHelperTests {
       deserializer,
       logger);
 
-    // Wait for background task to complete (and fail)
-    await Task.Delay(100);
+    // Wait for background task to complete (and fail) - using reliable synchronization
+    await logger.WaitForErrorAsync(TimeSpan.FromSeconds(5));
 
     // Assert - error should be logged
     await Assert.That(logger.ErrorCount).IsGreaterThan(0);
@@ -474,8 +474,8 @@ public class LifecycleInvocationHelperTests {
       deserializer,
       logger);
 
-    // Wait for background task to complete (and fail)
-    await Task.Delay(100);
+    // Wait for background task to complete (and fail) - using reliable synchronization
+    await logger.WaitForErrorAsync(TimeSpan.FromSeconds(5));
 
     // Assert - error should be logged
     await Assert.That(logger.ErrorCount).IsGreaterThan(0);
@@ -697,6 +697,7 @@ public class LifecycleInvocationHelperTests {
   private sealed class FakeLogger : ILogger {
     private int _errorCount;
     private readonly object _lock = new();
+    private readonly TaskCompletionSource _errorLogged = new();
 
     public int ErrorCount {
       get {
@@ -704,9 +705,23 @@ public class LifecycleInvocationHelperTests {
       }
     }
 
+    /// <summary>
+    /// Waits for an error to be logged with a timeout.
+    /// Use this instead of Task.Delay for reliable synchronization in tests.
+    /// </summary>
+    public async Task WaitForErrorAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _errorLogged.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        // Timeout - error wasn't logged in time
+      }
+    }
+
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       if (logLevel == LogLevel.Error) {
         lock (_lock) { _errorCount++; }
+        _errorLogged.TrySetResult();
       }
     }
 
