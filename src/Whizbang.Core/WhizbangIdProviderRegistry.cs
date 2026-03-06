@@ -121,4 +121,51 @@ public static class WhizbangIdProviderRegistry {
       return _factories.Keys.ToArray();
     }
   }
+
+  /// <summary>
+  /// Auto-invokes all DI registration callbacks if any are registered.
+  /// Uses <see cref="Uuid7IdProvider"/> as the default base provider.
+  /// Called by <see cref="ServiceCollectionExtensions.AddWhizbang"/> for automatic registration.
+  /// </summary>
+  /// <param name="services">The service collection to register providers with.</param>
+  /// <remarks>
+  /// <para>
+  /// This method is safe to call multiple times - if the base provider is already registered,
+  /// it will use the existing provider. If no DI callbacks were registered by module initializers,
+  /// this method does nothing.
+  /// </para>
+  /// <para>
+  /// For explicit control over the base provider, use
+  /// <see cref="WhizbangIdServiceCollectionExtensions.AddWhizbangIdProviders"/> instead.
+  /// </para>
+  /// </remarks>
+  internal static void InvokeDICallbacks(IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+
+    lock (_lock) {
+      // If no DI registrations, nothing to do
+      if (_diRegistrations.Count == 0) {
+        return;
+      }
+
+      // Check if base provider is already registered (user called AddWhizbangIdProviders manually)
+      var existingDescriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IWhizbangIdProvider));
+      IWhizbangIdProvider baseProvider;
+
+      if (existingDescriptor != null) {
+        // Base provider already registered - this is fine, RegisterAllWithDI is idempotent
+        // Skip re-registration to avoid duplicate service descriptors
+        return;
+      }
+
+      // Use default Uuid7 provider
+      baseProvider = new Uuid7IdProvider();
+      services.AddSingleton(baseProvider);
+
+      // Register all typed providers
+      foreach (var registration in _diRegistrations) {
+        registration(services, baseProvider);
+      }
+    }
+  }
 }

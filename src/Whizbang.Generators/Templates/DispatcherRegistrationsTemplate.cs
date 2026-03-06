@@ -20,6 +20,27 @@ using Whizbang.Core.Transports;
 #region NAMESPACE
 namespace Whizbang.Core.Generated {
 #endregion
+
+  /// <summary>
+  /// Auto-registration initializer for dispatcher and receptor services.
+  /// Registers callback with <see cref="ServiceRegistrationCallbacks"/> when the assembly loads.
+  /// </summary>
+  [ExcludeFromCodeCoverage]
+  [DebuggerNonUserCode]
+  internal static class DispatcherRegistrationInitializer {
+    /// <summary>
+    /// Module initializer that registers the dispatcher callback with the global registry.
+    /// Runs automatically when the assembly is loaded - no explicit call needed.
+    /// </summary>
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Initialize() {
+      // Register dispatcher callback - includes receptors, registry, and all dispatcher infrastructure
+      global::Whizbang.Core.ServiceRegistrationCallbacks.Dispatcher = services => {
+        services.AddWhizbangDispatcher();
+      };
+    }
+  }
+
   /// <summary>
   /// Auto-generated registrations for receptors, dispatcher, and perspective invoker.
   /// </summary>

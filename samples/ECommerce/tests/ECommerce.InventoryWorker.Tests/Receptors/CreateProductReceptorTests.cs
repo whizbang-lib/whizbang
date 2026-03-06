@@ -45,100 +45,6 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
-  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
-  [Obsolete]
-  public async Task HandleAsync_WithValidCommand_PublishesProductCreatedEventAsync() {
-    // Arrange
-    var dispatcher = new TestDispatcher();
-    var logger = new TestLogger<CreateProductReceptor>();
-    var receptor = new CreateProductReceptor(dispatcher, logger);
-
-    var productId = Guid.CreateVersion7();
-    var command = new CreateProductCommand {
-
-      ProductId = ProductId.From(productId),
-      Name = "Widget",
-      Description = "Description",
-      Price = 19.99m,
-      ImageUrl = null,
-      InitialStock = 0
-    };
-
-    // Act
-    await receptor.HandleAsync(command);
-
-    // Assert
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
-    await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductCreatedEvent>();
-
-    var publishedEvent = (ProductCreatedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
-    await Assert.That(publishedEvent.Name).IsEqualTo("Widget");
-  }
-
-  [Test]
-  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
-  [Obsolete]
-  public async Task HandleAsync_WithZeroInitialStock_PublishesOnlyProductCreatedEventAsync() {
-    // Arrange
-    var dispatcher = new TestDispatcher();
-    var logger = new TestLogger<CreateProductReceptor>();
-    var receptor = new CreateProductReceptor(dispatcher, logger);
-
-    var productId = Guid.CreateVersion7();
-    var command = new CreateProductCommand {
-
-      ProductId = ProductId.From(productId),
-      Name = "No Stock Widget",
-      Description = "Widget without stock",
-      Price = 9.99m,
-      ImageUrl = null,
-      InitialStock = 0
-    };
-
-    // Act
-    await receptor.HandleAsync(command);
-
-    // Assert - Only one event (ProductCreated)
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
-    await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductCreatedEvent>();
-  }
-
-  [Test]
-  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
-  [Obsolete]
-  public async Task HandleAsync_WithPositiveInitialStock_PublishesBothEventsAsync() {
-    // Arrange
-    var dispatcher = new TestDispatcher();
-    var logger = new TestLogger<CreateProductReceptor>();
-    var receptor = new CreateProductReceptor(dispatcher, logger);
-
-    var productId = Guid.CreateVersion7();
-    var command = new CreateProductCommand {
-
-      ProductId = ProductId.From(productId),
-      Name = "Stocked Widget",
-      Description = "Widget with stock",
-      Price = 49.99m,
-      ImageUrl = null,
-      InitialStock = 100
-    };
-
-    // Act
-    await receptor.HandleAsync(command);
-
-    // Assert - Two events (ProductCreated + InventoryRestocked)
-    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(2);
-    await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductCreatedEvent>();
-    await Assert.That(dispatcher.PublishedEvents[1]).IsTypeOf<InventoryRestockedEvent>();
-
-    var inventoryEvent = (InventoryRestockedEvent)dispatcher.PublishedEvents[1];
-    await Assert.That(inventoryEvent.ProductId).IsEqualTo(productId);
-    await Assert.That(inventoryEvent.QuantityAdded).IsEqualTo(100);
-    await Assert.That(inventoryEvent.NewTotalQuantity).IsEqualTo(100);
-  }
-
-  [Test]
   public async Task HandleAsync_WithNullImageUrl_CreatesEventWithNullImageUrlAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -191,33 +97,6 @@ public class CreateProductReceptorTests {
     // Assert - CreatedAt should be between before and after
     await Assert.That(result.CreatedAt).IsGreaterThanOrEqualTo(beforeCall);
     await Assert.That(result.CreatedAt).IsLessThanOrEqualTo(afterCall);
-  }
-
-  [Test]
-  [Skip("Obsolete test - receptor now uses auto-cascade instead of manual PublishAsync")]
-  [Obsolete]
-  public async Task HandleAsync_LogsInformation_AboutProductCreationAsync() {
-    // Arrange
-    var dispatcher = new TestDispatcher();
-    var logger = new TestLogger<CreateProductReceptor>();
-    var receptor = new CreateProductReceptor(dispatcher, logger);
-
-    var productId = Guid.CreateVersion7();
-    var command = new CreateProductCommand {
-
-      ProductId = ProductId.From(productId),
-      Name = "Log Widget",
-      Description = "Test logging",
-      Price = 5.99m,
-      ImageUrl = null,
-      InitialStock = 0
-    };
-
-    // Act
-    await receptor.HandleAsync(command);
-
-    // Assert - Should have logged something
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
   }
 
   [Test]

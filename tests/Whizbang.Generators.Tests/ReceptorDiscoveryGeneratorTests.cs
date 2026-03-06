@@ -1169,15 +1169,15 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
   #region Multiple Handler Validation Tests
 
   /// <summary>
-  /// Tests that WHIZ080 error is reported when multiple handlers handle the same
-  /// message type with a response (RPC pattern). RPC requires exactly one handler
-  /// because we can only return one result.
+  /// Tests that WHIZ080 is NOT reported when multiple RPC handlers exist,
+  /// because the diagnostic is disabled by default pending key-based RPC handler selection.
+  /// When the feature is enabled in the future, this test should be updated to expect the warning.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
-  [Skip("WHIZ080 diagnostic is disabled by default pending key-based RPC handler selection feature")]
-  public async Task Generator_WithMultipleRpcHandlers_ReportsWHIZ080ErrorAsync() {
+  public async Task Generator_WithMultipleRpcHandlers_NoWarningWhenDisabledAsync() {
     // Arrange - Two handlers for the same message type with response (RPC pattern)
+    // WHIZ080 diagnostic is disabled by default, so no warning should be emitted
     var source = @"
 using System.Threading;
 using System.Threading.Tasks;
@@ -1194,7 +1194,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     => ValueTask.FromResult(new OrderCreated());
 }
 
-// Second handler for same message type - this is an error for RPC!
+// Second handler for same message type - would be an error for RPC if WHIZ080 was enabled
 public class AnotherOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
   public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
     => ValueTask.FromResult(new OrderCreated());
@@ -1204,14 +1204,14 @@ public class AnotherOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should report WHIZ080 error
+    // Assert - WHIZ080 should NOT be reported since it's disabled by default
+    var whiz080 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ080");
+    await Assert.That(whiz080).IsNull()
+      .Because("WHIZ080 is disabled by default pending key-based RPC handler selection feature");
+
+    // Verify no other errors occurred
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-    var whiz080 = errors.FirstOrDefault(d => d.Id == "WHIZ080");
-    await Assert.That(whiz080).IsNotNull();
-    var message = whiz080!.GetMessage(CultureInfo.InvariantCulture);
-    await Assert.That(message).Contains("CreateOrder");
-    await Assert.That(message).Contains("OrderReceptor");
-    await Assert.That(message).Contains("AnotherOrderReceptor");
+    await Assert.That(errors).Count().IsEqualTo(0);
   }
 
   /// <summary>
