@@ -911,6 +911,43 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine();
 
+    // List<List<primitive>> types - needed for deeply nested collections like List<List<string>>
+    // When List<List<string>> is serialized, STJ needs explicit JsonTypeInfo for the outer list type in AOT mode
+    sb.AppendLine("  // List<List<primitive>> types - enables deeply nested collections");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<string>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>, global::System.Collections.Generic.List<string>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<string>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<int>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>, global::System.Collections.Generic.List<int>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<int>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<long>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<long>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<long>>, global::System.Collections.Generic.List<long>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<long>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<long>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<bool>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<bool>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<bool>>, global::System.Collections.Generic.List<bool>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<bool>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<bool>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<Guid>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<Guid>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Guid>>, global::System.Collections.Generic.List<Guid>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<Guid>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<Guid>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<decimal>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<decimal>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<decimal>>, global::System.Collections.Generic.List<decimal>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<decimal>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<decimal>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<double>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<double>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<double>>, global::System.Collections.Generic.List<double>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<double>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<double>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::System.Collections.Generic.List<float>>)) {");
+    sb.AppendLine("    var innerListInfo = GetOrCreateTypeInfo<global::System.Collections.Generic.List<float>>(options);");
+    sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<global::System.Collections.Generic.List<float>>, global::System.Collections.Generic.List<float>>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<global::System.Collections.Generic.List<float>>> { ObjectCreator = static () => new global::System.Collections.Generic.List<global::System.Collections.Generic.List<float>>(), ElementInfo = innerListInfo });");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
     // All discovered types (messages + nested types)
     sb.AppendLine("  // Discovered types (messages + nested types)");
     foreach (var type in allTypes) {

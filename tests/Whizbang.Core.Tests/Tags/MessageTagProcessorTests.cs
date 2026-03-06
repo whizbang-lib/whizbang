@@ -718,7 +718,8 @@ public class MessageTagProcessorTests {
     await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
 
     // Assert - scope was created and hook was invoked
-    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(1);
+    // Note: ScopesCreated is 2 because TagLogger creates a scope to resolve ILoggerFactory
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(2);
     await Assert.That(hook.InvokedCount).IsEqualTo(1);
   }
 
@@ -763,15 +764,16 @@ public class MessageTagProcessorTests {
 
     var hookIndex = 0;
     var hooks = new[] { hook1, hook2 };
-    var scopeFactory = new TrackingScopeFactory(type => hooks[hookIndex++]);
+    var scopeFactory = new TrackingScopeFactory(type => type == typeof(TrackingHook) ? hooks[hookIndex++] : null);
     var processor = new MessageTagProcessor(options, scopeFactory);
     var message = new TaggedTestMessage("123");
 
     // Act
     await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
 
-    // Assert - only ONE scope was created for both hooks
-    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(1);
+    // Assert - TWO scopes were created (one for TagLogger, one shared for hooks)
+    // Note: TagLogger creates a scope to resolve ILoggerFactory, plus one scope for processing
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(2);
     await Assert.That(hook1.InvokedCount).IsEqualTo(1);
     await Assert.That(hook2.InvokedCount).IsEqualTo(1);
   }
@@ -793,8 +795,9 @@ public class MessageTagProcessorTests {
     // Act
     await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion);
 
-    // Assert - no scope should be created if no tags exist
-    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(0);
+    // Assert - only the logger scope should be created (no processing scope since no tags)
+    // Note: TagLogger creates 1 scope to resolve ILoggerFactory for diagnostic logging
+    await Assert.That(scopeFactory.ScopesCreated).IsEqualTo(1);
   }
 
   /// <summary>

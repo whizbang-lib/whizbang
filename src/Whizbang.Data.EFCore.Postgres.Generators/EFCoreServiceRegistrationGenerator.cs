@@ -74,10 +74,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractDbContextInfo(ctx, ct)
     ).Where(static info => info is not null);
 
+    // Discover multi-model ILensQuery<T1, T2, ...> constructor parameters
+    var multiLensQueries = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) =>
+            node is ParameterSyntax { Type: GenericNameSyntax { TypeArgumentList.Arguments.Count: >= 2 } },
+        transform: static (ctx, ct) => _extractMultiLensQueryInfo(ctx, ct)
+    ).Where(static info => info is not null);
+
     // Combine perspectives with DbContext info and compilation
     var allData = perspectives.Collect()
         .Combine(dbContextClasses.Collect())
         .Combine(context.CompilationProvider);
+
+    // Combine perspectives, DbContexts, and multi-lens queries for registration metadata generation
+    var registrationData = perspectives.Collect()
+        .Combine(dbContextClasses.Collect())
+        .Combine(multiLensQueries.Collect());
 
     // Generate DbContext partial class with DbSet<PerspectiveRow<TModel>> properties
     context.RegisterSourceOutput(
@@ -130,19 +142,21 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         }
     );
 
-    // Generate EFCoreRegistrationMetadata class
+    // Generate EFCoreRegistrationMetadata class (uses registrationData which includes multi-lens queries)
     context.RegisterSourceOutput(
-        allData,
+        registrationData,
         static (ctx, data) => {
           var perspectives = data.Left.Left;
           var dbContexts = data.Left.Right;
+          var multiLensQueries = data.Right;
 
           try {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
             var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
             var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+            var validMultiLensQueries = multiLensQueries.OfType<MultiLensQueryInfo>().ToImmutableArray();
 
-            _generateRegistrationMetadata(ctx, validPerspectives, validDbContexts);
+            _generateRegistrationMetadata(ctx, validPerspectives, validDbContexts, validMultiLensQueries);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE996",
@@ -620,6 +634,146 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Extracts multi-model ILensQuery information from a constructor parameter.
+  /// Returns null if the parameter is not typed as ILensQuery&lt;T1, T2, ...&gt; (arity >= 2)
+  /// from Whizbang.Core.Lenses.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQueryConstructorParam_GeneratesRegistrationAsync</tests>
+  private static MultiLensQueryInfo? _extractMultiLensQueryInfo(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var parameterSyntax = (ParameterSyntax)context.Node;
+    if (parameterSyntax.Type is not GenericNameSyntax genericName) {
+      return null;
+    }
+
+    // Get the semantic type info for the parameter type
+    var typeInfo = context.SemanticModel.GetTypeInfo(genericName, ct);
+    var type = typeInfo.Type as INamedTypeSymbol;
+    if (type == null) {
+      return null;
+    }
+
+    // Check if it's ILensQuery from Whizbang.Core.Lenses with 2+ type arguments
+    if (type.TypeKind != TypeKind.Interface) {
+      return null;
+    }
+
+    if (!type.Name.Equals("ILensQuery", StringComparison.Ordinal)) {
+      return null;
+    }
+
+    if (type.TypeArguments.Length < 2) {
+      return null;
+    }
+
+    if (type.ContainingNamespace?.ToDisplayString() != "Whizbang.Core.Lenses") {
+      return null;
+    }
+
+    // Extract model type names (fully qualified with global:: prefix)
+    var modelTypeNames = type.TypeArguments
+        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .ToImmutableArray();
+
+    // Get consumer class name from containing type declaration
+    var containingClass = parameterSyntax.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+    string consumerClassName = "Unknown";
+    if (containingClass != null) {
+      var classSymbol = context.SemanticModel.GetDeclaredSymbol(containingClass, ct);
+      if (classSymbol != null) {
+        consumerClassName = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      }
+    }
+
+    return new MultiLensQueryInfo(modelTypeNames, type.TypeArguments.Length, consumerClassName);
+  }
+
+  /// <summary>
+  /// Generates multi-model ILensQuery transient registrations for a DbContext.
+  /// Cross-references model types against known perspectives to get table names.
+  /// Reports WHIZ401 for unknown models, WHIZ402 for successful auto-detection.
+  /// </summary>
+  private static void _generateMultiLensQueryRegistrations(
+      SourceProductionContext context,
+      StringBuilder sb,
+      DbContextInfo dbContext,
+      List<PerspectiveModelInfo> matchingPerspectives,
+      ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
+
+    if (multiLensQueries.IsEmpty) {
+      return;
+    }
+
+    // Build lookup from model type name to table name for this DbContext's perspectives
+    var modelTableLookup = new Dictionary<string, string>();
+    foreach (var perspective in matchingPerspectives) {
+      modelTableLookup[perspective.ModelTypeName] = perspective.TableName;
+    }
+
+    // Deduplicate multi-lens queries by their model type combination (preserve declaration order)
+    var uniqueCombinations = multiLensQueries
+        .GroupBy(q => string.Join(",", q.ModelTypeNames))
+        .Select(g => g.First())
+        .ToList();
+
+    foreach (var query in uniqueCombinations) {
+      // Check if ALL model types are known perspectives for this DbContext
+      var allModelsKnown = true;
+      foreach (var modelType in query.ModelTypeNames) {
+        if (!modelTableLookup.ContainsKey(modelType)) {
+          allModelsKnown = false;
+
+          // Report WHIZ401 - unknown model type
+          var typeArgDisplay = string.Join(", ", query.ModelTypeNames.Select(t => t.Replace("global::", "")));
+          var unknownType = modelType.Replace("global::", "");
+          context.ReportDiagnostic(Diagnostic.Create(
+              DiagnosticDescriptors.MultiLensQueryUnknownModel,
+              Location.None,
+              typeArgDisplay,
+              query.ConsumerClassName.Replace("global::", ""),
+              unknownType));
+          break;
+        }
+      }
+
+      if (!allModelsKnown) {
+        continue;
+      }
+
+      // Report WHIZ402 - auto-detected
+      var modelNames = string.Join(", ", query.ModelTypeNames.Select(t => t.Replace("global::", "")));
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.MultiLensQueryDiscovered,
+          Location.None,
+          modelNames,
+          query.Arity,
+          query.ConsumerClassName.Replace("global::", "")));
+
+      // Generate the transient registration code
+      var typeArgs = string.Join(", ", query.ModelTypeNames);
+      sb.AppendLine($"        // Auto-detected: ILensQuery<{modelNames}> (from {query.ConsumerClassName.Replace("global::", "")})");
+      sb.AppendLine($"        services.AddTransient<Whizbang.Core.Lenses.ILensQuery<{typeArgs}>>(sp => {{");
+      sb.AppendLine($"          var factory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>();");
+      sb.AppendLine($"          var context = factory.CreateDbContext();");
+      sb.AppendLine($"          var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {{");
+
+      for (int i = 0; i < query.ModelTypeNames.Length; i++) {
+        var modelType = query.ModelTypeNames[i];
+        var tableName = modelTableLookup[modelType];
+        var comma = i < query.ModelTypeNames.Length - 1 ? "," : "";
+        sb.AppendLine($"            [typeof({modelType})] = \"{tableName}\"{comma}");
+      }
+
+      sb.AppendLine($"          }};");
+      sb.AppendLine($"          return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<{typeArgs}>(context, tableNames);");
+      sb.AppendLine($"        }});");
+      sb.AppendLine();
+    }
+  }
+
+  /// <summary>
   /// Converts a PhysicalFieldInfo to the corresponding PostgreSQL column type.
   /// </summary>
   private static string _getPostgresColumnType(PhysicalFieldInfo field) {
@@ -746,9 +900,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
 
       sb.AppendLine("using Microsoft.EntityFrameworkCore;");
-      sb.AppendLine("using Whizbang.Core.Lenses;");
-      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Generated;");
-      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Configuration;");
+      sb.AppendLine("using global::Whizbang.Core.Lenses;");
+      sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Generated;");
+      sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
       sb.AppendLine($"namespace {dbContext.Namespace};");
@@ -816,20 +970,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Always generates infrastructure registration (Inbox/Outbox/EventStore) even when there are no perspectives.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQueryConstructorParam_GeneratesRegistrationAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_UnknownModel_ReportsWHIZ401Async</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultiModelLensQuery_DuplicateUsage_RegistersOnceAsync</tests>
   private static void _generateRegistrationMetadata(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
-      ImmutableArray<DbContextInfo> dbContexts) {
+      ImmutableArray<DbContextInfo> dbContexts,
+      ImmutableArray<MultiLensQueryInfo> multiLensQueries) {
 
     // DEBUG: Always report that we're running
     var debugDescriptor = new DiagnosticDescriptor(
         id: "EFCORE106",
         title: "GenerateRegistrationMetadata Running",
-        messageFormat: "GenerateRegistrationMetadata: Found {0} perspectives, {1} DbContexts",
+        messageFormat: "GenerateRegistrationMetadata: Found {0} perspectives, {1} DbContexts, {2} multi-lens queries",
         category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
-    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length, dbContexts.Length));
+    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length, dbContexts.Length, multiLensQueries.Length));
 
     if (dbContexts.IsEmpty) {
       return;  // No DbContext found - nothing to register
@@ -897,8 +1055,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
     sb.AppendLine("using Microsoft.Extensions.Logging;");
-    sb.AppendLine("using Whizbang.Core.Lenses;");
-    sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
+    sb.AppendLine("using global::Whizbang.Core.Lenses;");
+    sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres;");
     // Add pgvector usings if ANY DbContext has vector fields
     // Npgsql namespace provides NpgsqlDataSourceBuilder.UseVector() extension (from Pgvector package)
     // Pgvector.EntityFrameworkCore provides NpgsqlDbContextOptionsBuilder.UseVector() extension
@@ -953,6 +1111,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine(TemplateUtilities.IndentCode(perspectiveCode, "        "));
         sb.AppendLine();
       }
+
+      // Generate multi-model ILensQuery registrations (auto-detected from constructor parameters)
+      _generateMultiLensQueryRegistrations(context, sb, group.DbContext, group.Models, multiLensQueries);
 
       sb.AppendLine($"      }}");
       sb.AppendLine();
@@ -1176,7 +1337,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("    var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);");
       sb.AppendLine();
       sb.AppendLine("    // Configure JSON serialization using Whizbang's combined options");
-      sb.AppendLine("    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+      sb.AppendLine("    var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
       sb.AppendLine("    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
       sb.AppendLine("    dataSourceBuilder.EnableDynamicJson();");
       sb.AppendLine();
@@ -1215,11 +1376,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"    // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
       sb.AppendLine($"    // avoiding scope validation issues that AddPooledDbContextFactory causes");
       sb.AppendLine($"    services.AddSingleton<IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
-      sb.AppendLine($"      new ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+      sb.AppendLine($"      new global::Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
       sb.AppendLine($"        sp.GetRequiredService<IServiceScopeFactory>()));");
       sb.AppendLine();
       sb.AppendLine("    // Register JsonSerializerOptions for Whizbang components");
-      sb.AppendLine("    services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+      sb.AppendLine("    services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
       sb.AppendLine();
       sb.AppendLine("    return services;");
       sb.AppendLine("  }");
@@ -1276,7 +1437,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("      var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(connectionString);");
     sb.AppendLine();
     sb.AppendLine("      // Configure JSON serialization using Whizbang's combined options");
-    sb.AppendLine("      var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
+    sb.AppendLine("      var jsonOptions = global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();");
     sb.AppendLine("      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);");
     sb.AppendLine("      dataSourceBuilder.EnableDynamicJson();");
     sb.AppendLine();
@@ -1328,11 +1489,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"      // ScopedDbContextFactory creates a scope for each CreateDbContext() call,");
     sb.AppendLine($"      // avoiding scope validation issues that AddPooledDbContextFactory causes");
     sb.AppendLine($"      services.AddSingleton<Microsoft.EntityFrameworkCore.IDbContextFactory<{dbContext.FullyQualifiedName}>>(sp =>");
-    sb.AppendLine($"        new Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
+    sb.AppendLine($"        new global::Whizbang.Data.EFCore.Postgres.ScopedDbContextFactory<{dbContext.FullyQualifiedName}>(");
     sb.AppendLine($"          sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>()));");
     sb.AppendLine();
     sb.AppendLine("      // Register JsonSerializerOptions for Whizbang components");
-    sb.AppendLine("      services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
+    sb.AppendLine("      services.AddSingleton(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());");
     sb.AppendLine("    });");
     sb.AppendLine();
     sb.AppendLine($"    // Register initialization callback for EnsureWhizbangInitializedAsync()");
@@ -1841,3 +2002,14 @@ internal sealed record PerspectiveModelCandidate(
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields);
+
+/// <summary>
+/// Information about a discovered multi-model ILensQuery constructor parameter.
+/// </summary>
+/// <param name="ModelTypeNames">Fully qualified model type names (ordered as declared)</param>
+/// <param name="Arity">Number of type arguments (2-10)</param>
+/// <param name="ConsumerClassName">Fully qualified name of the class containing the constructor</param>
+internal sealed record MultiLensQueryInfo(
+    ImmutableArray<string> ModelTypeNames,
+    int Arity,
+    string ConsumerClassName);

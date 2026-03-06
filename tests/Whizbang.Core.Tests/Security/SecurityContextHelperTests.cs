@@ -718,6 +718,122 @@ public class SecurityContextHelperTests {
     }
   }
 
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithExplicitContext_TakesPriorityOverAsyncLocalAsync() {
+    // Arrange: Set BOTH explicit context (via IScopeContextAccessor.Current) AND AsyncLocal context
+    // This simulates AsSystem/RunAs scenario where explicit context should take priority
+    var explicitUserId = "explicit-user-id";
+    var explicitTenantId = "explicit-tenant-id";
+    var asyncLocalUserId = "asynclocal-user-id";
+    var asyncLocalTenantId = "asynclocal-tenant-id";
+
+    // Set AsyncLocal context (this would normally come from parent receptor)
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      Timestamp = DateTimeOffset.UtcNow,
+      UserId = asyncLocalUserId,
+      TenantId = asyncLocalTenantId
+    };
+
+    // Create explicit context (this would be set by AsSystem/RunAs)
+    var explicitExtraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = explicitUserId, TenantId = explicitTenantId },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "ExplicitContext"
+    };
+    var explicitContext = new ImmutableScopeContext(explicitExtraction, shouldPropagate: true);
+
+    // Create a scoped service provider with IScopeContextAccessor set to explicit context
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopeContextAccessor>(new MockScopeContextAccessor(explicitContext));
+    var serviceProvider = services.BuildServiceProvider();
+
+    try {
+      // Act: Call EstablishMessageContextForCascade with service provider that has explicit context
+      SecurityContextHelper.EstablishMessageContextForCascade(serviceProvider);
+
+      // Assert: MessageContextAccessor should use EXPLICIT context values, not AsyncLocal
+      var result = MessageContextAccessor.CurrentContext;
+      await Assert.That(result).IsNotNull();
+      await Assert.That(result!.UserId).IsEqualTo(explicitUserId);
+      await Assert.That(result.TenantId).IsEqualTo(explicitTenantId);
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentContext = null;
+      MessageContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithExplicitContext_DoesNotOverwriteScopeContextAccessorAsync() {
+    // Arrange: Set explicit context (via IScopeContextAccessor.Current)
+    // Verify that EstablishMessageContextForCascade does NOT overwrite ScopeContextAccessor.CurrentContext
+    var explicitUserId = "explicit-user-id";
+    var explicitTenantId = "explicit-tenant-id";
+
+    // Create explicit context (this would be set by AsSystem/RunAs)
+    var explicitExtraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = explicitUserId, TenantId = explicitTenantId },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "ExplicitContext"
+    };
+    var explicitContext = new ImmutableScopeContext(explicitExtraction, shouldPropagate: true);
+
+    // Create a scoped service provider with IScopeContextAccessor set to explicit context
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopeContextAccessor>(new MockScopeContextAccessor(explicitContext));
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Set AsyncLocal to a different value
+    var asyncLocalExtraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { UserId = "asynclocal-user", TenantId = "asynclocal-tenant" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "AsyncLocal"
+    };
+    ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(asyncLocalExtraction, shouldPropagate: true);
+
+    try {
+      // Act: Call EstablishMessageContextForCascade with service provider that has explicit context
+      SecurityContextHelper.EstablishMessageContextForCascade(serviceProvider);
+
+      // Assert: ScopeContextAccessor.CurrentContext should still be the AsyncLocal value
+      // because we don't overwrite when explicit context exists (hasExplicitContext = true)
+      var result = ScopeContextAccessor.CurrentContext;
+      await Assert.That(result).IsNotNull();
+      // The value should be the AsyncLocal one, not modified
+      await Assert.That(result!.Scope.UserId).IsEqualTo("asynclocal-user");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentContext = null;
+      MessageContextAccessor.CurrentContext = null;
+    }
+  }
+
+  // Mock implementation for IScopeContextAccessor used in explicit context tests
+  private sealed class MockScopeContextAccessor : IScopeContextAccessor {
+    private readonly IScopeContext? _explicitContext;
+
+    public MockScopeContextAccessor(IScopeContext? explicitContext) {
+      _explicitContext = explicitContext;
+    }
+
+    public IScopeContext? Current {
+      get => _explicitContext;
+      set { /* Ignore sets - we're simulating explicit context that shouldn't be overwritten */ }
+    }
+  }
+
   // === Argument Validation Tests ===
 
   [Test]

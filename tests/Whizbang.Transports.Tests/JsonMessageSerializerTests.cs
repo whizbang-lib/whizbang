@@ -527,6 +527,24 @@ public class JsonMessageSerializerTests {
   }
 
   [Test]
+  public async Task Constructor_WithNullTypeInfoResolver_ShouldThrowArgumentExceptionAsync() {
+    // Arrange - Create options without TypeInfoResolver (default is null)
+    var options = new JsonSerializerOptions();
+
+    // Act & Assert - Should throw because TypeInfoResolver is not configured
+    await Assert.That(() => new JsonMessageSerializer(options))
+      .ThrowsExactly<ArgumentException>()
+      .WithMessageContaining("TypeInfoResolver");
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ShouldThrowArgumentNullExceptionAsync() {
+    // Act & Assert - Should throw for null options
+    await Assert.That(() => new JsonMessageSerializer((JsonSerializerOptions)null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
   [RequiresUnreferencedCode("")]
   [RequiresDynamicCode("")]
   public async Task RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync() {
