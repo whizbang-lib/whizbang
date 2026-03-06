@@ -22,7 +22,8 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// WHIZ400 error to prevent runtime failures.
 /// </para>
 /// </remarks>
-/// <tests>LensQueryTypeArgumentAnalyzerTests.cs</tests>
+/// <docs>diagnostics/WHIZ400</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LensQueryTypeArgumentAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>

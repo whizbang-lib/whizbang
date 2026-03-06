@@ -240,6 +240,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
     // If not found, look for IReceptor<TMessage> interface (void receptor)
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var voidReceptorInterface = receptorInterface is null
         ? TypeNameHelper.FindInterfaceByOriginalDefinition(
             classSymbol, StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION)

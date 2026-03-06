@@ -25,6 +25,11 @@
     over -IncrementVersion. Useful for testing specific versions or matching CI builds.
     For example: 0.9.0-alpha.119
 
+.PARAMETER Version
+    Explicit version to use for all packages. When specified, this takes precedence
+    over -IncrementVersion. Useful for testing specific versions or matching CI builds.
+    For example: 0.9.0-alpha.119
+
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
     Packs all packages in Debug configuration.
