@@ -8,11 +8,10 @@ branches:
     regex: ^develop$
   release:
     tag: ''
-    increment: Patch
+    increment: None
     prevent-increment-of-merged-branch-version: false
     track-merge-target: false
     regex: ^releases?[/-]
-    is-release-branch: true
   main:
     tag: ''
     increment: Patch
@@ -22,5 +21,4 @@ branches:
   pull-request:
     tag: pr
     increment: Inherit
-    regex: ^(pull|pull\-requests|pr)[/-]
     tag-number-pattern: '[/-](?<number>\d+)'
