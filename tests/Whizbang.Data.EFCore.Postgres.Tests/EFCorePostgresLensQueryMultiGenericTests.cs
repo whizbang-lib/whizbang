@@ -7,6 +7,9 @@ using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres;
 
+// WHIZ400: Suppress for tests that intentionally verify invalid type argument behavior
+#pragma warning disable WHIZ400
+
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>

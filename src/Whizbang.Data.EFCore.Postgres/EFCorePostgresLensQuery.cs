@@ -1,6 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 
+// WHIZ400: Suppress for internal implementation - the runtime checks verify T is valid
+#pragma warning disable WHIZ400
+
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
