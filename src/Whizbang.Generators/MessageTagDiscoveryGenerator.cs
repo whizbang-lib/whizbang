@@ -78,11 +78,8 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Get property names from the type for payload extraction (shared across all attributes)
-    var typeProperties = typeSymbol.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
-        .Select(p => p.Name)
-        .ToArray();
+    // Uses shared utility to include inherited properties from base classes
+    var typeProperties = typeSymbol.GetAllPublicPropertyNames();
 
     // Yield a MessageTagInfo for EACH tag attribute
     foreach (var tagAttribute in tagAttributes) {

@@ -2739,29 +2739,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Uses property name to dedupe (derived class property overrides base class property).
   /// </summary>
   private static List<IPropertySymbol> _getAllPropertiesIncludingInherited(INamedTypeSymbol typeSymbol) {
-    var seenProperties = new HashSet<string>();
-    var allProperties = new List<IPropertySymbol>();
-
-    // Walk inheritance chain from most derived to base
-    var currentType = typeSymbol;
-    while (currentType != null && currentType.SpecialType != SpecialType.System_Object) {
-      var typeProperties = currentType.GetMembers()
-          .OfType<IPropertySymbol>()
-          .Where(p => p.DeclaredAccessibility == Accessibility.Public &&
-                     !p.IsStatic &&
-                     !seenProperties.Contains(p.Name))
-          .ToList();
-
-      foreach (var prop in typeProperties) {
-        seenProperties.Add(prop.Name);
-      }
-
-      // Insert at beginning so base properties come first
-      allProperties.InsertRange(0, typeProperties);
-      currentType = currentType.BaseType;
-    }
-
-    return allProperties;
+    // Use shared utility (returns derived→base order) and reverse to get base→derived order
+    return typeSymbol.GetAllProperties().Reverse().ToList();
   }
 
   /// <summary>

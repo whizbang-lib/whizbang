@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -63,11 +64,9 @@ public class PerspectiveModelArrayAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    // Check all properties for arrays
-    foreach (var member in typeSymbol.GetMembers()) {
-      if (member is IPropertySymbol propertySymbol) {
-        _checkPropertyForArray(context, propertySymbol, typeSymbol);
-      }
+    // Check all properties for arrays (including inherited properties from base model classes)
+    foreach (var propertySymbol in typeSymbol.GetAllProperties()) {
+      _checkPropertyForArray(context, propertySymbol, typeSymbol);
     }
   }
 
