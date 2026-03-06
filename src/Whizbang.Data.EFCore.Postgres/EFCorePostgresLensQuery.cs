@@ -67,39 +67,15 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
 }
 
 /// <summary>
-<<<<<<< release/v0.9.1-alpha.2
-/// EF Core implementation of <see cref="ILensQuery{T1, T2}"/> for PostgreSQL.
-/// Provides LINQ-based querying over two perspective types with shared DbContext for joins.
-/// AOT-compatible: uses typeof() comparisons which are compile-time constants.
-/// </summary>
-/// <typeparam name="T1">First model type</typeparam>
-/// <typeparam name="T2">Second model type</typeparam>
-/// <docs>lenses/multi-model-queries</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryMultiGenericTests.cs</tests>
-public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
-    where T1 : class
-    where T2 : class {
-
-=======
 /// Abstract base class for multi-model EF Core lens queries.
 /// Provides common dispose pattern and GetByIdAsync implementation.
 /// </summary>
 /// <docs>lenses/multi-model-queries</docs>
 public abstract class EFCorePostgresLensQueryBase : IDisposable, IAsyncDisposable {
->>>>>>> main
   private readonly DbContext _context;
   private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
-<<<<<<< release/v0.9.1-alpha.2
-  /// <summary>
-  /// Initializes a new instance with an existing DbContext.
-  /// The DbContext is shared across all Query&lt;T&gt;() calls for join support.
-  /// </summary>
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-=======
   /// <summary>The EF Core DbContext shared across all queries.</summary>
   protected DbContext Context => _context;
 
@@ -107,33 +83,12 @@ public abstract class EFCorePostgresLensQueryBase : IDisposable, IAsyncDisposabl
   /// Initializes the base lens query with shared context.
   /// </summary>
   protected EFCorePostgresLensQueryBase(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames) {
->>>>>>> main
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
     _tableNames = tableNames;
   }
 
-<<<<<<< release/v0.9.1-alpha.2
-  /// <inheritdoc/>
-  /// <remarks>AOT-safe: typeof() comparisons are compile-time operations.</remarks>
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    // AOT-safe pattern: typeof() is a compile-time operation
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    throw new ArgumentException(
-        $"Type '{typeof(T).Name}' is not valid for this ILensQuery<{typeof(T1).Name}, {typeof(T2).Name}>. " +
-        $"Valid types are: {typeof(T1).Name}, {typeof(T2).Name}");
-  }
-
-  /// <inheritdoc/>
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-=======
   /// <summary>
   /// Gets the query for a specific model type. Must be implemented by derived classes.
   /// </summary>
@@ -144,7 +99,6 @@ public abstract class EFCorePostgresLensQueryBase : IDisposable, IAsyncDisposabl
   /// </summary>
   protected async Task<T?> GetByIdCoreAsync<T>(Guid id, CancellationToken cancellationToken) where T : class {
     var row = await GetQueryCore<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
->>>>>>> main
     return row?.Data;
   }
 
@@ -154,11 +108,7 @@ public abstract class EFCorePostgresLensQueryBase : IDisposable, IAsyncDisposabl
       _context.Dispose();
       _disposed = true;
     }
-<<<<<<< release/v0.9.1-alpha.2
-
-=======
     GC.SuppressFinalize(this);
->>>>>>> main
   }
 
   /// <inheritdoc/>
@@ -167,74 +117,11 @@ public abstract class EFCorePostgresLensQueryBase : IDisposable, IAsyncDisposabl
       await _context.DisposeAsync();
       _disposed = true;
     }
-<<<<<<< release/v0.9.1-alpha.2
-
-=======
     GC.SuppressFinalize(this);
->>>>>>> main
   }
 }
 
 /// <summary>
-<<<<<<< release/v0.9.1-alpha.2
-/// EF Core implementation of <see cref="ILensQuery{T1, T2, T3}"/> for PostgreSQL.
-/// </summary>
-/// <docs>lenses/multi-model-queries</docs>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryMultiGenericTests.cs</tests>
-public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
-    where T1 : class
-    where T2 : class
-    where T3 : class {
-
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    throw new ArgumentException(
-        $"Type '{typeof(T).Name}' is not valid for this ILensQuery<{typeof(T1).Name}, {typeof(T2).Name}, {typeof(T3).Name}>. " +
-        $"Valid types are: {typeof(T1).Name}, {typeof(T2).Name}, {typeof(T3).Name}");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
 /// EF Core implementation of <see cref="ILensQuery{T1, T2}"/> for PostgreSQL.
 /// </summary>
 /// <docs>lenses/multi-model-queries</docs>
@@ -297,75 +184,17 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : EFCorePostgresLensQuer
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2, T3, T4>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
     where T4 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    throw new ArgumentException(
-        $"Type '{typeof(T).Name}' is not valid for this ILensQuery. " +
-        $"Valid types are: {typeof(T1).Name}, {typeof(T2).Name}, {typeof(T3).Name}, {typeof(T4).Name}");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -393,79 +222,18 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : EFCorePostgresLens
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1, T2, T3, T4, T5>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
     where T4 : class
     where T5 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    throw new ArgumentException(
-        $"Type '{typeof(T).Name}' is not valid for this ILensQuery. " +
-        $"Valid types are: {typeof(T1).Name}, {typeof(T2).Name}, {typeof(T3).Name}, {typeof(T4).Name}, {typeof(T5).Name}");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -497,17 +265,12 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : EFCorePostgres
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5, T6}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery<T1, T2, T3, T4, T5, T6>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5, T6>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
@@ -515,63 +278,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : EFCorePost
     where T5 : class
     where T6 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T6)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T6>>().AsNoTracking();
-    }
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid for this ILensQuery.");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -607,17 +313,12 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : EFCorePost
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5, T6, T7}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQuery<T1, T2, T3, T4, T5, T6, T7>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5, T6, T7>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
@@ -626,66 +327,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : EFCore
     where T6 : class
     where T7 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T6)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T6>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T7)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T7>>().AsNoTracking();
-    }
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid for this ILensQuery.");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -725,17 +366,12 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : EFCore
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5, T6, T7, T8}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
@@ -745,69 +381,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : EF
     where T7 : class
     where T8 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T6)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T6>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T7)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T7>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T8)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T8>>().AsNoTracking();
-    }
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid for this ILensQuery.");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -851,17 +424,12 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : EF
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5, T6, T7, T8, T9}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> : ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
@@ -872,72 +440,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
     where T8 : class
     where T9 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T6)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T6>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T7)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T7>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T8)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T8>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T9)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T9>>().AsNoTracking();
-    }
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid for this ILensQuery.");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -985,17 +487,12 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
 
 /// <summary>
 /// EF Core implementation of <see cref="ILensQuery{T1, T2, T3, T4, T5, T6, T7, T8, T9, T10}"/> for PostgreSQL.
 /// </summary>
-<<<<<<< release/v0.9.1-alpha.2
-public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> : ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>
-=======
 public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> : EFCorePostgresLensQueryBase, ILensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>
->>>>>>> main
     where T1 : class
     where T2 : class
     where T3 : class
@@ -1007,75 +504,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
     where T9 : class
     where T10 : class {
 
-<<<<<<< release/v0.9.1-alpha.2
-  private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
-  private bool _disposed;
-
-  public EFCorePostgresLensQuery(
-      DbContext dbContext,
-      IReadOnlyDictionary<Type, string> tableNames) {
-    ArgumentNullException.ThrowIfNull(dbContext);
-    ArgumentNullException.ThrowIfNull(tableNames);
-    _context = dbContext;
-    _tableNames = tableNames;
-  }
-
-  public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
-    if (typeof(T) == typeof(T1)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T1>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T2)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T2>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T3)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T3>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T4)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T4>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T5)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T5>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T6)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T6>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T7)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T7>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T8)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T8>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T9)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T9>>().AsNoTracking();
-    }
-    if (typeof(T) == typeof(T10)) {
-      return (IQueryable<PerspectiveRow<T>>)(object)_context.Set<PerspectiveRow<T10>>().AsNoTracking();
-    }
-    throw new ArgumentException($"Type '{typeof(T).Name}' is not valid for this ILensQuery.");
-  }
-
-  public async Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class {
-    var row = await Query<T>().FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-    return row?.Data;
-  }
-
-  public void Dispose() {
-    if (!_disposed) {
-      _context.Dispose();
-      _disposed = true;
-    }
-
-  }
-
-  public async ValueTask DisposeAsync() {
-    if (!_disposed) {
-      await _context.DisposeAsync();
-      _disposed = true;
-    }
-
-  }
-=======
   public EFCorePostgresLensQuery(DbContext dbContext, IReadOnlyDictionary<Type, string> tableNames)
       : base(dbContext, tableNames) { }
 
@@ -1127,5 +555,4 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
 
   public Task<T?> GetByIdAsync<T>(Guid id, CancellationToken cancellationToken = default) where T : class
       => GetByIdCoreAsync<T>(id, cancellationToken);
->>>>>>> main
 }
