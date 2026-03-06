@@ -6,9 +6,29 @@
 --              The backoff grows exponentially until 5 minutes, then stays at 5 minutes.
 -- Dependencies: 017-019 (failure processing functions)
 
--- Maximum backoff multiplier: 10 gives 5 minutes with 30s base (30 * 10 = 300s = 5 min)
--- Exponential growth: 60s, 120s, 240s, 300s (capped), 300s, 300s, ...
--- This prevents: INTERVAL '30 seconds' * POWER(2, 60+1) from overflowing
+-- Configuration constants (defined once, used by all failure processing functions):
+-- BASE_BACKOFF_SECONDS: Starting backoff interval
+-- MAX_BACKOFF_MULTIPLIER: Cap to prevent overflow (10 * 30s = 300s = 5 minutes max)
+-- FAILED_STATUS_FLAG: Bit flag indicating failure (32768 = 0x8000)
+
+-- Helper function to calculate exponential backoff interval
+-- Prevents duplication across failure processing functions
+CREATE OR REPLACE FUNCTION __SCHEMA__.calculate_backoff_interval(
+  p_current_attempts INTEGER
+) RETURNS INTERVAL AS $$
+DECLARE
+  c_base_seconds CONSTANT INTEGER := 30;
+  c_max_multiplier CONSTANT INTEGER := 10;
+  v_multiplier INTEGER;
+BEGIN
+  -- Calculate multiplier with cap: 2^(attempts+1), max 10
+  v_multiplier := LEAST(POWER(2, p_current_attempts + 1)::INTEGER, c_max_multiplier);
+  RETURN (c_base_seconds * v_multiplier) * INTERVAL '1 second';
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+COMMENT ON FUNCTION __SCHEMA__.calculate_backoff_interval IS
+'Calculates exponential backoff interval for retry scheduling. Base: 30s, doubles each attempt, capped at 5 minutes (300s).';
 
 -- Fix process_outbox_failures
 CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_failures(
@@ -16,6 +36,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_failures(
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
 DECLARE
+  c_failed_flag CONSTANT INTEGER := 32768;
   v_failure RECORD;
 BEGIN
   FOR v_failure IN
@@ -26,14 +47,12 @@ BEGIN
       (elem->>'FailureReason')::INTEGER as failure_reason
     FROM jsonb_array_elements(p_failures) as elem
   LOOP
-    -- Update message with failure information and exponential backoff
     UPDATE wh_outbox o
-    SET status = o.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
+    SET status = o.status | v_failure.status_flags | c_failed_flag,
         error = v_failure.error_message,
-        failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
+        failure_reason = COALESCE(v_failure.failure_reason, 0),
         attempts = o.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
-        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, o.attempts + 1), 10)),
+        scheduled_for = p_now + __SCHEMA__.calculate_backoff_interval(o.attempts),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE o.message_id = v_failure.msg_id;
@@ -50,6 +69,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_inbox_failures(
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
 DECLARE
+  c_failed_flag CONSTANT INTEGER := 32768;
   v_failure RECORD;
 BEGIN
   FOR v_failure IN
@@ -60,14 +80,12 @@ BEGIN
       (elem->>'FailureReason')::INTEGER as failure_reason
     FROM jsonb_array_elements(p_failures) as elem
   LOOP
-    -- Update message with failure information and exponential backoff
     UPDATE wh_inbox i
-    SET status = i.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
+    SET status = i.status | v_failure.status_flags | c_failed_flag,
         error = v_failure.error_message,
-        failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
+        failure_reason = COALESCE(v_failure.failure_reason, 0),
         attempts = i.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
-        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, i.attempts + 1), 10)),
+        scheduled_for = p_now + __SCHEMA__.calculate_backoff_interval(i.attempts),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE i.message_id = v_failure.msg_id;
@@ -84,6 +102,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_perspective_event_failures(
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
 DECLARE
+  c_failed_flag CONSTANT INTEGER := 32768;
   v_failure RECORD;
 BEGIN
   FOR v_failure IN
@@ -94,14 +113,12 @@ BEGIN
       (elem->>'FailureReason')::INTEGER as failure_reason
     FROM jsonb_array_elements(p_failures) as elem
   LOOP
-    -- Update event with failure information and exponential backoff
     UPDATE wh_perspective_events pe
-    SET status = pe.status | v_failure.status_flags | 32768,  -- Set Failed bit (32768)
+    SET status = pe.status | v_failure.status_flags | c_failed_flag,
         error = v_failure.error_message,
-        failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
+        failure_reason = COALESCE(v_failure.failure_reason, 0),
         attempts = pe.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
-        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, pe.attempts + 1), 10)),
+        scheduled_for = p_now + __SCHEMA__.calculate_backoff_interval(pe.attempts),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE pe.event_work_id = v_failure.work_id;
