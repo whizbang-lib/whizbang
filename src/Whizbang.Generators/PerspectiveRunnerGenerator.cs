@@ -546,17 +546,16 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       List<string> eventTypes) {
     var mustExistEvents = new List<string>();
 
-    foreach (var member in classSymbol.GetMembers()) {
-      if (member is IMethodSymbol method && method.Name == "Apply") {
-        var hasMustExist = method.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == MUST_EXIST_ATTRIBUTE_NAME);
+    // Use shared utility to include inherited Apply methods from base classes
+    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
+      var hasMustExist = method.GetAttributes()
+          .Any(a => a.AttributeClass?.ToDisplayString() == MUST_EXIST_ATTRIBUTE_NAME);
 
-        if (hasMustExist && method.Parameters.Length >= 2) {
-          // Second parameter is the event type
-          var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-          if (eventTypes.Contains(eventType)) {
-            mustExistEvents.Add(eventType);
-          }
+      if (hasMustExist && method.Parameters.Length >= 2) {
+        // Second parameter is the event type
+        var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (eventTypes.Contains(eventType)) {
+          mustExistEvents.Add(eventType);
         }
       }
     }
@@ -576,17 +575,20 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var returnTypes = new List<EventReturnTypeInfo>();
     var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    foreach (var member in classSymbol.GetMembers()) {
-      if (member is IMethodSymbol method && method.Name == "Apply" && method.Parameters.Length >= 2) {
-        // Second parameter is the event type
-        var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        if (!eventTypes.Contains(eventType)) {
-          continue;
-        }
-
-        var returnType = _classifyReturnType(method.ReturnType, modelTypeName);
-        returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
+    // Use shared utility to include inherited Apply methods from base classes
+    foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
+      if (method.Parameters.Length < 2) {
+        continue;
       }
+
+      // Second parameter is the event type
+      var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      if (!eventTypes.Contains(eventType)) {
+        continue;
+      }
+
+      var returnType = _classifyReturnType(method.ReturnType, modelTypeName);
+      returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
     }
 
     return returnTypes.ToArray();
@@ -647,10 +649,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
-    foreach (var member in modelType.GetMembers()) {
-      if (member is not IPropertySymbol property || property.IsStatic) {
-        continue;
-      }
+    // Use shared utility to include inherited properties from base model classes
+    if (modelType is not INamedTypeSymbol namedModelType) {
+      return physicalFields.ToArray();
+    }
+
+    foreach (var property in namedModelType.GetAllProperties()) {
 
       string? columnName = null;
       bool isVectorField = false;
