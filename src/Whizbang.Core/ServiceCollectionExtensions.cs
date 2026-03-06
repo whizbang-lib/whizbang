@@ -182,6 +182,10 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
     services.AddSingleton<Messaging.ILifecycleInvoker, Messaging.RuntimeLifecycleInvoker>();
 
+    // Deferred outbox channel for events published outside transaction context
+    // Events queued here are drained by the work coordinator in the next lifecycle loop
+    services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
+
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
       return new Messaging.JsonLifecycleMessageDeserializer(jsonOptions);
