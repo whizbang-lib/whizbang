@@ -78,7 +78,9 @@ public static class AssemblyRegistry<T> where T : class {
         return _orderedContributions;
       }
       Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions BUILDING list from {_contributions.Count} contributions");
+      // Take a snapshot before iterating to avoid race condition with concurrent Register() calls
       _orderedContributions = _contributions
+          .ToArray()
           .OrderBy(c => c.Priority)
           .Select(c => c.Contribution)
           .ToList();

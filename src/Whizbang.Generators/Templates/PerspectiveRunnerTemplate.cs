@@ -91,7 +91,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Track progress
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
-    var processedEvents = new List<Whizbang.Core.Observability.MessageEnvelope<Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
+    var processedEvents = new List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();  // Track envelopes for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
@@ -109,7 +109,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     try {
       // Materialize events into list for PrePerspective peek and main processing
       // This allows PrePerspective receptors to receive the first event for type-based routing
-      var events = new System.Collections.Generic.List<Whizbang.Core.Observability.MessageEnvelope<Whizbang.Core.IEvent>>();
+      var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
 
       if (_diagnosticLogging) {
         Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName} starting ReadPolymorphicAsync for stream {streamId}, lastProcessedEventId={lastProcessedEventId}");

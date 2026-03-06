@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -36,10 +37,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
-  private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
-  private const string SYNC_RECEPTOR_INTERFACE_NAME = "Whizbang.Core.ISyncReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
-  private const string IEVENT_INTERFACE_NAME = "Whizbang.Core.IEvent";
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
@@ -139,8 +136,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var hasTraceAttribute = _hasWhizbangTraceAttribute(classSymbol);
 
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
-    var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
+    var receptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
+        classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
     if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
       // Found IReceptor<TMessage, TResponse> - regular async receptor with response
@@ -149,8 +146,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
       var messageTypeSymbol = receptorInterface.TypeArguments[0];
       return new ReceptorInfo(
-          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
+          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
           ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: false,
@@ -162,15 +159,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for IReceptor<TMessage> interface (1 type argument) - void receptor
-    var voidReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage>");
+    var voidReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
+        classSymbol, StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION);
 
     if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
       // Found IReceptor<TMessage> - void async receptor with no response
       var messageTypeSymbol = voidReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
-          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
+          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: false,
@@ -182,8 +179,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for ISyncReceptor<TMessage, TResponse> interface (2 type arguments) - sync receptor
-    var syncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
+    var syncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
+        classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
     if (syncReceptorInterface is not null && syncReceptorInterface.TypeArguments.Length == 2) {
       // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
@@ -192,8 +189,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Use _fullyQualifiedFormatWithNullability for response type to preserve nullable tuple elements
       var messageTypeSymbol = syncReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
-          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
+          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
           ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability),
           LifecycleStages: lifecycleStages,
           IsSync: true,
@@ -205,15 +202,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for ISyncReceptor<TMessage> interface (1 type argument) - void sync receptor
-    var voidSyncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage>");
+    var voidSyncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
+        classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_GENERIC_DEFINITION);
 
     if (voidSyncReceptorInterface is not null && voidSyncReceptorInterface.TypeArguments.Length == 1) {
       // Found ISyncReceptor<TMessage> - void sync receptor with no response
       var messageTypeSymbol = voidSyncReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
-          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          MessageType: messageTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
+          MessageType: TypeNameHelper.GetFullyQualifiedName(messageTypeSymbol),
           ResponseType: null,  // Void receptor - no response type
           LifecycleStages: lifecycleStages,
           IsSync: true,
@@ -235,8 +232,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <param name="typeSymbol">The type symbol to check.</param>
   /// <returns>True if the type implements IEvent, false otherwise.</returns>
   private static bool _implementsIEvent(ITypeSymbol typeSymbol) {
-    return typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == IEVENT_INTERFACE_NAME);
+    return TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
   }
 
   /// <summary>
@@ -790,10 +786,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IPerspectiveFor<TModel, TEvent, ...> interface (any variant with 2+ type args)
+    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var hasPerspective = classSymbol.AllInterfaces.Any(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameHelper.GetOriginalDefinitionName(i);
       // Check if it starts with our perspective interface name and has at least 2 type arguments (model + events)
-      return originalDef.StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal) && i.TypeArguments.Length >= 2;
+      return originalDef.StartsWith(StandardInterfaceNames.I_PERSPECTIVE_FOR + "<", StringComparison.Ordinal) && i.TypeArguments.Length >= 2;
     });
 
     return hasPerspective;
@@ -937,13 +934,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         if (receptor.IsVoid) {
           // Void sync receptor: ISyncReceptor<TMessage>
           generatedCode = voidSyncRegistrationSnippet
-              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
               .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
               .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
         } else {
           // Regular sync receptor: ISyncReceptor<TMessage, TResponse>
           generatedCode = syncRegistrationSnippet
-              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
               .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
               .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
               .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
@@ -953,13 +950,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         if (receptor.IsVoid) {
           // Void receptor: IReceptor<TMessage>
           generatedCode = voidRegistrationSnippet
-              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
               .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
               .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
         } else {
           // Regular receptor: IReceptor<TMessage, TResponse>
           generatedCode = registrationSnippet
-              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
               .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
               .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
               .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
@@ -1048,7 +1045,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var generatedCode = sendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
@@ -1074,7 +1071,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
@@ -1100,7 +1097,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Replace placeholders with actual types
       var generatedCode = publishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
 
       publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -1127,7 +1124,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Replace placeholders with actual types
       var generatedCode = untypedPublishSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
 
       untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -1149,7 +1146,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var generatedCode = syncSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
       syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
@@ -1171,7 +1168,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // Replace placeholders with actual types
       var generatedCode = voidSyncSendSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
-          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
       voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
@@ -1198,7 +1195,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var generatedCode = anySendNonVoidSnippet
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
-          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
@@ -1365,14 +1362,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (receptor.IsVoid) {
         // Void receptor: IReceptor<TMessage>
         generatedCode = voidSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
             .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
             .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
       } else {
         // Regular receptor: IReceptor<TMessage, TResponse>
         generatedCode = responseSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
             .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
             .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
@@ -1569,7 +1566,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Apply replacements
     var result = entryTemplate
-        .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+        .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
         .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
@@ -1602,11 +1599,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"  InvokeAsync: async (sp, msg, ct) => {{");
 
     if (receptor.IsVoid) {
-      sb.AppendLine($"    var receptor = sp.GetRequiredService<{RECEPTOR_INTERFACE_NAME}<{receptor.MessageType}>>();");
+      sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}>>();");
       sb.AppendLine($"    await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
       sb.AppendLine($"    return null;");
     } else {
-      sb.AppendLine($"    var receptor = sp.GetRequiredService<{RECEPTOR_INTERFACE_NAME}<{receptor.MessageType}, {receptor.ResponseType}>>();");
+      sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}, {receptor.ResponseType}>>();");
       sb.AppendLine($"    var result = await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
       sb.AppendLine($"    if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {{");
       sb.AppendLine($"      return routedResult.Value;");

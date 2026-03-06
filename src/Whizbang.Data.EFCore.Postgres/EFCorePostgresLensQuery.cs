@@ -1,6 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 
+// WHIZ400: Suppress for internal implementation - the runtime checks verify T is valid
+#pragma warning disable WHIZ400
+
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
@@ -115,12 +118,21 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
   }
 
   /// <inheritdoc/>
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
+  /// <inheritdoc/>
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -167,12 +179,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -221,12 +241,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -279,12 +307,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -339,12 +375,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -403,12 +447,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -471,12 +523,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -543,12 +603,20 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -619,11 +687,19 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
     return row?.Data;
   }
 
+  public void Dispose() {
+    if (!_disposed) {
+      _context.Dispose();
+      _disposed = true;
+    }
+
+  }
+
   public async ValueTask DisposeAsync() {
     if (!_disposed) {
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
