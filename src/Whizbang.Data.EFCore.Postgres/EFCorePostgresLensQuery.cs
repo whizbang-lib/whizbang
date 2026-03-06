@@ -120,7 +120,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   /// <inheritdoc/>
@@ -129,7 +129,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -181,7 +181,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -189,7 +189,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -243,7 +243,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -251,7 +251,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -309,7 +309,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -317,7 +317,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -377,7 +377,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -385,7 +385,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -449,7 +449,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -457,7 +457,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -525,7 +525,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -533,7 +533,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -605,7 +605,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -613,7 +613,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
 
@@ -689,7 +689,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
       _context.Dispose();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 
   public async ValueTask DisposeAsync() {
@@ -697,6 +697,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
       await _context.DisposeAsync();
       _disposed = true;
     }
-    GC.SuppressFinalize(this);
+
   }
 }
