@@ -40,16 +40,19 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install GitVersion
+        if: inputs.release_type != 'manual'
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           versionSpec: '6.0.x'
 
       - name: Determine Base Version
+        if: inputs.release_type != 'manual'
         id: gitversion
         uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
+          disableNormalization: true
 
       - name: Calculate Final Version
         id: version
