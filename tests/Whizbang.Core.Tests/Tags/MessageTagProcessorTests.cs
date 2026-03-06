@@ -763,7 +763,7 @@ public class MessageTagProcessorTests {
 
     var hookIndex = 0;
     var hooks = new[] { hook1, hook2 };
-    var scopeFactory = new TrackingScopeFactory(type => type == typeof(TrackingHook) ? hooks[hookIndex++] : null);
+    var scopeFactory = new TrackingScopeFactory(type => hooks[hookIndex++]);
     var processor = new MessageTagProcessor(options, scopeFactory);
     var message = new TaggedTestMessage("123");
 

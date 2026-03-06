@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -13,10 +14,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class TopicRegistryGenerator : IIncrementalGenerator {
-  private const string IEVENT_INTERFACE = "Whizbang.Core.IEvent";
-  private const string ICOMMAND_INTERFACE = "Whizbang.Core.ICommand";
-  private const string TOPIC_ATTRIBUTE = "Whizbang.Core.Attributes.TopicAttribute";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline: Discover event/command types with [Topic] attribute or convention-based routing
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -65,21 +62,21 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
     }
 
     // Check if implements IEvent or ICommand
-    var isEvent = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == IEVENT_INTERFACE);
-    var isCommand = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString() == ICOMMAND_INTERFACE);
+    var isEvent = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
+    var isCommand = TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_COMMAND);
 
     if (!isEvent && !isCommand) {
       return null;  // Early exit - not a message type
     }
 
     // Get fully qualified type name
-    var fullTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var fullTypeName = TypeNameHelper.GetFullyQualifiedName(typeSymbol);
 
     // Check for [Topic] attribute
     var topicAttribute = typeSymbol.GetAttributes()
-        .FirstOrDefault(attr => attr.AttributeClass?.ToDisplayString() == TOPIC_ATTRIBUTE);
+        .FirstOrDefault(attr =>
+            attr.AttributeClass is not null &&
+            TypeNameHelper.GetFullyQualifiedName(attr.AttributeClass) == StandardInterfaceNames.TOPIC_ATTRIBUTE);
 
     string? baseTopic = null;
 

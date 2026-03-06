@@ -445,10 +445,10 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = partialClass!.SourceText.ToString();
 
-    // Should include required using directives
+    // Should include required using directives (now with global:: prefix for consistency)
     await Assert.That(sourceText).Contains("using Microsoft.EntityFrameworkCore;");
-    await Assert.That(sourceText).Contains("using Whizbang.Core.Lenses;");
-    await Assert.That(sourceText).Contains("using Whizbang.Data.EFCore.Postgres.Generated;");
+    await Assert.That(sourceText).Contains("using global::Whizbang.Core.Lenses;");
+    await Assert.That(sourceText).Contains("using global::Whizbang.Data.EFCore.Postgres.Generated;");
   }
 
   /// <summary>
