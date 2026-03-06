@@ -19,17 +19,31 @@ public class JsonMessageSerializerTests {
     // Arrange - Create options without TypeInfoResolver (default is null)
     var options = new JsonSerializerOptions();
 
-    // Act & Assert - Should throw because TypeInfoResolver is not configured
-    await Assert.That(() => new JsonMessageSerializer(options))
-      .ThrowsExactly<ArgumentException>()
-      .WithMessageContaining("TypeInfoResolver");
+    // Act - Call constructor directly to ensure coverage is collected
+    ArgumentException? caughtException = null;
+    try {
+      _ = new JsonMessageSerializer(options);
+    } catch (ArgumentException ex) {
+      caughtException = ex;
+    }
+
+    // Assert - Should have thrown ArgumentException with correct message
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("TypeInfoResolver");
   }
 
   [Test]
   public async Task Constructor_WithNullOptions_ShouldThrowArgumentNullExceptionAsync() {
-    // Act & Assert - Should throw for null options
-    await Assert.That(() => new JsonMessageSerializer((JsonSerializerOptions)null!))
-      .ThrowsExactly<ArgumentNullException>();
+    // Act - Call constructor directly to ensure coverage is collected
+    ArgumentNullException? caughtException = null;
+    try {
+      _ = new JsonMessageSerializer((JsonSerializerOptions)null!);
+    } catch (ArgumentNullException ex) {
+      caughtException = ex;
+    }
+
+    // Assert - Should have thrown ArgumentNullException
+    await Assert.That(caughtException).IsNotNull();
   }
 
   [Test]
