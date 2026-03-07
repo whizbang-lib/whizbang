@@ -33,8 +33,10 @@ jobs:
 
     - name: Extract Version from Tag
       id: version
+      env:
+        INPUT_TAG: ${{ inputs.tag || github.ref }}
       run: |
-        VERSION_REF="${{ inputs.tag || github.ref }}"
+        VERSION_REF="$INPUT_TAG"
         # Strip refs/tags/ prefix and v prefix to get bare semver
         VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||; s|^v||')
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -94,8 +96,10 @@ jobs:
 
     - name: Determine Release Type
       id: release_type
+      env:
+        INPUT_TAG: ${{ inputs.tag || github.ref_name }}
       run: |
-        TAG="${{ inputs.tag || github.ref_name }}"
+        TAG="$INPUT_TAG"
         # Check if version contains prerelease suffix (e.g., -alpha, -beta, -rc)
         if [[ "$TAG" =~ -[a-zA-Z] ]]; then
           echo "prerelease=true" >> $GITHUB_OUTPUT
