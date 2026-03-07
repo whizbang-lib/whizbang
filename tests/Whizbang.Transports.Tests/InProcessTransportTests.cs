@@ -568,40 +568,4 @@ public class InProcessTransportTests {
     // Verify finally block executed by checking that pending request was removed
     // (Subsequent call with same envelope should not interfere with previous request)
   }
-
-  [Test]
-  [Skip("Routing key matching not yet implemented in InProcessTransport")]
-  public async Task PublishAsync_WithRoutingKey_DeliversToCorrectDestinationAsync() {
-    // Arrange
-    var transport = new InProcessTransport();
-    var envelope = _createTestEnvelope("test");
-    var destination1 = new TransportDestination("topic", RoutingKey: "orders.created");
-    var destination2 = new TransportDestination("topic", RoutingKey: "orders.updated");
-
-    var handler1Invoked = false;
-    var handler2Invoked = false;
-
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handler1Invoked = true;
-        return Task.CompletedTask;
-      },
-      destination: destination1
-    );
-
-    await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        handler2Invoked = true;
-        return Task.CompletedTask;
-      },
-      destination: destination2
-    );
-
-    // Act - Publish to destination1
-    await transport.PublishAsync(envelope, destination1);
-
-    // Assert - Only handler1 should be invoked (different addresses due to RoutingKey)
-    await Assert.That(handler1Invoked).IsTrue();
-    await Assert.That(handler2Invoked).IsFalse();
-  }
 }

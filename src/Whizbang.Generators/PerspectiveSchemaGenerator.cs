@@ -122,10 +122,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var modelClassName = modelType.Name;
-    var modelProperties = modelType.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => !p.IsStatic)
-        .ToList();
+    // Use shared utility to include inherited properties from base model classes
+    var modelProperties = modelType is INamedTypeSymbol namedModelType
+        ? namedModelType.GetAllProperties().ToList()
+        : modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic).ToList();
 
     var propertyCount = modelProperties.Count;
     var estimatedSize = _estimateJsonSize(propertyCount);

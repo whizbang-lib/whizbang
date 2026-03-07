@@ -54,6 +54,25 @@ public sealed class WhizbangCoreOptions {
   public TracingOptions Tracing { get; } = new();
 
   /// <summary>
+  /// Gets the service registration configuration for auto-discovered services.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Use this property to control how lenses and perspectives are registered.
+  /// These options are passed to the source-generated registration callbacks.
+  /// </para>
+  /// <example>
+  /// <code>
+  /// services.AddWhizbang(options => {
+  ///   options.Services.IncludeSelfRegistration = false;  // Only register interfaces
+  /// });
+  /// </code>
+  /// </example>
+  /// </remarks>
+  /// <docs>configuration/service-registration-options</docs>
+  public ServiceRegistrationOptions Services { get; } = new();
+
+  /// <summary>
   /// Gets or sets whether tag processing is enabled.
   /// Default: true (process tags after receptor completion).
   /// </summary>

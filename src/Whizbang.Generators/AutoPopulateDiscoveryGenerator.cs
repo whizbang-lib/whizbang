@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -61,8 +62,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Get all properties including inherited ones
-    var properties = _getAllProperties(typeSymbol);
+    // Get all properties including inherited ones (uses shared utility)
+    var properties = typeSymbol.GetAllProperties();
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
@@ -83,19 +84,6 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
           yield return info;
         }
       }
-    }
-  }
-
-  private static IEnumerable<IPropertySymbol> _getAllProperties(INamedTypeSymbol typeSymbol) {
-    // Get properties from this type and all base types
-    var current = typeSymbol;
-    while (current is not null) {
-      foreach (var member in current.GetMembers().OfType<IPropertySymbol>()) {
-        if (member.DeclaredAccessibility == Accessibility.Public && !member.IsStatic) {
-          yield return member;
-        }
-      }
-      current = current.BaseType;
     }
   }
 

@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -144,21 +145,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Searches the type hierarchy to find [StreamId] on inherited properties.
   /// </summary>
   private static string? _findStreamIdProperty(ITypeSymbol modelType) {
-    var currentType = modelType as INamedTypeSymbol;
-    while (currentType is not null) {
-      foreach (var member in currentType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
-
-          if (hasStreamIdAttribute) {
-            return property.Name;
-          }
-        }
-      }
-      currentType = currentType.BaseType;
+    if (modelType is not INamedTypeSymbol namedType) {
+      return null;
     }
-    return null;
+
+    var streamIdProperty = namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    return streamIdProperty?.Name;
   }
 
   /// <summary>
@@ -203,23 +195,17 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       typeToValidate = arrayType.ElementType;
     }
 
-    var streamKeyProperties = new List<string>();
-
-    // Traverse the type hierarchy to find [StreamId] on inherited properties
-    var currentType = typeToValidate as INamedTypeSymbol;
-    while (currentType is not null) {
-      foreach (var member in currentType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
-
-          if (hasStreamIdAttribute) {
-            streamKeyProperties.Add(property.Name);
-          }
-        }
-      }
-      currentType = currentType.BaseType;
+    if (typeToValidate is not INamedTypeSymbol namedType) {
+      var typeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      return new EventValidationError(TypeNameUtilities.GetSimpleName(typeName), StreamIdErrorType.MissingStreamId);
     }
+
+    // Get all properties with [StreamId] from the type hierarchy
+    var streamKeyProperties = namedType.GetAllProperties()
+        .Where(p => p.GetAttributes().Any(a =>
+            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE))
+        .Select(p => p.Name)
+        .ToList();
 
     var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
@@ -246,23 +232,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       typeToExtract = arrayType.ElementType;
     }
 
-    // Traverse the type hierarchy to find [StreamId] on inherited properties
-    var currentType = typeToExtract as INamedTypeSymbol;
-    while (currentType is not null) {
-      foreach (var member in currentType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
-
-          if (hasStreamIdAttribute) {
-            return property.Name;
-          }
-        }
-      }
-      currentType = currentType.BaseType;
+    if (typeToExtract is not INamedTypeSymbol namedType) {
+      return null;
     }
 
-    return null;
+    var streamIdProperty = namedType.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    return streamIdProperty?.Name;
   }
 
   /// <summary>

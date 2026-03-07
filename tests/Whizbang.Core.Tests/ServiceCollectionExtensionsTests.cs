@@ -759,6 +759,197 @@ public class ServiceCollectionExtensionsTests {
   }
 
   // ==========================================================================
+  // ServiceRegistrationCallbacks Tests - Auto-Registration
+  // These tests modify shared static state and must NOT run in parallel
+  // ==========================================================================
+
+  [Test]
+  [NotInParallel(Order = 1)]
+  public async Task AddWhizbang_InvokesLensServicesCallback_WhenRegisteredAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var callbackInvoked = false;
+    ServiceRegistrationOptions? receivedOptions = null;
+
+    ServiceRegistrationCallbacks.Reset();
+    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+      callbackInvoked = true;
+      receivedOptions = options;
+    };
+
+    try {
+      // Act
+      _ = services.AddWhizbang();
+
+      // Assert
+      await Assert.That(callbackInvoked).IsTrue();
+      await Assert.That(receivedOptions).IsNotNull();
+      await Assert.That(receivedOptions!.IncludeSelfRegistration).IsTrue(); // Default
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 2)]
+  public async Task AddWhizbang_InvokesPerspectiveServicesCallback_WhenRegisteredAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var callbackInvoked = false;
+
+    ServiceRegistrationCallbacks.Reset();
+    ServiceRegistrationCallbacks.PerspectiveServices = (s, options) => {
+      callbackInvoked = true;
+    };
+
+    try {
+      // Act
+      _ = services.AddWhizbang();
+
+      // Assert
+      await Assert.That(callbackInvoked).IsTrue();
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 3)]
+  public async Task AddWhizbang_InvokesDispatcherCallback_WhenRegisteredAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var callbackInvoked = false;
+
+    ServiceRegistrationCallbacks.Reset();
+    ServiceRegistrationCallbacks.Dispatcher = s => {
+      callbackInvoked = true;
+    };
+
+    try {
+      // Act
+      _ = services.AddWhizbang();
+
+      // Assert
+      await Assert.That(callbackInvoked).IsTrue();
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 4)]
+  public async Task AddWhizbang_PassesServiceOptionsToCallbacks_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+    ServiceRegistrationOptions? receivedOptions = null;
+
+    ServiceRegistrationCallbacks.Reset();
+    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+      receivedOptions = options;
+    };
+
+    try {
+      // Act
+      _ = services.AddWhizbang(options => {
+        options.Services.IncludeSelfRegistration = false;
+      });
+
+      // Assert
+      await Assert.That(receivedOptions).IsNotNull();
+      await Assert.That(receivedOptions!.IncludeSelfRegistration).IsFalse();
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 5)]
+  public async Task AddWhizbang_WithNoCallbacks_DoesNotThrowAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    ServiceRegistrationCallbacks.Reset();
+
+    try {
+      // Act & Assert - should not throw even with no callbacks registered
+      var builder = services.AddWhizbang();
+      await Assert.That(builder).IsNotNull();
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 6)]
+  public async Task AddWhizbang_CallsAllCallbacksInOrder_Async() {
+    // Arrange
+    var services = new ServiceCollection();
+    var callOrder = new List<string>();
+
+    ServiceRegistrationCallbacks.Reset();
+    ServiceRegistrationCallbacks.LensServices = (s, options) => callOrder.Add("Lens");
+    ServiceRegistrationCallbacks.PerspectiveServices = (s, options) => callOrder.Add("Perspective");
+    ServiceRegistrationCallbacks.Dispatcher = s => callOrder.Add("Dispatcher");
+
+    try {
+      // Act
+      _ = services.AddWhizbang();
+
+      // Assert - verify all callbacks were invoked
+      await Assert.That(callOrder).Contains("Lens");
+      await Assert.That(callOrder).Contains("Perspective");
+      await Assert.That(callOrder).Contains("Dispatcher");
+    } finally {
+      ServiceRegistrationCallbacks.Reset();
+    }
+  }
+
+  [Test]
+  [NotInParallel(Order = 7)]
+  public async Task ServiceRegistrationCallbacks_Reset_ClearsAllCallbacksAsync() {
+    // Arrange
+    ServiceRegistrationCallbacks.LensServices = (s, o) => { };
+    ServiceRegistrationCallbacks.PerspectiveServices = (s, o) => { };
+    ServiceRegistrationCallbacks.Dispatcher = s => { };
+
+    // Act
+    ServiceRegistrationCallbacks.Reset();
+
+    // Assert
+    await Assert.That(ServiceRegistrationCallbacks.LensServices).IsNull();
+    await Assert.That(ServiceRegistrationCallbacks.PerspectiveServices).IsNull();
+    await Assert.That(ServiceRegistrationCallbacks.Dispatcher).IsNull();
+  }
+
+  [Test]
+  [NotInParallel(Order = 8)]
+  public async Task WhizbangCoreOptions_Services_HasDefaultIncludeSelfRegistrationTrueAsync() {
+    // Arrange & Act
+    var options = new WhizbangCoreOptions();
+
+    // Assert
+    await Assert.That(options.Services).IsNotNull();
+    await Assert.That(options.Services.IncludeSelfRegistration).IsTrue();
+  }
+
+  [Test]
+  [NotInParallel(Order = 9)]
+  public async Task WhizbangCoreOptions_Services_CanBeConfiguredAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang(options => {
+      options.Services.IncludeSelfRegistration = false;
+    });
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var coreOptions = provider.GetService<WhizbangCoreOptions>();
+    await Assert.That(coreOptions).IsNotNull();
+    await Assert.That(coreOptions!.Services.IncludeSelfRegistration).IsFalse();
+  }
+
+  // ==========================================================================
   // Test Hook Implementations for Options Lambda Tests
   // ==========================================================================
 

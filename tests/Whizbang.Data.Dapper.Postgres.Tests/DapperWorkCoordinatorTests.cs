@@ -101,7 +101,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  [Skip("Completion behavior needs investigation - test expectations may not match PostgreSQL function behavior")]
   public async Task ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
@@ -111,7 +110,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertOutboxMessageAsync(messageId1, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
     await _insertOutboxMessageAsync(messageId2, "topic2", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
-    // Act - Complete the messages with Published status
+    // Act - Complete the messages with Published status (DebugMode retains messages for verification)
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -119,6 +118,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
+            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
             OutboxCompletions = [
               new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
               new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
@@ -139,7 +139,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
 
-    // Verify messages marked as Published in debug mode
+    // Verify messages marked as Published (retained in debug mode)
     var status1 = await _getOutboxStatusAsync(messageId1);
     var status2 = await _getOutboxStatusAsync(messageId2);
     await Assert.That(status1).IsEqualTo("Published");
@@ -191,7 +191,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  [Skip("Completion behavior needs investigation - test expectations may not match PostgreSQL function behavior")]
   public async Task ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
@@ -201,7 +200,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertInboxMessageAsync(messageId1, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
     await _insertInboxMessageAsync(messageId2, "Handler2", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
 
-    // Act - Complete the messages (Published status to trigger deletion)
+    // Act - Complete the messages (EventStored status triggers deletion in production mode)
+    // Note: Inbox completion checks for EventStored flag (bit 1), not Published flag (bit 2)
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -212,8 +212,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             OutboxCompletions = [],
             OutboxFailures = [],
             InboxCompletions = [
-              new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
-              new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
+              new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.EventStored },
+              new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.EventStored }
             ],
             InboxFailures = [],
             ReceptorCompletions = [],
@@ -229,7 +229,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
 
-    // Verify messages deleted (FullyCompleted messages are deleted in non-debug mode)
+    // Verify messages deleted (EventStored triggers deletion in production mode)
     var status1 = await _getInboxStatusAsync(messageId1);
     var status2 = await _getInboxStatusAsync(messageId2);
     await Assert.That(status1).IsNull()
@@ -425,7 +425,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   [Test]
-  [Skip("Completion behavior needs investigation - test expectations may not match PostgreSQL function behavior")]
   public async Task ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
@@ -464,7 +463,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
       streamId: _idProvider.NewGuid());
 
-    // Act - Process completions, failures, and claim orphaned messages
+    // Act - Process completions, failures, and claim orphaned messages (DebugMode retains messages)
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -472,6 +471,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
+            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }],
             OutboxFailures = [new MessageFailure { MessageId = failedOutboxId, CompletedStatus = MessageProcessingStatus.Stored, Error = "Test failure" }],
             InboxCompletions = [new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored }],
@@ -490,7 +490,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     await Assert.That(result.InboxWork).Count().IsEqualTo(1);
 
-    // Verify completed in debug mode
+    // Verify completed (retained in debug mode)
     await Assert.That(await _getOutboxStatusAsync(completedOutboxId)).IsEqualTo("Published");
     // In debug mode, completed inbox messages are kept (not deleted) for verification
     var inboxStatus = await _getInboxStatusAsync(completedInboxId);
@@ -1381,7 +1381,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   // ========================================
 
   [Test]
-  [Skip("Status flag accumulation needs investigation - PostgreSQL function behavior differs from expectations")]
   public async Task ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync() {
     // Arrange
     await _insertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
@@ -1389,7 +1388,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     await _insertOutboxMessageAsync(messageId, "test-topic", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
-    // Act 1 - Complete with Stored status
+    // Act 1 - Complete with Stored status (DebugMode to retain messages)
     await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -1397,6 +1396,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
+            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Stored
@@ -1414,7 +1414,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             RenewInboxLeaseIds = []
           });
 
-    // Verify status after first completion in debug mode
+    // Verify status after first completion (retained in debug mode)
     var status1 = await _getOutboxStatusFlagsAsync(messageId);
     await Assert.That((status1 & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Status should include Stored flag");
@@ -1427,6 +1427,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
+            Flags = WorkBatchFlags.DebugMode,  // Retain messages for verification
             OutboxCompletions = [new MessageCompletion {
               MessageId = messageId,
               Status = MessageProcessingStatus.Published
@@ -1582,15 +1583,15 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   // ========================================
 
   [Test]
-  [Skip("Stale instance cleanup needs investigation - PostgreSQL function behavior differs from expectations")]
   public async Task ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync() {
     // Arrange
     var staleInstanceId = _idProvider.NewGuid();
     var activeInstanceId = _instanceId;
 
-    // Insert stale instance (heartbeat > 300 seconds old, default staleThresholdSeconds)
+    // Insert stale instance (heartbeat > 600 seconds old, matching default StaleThresholdSeconds)
+    // Default StaleThresholdSeconds is 600 (10 minutes), so heartbeat must be older than that
     await _insertServiceInstanceAsync(staleInstanceId, "StaleService", "stale-host", 999);
-    await _markInstanceHeartbeatOldAsync(staleInstanceId, DateTimeOffset.UtcNow.AddSeconds(-400));
+    await _markInstanceHeartbeatOldAsync(staleInstanceId, DateTimeOffset.UtcNow.AddSeconds(-700));
 
     // Insert active instance
     await _insertServiceInstanceAsync(activeInstanceId, "ActiveService", "active-host", 123);
@@ -1622,7 +1623,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var activeExists = await _serviceInstanceExistsAsync(activeInstanceId);
 
     await Assert.That(staleExists).IsFalse()
-      .Because("Instance with heartbeat older than staleThresholdSeconds should be deleted");
+      .Because("Instance with heartbeat older than StaleThresholdSeconds (600s) should be deleted");
     await Assert.That(activeExists).IsTrue()
       .Because("Active instance should remain");
   }

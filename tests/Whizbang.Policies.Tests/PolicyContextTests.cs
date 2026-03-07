@@ -382,25 +382,6 @@ public class PolicyContextTests {
   }
 
   [Test]
-  [Skip("Test types conflict with MessageJsonContextGenerator - command support verified by DispatcherDeliveryReceiptTests")]
-  public async Task GetStreamId_WithStreamIdAttribute_UsesGeneratedExtractorAsync() {
-    // Arrange
-    var services = new ServiceCollection()
-        .AddWhizbang()
-        .Services
-        .BuildServiceProvider();
-    var productId = Guid.NewGuid();
-    var message = new CreateProduct(productId, "New Product");
-    var context = new PolicyContext(message, services: services);
-
-    // Act - Should use generated extractor via DI (zero reflection)
-    var aggregateId = context.GetAggregateId();
-
-    // Assert
-    await Assert.That(aggregateId).IsEqualTo(productId);
-  }
-
-  [Test]
   public async Task GetStreamId_WithoutStreamIdAttribute_ThrowsHelpfulExceptionAsync() {
     // Arrange
     var services = new ServiceCollection()
@@ -418,25 +399,6 @@ public class PolicyContextTests {
         .Throws<InvalidOperationException>();
 
     await Assert.That(exception!.Message).Contains("does not have a property marked with [StreamId]");
-  }
-
-  [Test]
-  [Skip("Test types conflict with MessageJsonContextGenerator - command support verified by DispatcherDeliveryReceiptTests")]
-  public async Task GetStreamId_ReturnsId_WhenMessageContainsStreamIdAsync() {
-    // Arrange
-    var services = new ServiceCollection()
-        .AddWhizbang()
-        .Services
-        .BuildServiceProvider();
-    var orderId = Guid.NewGuid();
-    var message = new CreateOrder(orderId, "Widget");
-    var context = new PolicyContext(message, services: services);
-
-    // Act
-    var aggregateId = context.GetAggregateId();
-
-    // Assert
-    await Assert.That(aggregateId).IsEqualTo(orderId);
   }
 
   [Test]

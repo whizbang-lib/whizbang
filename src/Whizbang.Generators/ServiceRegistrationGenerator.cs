@@ -59,7 +59,10 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts service registration information from a class declaration.
-  /// Returns null if the class doesn't implement a user interface that extends Whizbang interfaces.
+  /// Supports two patterns:
+  /// 1. User-defined interface pattern: class implements IMyLens where IMyLens : ILensQuery&lt;T&gt;
+  /// 2. Direct implementation pattern: class implements ILensQuery&lt;T&gt; directly
+  /// Returns null if the class doesn't match either pattern.
   /// </summary>
   private static ServiceRegistrationInfo? _extractServiceRegistrationInfo(
       GeneratorSyntaxContext context,
@@ -81,27 +84,83 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find user interfaces that extend Whizbang interfaces
+    // Skip Whizbang.Core internal classes - this generator is for user types only
+    var className = classSymbol.ToDisplayString();
+    if (className.StartsWith("Whizbang.Core", StringComparison.Ordinal)) {
+      return null;
+    }
+
+    // Pattern 1: Find user interfaces that extend Whizbang interfaces
     // A "user interface" is one that:
     // 1. Is NOT a Whizbang interface itself (doesn't start with Whizbang.Core)
     // 2. Has ILensQuery or IPerspectiveFor in its AllInterfaces hierarchy
     var userInterface = classSymbol.Interfaces.FirstOrDefault(i => _isUserInterfaceExtendingWhizbang(i));
 
-    if (userInterface is null) {
-      return null;
+    if (userInterface is not null) {
+      // User-defined interface pattern - register against user interface
+      var category = _getServiceCategory(userInterface);
+      return new ServiceRegistrationInfo(
+          ConcreteTypeName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
+          UserInterfaceName: userInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          Category: category,
+          IsAbstract: isAbstract
+      );
     }
 
-    // Determine category
-    var category = _getServiceCategory(userInterface);
+    // Pattern 2: Direct implementation of ILensQuery<T> or IPerspectiveFor<T>
+    var directWhizbangInterface = classSymbol.Interfaces.FirstOrDefault(i => _isDirectWhizbangInterface(i));
 
-    // Return info (abstract status is encoded in the result for diagnostic reporting)
-    return new ServiceRegistrationInfo(
-        ConcreteTypeName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
-        UserInterfaceName: userInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        Category: category,
-        IsAbstract: isAbstract
-    );
+    if (directWhizbangInterface is not null) {
+      // Direct implementation pattern - register against the Whizbang interface
+      var category = _getServiceCategoryFromWhizbangInterface(directWhizbangInterface);
+      return new ServiceRegistrationInfo(
+          ConcreteTypeName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
+          UserInterfaceName: directWhizbangInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          Category: category,
+          IsAbstract: isAbstract
+      );
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Checks if an interface is a direct Whizbang interface (ILensQuery or IPerspectiveFor).
+  /// Only matches closed generic types (e.g., ILensQuery&lt;Order&gt;), not open generics (e.g., ILensQuery&lt;TModel&gt;).
+  /// </summary>
+  private static bool _isDirectWhizbangInterface(INamedTypeSymbol interfaceSymbol) {
+    var name = interfaceSymbol.OriginalDefinition.ToDisplayString();
+    var isWhizbangInterface = name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal) ||
+                              name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal);
+
+    if (!isWhizbangInterface) {
+      return false;
+    }
+
+    // Filter out open generic types - all type arguments must be concrete types
+    // e.g., ILensQuery<Order> is OK, ILensQuery<TModel> is not
+    if (interfaceSymbol.IsGenericType) {
+      foreach (var typeArg in interfaceSymbol.TypeArguments) {
+        if (typeArg.TypeKind == TypeKind.TypeParameter) {
+          return false; // Open generic - skip
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /// <summary>
+  /// Gets the service category from a direct Whizbang interface.
+  /// </summary>
+  private static ServiceCategory _getServiceCategoryFromWhizbangInterface(INamedTypeSymbol whizbangInterface) {
+    var name = whizbangInterface.OriginalDefinition.ToDisplayString();
+    if (name.StartsWith(PERSPECTIVE_INTERFACE, StringComparison.Ordinal)) {
+      return ServiceCategory.Perspective;
+    }
+    return ServiceCategory.Lens;
   }
 
   /// <summary>

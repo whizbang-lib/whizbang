@@ -68,7 +68,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("AddLensServices");
-    await Assert.That(code).Contains("AddScoped<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
+    await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
   }
 
   [Test]
@@ -99,9 +99,9 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register interface → implementation
-    await Assert.That(code!).Contains("AddScoped<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
+    await Assert.That(code!).Contains("AddTransient<global::TestApp.IOrderLens, global::TestApp.OrderLens>");
     // Should also register self (default behavior)
-    await Assert.That(code).Contains("AddScoped<global::TestApp.OrderLens>");
+    await Assert.That(code).Contains("AddTransient<global::TestApp.OrderLens>");
     // Verify options class is generated
     await Assert.That(code).Contains("ServiceRegistrationOptions");
     await Assert.That(code).Contains("IncludeSelfRegistration");
@@ -180,9 +180,9 @@ public class ServiceRegistrationGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_DirectWhizbangImplementation_SkippedAsync() {
+  public async Task Generator_DirectWhizbangImplementation_RegistersAgainstWhizbangInterfaceAsync() {
     // Arrange - Class directly implementing ILensQuery<T> (not through user interface)
-    // This is infrastructure code, not user code
+    // Should be registered against the ILensQuery<T> interface
     var source = """
             using System;
             using System.Linq;
@@ -194,7 +194,7 @@ public class ServiceRegistrationGeneratorTests {
 
             public record Order(Guid Id, string Status);
 
-            // This should be SKIPPED - it's infrastructure, not user code
+            // Direct implementation - should be registered against ILensQuery<Order>
             public class DirectLensQuery : ILensQuery<Order> {
               public IQueryable<PerspectiveRow<Order>> Query => throw new NotImplementedException();
               public Task<Order?> GetByIdAsync(Guid id, CancellationToken ct = default) => Task.FromResult<Order?>(null);
@@ -207,8 +207,8 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    // Should NOT register class that directly implements ILensQuery<T>
-    await Assert.That(code!).DoesNotContain("DirectLensQuery");
+    // Should register against ILensQuery<Order>
+    await Assert.That(code!).Contains("AddTransient<global::Whizbang.Core.Lenses.ILensQuery<global::TestApp.Order>, global::TestApp.DirectLensQuery>");
   }
 
   [Test]
@@ -297,7 +297,7 @@ public class ServiceRegistrationGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("AddPerspectiveServices");
-    await Assert.That(code).Contains("AddScoped<global::TestApp.IOrderPerspective, global::TestApp.OrderPerspective>");
+    await Assert.That(code).Contains("AddTransient<global::TestApp.IOrderPerspective, global::TestApp.OrderPerspective>");
   }
 
   [Test]
@@ -336,8 +336,9 @@ public class ServiceRegistrationGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_DirectPerspectiveImplementation_SkippedAsync() {
+  public async Task Generator_DirectPerspectiveImplementation_RegistersAgainstWhizbangInterfaceAsync() {
     // Arrange - Class directly implementing IPerspectiveFor<> (no user interface)
+    // Should be registered against the IPerspectiveFor<,> interface
     var source = """
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -352,8 +353,7 @@ public class ServiceRegistrationGeneratorTests {
               public string OrderId { get; set; } = "";
             }
 
-            // Direct implementation - no user interface layer
-            // This should be SKIPPED by ServiceRegistrationGenerator
+            // Direct implementation - should be registered against IPerspectiveFor<OrderModel, OrderCreatedEvent>
             public class DirectPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
               public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
                 return currentData;
@@ -367,8 +367,8 @@ public class ServiceRegistrationGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
     await Assert.That(code).IsNotNull();
-    // Should NOT register direct implementations (no user interface)
-    await Assert.That(code!).DoesNotContain("DirectPerspective");
+    // Should register against IPerspectiveFor<OrderModel, OrderCreatedEvent>
+    await Assert.That(code!).Contains("AddTransient<global::Whizbang.Core.Perspectives.IPerspectiveFor<global::TestApp.OrderModel, global::TestApp.OrderCreatedEvent>, global::TestApp.DirectPerspective>");
   }
 
   // ===========================================
@@ -452,7 +452,7 @@ public class ServiceRegistrationGeneratorTests {
       await Assert.That(code).Contains("AddLensServices");
       // Should not contain any actual service registrations
       // Note: "AddScoped" may appear in XML doc comments, so we check for actual registration pattern
-      await Assert.That(code).DoesNotContain("AddScoped<global::");
+      await Assert.That(code).DoesNotContain("AddTransient<global::");
     }
   }
 

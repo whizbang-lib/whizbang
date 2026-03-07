@@ -2695,17 +2695,32 @@ public abstract partial class Dispatcher(
       }
 #pragma warning restore CA1848
 
-      // If no strategy is registered, skip outbox routing (local-only event)
+      // If no strategy is registered, check for deferred channel
       if (strategy == null) {
-        // Log diagnostic warning for configuration issues (error path only, performance not critical)
+        // Try to get deferred channel for resilient event publishing
+        var deferredChannel = scope.ServiceProvider.GetService<IDeferredOutboxChannel>();
+
+        if (deferredChannel != null) {
+          // Queue to deferred channel for next lifecycle loop pickup
+          await _deferEventToChannelAsync(eventData, eventType, messageId, sourceEnvelope, eventStoreOnly, deferredChannel);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Event {EventType} queued to deferred channel (no active strategy)",
+              eventType.Name);
+          }
+#pragma warning restore CA1848
+          return;
+        }
+
+        // No strategy AND no deferred channel - log warning for backward compatibility
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
         var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
         if (logger != null && logger.IsEnabled(LogLevel.Warning)) {
           var eventTypeName = eventType.Name;
           logger.LogWarning(
-            "IWorkCoordinatorStrategy not registered - event will not be published to outbox for cross-service delivery. " +
-            "Register IWorkCoordinatorStrategy (ImmediateWorkCoordinatorStrategy, ScopedWorkCoordinatorStrategy, " +
-            "or IntervalWorkCoordinatorStrategy) to enable outbox pattern. EventType: {EventType}",
+            "IWorkCoordinatorStrategy not registered and IDeferredOutboxChannel not available - " +
+            "event will not be published to outbox for cross-service delivery. " +
+            "Register IWorkCoordinatorStrategy or IDeferredOutboxChannel to enable outbox pattern. EventType: {EventType}",
             eventTypeName);
         }
 #pragma warning restore CA1848
@@ -3602,6 +3617,60 @@ public abstract partial class Dispatcher(
       results.Add(result);
     }
     return results;
+  }
+
+  // ========================================
+  // DEFERRED EVENT CHANNEL
+  // ========================================
+
+  /// <summary>
+  /// Defers an event to the in-memory channel for next lifecycle loop.
+  /// The work coordinator will drain and write to outbox in that transaction.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#deferred-publishing</docs>
+  /// <tests>Whizbang.Core.Tests/Messaging/DeferredDispatchTests.cs</tests>
+  private async Task _deferEventToChannelAsync<TEvent>(
+    TEvent eventData,
+    Type eventType,
+    MessageId messageId,
+    IMessageEnvelope? sourceEnvelope,
+    bool eventStoreOnly,
+    IDeferredOutboxChannel deferredChannel) {
+
+    // 1. Resolve destination topic
+    string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+
+    // 2. Create MessageEnvelope wrapping the event
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = eventData,
+      Hops = []
+    };
+
+    // 3. Extract aggregate ID and add to hop metadata
+    var hopMetadata = _createHopMetadata(eventData!, eventType);
+
+    // 4. Add hop indicating message is being deferred
+    var propagatedSecurityContext = _getSecurityContextForPropagation();
+    var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
+    var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _instanceProvider.ToInfo(),
+      Topic = destination ?? "(event-store)",
+      Timestamp = DateTimeOffset.UtcNow,
+      Metadata = hopMetadata,
+      SecurityContext = finalSecurityContext,
+      TraceParent = System.Diagnostics.Activity.Current?.Id
+    };
+    envelope.AddHop(hop);
+
+    // 5. Serialize to OutboxMessage
+    var outboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+
+    // 6. Queue to deferred channel (NOT direct DB write)
+    await deferredChannel.QueueAsync(outboxMessage);
   }
 
   // ========================================
