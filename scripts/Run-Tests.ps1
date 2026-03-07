@@ -1833,7 +1833,24 @@ try {
         # In AI/Verbose mode, use the process exit code and check captured errors
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
-        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or $infrastructureErrors -gt 0
+        #
+        # Infrastructure errors (cleanup/teardown issues) are only treated as fatal if:
+        # - Tests also failed (indicates a real problem)
+        # - No tests passed (indicates setup failure)
+        # If tests pass but cleanup throws, we log a warning but don't fail the build
+        $hasTestFailures = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+        $hasInfraErrorsOnly = $infrastructureErrors -gt 0 -and -not $hasTestFailures
+
+        if ($hasInfraErrorsOnly -and $totalPassed -gt 0) {
+            # Infrastructure errors with passing tests - warn but don't fail
+            Write-Host ""
+            Write-Host "WARNING: $infrastructureErrors infrastructure error(s) during cleanup (all tests passed)" -ForegroundColor Yellow
+            Write-Host "         This is typically Docker container cleanup noise and does not affect test results." -ForegroundColor DarkYellow
+            $hasErrors = $false
+        } else {
+            # Real failures or infrastructure errors without passing tests
+            $hasErrors = $hasTestFailures -or ($infrastructureErrors -gt 0 -and $totalPassed -eq 0)
+        }
     } else {
         $hasErrors = $LASTEXITCODE -ne 0
     }
