@@ -40,6 +40,8 @@
     <Nullable>enable</Nullable>
     <!-- Integration: Requires PostgreSQL via Testcontainers -->
     <WhizbangTestType>Integration</WhizbangTestType>
+    <!-- Tags for filtering: Postgres, Docker, Data -->
+    <WhizbangTestTags>Postgres;Docker;Data</WhizbangTestTags>
     <!-- Suppress trimming warnings for test project using EF Core InMemory -->
     <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
 
