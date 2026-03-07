@@ -1,24 +1,27 @@
 mode: ContinuousDeployment
 branches:
   develop:
-    tag: alpha
+    label: alpha
     increment: Patch
     track-merge-target: true
     regex: ^develop$
   release:
-    tag: ''
+    label: ''
     increment: Patch
-    prevent-increment-of-merged-branch-version: false
+    prevent-increment:
+      of-merged-branch: false
     track-merge-target: false
     regex: ^releases?[/-]
     is-release-branch: true
   main:
-    tag: ''
+    label: ''
     increment: Patch
-    prevent-increment-of-merged-branch-version: true
+    prevent-increment:
+      of-merged-branch: true
     track-merge-target: false
     regex: ^master$|^main$
+    is-main-branch: true
   pull-request:
-    tag: pr
+    label: pr
     increment: Inherit
-    tag-number-pattern: '[/-](?<number>\d+)'
+    label-number-pattern: '[/-](?<number>\d+)'
