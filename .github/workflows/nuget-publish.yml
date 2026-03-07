@@ -1,9 +1,9 @@
 name: NuGet Publish
 
 on:
-  push:
-    tags:
-      - 'v*'  # Trigger on version tags: v0.1.0-alpha, v0.1.0-beta, v0.1.0
+  # Note: Removed direct tag trigger to avoid race condition with release.yml
+  # release.yml creates the GitHub release and then calls this workflow
+  # Having both triggers causes the release to become immutable before assets can be uploaded
   workflow_dispatch:
     inputs:
       tag:
@@ -53,7 +53,7 @@ jobs:
         echo "Commit: $(git rev-parse HEAD)"
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0 # v4.3.1
+      uses: ./.github/actions/setup-dotnet-retry
       with:
         dotnet-version: '10.0.x'
 
@@ -109,9 +109,9 @@ jobs:
           echo "Release type: Stable"
         fi
 
-    # Note: GitHub Release is already created by release.yml
-    # This step only uploads assets to the existing release
-    - name: Upload Assets to GitHub Release
+    # Note: GitHub Release is created as DRAFT by release.yml
+    # This step uploads assets and publishes the release (removes draft status)
+    - name: Upload Assets and Publish GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
         tag_name: ${{ inputs.tag || github.ref_name }}
@@ -119,3 +119,55 @@ jobs:
           ./packages/*.nupkg
           ./packages/*.sha256
         fail_on_unmatched_files: false
+        draft: false
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+  # ============================================================================
+  # Notifications - Send push notifications on deployment completion
+  # ============================================================================
+
+  notify-deployed:
+    name: Notify Deployed
+    needs: [publish]
+    if: success() && vars.PUSHOVER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Send Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          title: "🚀 Deployed v${{ needs.publish.outputs.version }}"
+          message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet"
+          status: deployed
+          url: "https://www.nuget.org/packages/Whizbang.Core/${{ needs.publish.outputs.version }}"
+          url-title: "View on NuGet"
+
+  notify-deploy-failed:
+    name: Notify Deploy Failed
+    needs: [publish]
+    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Send Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          title: "❌ Deploy Failed"
+          message: "Failed to publish Whizbang to NuGet"
+          status: deploy-failed
+          url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          url-title: "View Workflow"

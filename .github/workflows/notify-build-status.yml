@@ -1,0 +1,97 @@
+name: Notify Build Status
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        description: 'Build status: success, failure, cancelled'
+        required: true
+        type: string
+      title:
+        description: 'Custom notification title (optional)'
+        required: false
+        type: string
+      message:
+        description: 'Custom notification message (optional)'
+        required: false
+        type: string
+      run-url:
+        description: 'URL to the workflow run'
+        required: false
+        type: string
+    secrets:
+      PUSHOVER_API_TOKEN:
+        description: 'Pushover Application API Token'
+        required: true
+      PUSHOVER_USER_KEYS:
+        description: 'Pushover User/Group Key(s) - newline, comma, or semicolon separated'
+        required: true
+
+jobs:
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for action)
+        uses: actions/checkout@v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Build Notification Content
+        id: content
+        env:
+          INPUT_STATUS: ${{ inputs.status }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_MESSAGE: ${{ inputs.message }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ inputs.run-url || github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Determine emoji based on status
+          case "$INPUT_STATUS" in
+            success) EMOJI="✅" ;;
+            failure) EMOJI="❌" ;;
+            cancelled) EMOJI="⚠️" ;;
+            *) EMOJI="ℹ️" ;;
+          esac
+
+          # Build title
+          if [ -n "$INPUT_TITLE" ]; then
+            TITLE="$INPUT_TITLE"
+          elif [ -n "$PR_NUMBER" ]; then
+            TITLE="$EMOJI PR #$PR_NUMBER - ${INPUT_STATUS^}"
+          else
+            TITLE="$EMOJI $BRANCH - ${INPUT_STATUS^}"
+          fi
+
+          # Build message
+          if [ -n "$INPUT_MESSAGE" ]; then
+            MESSAGE="$INPUT_MESSAGE"
+          elif [ -n "$PR_NUMBER" ]; then
+            MESSAGE="<b>$PR_TITLE</b>\nby $ACTOR\n\nBranch: $BRANCH"
+          else
+            MESSAGE="Branch: $BRANCH\nTriggered by: $ACTOR"
+          fi
+
+          # Output (handle multiline)
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          {
+            echo "message<<EOF"
+            echo -e "$MESSAGE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Send Pushover Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          title: ${{ steps.content.outputs.title }}
+          message: ${{ steps.content.outputs.message }}
+          status: ${{ inputs.status }}
+          url: ${{ steps.content.outputs.url }}
+          url-title: 'View Build'
