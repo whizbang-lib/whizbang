@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -210,5 +211,70 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
     // Assert
     await Assert.That(isReady).IsTrue()
       .Because("All required tables AND functions exist");
+  }
+
+  // ============================================================================
+  // NpgsqlDataSource Constructor Tests (Fix for password stripping bug)
+  // ============================================================================
+
+  /// <summary>
+  /// THE BUG FIX TEST: Verifies that using NpgsqlDataSource retains credentials
+  /// even though dataSource.ConnectionString strips the password for security.
+  /// This is the core test for the password stripping bug fix.
+  /// </summary>
+  [Test]
+  public async Task IsReadyAsync_WithDataSourceFromPasswordProtectedConnection_AuthenticatesSuccessfullyAsync() {
+    // Arrange - Build NpgsqlDataSource from full connection string (with password)
+    var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
+    await using var dataSource = dataSourceBuilder.Build();
+
+    // Verify Npgsql's security behavior: ConnectionString property strips password
+    // This is the root cause of the bug - extracting ConnectionString loses credentials
+    await Assert.That(dataSource.ConnectionString).DoesNotContain("Password=")
+      .Because("Npgsql strips password from ConnectionString property for security");
+
+    // Act - Create readiness check using DataSource (not connection string)
+    var readinessCheck = new PostgresDatabaseReadinessCheck(
+      dataSource,
+      NullLogger<PostgresDatabaseReadinessCheck>.Instance
+    );
+    var isReady = await readinessCheck.IsReadyAsync();
+
+    // Assert - Should authenticate successfully using DataSource.CreateConnection()
+    await Assert.That(isReady).IsTrue()
+      .Because("DataSource.CreateConnection() retains credentials internally, unlike ConnectionString property");
+  }
+
+  /// <summary>
+  /// Tests that the NpgsqlDataSource constructor properly validates null input.
+  /// </summary>
+  [Test]
+  public async Task Constructor_WithNullDataSource_ThrowsArgumentNullExceptionAsync() {
+    // Act & Assert
+    await Assert.That(() => new PostgresDatabaseReadinessCheck(
+      (NpgsqlDataSource)null!,
+      NullLogger<PostgresDatabaseReadinessCheck>.Instance
+    )).ThrowsExactly<ArgumentNullException>()
+      .Because("Null data source should be rejected");
+  }
+
+  /// <summary>
+  /// Tests backward compatibility: connection string constructor still works
+  /// for the Dapper path which receives the full connection string.
+  /// </summary>
+  [Test]
+  public async Task IsReadyAsync_WithConnectionStringConstructor_MaintainsBackwardCompatibilityAsync() {
+    // Arrange - Use connection string constructor (existing Dapper path)
+    var readinessCheck = new PostgresDatabaseReadinessCheck(
+      ConnectionString,
+      NullLogger<PostgresDatabaseReadinessCheck>.Instance
+    );
+
+    // Act
+    var isReady = await readinessCheck.IsReadyAsync();
+
+    // Assert
+    await Assert.That(isReady).IsTrue()
+      .Because("Connection string constructor must continue working for Dapper path");
   }
 }
