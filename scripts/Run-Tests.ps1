@@ -955,7 +955,8 @@ try {
     } elseif ($ProjectFilter) {
         Ensure-BuildExists
         # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
-        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
+        # IMPORTANT: Only match *.Tests.dll to avoid picking up non-test DLLs like Whizbang.Data.EFCore.Postgres.dll
+        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
             Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
