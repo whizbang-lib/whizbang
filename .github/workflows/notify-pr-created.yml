@@ -1,0 +1,48 @@
+name: Notify PR Created
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  notify:
+    name: Send PR Notification
+    runs-on: ubuntu-latest
+    if: vars.PUSHOVER_ENABLED == 'true'
+
+    steps:
+      - name: Checkout (for action)
+        uses: actions/checkout@v4
+
+      - name: Build notification content
+        id: content
+        run: |
+          # Get PR details
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+          HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+
+          # Build title and message
+          TITLE="PR #${PR_NUMBER} Created"
+          MESSAGE="${PR_TITLE}\n\nBy: ${PR_AUTHOR}\n${HEAD_BRANCH} → ${BASE_BRANCH}"
+
+          # Output for next step
+          echo "title=${TITLE}" >> $GITHUB_OUTPUT
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "url=${PR_URL}" >> $GITHUB_OUTPUT
+
+      - name: Send Pushover notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          title: ${{ steps.content.outputs.title }}
+          message: ${{ steps.content.outputs.message }}
+          status: pr-created
+          url: ${{ steps.content.outputs.url }}
+          url-title: 'View Pull Request'
