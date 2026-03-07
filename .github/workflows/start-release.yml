@@ -53,6 +53,27 @@ jobs:
           useConfigFile: true
           configFilePath: GitVersion.yml
           disableNormalization: true
+        continue-on-error: true
+
+      - name: Fallback Version (if GitVersion fails)
+        if: inputs.release_type != 'manual' && steps.gitversion.outcome == 'failure'
+        id: fallback
+        run: |
+          echo "::warning::GitVersion failed, using fallback version from Directory.Build.props"
+          # Extract current version from Directory.Build.props
+          CURRENT_VERSION=$(grep -oP '(?<=<Version>)[^<]+' Directory.Build.props | head -1)
+          if [[ "$CURRENT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+            echo "major=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "minor=${BASH_REMATCH[2]}" >> $GITHUB_OUTPUT
+            echo "patch=$((${BASH_REMATCH[3]} + 1))" >> $GITHUB_OUTPUT
+            echo "preReleaseTag=fallback" >> $GITHUB_OUTPUT
+          else
+            # Last resort defaults
+            echo "major=0" >> $GITHUB_OUTPUT
+            echo "minor=9" >> $GITHUB_OUTPUT
+            echo "patch=99" >> $GITHUB_OUTPUT
+            echo "preReleaseTag=fallback" >> $GITHUB_OUTPUT
+          fi
 
       - name: Calculate Final Version
         id: version
@@ -74,10 +95,23 @@ jobs:
             fi
             SEMVER="$MANUAL_VER"
           else
-            MAJOR=${{ steps.gitversion.outputs.major }}
-            MINOR=${{ steps.gitversion.outputs.minor }}
-            PATCH=${{ steps.gitversion.outputs.patch }}
-            PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+            # Use GitVersion outputs, or fallback if it failed
+            if [ "${{ steps.gitversion.outcome }}" == "failure" ]; then
+              MAJOR=${{ steps.fallback.outputs.major }}
+              MINOR=${{ steps.fallback.outputs.minor }}
+              PATCH=${{ steps.fallback.outputs.patch }}
+              echo "::warning::Using fallback version values"
+            else
+              MAJOR=${{ steps.gitversion.outputs.major }}
+              MINOR=${{ steps.gitversion.outputs.minor }}
+              PATCH=${{ steps.gitversion.outputs.patch }}
+            fi
+            # Get prerelease tag (from GitVersion or fallback)
+            if [ "${{ steps.gitversion.outcome }}" == "failure" ]; then
+              PRERELEASE="${{ steps.fallback.outputs.preReleaseTag }}"
+            else
+              PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+            fi
 
             case "$INPUT_RELEASE_TYPE" in
               major)

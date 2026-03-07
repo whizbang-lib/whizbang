@@ -1,11 +1,11 @@
 name: "OSSF Scorecard"
 
 on:
-  branch_protection_rule:
+  # Note: OSSF Scorecard only works on the default branch
+  # Push trigger removed because 'main' is not the default branch (develop is)
+  # branch_protection_rule:  # Disabled - requires default branch
   schedule:
     - cron: '0 0 * * 0'  # Weekly on Sunday
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 # Permissions are defined at job level for least-privilege principle
