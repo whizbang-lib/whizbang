@@ -5,15 +5,39 @@ inputs:
   api-token:
     description: 'Pushover Application API Token'
     required: true
-  user-keys:
-    description: |
-      Pushover User Key(s) or Group Key. Supports:
-      - Single user key: uQiRzpo4DXghDmr9QzzfQu27cmVRsG
-      - Group key: gznej3rKEVAvPUxu9vvNnqpmZpokzF
-      - Multiple users (newline-separated):
-          uQiRzpo4DXghDmr9QzzfQu27cmVRsG
-          aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2
-    required: true
+  # Individual user keys (1-10) - easier to manage than a single combined secret
+  # Set PUSHOVER_USER_KEY_1, PUSHOVER_USER_KEY_2, etc. in GitHub Secrets
+  # Add new users without needing to remember existing keys
+  user-key-1:
+    description: 'Pushover User Key 1'
+    required: false
+  user-key-2:
+    description: 'Pushover User Key 2'
+    required: false
+  user-key-3:
+    description: 'Pushover User Key 3'
+    required: false
+  user-key-4:
+    description: 'Pushover User Key 4'
+    required: false
+  user-key-5:
+    description: 'Pushover User Key 5'
+    required: false
+  user-key-6:
+    description: 'Pushover User Key 6'
+    required: false
+  user-key-7:
+    description: 'Pushover User Key 7'
+    required: false
+  user-key-8:
+    description: 'Pushover User Key 8'
+    required: false
+  user-key-9:
+    description: 'Pushover User Key 9'
+    required: false
+  user-key-10:
+    description: 'Pushover User Key 10'
+    required: false
   title:
     description: 'Notification title'
     required: true
@@ -66,7 +90,17 @@ runs:
       shell: bash
       env:
         PUSHOVER_TOKEN: ${{ inputs.api-token }}
-        PUSHOVER_USERS: ${{ inputs.user-keys }}
+        # Combine all user keys into one variable (empty keys are filtered out)
+        USER_KEY_1: ${{ inputs.user-key-1 }}
+        USER_KEY_2: ${{ inputs.user-key-2 }}
+        USER_KEY_3: ${{ inputs.user-key-3 }}
+        USER_KEY_4: ${{ inputs.user-key-4 }}
+        USER_KEY_5: ${{ inputs.user-key-5 }}
+        USER_KEY_6: ${{ inputs.user-key-6 }}
+        USER_KEY_7: ${{ inputs.user-key-7 }}
+        USER_KEY_8: ${{ inputs.user-key-8 }}
+        USER_KEY_9: ${{ inputs.user-key-9 }}
+        USER_KEY_10: ${{ inputs.user-key-10 }}
         NOTIFY_TITLE: ${{ inputs.title }}
         NOTIFY_MESSAGE: ${{ inputs.message }}
         NOTIFY_STATUS: ${{ inputs.status }}
@@ -114,9 +148,20 @@ runs:
 
         echo "Sending Pushover notification (status: $NOTIFY_STATUS, sound: $SOUND, priority: $PRIORITY)"
 
-        # Parse user keys (supports newline, comma, or semicolon separated)
-        # Normalize separators to newlines, then process
-        USERS=$(echo "$PUSHOVER_USERS" | tr ',;' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+        # Combine all user keys (filters out empty ones)
+        USERS=""
+        for key in "$USER_KEY_1" "$USER_KEY_2" "$USER_KEY_3" "$USER_KEY_4" "$USER_KEY_5" \
+                   "$USER_KEY_6" "$USER_KEY_7" "$USER_KEY_8" "$USER_KEY_9" "$USER_KEY_10"; do
+          if [ -n "$key" ]; then
+            USERS="${USERS}${key}"$'\n'
+          fi
+        done
+        USERS=$(echo "$USERS" | grep -v '^$')
+
+        if [ -z "$USERS" ]; then
+          echo "::warning::No user keys configured. Set PUSHOVER_USER_KEY_1, etc. in GitHub Secrets."
+          exit 0
+        fi
 
         # Count users for logging
         USER_COUNT=$(echo "$USERS" | wc -l | tr -d ' ')

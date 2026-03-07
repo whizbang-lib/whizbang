@@ -19,13 +19,11 @@ on:
         description: 'URL to the workflow run'
         required: false
         type: string
-    secrets:
-      PUSHOVER_API_TOKEN:
-        description: 'Pushover Application API Token'
-        required: true
-      PUSHOVER_USER_KEYS:
-        description: 'Pushover User/Group Key(s) - newline, comma, or semicolon separated'
-        required: true
+    # Use 'secrets: inherit' when calling this workflow to pass all secrets
+    # Required secrets:
+    #   - PUSHOVER_API_TOKEN: Application API token
+    #   - PUSHOVER_USER_KEY_1, _2, ... _N: Individual user keys (add as many as needed)
+    secrets: inherit
 
 jobs:
   notify:
@@ -89,7 +87,16 @@ jobs:
         uses: ./.github/actions/notify-pushover
         with:
           api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
-          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
           title: ${{ steps.content.outputs.title }}
           message: ${{ steps.content.outputs.message }}
           status: ${{ inputs.status }}
