@@ -2735,30 +2735,41 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Gets all public instance properties from a type, including inherited properties.
-  /// Properties are returned in order: base class properties first, then derived class properties.
+  /// For types with parameterized constructors (records), properties are ordered to match
+  /// the constructor parameter order for correct JSON deserialization.
+  /// For other types, properties are returned in base→derived order.
   /// Uses property name to dedupe (derived class property overrides base class property).
   /// </summary>
   private static List<IPropertySymbol> _getAllPropertiesIncludingInherited(INamedTypeSymbol typeSymbol) {
-    var seenProperties = new HashSet<string>();
-    var allProperties = new List<IPropertySymbol>();
+    // GetAllProperties returns derived→base order; reverse to get base→derived order
+    var allProperties = typeSymbol.GetAllProperties().Reverse().ToList();
 
-    // Walk inheritance chain from most derived to base
-    var currentType = typeSymbol;
-    while (currentType != null && currentType.SpecialType != SpecialType.System_Object) {
-      var typeProperties = currentType.GetMembers()
-          .OfType<IPropertySymbol>()
-          .Where(p => p.DeclaredAccessibility == Accessibility.Public &&
-                     !p.IsStatic &&
-                     !seenProperties.Contains(p.Name))
-          .ToList();
+    // For types with a primary constructor, order properties to match constructor parameters
+    // This is critical for JSON deserialization which passes args[i] positionally
+    var primaryCtor = typeSymbol.Constructors
+        .FirstOrDefault(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0);
 
-      foreach (var prop in typeProperties) {
-        seenProperties.Add(prop.Name);
+    if (primaryCtor is not null) {
+      // Build a lookup of property name -> property
+      var propertyLookup = allProperties.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+
+      // Order properties by constructor parameter order, then any remaining properties (in base→derived order)
+      var ordered = new List<IPropertySymbol>();
+      foreach (var param in primaryCtor.Parameters) {
+        if (propertyLookup.TryGetValue(param.Name, out var prop)) {
+          ordered.Add(prop);
+          propertyLookup.Remove(param.Name);
+        }
       }
 
-      // Insert at beginning so base properties come first
-      allProperties.InsertRange(0, typeProperties);
-      currentType = currentType.BaseType;
+      // Add any remaining properties (computed properties, inherited properties not in ctor)
+      // Keep them in base→derived order
+      foreach (var prop in allProperties) {
+        if (propertyLookup.ContainsKey(prop.Name)) {
+          ordered.Add(prop);
+        }
+      }
+      return ordered;
     }
 
     return allProperties;

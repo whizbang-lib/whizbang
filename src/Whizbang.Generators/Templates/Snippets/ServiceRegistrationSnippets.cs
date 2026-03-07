@@ -14,7 +14,7 @@ internal static class ServiceRegistrationSnippets {
   // Example method showing interface registration snippet structure (for IDE support only)
   private static void InterfaceRegistrationExample(IServiceCollection services) {
     #region INTERFACE_REGISTRATION_SNIPPET
-    services.AddScoped<__USER_INTERFACE__, __CONCRETE_CLASS__>();
+    services.AddTransient<__USER_INTERFACE__, __CONCRETE_CLASS__>();
     #endregion
   }
 
@@ -22,7 +22,7 @@ internal static class ServiceRegistrationSnippets {
   private static void SelfRegistrationExample(IServiceCollection services, ServiceRegistrationOptions options) {
     #region SELF_REGISTRATION_SNIPPET
     if (options.IncludeSelfRegistration) {
-      services.AddScoped<__CONCRETE_CLASS__>();
+      services.AddTransient<__CONCRETE_CLASS__>();
     }
     #endregion
   }

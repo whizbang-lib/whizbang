@@ -239,20 +239,6 @@ public class TransportManagerPublishingTests {
   }
 
   [Test]
-  [Skip("TransportManager no longer uses custom serializers")]
-  public async Task Constructor_WithCustomSerializer_ShouldUseSerializerAsync() {
-    // Test no longer applicable - TransportManager no longer takes serializer parameter
-    await Task.CompletedTask;
-  }
-
-  [Test]
-  [Skip("TransportManager no longer has required parameters")]
-  public async Task Constructor_WithNullSerializer_ShouldThrowAsync() {
-    // Test no longer applicable - TransportManager no longer requires serializer
-    await Task.CompletedTask;
-  }
-
-  [Test]
   public async Task Constructor_Default_ShouldCreateWithJsonSerializerAsync() {
     // Arrange & Act
     var manager = new TransportManager();

@@ -139,6 +139,13 @@ public static class ServiceCollectionExtensions {
     // Register perspective synchronization services
     _registerPerspectiveSyncServices(services);
 
+    // Auto-invoke generated service registration callbacks
+    // These are set by source-generated module initializers in consumer assemblies
+    ServiceRegistrationCallbacks.InvokeAll(services, coreOptions.Services);
+
+    // Auto-invoke WhizbangId provider DI callbacks if any were registered
+    WhizbangIdProviderRegistry.InvokeDICallbacks(services);
+
     return new WhizbangBuilder(services);
   }
 
@@ -181,6 +188,10 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
     services.AddSingleton<Messaging.ILifecycleInvoker, Messaging.RuntimeLifecycleInvoker>();
+
+    // Deferred outbox channel for events published outside transaction context
+    // Events queued here are drained by the work coordinator in the next lifecycle loop
+    services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
 
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();

@@ -27,6 +27,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly IDeferredOutboxChannel? _deferredChannel;
 
   // Immediate strategy queues for single flush cycle
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -43,7 +44,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
     ILifecycleInvoker? lifecycleInvoker = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null
+    IOptionsMonitor<TracingOptions>? tracingOptions = null,
+    IDeferredOutboxChannel? deferredChannel = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -52,6 +54,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _lifecycleInvoker = lifecycleInvoker;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
+    _deferredChannel = deferredChannel;
   }
 
   /// <summary>
@@ -134,7 +137,20 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// Immediately flushes all queued operations to the work coordinator.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    // Drain deferred channel first - these get written in THIS transaction
+    // Events that were published outside transaction context (e.g., PostPerspective handlers)
+    // are picked up here and included in the current work batch.
+    if (_deferredChannel?.HasPending == true) {
+      var deferredMessages = _deferredChannel.DrainAll();
+      // Prepend deferred messages to the queue
+      _queuedOutboxMessages.InsertRange(0, deferredMessages);
+      if (_logger != null) {
+        LogDeferredChannelDrained(_logger, deferredMessages.Count);
+      }
+    }
+
     // Immediate strategy calls process_work_batch with all queued operations
     if (_logger != null) {
       LogFlushStarting(
@@ -281,4 +297,11 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     int completionCount,
     int failureCount
   );
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Debug,
+    Message = "Immediate strategy: Drained {Count} deferred messages from channel into current work batch"
+  )]
+  static partial void LogDeferredChannelDrained(ILogger logger, int count);
 }

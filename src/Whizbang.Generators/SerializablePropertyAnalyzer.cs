@@ -6,6 +6,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -65,20 +66,8 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
       return; // Already checked - prevent infinite loops
     }
 
-    foreach (var member in currentType.GetMembers()) {
-      if (member is not IPropertySymbol property) {
-        continue;
-      }
-
-      // Skip non-public properties
-      if (property.DeclaredAccessibility != Accessibility.Public) {
-        continue;
-      }
-
-      // Skip static properties
-      if (property.IsStatic) {
-        continue;
-      }
+    // Walk inheritance chain to check properties from base classes
+    foreach (var property in currentType.GetAllProperties()) {
 
       var propType = property.Type;
 

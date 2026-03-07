@@ -37,7 +37,8 @@ public class DapperEventStoreTests : EventStoreContractTests, IDisposable {
     GC.SuppressFinalize(this);
   }
 
-  // Skip tests that require 3-column JSONB storage model (SQLite uses single envelope column)
+  // SQLite uses single envelope column, not 3-column JSONB model.
+  // These tests require the JSONB model and are not applicable to SQLite.
   [Test]
   [Skip("SQLite uses single envelope column, not 3-column JSONB model")]
   public override Task GetEventsBetweenAsync_ShouldReturnEventsInRangeAsync() => Task.CompletedTask;

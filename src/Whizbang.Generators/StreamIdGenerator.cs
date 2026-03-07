@@ -92,25 +92,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Look for [StreamId] on properties (including inherited properties)
-    var currentType = typeSymbol;
-    while (currentType is not null) {
-      foreach (var member in currentType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttr = property.GetAttributes().Any(a =>
-              a.AttributeClass is not null &&
-              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-
-          if (hasStreamIdAttr) {
-            return new StreamIdInfo(
-                EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-                PropertyName: property.Name,
-                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType
-            );
-          }
-        }
-      }
-      currentType = currentType.BaseType;
+    var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    if (streamIdProperty is not null) {
+      return new StreamIdInfo(
+          EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+          PropertyName: streamIdProperty.Name,
+          PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
+          IsPropertyValueType: streamIdProperty.Type.IsValueType
+      );
     }
 
     // Look for [StreamId] on constructor parameters (for records)
@@ -161,17 +150,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Check if has [StreamId] anywhere (including inherited properties)
-    var hasStreamIdOnProperty = false;
-    var checkType = typeSymbol;
-    while (checkType is not null && !hasStreamIdOnProperty) {
-      hasStreamIdOnProperty = checkType.GetMembers().OfType<IPropertySymbol>().Any(p =>
-          p.GetAttributes().Any(a =>
-              a.AttributeClass is not null &&
-              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE));
-      checkType = checkType.BaseType;
-    }
-
-    if (hasStreamIdOnProperty) {
+    var streamIdOnProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    if (streamIdOnProperty is not null) {
       return null;
     }
 
@@ -210,25 +190,14 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Look for [StreamId] on properties (including inherited properties)
-    var currentType = typeSymbol;
-    while (currentType is not null) {
-      foreach (var member in currentType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamIdAttr = property.GetAttributes().Any(a =>
-              a.AttributeClass is not null &&
-              TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-
-          if (hasStreamIdAttr) {
-            return new CommandStreamIdInfo(
-                CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-                PropertyName: property.Name,
-                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType
-            );
-          }
-        }
-      }
-      currentType = currentType.BaseType;
+    var commandStreamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+    if (commandStreamIdProperty is not null) {
+      return new CommandStreamIdInfo(
+          CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+          PropertyName: commandStreamIdProperty.Name,
+          PropertyType: TypeNameHelper.GetFullyQualifiedName(commandStreamIdProperty.Type),
+          IsPropertyValueType: commandStreamIdProperty.Type.IsValueType
+      );
     }
 
     // Look for [StreamId] on constructor parameters (for records)
