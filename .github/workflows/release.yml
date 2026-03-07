@@ -49,14 +49,17 @@ jobs:
     steps:
       - name: Check if release should proceed
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
             echo "Manual trigger - dry run mode"
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "version=" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event.pull_request.merged }}" == "true" ]; then
+          elif [ "$PR_MERGED" == "true" ]; then
             # Check if PR title matches release pattern
-            PR_TITLE="${{ github.event.pull_request.title }}"
             if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
               echo "Release PR merged - version: $VERSION"
@@ -113,10 +116,12 @@ jobs:
       - name: Fallback Version (if GitVersion fails)
         if: steps.gitversion.outcome == 'failure'
         id: fallback
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           echo "::warning::GitVersion failed, using fallback version extraction"
           # Try to extract from inputs.version first
-          if [ -n "${{ inputs.version }}" ]; then
+          if [ -n "$INPUT_VERSION" ]; then
             echo "major=0" >> $GITHUB_OUTPUT
             echo "minor=0" >> $GITHUB_OUTPUT
             echo "patch=0" >> $GITHUB_OUTPUT
@@ -131,9 +136,21 @@ jobs:
 
       - name: Calculate Final Version
         id: final_version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+          GITVERSION_OUTCOME: ${{ steps.gitversion.outcome }}
+          GV_MAJOR: ${{ steps.gitversion.outputs.major }}
+          GV_MINOR: ${{ steps.gitversion.outputs.minor }}
+          GV_PATCH: ${{ steps.gitversion.outputs.patch }}
+          GV_PRERELEASE: ${{ steps.gitversion.outputs.preReleaseTag }}
+          FB_MAJOR: ${{ steps.fallback.outputs.major }}
+          FB_MINOR: ${{ steps.fallback.outputs.minor }}
+          FB_PATCH: ${{ steps.fallback.outputs.patch }}
+          FB_PRERELEASE: ${{ steps.fallback.outputs.preReleaseTag }}
         run: |
           # Check if explicit version was provided
-          EXPLICIT_VERSION="${{ inputs.version }}"
+          EXPLICIT_VERSION="$INPUT_VERSION"
 
           if [ -n "$EXPLICIT_VERSION" ]; then
             # Use explicit version - parse it into components
@@ -154,20 +171,20 @@ jobs:
             FULLSEMVER="$EXPLICIT_VERSION"
           else
             # Auto-calculate version using GitVersion (with fallback if it failed)
-            if [ "${{ steps.gitversion.outcome }}" == "failure" ]; then
-              MAJOR=${{ steps.fallback.outputs.major }}
-              MINOR=${{ steps.fallback.outputs.minor }}
-              PATCH=${{ steps.fallback.outputs.patch }}
-              PRERELEASE="${{ steps.fallback.outputs.preReleaseTag }}"
+            if [ "$GITVERSION_OUTCOME" == "failure" ]; then
+              MAJOR=$FB_MAJOR
+              MINOR=$FB_MINOR
+              PATCH=$FB_PATCH
+              PRERELEASE="$FB_PRERELEASE"
               echo "::warning::Using fallback version values"
             else
-              MAJOR=${{ steps.gitversion.outputs.major }}
-              MINOR=${{ steps.gitversion.outputs.minor }}
-              PATCH=${{ steps.gitversion.outputs.patch }}
-              PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+              MAJOR=$GV_MAJOR
+              MINOR=$GV_MINOR
+              PATCH=$GV_PATCH
+              PRERELEASE="$GV_PRERELEASE"
             fi
 
-            case "${{ inputs.release_type }}" in
+            case "$INPUT_RELEASE_TYPE" in
               major)
                 MAJOR=$((MAJOR + 1))
                 MINOR=0
@@ -204,28 +221,39 @@ jobs:
           echo "Final version: $SEMVER"
 
       - name: Display Version Info
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+          SEMVER: ${{ steps.final_version.outputs.semver }}
+          FULLSEMVER: ${{ steps.final_version.outputs.fullsemver }}
+          V_MAJOR: ${{ steps.final_version.outputs.major }}
+          V_MINOR: ${{ steps.final_version.outputs.minor }}
+          V_PATCH: ${{ steps.final_version.outputs.patch }}
+          V_PRERELEASE: ${{ steps.final_version.outputs.prerelease }}
+          GV_BRANCH: ${{ steps.gitversion.outputs.branchName }}
+          GV_SHA: ${{ steps.gitversion.outputs.sha }}
         run: |
           echo "## Version Information (Dry Run)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| SemVer | ${{ steps.final_version.outputs.semver }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FullSemVer | ${{ steps.final_version.outputs.fullsemver }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Major | ${{ steps.final_version.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Minor | ${{ steps.final_version.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Patch | ${{ steps.final_version.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| PreRelease | ${{ steps.final_version.outputs.prerelease }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ steps.gitversion.outputs.branchName }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SHA | ${{ steps.gitversion.outputs.sha }} |" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "| Version Source | Explicit: \`${{ inputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SemVer | \`$SEMVER\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| FullSemVer | \`$FULLSEMVER\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Major | $V_MAJOR |" >> $GITHUB_STEP_SUMMARY
+          echo "| Minor | $V_MINOR |" >> $GITHUB_STEP_SUMMARY
+          echo "| Patch | $V_PATCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| PreRelease | $V_PRERELEASE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | $GV_BRANCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | $GV_SHA |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "| Version Source | Explicit: \`$INPUT_VERSION\` |" >> $GITHUB_STEP_SUMMARY
           else
-            echo "| Version Source | Auto-calculated (${{ inputs.release_type }}) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Version Source | Auto-calculated ($INPUT_RELEASE_TYPE) |" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo ""
-          echo "Calculated version: ${{ steps.final_version.outputs.semver }}"
-          echo "Full SemVer: ${{ steps.final_version.outputs.fullsemver }}"
+          echo "Calculated version: $SEMVER"
+          echo "Full SemVer: $FULLSEMVER"
 
   release:
     name: Create Release
@@ -248,8 +276,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Check if version already exists
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
         run: |
-          VERSION="${{ needs.check-release.outputs.version }}"
+          VERSION="$RELEASE_VERSION"
           TAG="v$VERSION"
 
           # Check if tag already exists
@@ -277,8 +307,10 @@ jobs:
       # Directory.Build.props already contains the correct version
 
       - name: Create and Push Tag
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
         run: |
-          VERSION="${{ needs.check-release.outputs.version }}"
+          VERSION="$RELEASE_VERSION"
           TAG="v$VERSION"
 
           echo "Creating tag: $TAG"
@@ -304,11 +336,14 @@ jobs:
           prerelease: true
 
       - name: Summary
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           echo "## Release Created" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v${{ needs.check-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: [v${{ needs.check-release.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.check-release.outputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v$RELEASE_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: [v$RELEASE_VERSION](https://github.com/$REPO/releases/tag/v$RELEASE_VERSION)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The NuGet publish workflow will be triggered next." >> $GITHUB_STEP_SUMMARY
 
