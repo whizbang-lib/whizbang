@@ -31,10 +31,15 @@ jobs:
         fetch-depth: 0  # Full history for GitVersion
         ref: ${{ inputs.tag || github.ref }}
 
-    - name: Display Version Info
+    - name: Extract Version from Tag
+      id: version
+      env:
+        INPUT_TAG: ${{ inputs.tag || github.ref }}
       run: |
-        VERSION_REF="${{ inputs.tag || github.ref }}"
-        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||')
+        VERSION_REF="$INPUT_TAG"
+        # Strip refs/tags/ prefix and v prefix to get bare semver
+        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||; s|^v||')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         echo "## Publishing Version" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
@@ -56,13 +61,14 @@ jobs:
       run: dotnet restore
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
 
     - name: Pack NuGet packages
       # Note: NU5017 false positive occurs for analyzer packages in .NET 10 SDK
       # The packages are created correctly despite the error, so we verify and continue
+      # Version is derived from the git tag, not Directory.Build.props
       run: |
-        dotnet pack --configuration Release --output ./packages || true
+        dotnet pack --configuration Release --output ./packages -p:Version=${{ steps.version.outputs.version }} || true
         # Verify packages were created
         ls -la ./packages/*.nupkg
         if [ $(ls ./packages/*.nupkg 2>/dev/null | wc -l) -eq 0 ]; then
@@ -90,8 +96,10 @@ jobs:
 
     - name: Determine Release Type
       id: release_type
+      env:
+        INPUT_TAG: ${{ inputs.tag || github.ref_name }}
       run: |
-        TAG="${{ inputs.tag || github.ref_name }}"
+        TAG="$INPUT_TAG"
         # Check if version contains prerelease suffix (e.g., -alpha, -beta, -rc)
         if [[ "$TAG" =~ -[a-zA-Z] ]]; then
           echo "prerelease=true" >> $GITHUB_OUTPUT
@@ -101,13 +109,13 @@ jobs:
           echo "Release type: Stable"
         fi
 
-    - name: Create GitHub Release
+    # Note: GitHub Release is already created by release.yml
+    # This step only uploads assets to the existing release
+    - name: Upload Assets to GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
         tag_name: ${{ inputs.tag || github.ref_name }}
-        name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release {0}', inputs.tag || github.ref_name) || format('Release {0}', inputs.tag || github.ref_name) }}
         files: |
           ./packages/*.nupkg
           ./packages/*.sha256
-        generate_release_notes: true
-        prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
+        fail_on_unmatched_files: false

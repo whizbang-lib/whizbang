@@ -1445,16 +1445,24 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("      // Auto-configured: pgvector support required for [VectorField] columns");
       sb.AppendLine("      dataSourceBuilder.UseVector();");
       sb.AppendLine();
-      sb.AppendLine("      // CRITICAL: Create pgvector extension BEFORE building the data source.");
+      sb.AppendLine("      // CRITICAL: Ensure pgvector extension exists BEFORE building the data source.");
       sb.AppendLine("      // When NpgsqlDataSource.Build() executes, Npgsql queries the database's pg_type catalog");
       sb.AppendLine("      // to load type information. If the vector extension doesn't exist at that moment,");
       sb.AppendLine("      // Npgsql won't know how to handle Vector types, causing runtime errors.");
-      sb.AppendLine("      // Using a temporary connection (without UseVector) to create the extension first.");
+      sb.AppendLine("      // Using a temporary connection (without UseVector) to check/create the extension first.");
+      sb.AppendLine("      // NOTE: We check pg_extension first to avoid permission errors when the extension");
+      sb.AppendLine("      // already exists (infrastructure typically pre-creates it). This is required for");
+      sb.AppendLine("      // Azure PostgreSQL which checks CREATE permissions before evaluating IF NOT EXISTS.");
       sb.AppendLine("      using (var tempConn = new Npgsql.NpgsqlConnection(connectionString)) {");
       sb.AppendLine("        tempConn.Open();");
-      sb.AppendLine("        using var cmd = tempConn.CreateCommand();");
-      sb.AppendLine("        cmd.CommandText = \"CREATE EXTENSION IF NOT EXISTS vector\";");
-      sb.AppendLine("        cmd.ExecuteNonQuery();");
+      sb.AppendLine("        using var checkCmd = tempConn.CreateCommand();");
+      sb.AppendLine("        checkCmd.CommandText = \"SELECT 1 FROM pg_extension WHERE extname = 'vector'\";");
+      sb.AppendLine("        var extensionExists = checkCmd.ExecuteScalar() != null;");
+      sb.AppendLine("        if (!extensionExists) {");
+      sb.AppendLine("          using var createCmd = tempConn.CreateCommand();");
+      sb.AppendLine("          createCmd.CommandText = \"CREATE EXTENSION vector\";");
+      sb.AppendLine("          createCmd.ExecuteNonQuery();");
+      sb.AppendLine("        }");
       sb.AppendLine("      }");
       sb.AppendLine();
     }
@@ -1728,11 +1736,18 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {quotedSchema};");
     sb.AppendLine();
 
-    // Check if any perspectives have vector fields - if so, create pgvector extension
+    // Check if any perspectives have vector fields - if so, ensure pgvector extension exists
     var hasVectorFields = perspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
     if (hasVectorFields) {
-      sb.AppendLine("-- Create pgvector extension for vector similarity search");
-      sb.AppendLine("CREATE EXTENSION IF NOT EXISTS vector;");
+      sb.AppendLine("-- Ensure pgvector extension exists for vector similarity search");
+      sb.AppendLine("-- Using DO block to check first, avoiding permission errors when extension already exists");
+      sb.AppendLine("-- (Required for Azure PostgreSQL which checks CREATE permissions before IF NOT EXISTS)");
+      sb.AppendLine("DO $$");
+      sb.AppendLine("BEGIN");
+      sb.AppendLine("  IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN");
+      sb.AppendLine("    CREATE EXTENSION vector;");
+      sb.AppendLine("  END IF;");
+      sb.AppendLine("END$$;");
       sb.AppendLine();
     }
 

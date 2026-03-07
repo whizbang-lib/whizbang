@@ -78,9 +78,11 @@ jobs:
       - name: Fallback Version (if GitVersion fails)
         if: steps.gitversion.outcome == 'failure'
         id: fallback
+        env:
+          INPUT_REF: ${{ inputs.ref || github.ref_name }}
         run: |
           echo "GitVersion failed, using branch name extraction"
-          BRANCH_NAME="${{ inputs.ref || github.ref_name }}"
+          BRANCH_NAME="$INPUT_REF"
           if [[ "$BRANCH_NAME" =~ ^release[/-]v?([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?)$ ]]; then
             VERSION="${BASH_REMATCH[1]}"
           else

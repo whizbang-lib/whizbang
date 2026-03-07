@@ -76,7 +76,7 @@ public static class PostgresDriverExtensions {
         PerspectiveRunnerCallbackRegistry.InvokeRegistration(selector.Services);
 
         // Register IDatabaseReadinessCheck - CRITICAL for resilient worker startup
-        // Extracts connection string from NpgsqlDataSource at resolution time
+        // Uses NpgsqlDataSource directly to create connections (avoids password stripping bug)
         // This ensures workers wait for database schema to be ready before processing
         selector.Services.TryAddSingleton<IDatabaseReadinessCheck>(sp => {
           var dataSource = sp.GetService<NpgsqlDataSource>();
@@ -92,9 +92,11 @@ public static class PostgresDriverExtensions {
             return new DefaultDatabaseReadinessCheck();
           }
 
-          var connectionString = dataSource.ConnectionString;
+          // IMPORTANT: Pass NpgsqlDataSource directly instead of extracting ConnectionString.
+          // NpgsqlDataSource.ConnectionString strips passwords for security, causing auth failures.
+          // DataSource.CreateConnection() properly retains credentials internally.
           var logger = sp.GetRequiredService<ILogger<PostgresDatabaseReadinessCheck>>();
-          return new PostgresDatabaseReadinessCheck(connectionString, logger);
+          return new PostgresDatabaseReadinessCheck(dataSource, logger);
         });
 
         return new WhizbangPerspectiveBuilder(selector.Services);
