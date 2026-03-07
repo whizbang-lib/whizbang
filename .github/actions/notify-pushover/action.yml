@@ -21,7 +21,7 @@ inputs:
     description: 'Notification message'
     required: true
   status:
-    description: 'Build status: success, failure, cancelled, or custom'
+    description: 'Build status: success, failure, cancelled, deployed, deploy-failed, pr-created, or custom'
     required: false
     default: 'success'
   url:
@@ -51,6 +51,10 @@ inputs:
     description: 'Sound for failed deployments'
     required: false
     default: 'siren'
+  sound-pr-created:
+    description: 'Sound for new pull requests'
+    required: false
+    default: 'bike'
   priority:
     description: 'Message priority: -2 (silent) to 2 (emergency). Default: 0 (normal), failures use 1 (high)'
     required: false
@@ -73,6 +77,7 @@ runs:
         SOUND_CANCELLED: ${{ inputs.sound-cancelled }}
         SOUND_DEPLOYED: ${{ inputs.sound-deployed }}
         SOUND_DEPLOY_FAILED: ${{ inputs.sound-deploy-failed }}
+        SOUND_PR_CREATED: ${{ inputs.sound-pr-created }}
         PRIORITY_OVERRIDE: ${{ inputs.priority }}
       run: |
         # Determine sound and priority based on status
@@ -96,6 +101,10 @@ runs:
           deploy-failed)
             SOUND="$SOUND_DEPLOY_FAILED"
             PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          pr-created)
+            SOUND="$SOUND_PR_CREATED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
             ;;
           *)
             SOUND="pushover"
