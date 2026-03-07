@@ -31,10 +31,13 @@ jobs:
         fetch-depth: 0  # Full history for GitVersion
         ref: ${{ inputs.tag || github.ref }}
 
-    - name: Display Version Info
+    - name: Extract Version from Tag
+      id: version
       run: |
         VERSION_REF="${{ inputs.tag || github.ref }}"
-        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||')
+        # Strip refs/tags/ prefix and v prefix to get bare semver
+        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||; s|^v||')
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         echo "## Publishing Version" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
@@ -56,13 +59,14 @@ jobs:
       run: dotnet restore
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
 
     - name: Pack NuGet packages
       # Note: NU5017 false positive occurs for analyzer packages in .NET 10 SDK
       # The packages are created correctly despite the error, so we verify and continue
+      # Version is derived from the git tag, not Directory.Build.props
       run: |
-        dotnet pack --configuration Release --output ./packages || true
+        dotnet pack --configuration Release --output ./packages -p:Version=${{ steps.version.outputs.version }} || true
         # Verify packages were created
         ls -la ./packages/*.nupkg
         if [ $(ls ./packages/*.nupkg 2>/dev/null | wc -l) -eq 0 ]; then
