@@ -104,3 +104,40 @@ jobs:
             echo "Creating new version comment"
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
           fi
+
+  # ============================================================================
+  # Notifications - Send push notifications on build completion
+  # ============================================================================
+
+  notify-success:
+    name: Notify Success
+    needs: [quality]
+    if: success() && vars.PUSHOVER_ENABLED == 'true'
+    uses: ./.github/workflows/notify-build-status.yml
+    with:
+      status: success
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}
+
+  notify-failure:
+    name: Notify Failure
+    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
+    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    uses: ./.github/workflows/notify-build-status.yml
+    with:
+      status: failure
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}
+
+  notify-cancelled:
+    name: Notify Cancelled
+    needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
+    if: cancelled() && vars.PUSHOVER_ENABLED == 'true'
+    uses: ./.github/workflows/notify-build-status.yml
+    with:
+      status: cancelled
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}

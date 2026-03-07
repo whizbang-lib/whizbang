@@ -1,0 +1,43 @@
+name: 'Setup .NET with Retry'
+description: 'Installs .NET SDK with retry logic to handle transient network failures'
+
+inputs:
+  dotnet-version:
+    description: '.NET SDK version to install (e.g., "10.0.x", "9.0.x")'
+    required: false
+    default: '10.0.x'
+  max-attempts:
+    description: 'Maximum number of retry attempts'
+    required: false
+    default: '3'
+  retry-wait-seconds:
+    description: 'Seconds to wait between retry attempts'
+    required: false
+    default: '30'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup .NET (with retry)
+      uses: nick-invision/retry@7152eba30c6575329ac0576536151aca5a72780e # v3.0.0
+      with:
+        timeout_minutes: 5
+        max_attempts: ${{ inputs.max-attempts }}
+        retry_wait_seconds: ${{ inputs.retry-wait-seconds }}
+        shell: bash
+        command: |
+          # Extract major version from input (e.g., "10.0.x" -> "10.0")
+          DOTNET_CHANNEL="${{ inputs.dotnet-version }}"
+          DOTNET_CHANNEL="${DOTNET_CHANNEL%.x}"  # Remove trailing .x if present
+
+          echo "Installing .NET SDK channel: $DOTNET_CHANNEL"
+
+          # Install .NET SDK using the official install script
+          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
+
+          # Add to PATH for subsequent steps
+          echo "$HOME/.dotnet" >> $GITHUB_PATH
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> $GITHUB_ENV
+
+          # Verify installation
+          "$HOME/.dotnet/dotnet" --version

@@ -1,0 +1,155 @@
+name: 'Pushover Notification'
+description: 'Send push notifications via Pushover with custom sounds for CI events'
+
+inputs:
+  api-token:
+    description: 'Pushover Application API Token'
+    required: true
+  user-keys:
+    description: |
+      Pushover User Key(s) or Group Key. Supports:
+      - Single user key: uQiRzpo4DXghDmr9QzzfQu27cmVRsG
+      - Group key: gznej3rKEVAvPUxu9vvNnqpmZpokzF
+      - Multiple users (newline-separated):
+          uQiRzpo4DXghDmr9QzzfQu27cmVRsG
+          aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2
+    required: true
+  title:
+    description: 'Notification title'
+    required: true
+  message:
+    description: 'Notification message'
+    required: true
+  status:
+    description: 'Build status: success, failure, cancelled, or custom'
+    required: false
+    default: 'success'
+  url:
+    description: 'URL to include in notification (e.g., PR or workflow run link)'
+    required: false
+  url-title:
+    description: 'Title for the URL link'
+    required: false
+    default: 'View on GitHub'
+  sound-success:
+    description: 'Sound for successful builds'
+    required: false
+    default: 'magic'
+  sound-failure:
+    description: 'Sound for failed builds'
+    required: false
+    default: 'falling'
+  sound-cancelled:
+    description: 'Sound for cancelled builds'
+    required: false
+    default: 'intermission'
+  sound-deployed:
+    description: 'Sound for successful deployments'
+    required: false
+    default: 'cashregister'
+  sound-deploy-failed:
+    description: 'Sound for failed deployments'
+    required: false
+    default: 'siren'
+  priority:
+    description: 'Message priority: -2 (silent) to 2 (emergency). Default: 0 (normal), failures use 1 (high)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Send Pushover Notification
+      shell: bash
+      env:
+        PUSHOVER_TOKEN: ${{ inputs.api-token }}
+        PUSHOVER_USERS: ${{ inputs.user-keys }}
+        NOTIFY_TITLE: ${{ inputs.title }}
+        NOTIFY_MESSAGE: ${{ inputs.message }}
+        NOTIFY_STATUS: ${{ inputs.status }}
+        NOTIFY_URL: ${{ inputs.url }}
+        NOTIFY_URL_TITLE: ${{ inputs.url-title }}
+        SOUND_SUCCESS: ${{ inputs.sound-success }}
+        SOUND_FAILURE: ${{ inputs.sound-failure }}
+        SOUND_CANCELLED: ${{ inputs.sound-cancelled }}
+        SOUND_DEPLOYED: ${{ inputs.sound-deployed }}
+        SOUND_DEPLOY_FAILED: ${{ inputs.sound-deploy-failed }}
+        PRIORITY_OVERRIDE: ${{ inputs.priority }}
+      run: |
+        # Determine sound and priority based on status
+        case "$NOTIFY_STATUS" in
+          success)
+            SOUND="$SOUND_SUCCESS"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          failure)
+            SOUND="$SOUND_FAILURE"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          cancelled)
+            SOUND="$SOUND_CANCELLED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          deployed)
+            SOUND="$SOUND_DEPLOYED"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+          deploy-failed)
+            SOUND="$SOUND_DEPLOY_FAILED"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          *)
+            SOUND="pushover"
+            PRIORITY="${PRIORITY_OVERRIDE:-0}"
+            ;;
+        esac
+
+        echo "Sending Pushover notification (status: $NOTIFY_STATUS, sound: $SOUND, priority: $PRIORITY)"
+
+        # Parse user keys (supports newline, comma, or semicolon separated)
+        # Normalize separators to newlines, then process
+        USERS=$(echo "$PUSHOVER_USERS" | tr ',;' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+
+        # Count users for logging
+        USER_COUNT=$(echo "$USERS" | wc -l | tr -d ' ')
+        echo "Notifying $USER_COUNT user(s)/group(s)"
+
+        # Send to each user/group
+        FAILURES=0
+        echo "$USERS" | while IFS= read -r USER_KEY; do
+          if [ -z "$USER_KEY" ]; then
+            continue
+          fi
+
+          # Build curl command
+          CURL_ARGS=(
+            -s
+            --form-string "token=$PUSHOVER_TOKEN"
+            --form-string "user=$USER_KEY"
+            --form-string "title=$NOTIFY_TITLE"
+            --form-string "message=$NOTIFY_MESSAGE"
+            --form-string "sound=$SOUND"
+            --form-string "priority=$PRIORITY"
+          )
+
+          # Add optional URL
+          if [ -n "$NOTIFY_URL" ]; then
+            CURL_ARGS+=(--form-string "url=$NOTIFY_URL")
+            CURL_ARGS+=(--form-string "url_title=$NOTIFY_URL_TITLE")
+          fi
+
+          # Add HTML support for rich formatting
+          CURL_ARGS+=(--form-string "html=1")
+
+          RESPONSE=$(curl "${CURL_ARGS[@]}" https://api.pushover.net/1/messages.json)
+
+          if echo "$RESPONSE" | grep -q '"status":1'; then
+            echo "✓ Notification sent to ${USER_KEY:0:8}..."
+          else
+            echo "✗ Failed to send to ${USER_KEY:0:8}...: $RESPONSE"
+            FAILURES=$((FAILURES + 1))
+          fi
+        done
+
+        if [ "$FAILURES" -gt 0 ]; then
+          echo "::warning::$FAILURES notification(s) failed to send"
+        fi

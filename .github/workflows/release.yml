@@ -317,6 +317,7 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
+      # Create release as DRAFT so nuget-publish.yml can add assets before publishing
       - name: Create GitHub Release (stable only)
         if: ${{ !contains(needs.check-release.outputs.version, '-') }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -325,6 +326,7 @@ jobs:
           name: Release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: false
+          draft: true
 
       - name: Create GitHub Pre-Release
         if: ${{ contains(needs.check-release.outputs.version, '-') }}
@@ -334,6 +336,7 @@ jobs:
           name: Pre-release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: true
+          draft: true
 
       - name: Summary
         env:
