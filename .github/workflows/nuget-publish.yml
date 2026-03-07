@@ -143,7 +143,16 @@ jobs:
         uses: ./.github/actions/notify-pushover
         with:
           api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
-          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
           title: "🚀 Deployed v${{ needs.publish.outputs.version }}"
           message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet"
           status: deployed
@@ -165,7 +174,16 @@ jobs:
         uses: ./.github/actions/notify-pushover
         with:
           api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
-          user-keys: ${{ secrets.PUSHOVER_USER_KEYS }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
           title: "❌ Deploy Failed"
           message: "Failed to publish Whizbang to NuGet"
           status: deploy-failed

@@ -116,9 +116,7 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: success
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}
+    secrets: inherit
 
   notify-failure:
     name: Notify Failure
@@ -127,9 +125,7 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}
+    secrets: inherit
 
   notify-cancelled:
     name: Notify Cancelled
@@ -138,6 +134,4 @@ jobs:
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: cancelled
-    secrets:
-      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
-      PUSHOVER_USER_KEYS: ${{ secrets.PUSHOVER_USER_KEYS }}
+    secrets: inherit
