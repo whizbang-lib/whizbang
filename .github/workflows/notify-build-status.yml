@@ -19,11 +19,10 @@ on:
         description: 'URL to the workflow run'
         required: false
         type: string
-    # Use 'secrets: inherit' when calling this workflow to pass all secrets
+    # Callers should use 'secrets: inherit' to pass all Pushover secrets
     # Required secrets:
     #   - PUSHOVER_API_TOKEN: Application API token
     #   - PUSHOVER_USER_KEY_1, _2, ... _N: Individual user keys (add as many as needed)
-    secrets: inherit
 
 jobs:
   notify:
