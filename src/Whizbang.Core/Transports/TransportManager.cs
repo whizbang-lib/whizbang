@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Transports;
 
@@ -31,9 +32,13 @@ namespace Whizbang.Core.Transports;
 /// Creates a new TransportManager.
 /// </remarks>
 /// <param name="instanceProvider">Optional service instance provider for message tracing</param>
-public class TransportManager(IServiceInstanceProvider? instanceProvider = null) : ITransportManager {
+public class TransportManager(
+  IServiceInstanceProvider? instanceProvider = null,
+  CascadeContextFactory? cascadeContextFactory = null
+) : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = [];
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? new CascadeContextFactory(null);
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
@@ -82,8 +87,11 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
       return;
     }
 
-    // Create context if not provided
-    context ??= MessageContext.New();
+    // Create context if not provided - use CascadeContextFactory for proper security propagation
+    if (context == null) {
+      var cascade = _cascadeContextFactory.NewRoot();
+      context = MessageContext.Create(cascade);
+    }
 
     // Create envelope once (shared across all targets)
     var envelope = _createEnvelope(message, context);
@@ -194,6 +202,15 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
     TMessage message,
     IMessageContext context
   ) {
+    // Extract security context from IMessageContext (UserId/TenantId)
+    SecurityContext? securityContext = null;
+    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
+      securityContext = new SecurityContext {
+        UserId = context.UserId,
+        TenantId = context.TenantId
+      };
+    }
+
     return new MessageEnvelope<TMessage> {
       MessageId = context.MessageId,
       Payload = message,
@@ -202,10 +219,9 @@ public class TransportManager(IServiceInstanceProvider? instanceProvider = null)
           Type = HopType.Current,
           ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, JsonElement> {
-            ["CorrelationId"] = JsonElementHelper.FromString(context.CorrelationId.ToString()),
-            ["CausationId"] = JsonElementHelper.FromString(context.CausationId.ToString())
-          },
+          CorrelationId = context.CorrelationId,
+          CausationId = context.CausationId,
+          SecurityContext = securityContext,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]

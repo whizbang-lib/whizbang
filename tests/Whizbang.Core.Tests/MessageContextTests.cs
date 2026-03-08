@@ -341,4 +341,133 @@ public class MessageContextTests {
     public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => false;
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
   }
+
+  // ========================================
+  // ScopeContext OWNERSHIP TESTS
+  // ========================================
+
+  [Test]
+  public async Task ScopeContext_IsNullByDefaultAsync() {
+    // Arrange & Act
+    var context = new MessageContext();
+
+    // Assert
+    await Assert.That(context.ScopeContext).IsNull();
+  }
+
+  [Test]
+  public async Task ScopeContext_CanBeSetViaInitializerAsync() {
+    // Arrange
+    var scopeContext = new TestScopeContext("user-123", "tenant-abc");
+
+    // Act
+    var context = new MessageContext {
+      ScopeContext = scopeContext
+    };
+
+    // Assert - Message OWNS the scope context
+    await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+  }
+
+  [Test]
+  public async Task New_CapturesScopeContextFromAmbientAsync() {
+    // Arrange - Set ambient scope context
+    var scopeContext = new TestScopeContext("user-123", "tenant-abc");
+    ScopeContextAccessor.CurrentContext = scopeContext;
+    ScopeContextAccessor.CurrentInitiatingContext = null;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Message captures and OWNS the scope context
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("user-123");
+      await Assert.That(context.TenantId).IsEqualTo("tenant-abc");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task New_CapturesScopeContextFromInitiatingContextAsync() {
+    // Arrange - Set initiating context with scope
+    var scopeContext = new TestScopeContext("initiating-user", "initiating-tenant");
+    var initiatingContext = new MessageContext {
+      UserId = "initiating-user",
+      TenantId = "initiating-tenant",
+      ScopeContext = scopeContext
+    };
+    ScopeContextAccessor.CurrentInitiatingContext = initiatingContext;
+    ScopeContextAccessor.CurrentContext = null;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Message captures scope from initiating context
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, scopeContext)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("initiating-user");
+      await Assert.That(context.TenantId).IsEqualTo("initiating-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
+
+  [Test]
+  public async Task New_InitiatingContextTakesPrecedenceOverAmbientForScopeContextAsync() {
+    // Arrange - Set both initiating and ambient contexts
+    var initiatingScope = new TestScopeContext("initiating-user", "initiating-tenant");
+    var ambientScope = new TestScopeContext("ambient-user", "ambient-tenant");
+
+    var initiatingContext = new MessageContext {
+      UserId = "initiating-user",
+      TenantId = "initiating-tenant",
+      ScopeContext = initiatingScope
+    };
+    ScopeContextAccessor.CurrentInitiatingContext = initiatingContext;
+    ScopeContextAccessor.CurrentContext = ambientScope;
+
+    try {
+      // Act
+      var context = MessageContext.New();
+
+      // Assert - Initiating context takes precedence
+      await Assert.That(object.ReferenceEquals(context.ScopeContext, initiatingScope)).IsTrue();
+      await Assert.That(context.UserId).IsEqualTo("initiating-user");
+      await Assert.That(context.TenantId).IsEqualTo("initiating-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+      ScopeContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task MessageContextOwnsScope_AsyncLocalReadsFromItAsync() {
+    // Arrange - Create message context with scope
+    var scopeContext = new TestScopeContext("message-owner", "message-tenant");
+    var messageContext = new MessageContext {
+      UserId = "message-owner",
+      TenantId = "message-tenant",
+      ScopeContext = scopeContext
+    };
+
+    // Act - Set as initiating context in AsyncLocal
+    ScopeContextAccessor.CurrentInitiatingContext = messageContext;
+    ScopeContextAccessor.CurrentContext = null; // No ambient fallback
+
+    try {
+      // Assert - AsyncLocal reads FROM the message context's scope
+      var currentScope = ScopeContextAccessor.CurrentContext;
+      await Assert.That(object.ReferenceEquals(currentScope, scopeContext)).IsTrue();
+      await Assert.That(ScopeContextAccessor.CurrentUserId).IsEqualTo("message-owner");
+      await Assert.That(ScopeContextAccessor.CurrentTenantId).IsEqualTo("message-tenant");
+    } finally {
+      // Cleanup
+      ScopeContextAccessor.CurrentInitiatingContext = null;
+    }
+  }
 }

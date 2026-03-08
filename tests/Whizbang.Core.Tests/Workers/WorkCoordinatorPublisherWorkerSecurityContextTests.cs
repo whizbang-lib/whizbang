@@ -250,6 +250,11 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
         ScopeContextAccessor.CurrentContext = value; // Also set the real AsyncLocal
       }
     }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
+    }
   }
 
   /// <summary>

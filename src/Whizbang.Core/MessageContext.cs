@@ -35,6 +35,15 @@ public class MessageContext : IMessageContext {
   /// <inheritdoc />
   public string? TenantId { get; init; }
 
+  /// <inheritdoc />
+  /// <remarks>
+  /// The ScopeContext is OWNED by this message context.
+  /// When a message is created, it captures the current scope and carries it.
+  /// AsyncLocal reads FROM the initiating message context's ScopeContext.
+  /// </remarks>
+  /// <docs>core-concepts/cascade-context#scope-context</docs>
+  public IScopeContext? ScopeContext { get; init; }
+
   private readonly Dictionary<string, object> _metadata = [];
 
   /// <inheritdoc />
@@ -79,27 +88,52 @@ public class MessageContext : IMessageContext {
 
   /// <summary>
   /// Creates a new context with new identifiers.
-  /// If security context is available via <see cref="ScopeContextAccessor.CurrentContext"/>,
-  /// automatically inherits UserId and TenantId from the current scope.
-  /// This ensures security context propagates through LocalInvokeAsync calls.
+  /// Captures the current ScopeContext so the message OWNS and CARRIES it.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Messages carry state in event-sourced systems. When a new message context
+  /// is created, it captures the current scope and carries it.
+  /// </para>
+  /// <para>
+  /// Priority for UserId/TenantId:
+  /// 1. InitiatingContext (the IMessageContext that started this scope - SOURCE OF TRUTH)
+  /// 2. CurrentContext.Scope (fallback for backward compatibility)
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/cascade-context#message-context-new</docs>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesAllNewIdentifiersAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_CapturesScopeContextFromAmbientAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_CapturesScopeContextFromInitiatingContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextInitiatingContextTests.cs</tests>
   public static MessageContext New() {
-    // Read security context from current scope (AsyncLocal)
+    // Capture the current scope context - the message will OWN and CARRY it
+    IScopeContext? scopeContext = null;
     string? userId = null;
     string? tenantId = null;
-    var scopeContext = ScopeContextAccessor.CurrentContext;
-    if (scopeContext is not null) {
-      userId = scopeContext.Scope.UserId;
-      tenantId = scopeContext.Scope.TenantId;
+
+    var initiatingContext = ScopeContextAccessor.CurrentInitiatingContext;
+    if (initiatingContext is not null) {
+      // InitiatingContext is the source of truth - capture its scope
+      scopeContext = initiatingContext.ScopeContext;
+      userId = initiatingContext.UserId;
+      tenantId = initiatingContext.TenantId;
+    } else {
+      // Fall back to CurrentContext for backward compatibility
+      scopeContext = ScopeContextAccessor.CurrentContext;
+      if (scopeContext is not null) {
+        userId = scopeContext.Scope.UserId;
+        tenantId = scopeContext.Scope.TenantId;
+      }
     }
 
     return new MessageContext {
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New(),
       UserId = userId,
-      TenantId = tenantId
+      TenantId = tenantId,
+      ScopeContext = scopeContext
     };
   }
 }

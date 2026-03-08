@@ -37,25 +37,42 @@ internal sealed class ScopedMessageContext : IMessageContext {
 
   /// <inheritdoc />
   /// <remarks>
-  /// UserId is read from the security scope context (populated from envelope hop SecurityContext).
-  /// Falls back to the message context's UserId if scope context is not available.
+  /// UserId is read with the following priority:
+  /// 1. InitiatingContext (SOURCE OF TRUTH - the IMessageContext that started this scope)
+  /// 2. IScopeContext.Scope (populated from envelope hop SecurityContext)
+  /// 3. IMessageContextAccessor.Current (fallback)
   /// </remarks>
+  /// <docs>core-concepts/cascade-context#scoped-message-context</docs>
   public string? UserId =>
-    _scopeContextAccessor.Current?.Scope.UserId
+    _scopeContextAccessor.InitiatingContext?.UserId
+    ?? _scopeContextAccessor.Current?.Scope.UserId
     ?? _messageContextAccessor.Current?.UserId;
 
   /// <inheritdoc />
   /// <remarks>
-  /// TenantId is read from the security scope context (populated from envelope hop SecurityContext).
-  /// Falls back to the message context's TenantId if scope context is not available.
+  /// TenantId is read with the following priority:
+  /// 1. InitiatingContext (SOURCE OF TRUTH - the IMessageContext that started this scope)
+  /// 2. IScopeContext.Scope (populated from envelope hop SecurityContext)
+  /// 3. IMessageContextAccessor.Current (fallback)
   /// This ensures tenant context is available even in deferred lifecycle stages like PostPerspectiveAsync.
   /// </remarks>
+  /// <docs>core-concepts/cascade-context#scoped-message-context</docs>
   public string? TenantId =>
-    _scopeContextAccessor.Current?.Scope.TenantId
+    _scopeContextAccessor.InitiatingContext?.TenantId
+    ?? _scopeContextAccessor.Current?.Scope.TenantId
     ?? _messageContextAccessor.Current?.TenantId;
 
   /// <inheritdoc />
   public IReadOnlyDictionary<string, object> Metadata =>
     _messageContextAccessor.Current?.Metadata
     ?? new Dictionary<string, object>();
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// ScopeContext is read from the initiating context which OWNS and CARRIES it.
+  /// Fallback to accessor's Current for backward compatibility.
+  /// </remarks>
+  public IScopeContext? ScopeContext =>
+    _scopeContextAccessor.InitiatingContext?.ScopeContext
+    ?? _scopeContextAccessor.Current;
 }

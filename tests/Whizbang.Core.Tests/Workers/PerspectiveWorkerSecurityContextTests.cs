@@ -708,6 +708,7 @@ public class PerspectiveWorkerSecurityContextTests {
   private sealed class TestScopeContextAccessor : IScopeContextAccessor {
     private readonly Action? _onSet;
     private IScopeContext? _current;
+    private IMessageContext? _initiatingContext;
 
     public TestScopeContextAccessor(Action? onSet = null) {
       _onSet = onSet;
@@ -719,6 +720,11 @@ public class PerspectiveWorkerSecurityContextTests {
         _onSet?.Invoke();
         _current = value;
       }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => _initiatingContext;
+      set => _initiatingContext = value;
     }
   }
 

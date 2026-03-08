@@ -93,7 +93,7 @@ public static partial class SecurityContextHelper {
     }
 
     var securityContext = envelope.GetCurrentSecurityContext();
-    messageContextAccessor.Current = new MessageContext {
+    var messageContext = new MessageContext {
       MessageId = envelope.MessageId,
       CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
       CausationId = envelope.GetCausationId() ?? MessageId.New(),
@@ -101,6 +101,15 @@ public static partial class SecurityContextHelper {
       UserId = securityContext?.UserId,
       TenantId = securityContext?.TenantId
     };
+    messageContextAccessor.Current = messageContext;
+
+    // CRITICAL: Set InitiatingContext on IScopeContextAccessor
+    // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
+    // AsyncLocal carries a REFERENCE to this IMessageContext, not a copy of its data.
+    var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
+    if (scopeContextAccessor is not null) {
+      scopeContextAccessor.InitiatingContext = messageContext;
+    }
   }
 
   /// <summary>
@@ -262,7 +271,7 @@ public static partial class SecurityContextHelper {
     }
 
     // 2. Set MessageContextAccessor (for fallback + other consumers)
-    MessageContextAccessor.CurrentContext = new MessageContext {
+    var messageContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New(),
@@ -270,6 +279,12 @@ public static partial class SecurityContextHelper {
       UserId = userId,
       TenantId = tenantId
     };
+    MessageContextAccessor.CurrentContext = messageContext;
+
+    // 3. Set InitiatingContext on IScopeContextAccessor (SOURCE OF TRUTH pattern)
+    // This ensures IMessageContext is the source of truth for security context.
+    ScopeContextAccessor.CurrentInitiatingContext = messageContext;
+
     if (logger is not null) {
       Log.MessageContextEstablished(logger, userId, tenantId);
     }

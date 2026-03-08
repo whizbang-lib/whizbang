@@ -24,29 +24,77 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 public sealed class ScopeContextAccessor : IScopeContextAccessor {
   private static readonly AsyncLocal<IScopeContext?> _current = new();
+  private static readonly AsyncLocal<IMessageContext?> _initiatingContext = new();
 
   /// <summary>
   /// Static accessor for the current scope context.
+  /// Reads FROM the initiating message context's ScopeContext.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Messages carry state in event-sourced systems. The ScopeContext is OWNED by
+  /// the IMessageContext, and this property reads FROM it.
+  /// </para>
+  /// <para>
+  /// Fallback: If no InitiatingContext is set, falls back to _current for backward
+  /// compatibility during migration.
+  /// </para>
+  /// </remarks>
+  public static IScopeContext? CurrentContext {
+    get => _initiatingContext.Value?.ScopeContext ?? _current.Value;
+    set => _current.Value = value;
+  }
+
+  /// <summary>
+  /// Static accessor for the initiating message context.
   /// Use this from singleton services that cannot resolve the scoped IScopeContextAccessor.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// This provides direct access to the ambient context without requiring DI resolution.
-  /// Use sparingly - prefer the scoped IScopeContextAccessor for proper DI patterns.
+  /// The initiating context is the IMessageContext that started the current scope.
+  /// It is the SOURCE OF TRUTH for security context (UserId, TenantId).
   /// </para>
   /// <para>
-  /// Primary use case: Singleton services (e.g., Dispatcher) that need to read/write
-  /// context but cannot resolve scoped services.
+  /// Primary use case: Singleton services (e.g., Dispatcher) that need to read
+  /// the initiating message context for security propagation.
   /// </para>
   /// </remarks>
-  public static IScopeContext? CurrentContext {
-    get => _current.Value;
+  /// <docs>core-concepts/cascade-context#initiating-context</docs>
+  /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  public static IMessageContext? CurrentInitiatingContext {
+    get => _initiatingContext.Value;
+    set => _initiatingContext.Value = value;
+  }
+
+  /// <summary>
+  /// Static accessor for UserId from InitiatingContext (SOURCE OF TRUTH).
+  /// This is a POINTER to InitiatingContext.UserId, not a copy.
+  /// </summary>
+  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  public static string? CurrentUserId => _initiatingContext.Value?.UserId;
+
+  /// <summary>
+  /// Static accessor for TenantId from InitiatingContext (SOURCE OF TRUTH).
+  /// This is a POINTER to InitiatingContext.TenantId, not a copy.
+  /// </summary>
+  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  public static string? CurrentTenantId => _initiatingContext.Value?.TenantId;
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Reads FROM the initiating message context's ScopeContext.
+  /// Fallback to _current for backward compatibility.
+  /// </remarks>
+  public IScopeContext? Current {
+    get => _initiatingContext.Value?.ScopeContext ?? _current.Value;
     set => _current.Value = value;
   }
 
   /// <inheritdoc />
-  public IScopeContext? Current {
-    get => _current.Value;
-    set => _current.Value = value;
+  /// <docs>core-concepts/cascade-context#initiating-context</docs>
+  /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  public IMessageContext? InitiatingContext {
+    get => _initiatingContext.Value;
+    set => _initiatingContext.Value = value;
   }
 }

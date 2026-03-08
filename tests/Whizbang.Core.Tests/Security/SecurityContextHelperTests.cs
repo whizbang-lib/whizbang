@@ -218,6 +218,11 @@ public class SecurityContextHelperTests {
         ScopeContextAccessor.CurrentContext = value; // Also set the real AsyncLocal
       }
     }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
+    }
   }
 
   [Test]
@@ -831,6 +836,11 @@ public class SecurityContextHelperTests {
     public IScopeContext? Current {
       get => _explicitContext;
       set { /* Ignore sets - we're simulating explicit context that shouldn't be overwritten */ }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
     }
   }
 
