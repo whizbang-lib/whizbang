@@ -85,7 +85,8 @@ public abstract partial class Dispatcher(
   IScopedEventTracker? scopedEventTracker = null,
   ISyncEventTracker? syncEventTracker = null,
   ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
-  IOptionsMonitor<TracingOptions>? tracingOptions = null
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
+  CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -127,6 +128,8 @@ public abstract partial class Dispatcher(
   private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
+  // Cascade context factory for unified context propagation
+  private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? serviceProvider.GetService<CascadeContextFactory>() ?? new CascadeContextFactory(null);
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
   private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = serviceProvider.GetService<IEventCompletionAwaiter>();
   // Security context accessor is resolved lazily from scope - it's a scoped service
@@ -350,13 +353,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _sendAsyncInternalAsync<TMessage>(message, context);
   }
 
   /// <summary>
   /// Sends a message and returns a delivery receipt (not the business result).
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// For AOT compatibility, use the generic overload SendAsync&lt;TMessage&gt;.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
@@ -364,7 +368,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public Task<IDeliveryReceipt> SendAsync(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return SendAsync(message, context);
   }
 
@@ -522,12 +527,14 @@ public abstract partial class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _sendAsyncInternalWithOptionsAsync<TMessage>(message, context, options);
   }
 
   /// <summary>
   /// Sends a message with dispatch options.
+  /// Uses CascadeContextFactory for proper security propagation.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -535,7 +542,8 @@ public abstract partial class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return SendAsync(message, context, options);
   }
 
@@ -882,13 +890,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync<TResult>((object)message, context);
   }
 
   /// <summary>
   /// Invokes a receptor in-process and returns the typed business result.
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// PERFORMANCE: Zero allocation when trace store is null, target &lt; 20ns per invocation.
   /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage, TResult&gt;.
   /// </summary>
@@ -897,7 +906,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync<TResult>(message, context);
   }
 
@@ -1499,13 +1509,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync((object)message, context);
   }
 
   /// <summary>
   /// Invokes a void receptor in-process without returning a business result.
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// PERFORMANCE: Zero allocation target for command/event patterns.
   /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage&gt;.
   /// </summary>
@@ -1514,7 +1525,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask LocalInvokeAsync(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync(message, context);
   }
 
@@ -1843,12 +1855,14 @@ public abstract partial class Dispatcher(
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _localInvokeWithOptionsAsync<TResult>(message, context, options);
   }
 
   /// <summary>
   /// Invokes a void receptor in-process with dispatch options.
+  /// Uses CascadeContextFactory for proper security propagation.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -1856,7 +1870,8 @@ public abstract partial class Dispatcher(
 #endif
   public ValueTask LocalInvokeAsync(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _localInvokeVoidWithOptionsAsync(message, context, options);
   }
 

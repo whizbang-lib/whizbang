@@ -314,15 +314,21 @@ public class DebuggerAwareClockTests {
     var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
     using var clock = new DebuggerAwareClock(options);
 
-    // Act
+    // Act - use larger delays for CI stability
     var stopwatch1 = clock.StartNew();
-    await Task.Delay(50);
+    await Task.Delay(150); // Longer delay for more reliable difference
     var stopwatch2 = clock.StartNew();
-    await Task.Delay(50);
+    await Task.Delay(100);
 
-    // Assert - stopwatch1 should have more elapsed time than stopwatch2
-    await Assert.That(stopwatch1.ActiveElapsed.TotalMilliseconds)
-        .IsGreaterThan(stopwatch2.ActiveElapsed.TotalMilliseconds);
+    // Get elapsed times
+    var elapsed1 = stopwatch1.ActiveElapsed.TotalMilliseconds;
+    var elapsed2 = stopwatch2.ActiveElapsed.TotalMilliseconds;
+
+    // Assert - stopwatch1 should have significantly more elapsed time than stopwatch2
+    // stopwatch1 ran for ~250ms total, stopwatch2 ran for ~100ms
+    // We expect at least 100ms difference (allowing for timing variance)
+    await Assert.That(elapsed1 - elapsed2).IsGreaterThanOrEqualTo(80)
+        .Because($"stopwatch1 ({elapsed1:F0}ms) should be at least 80ms ahead of stopwatch2 ({elapsed2:F0}ms)");
   }
 
   [Test]
