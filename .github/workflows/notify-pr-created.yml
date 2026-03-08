@@ -16,25 +16,24 @@ jobs:
 
       - name: Build notification content
         id: content
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          # Get PR details
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
-          HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
-
           # Build title and message
           TITLE="PR #${PR_NUMBER} Created"
           MESSAGE="${PR_TITLE}\n\nBy: ${PR_AUTHOR}\n${HEAD_BRANCH} → ${BASE_BRANCH}"
 
           # Output for next step
-          echo "title=${TITLE}" >> $GITHUB_OUTPUT
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$MESSAGE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          echo "url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
+          echo "message<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$MESSAGE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "url=${PR_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Send Pushover notification
         uses: ./.github/actions/notify-pushover
