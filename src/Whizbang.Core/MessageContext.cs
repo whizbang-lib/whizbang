@@ -1,3 +1,4 @@
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -48,6 +49,31 @@ public class MessageContext : IMessageContext {
     return new MessageContext {
       CorrelationId = correlationId,
       CausationId = causationId ?? MessageId.New()
+    };
+  }
+
+  /// <summary>
+  /// Creates a new context from a CascadeContext.
+  /// Copies CorrelationId, CausationId, and SecurityContext from the cascade.
+  /// Generates a new MessageId.
+  /// </summary>
+  /// <param name="cascade">The cascade context to create from</param>
+  /// <returns>A new MessageContext with data from the cascade</returns>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_CopiesCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_UsesCascadeCausationIdAsContextCausationIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_GeneratesNewMessageIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_CopiesSecurityContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_WithNullSecurityContext_SetsNullSecurityAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_ThrowsOnNullCascadeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCascadeContext_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync</tests>
+  public static MessageContext Create(CascadeContext cascade) {
+    ArgumentNullException.ThrowIfNull(cascade);
+
+    return new MessageContext {
+      CorrelationId = cascade.CorrelationId,
+      CausationId = cascade.CausationId,
+      UserId = cascade.SecurityContext?.UserId,
+      TenantId = cascade.SecurityContext?.TenantId
     };
   }
 
