@@ -3,6 +3,7 @@ using HotChocolate.Data;
 using HotChocolate.Execution;
 using HotChocolate.Types;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 
@@ -128,10 +129,16 @@ public class ScopedTestOrderLens : IScopedOrderLens {
 /// </summary>
 public class TestScopeContextAccessor : IScopeContextAccessor {
   private readonly AsyncLocal<IScopeContext?> _current = new();
+  private readonly AsyncLocal<IMessageContext?> _initiatingContext = new();
 
   public IScopeContext? Current {
     get => _current.Value;
     set => _current.Value = value;
+  }
+
+  public IMessageContext? InitiatingContext {
+    get => _initiatingContext.Value;
+    set => _initiatingContext.Value = value;
   }
 }
 

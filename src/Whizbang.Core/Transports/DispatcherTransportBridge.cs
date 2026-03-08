@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Transports;
@@ -36,11 +37,13 @@ namespace Whizbang.Core.Transports;
 public class DispatcherTransportBridge(
   IDispatcher dispatcher,
   ITransport transport,
-  IServiceInstanceProvider instanceProvider
+  IServiceInstanceProvider instanceProvider,
+  CascadeContextFactory? cascadeContextFactory = null
   ) {
   private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? new CascadeContextFactory(null);
 
   /// <summary>
   /// Publishes a message to a remote transport destination.
@@ -62,8 +65,11 @@ public class DispatcherTransportBridge(
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(destination);
 
-    // Create or use provided context
-    context ??= MessageContext.New();
+    // Create or use provided context - use CascadeContextFactory for proper security propagation
+    if (context == null) {
+      var cascade = _cascadeContextFactory.NewRoot();
+      context = MessageContext.Create(cascade);
+    }
 
     // Create envelope with hop for observability
     var envelope = _createEnvelope(message, context);
@@ -92,8 +98,11 @@ public class DispatcherTransportBridge(
     ArgumentNullException.ThrowIfNull(request);
     ArgumentNullException.ThrowIfNull(destination);
 
-    // Create or use provided context
-    context ??= MessageContext.New();
+    // Create or use provided context - use CascadeContextFactory for proper security propagation
+    if (context == null) {
+      var cascade = _cascadeContextFactory.NewRoot();
+      context = MessageContext.Create(cascade);
+    }
 
     // Create request envelope
     var requestEnvelope = _createEnvelope(request, context);
@@ -153,12 +162,22 @@ public class DispatcherTransportBridge(
       Hops = []
     };
 
+    // Extract security context from IMessageContext (UserId/TenantId)
+    SecurityContext? securityContext = null;
+    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
+      securityContext = new SecurityContext {
+        UserId = context.UserId,
+        TenantId = context.TenantId
+      };
+    }
+
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
+      SecurityContext = securityContext,
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 

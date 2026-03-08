@@ -76,4 +76,21 @@ public interface IMessageContext {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Metadata_IsEmptyByDefaultAsync</tests>
   IReadOnlyDictionary<string, object> Metadata { get; }
+
+  /// <summary>
+  /// Gets the rich authorization context (Roles, Permissions, SecurityPrincipals, Claims)
+  /// that this message context OWNS and carries.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Messages carry state in event-sourced systems. The ScopeContext is OWNED by
+  /// the message context, not read from ambient AsyncLocal.
+  /// </para>
+  /// <para>
+  /// When a message context is created, it captures the current scope context.
+  /// AsyncLocal then reads FROM the initiating message context's ScopeContext.
+  /// </para>
+  /// </remarks>
+  /// <docs>core-concepts/cascade-context#scope-context</docs>
+  Security.IScopeContext? ScopeContext { get; }
 }

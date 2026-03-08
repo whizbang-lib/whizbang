@@ -156,35 +156,6 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Extracts security context from the ambient scope if propagation is enabled.
-  /// Returns null if no context is available or propagation is disabled.
-  /// </summary>
-  /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
-  private SecurityContext? _getSecurityContextForPropagation() {
-    // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
-    if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
-      return null;
-    }
-
-    if (!ctx.ShouldPropagate) {
-      return null;
-    }
-
-    var userId = ctx.Scope.UserId;
-
-    // Warn if propagating an empty GUID as UserId - this indicates the source didn't have proper user context
-    if (!string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var parsedUserId) && parsedUserId == Guid.Empty) {
-      Log.EmptyGuidUserIdPropagated(SecurityLogger, ctx.Scope.TenantId);
-    }
-
-    return new SecurityContext {
-      UserId = userId,
-      TenantId = ctx.Scope.TenantId
-    };
-  }
-
-  /// <summary>
   /// Gets the service provider for receptor resolution.
   /// Available to generated derived class.
   /// </summary>
@@ -2079,6 +2050,24 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Gets SecurityContext for hop propagation.
+  /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
+  /// This ensures context flows correctly even when AsyncLocal scope has ended.
+  /// </summary>
+  private static SecurityContext? _getSecurityContextForHop(IMessageContext context) {
+    // Priority 1: IMessageContext (set via CascadeContextFactory or explicit)
+    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
+      return new SecurityContext {
+        UserId = context.UserId,
+        TenantId = context.TenantId
+      };
+    }
+
+    // Priority 2: Ambient AsyncLocal scope
+    return CascadeContext.GetSecurityFromAmbient();
+  }
+
+  /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// Generic version - preserves type information at compile time.
   /// </summary>
@@ -2108,7 +2097,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation(),
+      SecurityContext = _getSecurityContextForHop(context),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
@@ -2153,7 +2142,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation(),
+      SecurityContext = _getSecurityContextForHop(context),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
@@ -2759,7 +2748,7 @@ public abstract partial class Dispatcher(
       // Add hop indicating message is being stored to outbox
       // When destination is null (event-store-only), use "(event-store)" as topic indicator
       // SecurityContext: First try ambient context, then inherit from source envelope
-      var propagatedSecurityContext = _getSecurityContextForPropagation();
+      var propagatedSecurityContext = CascadeContext.GetSecurityFromAmbient();
       var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
       var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
 
@@ -2878,7 +2867,7 @@ public abstract partial class Dispatcher(
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext(),
+        SecurityContext = CascadeContext.GetSecurityFromAmbient() ?? sourceEnvelope?.GetCurrentSecurityContext(),
         TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       jsonEnvelope.AddHop(hop);
@@ -3549,13 +3538,15 @@ public abstract partial class Dispatcher(
         localMessages.Add(message);
       } else {
         // No local receptor - route to outbox
-        outboxMessages.Add((message, messageType, MessageContext.New()));
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
     }
 
     // Process local messages individually (fast path)
     foreach (var message in localMessages) {
-      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.New());
+      var cascade = _cascadeContextFactory.NewRoot();
+      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
       receipts.Add(receipt);
     }
 
@@ -3596,7 +3587,8 @@ public abstract partial class Dispatcher(
         localMessages.Add((message, messageType));
       } else {
         // No local receptor - route to outbox
-        outboxMessages.Add((message, messageType, MessageContext.New()));
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
     }
 
@@ -3666,7 +3658,7 @@ public abstract partial class Dispatcher(
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
     // 4. Add hop indicating message is being deferred
-    var propagatedSecurityContext = _getSecurityContextForPropagation();
+    var propagatedSecurityContext = CascadeContext.GetSecurityFromAmbient();
     var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
     var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
 

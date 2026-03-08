@@ -740,6 +740,7 @@ public class SystemEventEmitterTests {
     public Dictionary<string, object> Metadata { get; } = new();
 
     public string? TenantId => throw new NotImplementedException();
+    public Core.Security.IScopeContext? ScopeContext => null;
 
     IReadOnlyDictionary<string, object> IMessageContext.Metadata => Metadata;
   }

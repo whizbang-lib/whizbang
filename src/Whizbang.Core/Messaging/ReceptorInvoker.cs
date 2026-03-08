@@ -135,21 +135,13 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     // GetType() is AOT-safe - returns the runtime type
     var messageType = message.GetType();
 
-    // Registry already has categorized receptors at compile time
-    // Just get receptors for this type/stage combination and invoke them
-    var receptors = _registry.GetReceptorsFor(messageType, stage);
-
-    if (receptors.Count == 0) {
-      // No receptors registered for this message type and stage - this is normal
-      return;
-    }
-
     // Use the injected scoped provider directly - no CreateScope needed
     // This invoker is registered as scoped and uses the ambient scope from the worker
     var securityProvider = _scopedProvider.GetService<IMessageSecurityContextProvider>();
 
-    // Establish security context from the envelope before invoking receptors
+    // Establish security context from the envelope BEFORE checking for receptors
     // This enables scoped services (like UserContextManager) to access security information
+    // even when there are no receptors registered for this message type/stage
     if (securityProvider is not null) {
       var securityContext = await securityProvider
         .EstablishContextAsync(envelope, _scopedProvider, cancellationToken)
@@ -164,18 +156,38 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     }
 
     // Set message context from envelope for injectable IMessageContext
-    // This enables receptors to inject IMessageContext and access MessageId, CorrelationId, UserId, TenantId, etc.
+    // This enables code to inject IMessageContext and access MessageId, CorrelationId, UserId, TenantId, etc.
+    // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
     var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
-      var securityContext = envelope.GetCurrentSecurityContext();
-      messageContextAccessor.Current = new MessageContext {
+      var envelopeSecurityContext = envelope.GetCurrentSecurityContext();
+      var messageContext = new MessageContext {
         MessageId = envelope.MessageId,
         CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
         CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
         Timestamp = envelope.GetMessageTimestamp(),
-        UserId = securityContext?.UserId,
-        TenantId = securityContext?.TenantId
+        UserId = envelopeSecurityContext?.UserId,
+        TenantId = envelopeSecurityContext?.TenantId
       };
+      messageContextAccessor.Current = messageContext;
+
+      // CRITICAL: Set InitiatingContext on IScopeContextAccessor
+      // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
+      // AsyncLocal carries a REFERENCE to this IMessageContext, not a copy of its data.
+      var scopeContextAccessor = _scopedProvider.GetService<IScopeContextAccessor>();
+      if (scopeContextAccessor is not null) {
+        scopeContextAccessor.InitiatingContext = messageContext;
+      }
+    }
+
+    // Registry already has categorized receptors at compile time
+    // Just get receptors for this type/stage combination and invoke them
+    var receptors = _registry.GetReceptorsFor(messageType, stage);
+
+    if (receptors.Count == 0) {
+      // No receptors registered for this message type and stage - this is normal
+      // Context is already established above, so just return
+      return;
     }
 
     // Try to get stream ID extractor for stream-based sync

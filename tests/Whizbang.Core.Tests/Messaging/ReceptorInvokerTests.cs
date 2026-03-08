@@ -795,6 +795,8 @@ public class ReceptorInvokerTests {
     public IScopeContext? LastSetContext { get; private set; }
 
     private IScopeContext? _current;
+    private IMessageContext? _initiatingContext;
+
     public IScopeContext? Current {
       get => _current;
       set {
@@ -802,6 +804,11 @@ public class ReceptorInvokerTests {
         LastSetContext = value;
         _current = value;
       }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => _initiatingContext;
+      set => _initiatingContext = value;
     }
   }
 
