@@ -357,9 +357,18 @@ jobs:
     uses: ./.github/workflows/nuget-publish.yml
     with:
       tag: v${{ needs.check-release.outputs.version }}
-    # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
-    # which relies on id-token permission (declared in the called workflow),
-    # not repository secrets
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   # Sync main back to develop after successful release
   sync-develop:
