@@ -60,10 +60,10 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = testUserId,
             TenantId = testTenantId
-          }
+          })
         }
       }
     };
@@ -114,10 +114,10 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = testUserId,
             TenantId = testTenantId
-          }
+          })
         }
       }
     };
@@ -164,7 +164,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = null  // No security context
+          Scope = null  // No security context
         }
       }
     };
@@ -218,7 +218,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = null  // No security context
+          Scope = null  // No security context
         }
       }
     };
@@ -249,6 +249,11 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
         CapturedContext = value; // Capture for verification
         ScopeContextAccessor.CurrentContext = value; // Also set the real AsyncLocal
       }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
     }
   }
 

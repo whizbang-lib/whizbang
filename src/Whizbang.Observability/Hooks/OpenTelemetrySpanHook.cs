@@ -68,11 +68,19 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
       activity.SetTag("whizbang.message_type", context.MessageType.FullName);
 
       // Add scope attributes
-      if (context.Scope is not null) {
-        foreach (var (key, value) in context.Scope) {
-          if (value is not null) {
-            activity.SetTag($"whizbang.scope.{key.ToLowerInvariant()}", value.ToString());
-          }
+      if (context.Scope?.Scope is not null) {
+        var scope = context.Scope.Scope;
+        if (!string.IsNullOrEmpty(scope.TenantId)) {
+          activity.SetTag("whizbang.scope.tenantid", scope.TenantId);
+        }
+        if (!string.IsNullOrEmpty(scope.UserId)) {
+          activity.SetTag("whizbang.scope.userid", scope.UserId);
+        }
+        if (!string.IsNullOrEmpty(scope.CustomerId)) {
+          activity.SetTag("whizbang.scope.customerid", scope.CustomerId);
+        }
+        if (!string.IsNullOrEmpty(scope.OrganizationId)) {
+          activity.SetTag("whizbang.scope.organizationid", scope.OrganizationId);
         }
       }
 

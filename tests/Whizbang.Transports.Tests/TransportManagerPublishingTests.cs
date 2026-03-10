@@ -218,7 +218,9 @@ public class TransportManagerPublishingTests {
     await Assert.That(envelope.Hops[0].Type).IsEqualTo(HopType.Current);
     await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");  // No instance provider configured
     await Assert.That(envelope.Hops[0].ServiceInstance.InstanceId).IsEqualTo(Guid.Empty);
-    await Assert.That(envelope.Hops[0].Metadata).IsNotNull();
+    // Verify CorrelationId and CausationId are set (proper properties instead of Metadata)
+    await Assert.That(envelope.Hops[0].CorrelationId).IsNotNull();
+    await Assert.That(envelope.Hops[0].CausationId).IsNotNull();
   }
 
   [Test]

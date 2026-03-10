@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Observability.Tests;
@@ -522,7 +523,7 @@ public class MessageTracingTests {
     };
 
     // Act
-    var securityContext = envelope.GetCurrentSecurityContext();
+    var securityContext = envelope.GetCurrentScope();
 
     // Assert
     await Assert.That(securityContext).IsNull();
@@ -561,7 +562,7 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = context1
+      Scope = ScopeDelta.FromSecurityContext(context1)
     });
 
     envelope.AddHop(new MessageHop {
@@ -571,7 +572,7 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = context2
+      Scope = ScopeDelta.FromSecurityContext(context2)
     });
 
     envelope.AddHop(new MessageHop {
@@ -581,16 +582,16 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = null // Null should be skipped
+      Scope = null // Null should be skipped
     });
 
     // Act
-    var securityContext = envelope.GetCurrentSecurityContext();
+    var securityContext = envelope.GetCurrentScope();
 
     // Assert
-    await Assert.That(securityContext).IsEqualTo(context2);
-    await Assert.That(securityContext!.UserId).IsEqualTo("user-2");
-    await Assert.That(securityContext!.TenantId).IsEqualTo("tenant-b");
+    await Assert.That(securityContext).IsNotNull();
+    await Assert.That(securityContext?.Scope?.UserId).IsEqualTo("user-2");
+    await Assert.That(securityContext?.Scope?.TenantId).IsEqualTo("tenant-b");
   }
 
   [Test]
@@ -996,6 +997,7 @@ public class MessageTracingTests {
       UserId = "user-123",
       TenantId = "tenant-abc"
     };
+    var scopeDelta = ScopeDelta.FromSecurityContext(securityContext);
 
     // Act
     var hop = new MessageHop {
@@ -1011,7 +1013,7 @@ public class MessageTracingTests {
       PartitionIndex = 5,
       SequenceNumber = 100,
       ExecutionStrategy = "ParallelExecutor",
-      SecurityContext = securityContext,
+      Scope = scopeDelta,
       CallerMemberName = "ExecuteAsync",
       CallerFilePath = "/src/SerialExecutor.cs",
       CallerLineNumber = 42,
@@ -1027,7 +1029,7 @@ public class MessageTracingTests {
     await Assert.That(hop.PartitionIndex).IsEqualTo(5);
     await Assert.That(hop.SequenceNumber).IsEqualTo(100);
     await Assert.That(hop.ExecutionStrategy).IsEqualTo("ParallelExecutor");
-    await Assert.That(hop.SecurityContext).IsEqualTo(securityContext);
+    await Assert.That(hop.Scope).IsNotNull();
     await Assert.That(hop.CallerMemberName).IsEqualTo("ExecuteAsync");
     await Assert.That(hop.CallerFilePath).IsEqualTo("/src/SerialExecutor.cs");
     await Assert.That(hop.CallerLineNumber).IsEqualTo(42);
@@ -1056,7 +1058,7 @@ public class MessageTracingTests {
   }
 
   [Test]
-  public async Task MessageHop_SecurityContext_CanBeNullAsync() {
+  public async Task MessageHop_Scope_CanBeNullAsync() {
     // Arrange & Act
     var hop = new MessageHop {
       ServiceInstance = new ServiceInstanceInfo {
@@ -1065,15 +1067,15 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = null
+      Scope = null
     };
 
     // Assert
-    await Assert.That(hop.SecurityContext).IsNull();
+    await Assert.That(hop.Scope).IsNull();
   }
 
   [Test]
-  public async Task MessageHop_SecurityContext_CanBeSetAsync() {
+  public async Task MessageHop_Scope_CanBeSetAsync() {
     // Arrange
     var securityContext = new SecurityContext {
       UserId = "user-123",
@@ -1088,13 +1090,21 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      SecurityContext = securityContext
+      Scope = ScopeDelta.FromSecurityContext(securityContext)
     };
 
+    // Create an envelope to verify scope values
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test",
+      Hops = [hop]
+    };
+    var scope = envelope.GetCurrentScope();
+
     // Assert
-    await Assert.That(hop.SecurityContext).IsEqualTo(securityContext);
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-123");
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("tenant-abc");
+    await Assert.That(hop.Scope).IsNotNull();
+    await Assert.That(scope?.Scope?.UserId).IsEqualTo("user-123");
+    await Assert.That(scope?.Scope?.TenantId).IsEqualTo("tenant-abc");
   }
 
   [Test]
@@ -1582,7 +1592,7 @@ public class MessageTracingTests {
 
             ProcessId = 12345
 
-          }, Type = HopType.Causation, SecurityContext = causationContext },
+          }, Type = HopType.Causation, Scope = ScopeDelta.FromSecurityContext(causationContext) },
         new MessageHop {
 
           ServiceInstance = new ServiceInstanceInfo {
@@ -1595,16 +1605,16 @@ public class MessageTracingTests {
 
             ProcessId = 12345
 
-          }, Type = HopType.Current, SecurityContext = currentContext }
+          }, Type = HopType.Current, Scope = ScopeDelta.FromSecurityContext(currentContext) }
       ]
     };
 
     // Act
-    var securityContext = envelope.GetCurrentSecurityContext();
+    var securityContext = envelope.GetCurrentScope();
 
     // Assert
-    await Assert.That(securityContext).IsEqualTo(currentContext);
-    await Assert.That(securityContext!.UserId).IsEqualTo("current-user");
+    await Assert.That(securityContext).IsNotNull();
+    await Assert.That(securityContext?.Scope?.UserId).IsEqualTo("current-user");
   }
 
   [Test]

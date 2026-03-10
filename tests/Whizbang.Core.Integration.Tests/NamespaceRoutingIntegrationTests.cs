@@ -3,11 +3,11 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Integration.Tests.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Integration.Tests.Generated;
 
 namespace Whizbang.Core.Integration.Tests;
 

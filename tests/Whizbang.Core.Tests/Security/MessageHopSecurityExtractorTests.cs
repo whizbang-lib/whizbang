@@ -134,14 +134,14 @@ public class MessageHopSecurityExtractorTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance("service-1"),
       Timestamp = DateTimeOffset.UtcNow.AddMinutes(-5),
-      SecurityContext = new SecurityContext { TenantId = "old-tenant", UserId = "old-user" }
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "old-tenant", UserId = "old-user" })
     };
 
     var secondHop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance("service-2"),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = new SecurityContext { TenantId = "new-tenant", UserId = "new-user" }
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "new-tenant", UserId = "new-user" })
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -169,14 +169,14 @@ public class MessageHopSecurityExtractorTests {
       Type = HopType.Causation,
       ServiceInstance = _createServiceInstance("causation-service"),
       Timestamp = DateTimeOffset.UtcNow.AddMinutes(-10),
-      SecurityContext = new SecurityContext { TenantId = "causation-tenant", UserId = "causation-user" }
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "causation-tenant", UserId = "causation-user" })
     };
 
     var currentHop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance("current-service"),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = new SecurityContext { TenantId = "current-tenant", UserId = "current-user" }
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "current-tenant", UserId = "current-user" })
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -313,7 +313,7 @@ public class MessageHopSecurityExtractorTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = securityContext
+      Scope = ScopeDelta.FromSecurityContext(securityContext)
     };
 
     return new MessageEnvelope<TestMessage> {
@@ -328,7 +328,7 @@ public class MessageHopSecurityExtractorTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = null
+      Scope = null
     };
 
     return new MessageEnvelope<TestMessage> {

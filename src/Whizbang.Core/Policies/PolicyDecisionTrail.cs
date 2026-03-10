@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Whizbang.Core.Policies;
 
 /// <summary>
@@ -19,6 +21,7 @@ public class PolicyDecisionTrail {
   /// Init setter required for JSON deserialization.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:Decisions_IsInitializedEmptyByDefaultAsync</tests>
+  [JsonPropertyName("d")]
   public List<PolicyDecision> Decisions { get; init; } = [];
 
   /// <summary>
@@ -81,30 +84,37 @@ public record PolicyDecision {
   /// <summary>
   /// Name of the policy (e.g., "StreamSelection", "ExecutionStrategy")
   /// </summary>
+  [JsonPropertyName("pn")]
   public required string PolicyName { get; init; }
 
   /// <summary>
   /// The rule that was evaluated (e.g., "Order.* → order-{id}")
   /// </summary>
+  [JsonPropertyName("r")]
   public required string Rule { get; init; }
 
   /// <summary>
   /// Whether this rule matched
   /// </summary>
+  [JsonPropertyName("m")]
   public required bool Matched { get; init; }
 
   /// <summary>
   /// Configuration applied (can be anything - stream key, executor type, etc.)
   /// </summary>
+  [JsonPropertyName("c")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public object? Configuration { get; init; }
 
   /// <summary>
   /// Human-readable reason for the decision
   /// </summary>
+  [JsonPropertyName("rs")]
   public required string Reason { get; init; }
 
   /// <summary>
   /// When this decision was made
   /// </summary>
+  [JsonPropertyName("ts")]
   public required DateTimeOffset Timestamp { get; init; }
 }

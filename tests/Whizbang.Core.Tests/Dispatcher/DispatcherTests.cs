@@ -247,8 +247,11 @@ public class DispatcherTests {
   // ========================================
   // ACTIVITY TRACING TESTS
   // ========================================
+  // These tests use [NotInParallel] because ActivityListener is global
+  // and captures spans from tests running concurrently.
 
   [Test]
+  [NotInParallel]
   public async Task SendAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
     // Arrange - Set up listener for Whizbang.Execution source
     var capturedActivities = new List<Activity>();
@@ -277,6 +280,7 @@ public class DispatcherTests {
   }
 
   [Test]
+  [NotInParallel]
   public async Task LocalInvokeAsync_CreatesDispatchActivity_WhenListenerAttachedAsync() {
     // Arrange - Set up listener for Whizbang.Execution source
     var capturedActivities = new List<Activity>();

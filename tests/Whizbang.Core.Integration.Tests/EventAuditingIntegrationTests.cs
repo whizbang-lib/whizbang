@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Audit;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
@@ -291,11 +292,11 @@ public class EventAuditingIntegrationTests {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = (tenantId != null || userId != null)
-          ? new SecurityContext {
+      Scope = (tenantId != null || userId != null)
+          ? ScopeDelta.FromSecurityContext(new SecurityContext {
             TenantId = tenantId,
             UserId = userId
-          }
+          })
           : null,
       CorrelationId = correlationId.HasValue ? new CorrelationId(correlationId.Value) : null
     };
@@ -344,8 +345,8 @@ public class TestableSystemEventEmitter : ISystemEventEmitter {
       return Task.CompletedTask;
     }
 
-    // Extract scope from envelope - use SecurityContext from hops
-    var securityContext = envelope.GetCurrentSecurityContext();
+    // Extract scope from envelope - use Scope from hops
+    var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
 
     // Create EventAudited
@@ -356,8 +357,8 @@ public class TestableSystemEventEmitter : ISystemEventEmitter {
       OriginalStreamPosition = streamPosition,
       OriginalBody = JsonSerializer.SerializeToElement(envelope.Payload),
       Timestamp = DateTimeOffset.UtcNow,
-      TenantId = securityContext?.TenantId,
-      UserId = securityContext?.UserId,
+      TenantId = scopeContext?.Scope?.TenantId,
+      UserId = scopeContext?.Scope?.UserId,
       CorrelationId = correlationId?.ToString()
     };
 

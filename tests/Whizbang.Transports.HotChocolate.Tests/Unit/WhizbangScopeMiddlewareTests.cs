@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Transports.HotChocolate.Middleware;
@@ -1014,4 +1015,5 @@ public class WhizbangScopeMiddlewareTests {
 /// </summary>
 internal sealed class TestScopeContextAccessor : IScopeContextAccessor {
   public IScopeContext? Current { get; set; }
+  public IMessageContext? InitiatingContext { get; set; }
 }

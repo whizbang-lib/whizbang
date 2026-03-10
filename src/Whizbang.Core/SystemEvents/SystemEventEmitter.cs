@@ -63,16 +63,16 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     }
 
     // Extract scope from envelope - generic dictionary for flexibility
-    var securityContext = envelope.GetCurrentSecurityContext();
+    var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
 
-    // Build scope dictionary from security context
+    // Build scope dictionary from scope context
     var scope = new Dictionary<string, string?>();
-    if (securityContext?.TenantId != null) {
-      scope["TenantId"] = securityContext.TenantId;
+    if (scopeContext?.Scope?.TenantId != null) {
+      scope["TenantId"] = scopeContext.Scope.TenantId;
     }
-    if (securityContext?.UserId != null) {
-      scope["UserId"] = securityContext.UserId;
+    if (scopeContext?.Scope?.UserId != null) {
+      scope["UserId"] = scopeContext.Scope.UserId;
     }
     if (correlationId != null) {
       scope["CorrelationId"] = correlationId.ToString();
@@ -90,8 +90,8 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       OriginalBody = payloadJson,
       Timestamp = DateTimeOffset.UtcNow,
       // Store individual properties for backward compatibility
-      TenantId = securityContext?.TenantId,
-      UserId = securityContext?.UserId,
+      TenantId = scopeContext?.Scope?.TenantId,
+      UserId = scopeContext?.Scope?.UserId,
       CorrelationId = correlationId?.ToString(),
       // Store full scope for generic access
       Scope = scope.Count > 0 ? scope : null

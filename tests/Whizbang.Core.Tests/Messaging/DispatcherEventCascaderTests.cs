@@ -5,6 +5,7 @@ using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -260,6 +261,7 @@ public class DispatcherEventCascaderTests {
     public MessageId? GetCausationId() => _hops[0].CausationId;
     public JsonElement? GetMetadata(string key) => null;
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 
   public sealed class TestCascadeEvent : IEvent {

@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Generated;
 
@@ -40,7 +41,7 @@ public class DispatcherTagProcessingTests {
     public object? LastMessage { get; private set; }
     public Type? LastMessageType { get; private set; }
     public LifecycleStage? LastStage { get; private set; }
-    public IReadOnlyDictionary<string, object?>? LastScope { get; private set; }
+    public IScopeContext? LastScope { get; private set; }
     public List<(object Message, Type MessageType, LifecycleStage Stage)> AllInvocations { get; } = [];
 
     public void Reset() {
@@ -56,7 +57,7 @@ public class DispatcherTagProcessingTests {
         object message,
         Type messageType,
         LifecycleStage stage,
-        IReadOnlyDictionary<string, object?>? scope = null,
+        IScopeContext? scope = null,
         CancellationToken ct = default) {
       InvocationCount++;
       LastMessage = message;

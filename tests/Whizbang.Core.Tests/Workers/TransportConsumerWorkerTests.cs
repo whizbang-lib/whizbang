@@ -486,6 +486,7 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public MessageId? GetCausationId() => _hops[0].CausationId;
   public JsonElement? GetMetadata(string key) => null;
   public SecurityContext? GetCurrentSecurityContext() => null;
+  public ScopeContext? GetCurrentScope() => null;
 }
 
 internal class DelayedReadinessCheck : ITransportReadinessCheck {

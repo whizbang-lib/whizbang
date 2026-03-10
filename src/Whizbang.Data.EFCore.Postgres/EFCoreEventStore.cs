@@ -65,7 +65,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Create envelope metadata directly - EF Core will serialize via POCO mapping
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
-      Hops = envelope.Hops.ToList()
+      Hops = envelope.Hops?.ToList() ?? []
     };
 
     var record = new EventStoreRecord {

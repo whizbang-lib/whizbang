@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Observability.Hooks;
@@ -100,7 +101,7 @@ public sealed class OpenTelemetryMetricHook : IMessageTagHook<MetricTagAttribute
   private static TagList _buildTags(
       JsonElement payload,
       string[]? properties,
-      IReadOnlyDictionary<string, object?>? scope) {
+      IScopeContext? scope) {
     var tags = new TagList();
 
     // Add properties from payload as dimensions
@@ -120,12 +121,19 @@ public sealed class OpenTelemetryMetricHook : IMessageTagHook<MetricTagAttribute
     }
 
     // Add scope values as dimensions
-    if (scope is not null) {
-      foreach (var (key, value) in scope) {
-        var lowerKey = key.ToLowerInvariant();
-        if (value is not null && !tags.Any(t => string.Equals(t.Key, lowerKey, StringComparison.Ordinal))) {
-          tags.Add(lowerKey, value.ToString());
-        }
+    if (scope?.Scope is not null) {
+      var perspectiveScope = scope.Scope;
+      if (!string.IsNullOrEmpty(perspectiveScope.TenantId) && !tags.Any(t => string.Equals(t.Key, "tenantid", StringComparison.Ordinal))) {
+        tags.Add("tenantid", perspectiveScope.TenantId);
+      }
+      if (!string.IsNullOrEmpty(perspectiveScope.UserId) && !tags.Any(t => string.Equals(t.Key, "userid", StringComparison.Ordinal))) {
+        tags.Add("userid", perspectiveScope.UserId);
+      }
+      if (!string.IsNullOrEmpty(perspectiveScope.CustomerId) && !tags.Any(t => string.Equals(t.Key, "customerid", StringComparison.Ordinal))) {
+        tags.Add("customerid", perspectiveScope.CustomerId);
+      }
+      if (!string.IsNullOrEmpty(perspectiveScope.OrganizationId) && !tags.Any(t => string.Equals(t.Key, "organizationid", StringComparison.Ordinal))) {
+        tags.Add("organizationid", perspectiveScope.OrganizationId);
       }
     }
 

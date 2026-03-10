@@ -47,7 +47,20 @@ internal class FakeConnection : IConnection {
   public event AsyncEventHandler<AsyncEventArgs>? ConnectionUnblockedAsync;
   public event AsyncEventHandler<ConsumerTagChangedAfterRecoveryEventArgs>? ConsumerTagChangeAfterRecoveryAsync;
   public event AsyncEventHandler<QueueNameChangedAfterRecoveryEventArgs>? QueueNameChangedAfterRecoveryAsync;
-  public event AsyncEventHandler<AsyncEventArgs>? RecoverySucceededAsync;
+  private AsyncEventHandler<AsyncEventArgs>? _recoverySucceededAsync;
+  public event AsyncEventHandler<AsyncEventArgs>? RecoverySucceededAsync {
+    add => _recoverySucceededAsync += value;
+    remove => _recoverySucceededAsync -= value;
+  }
+
+  /// <summary>
+  /// Simulates connection recovery for testing.
+  /// </summary>
+  public async Task SimulateRecoverySucceededAsync() {
+    if (_recoverySucceededAsync != null) {
+      await _recoverySucceededAsync.Invoke(this, new AsyncEventArgs());
+    }
+  }
   public event AsyncEventHandler<ConnectionRecoveryErrorEventArgs>? ConnectionRecoveryErrorAsync;
   public event AsyncEventHandler<RecoveringConsumerEventArgs>? RecoveringConsumerAsync;
 
@@ -99,7 +112,27 @@ internal class FakeChannel : IChannel {
   public event AsyncEventHandler<BasicReturnEventArgs>? BasicReturnAsync;
   public event AsyncEventHandler<CallbackExceptionEventArgs>? CallbackExceptionAsync;
   public event AsyncEventHandler<FlowControlEventArgs>? FlowControlAsync;
-  public event AsyncEventHandler<ShutdownEventArgs>? ChannelShutdownAsync;
+
+  private AsyncEventHandler<ShutdownEventArgs>? _channelShutdownAsync;
+  public event AsyncEventHandler<ShutdownEventArgs>? ChannelShutdownAsync {
+    add => _channelShutdownAsync += value;
+    remove => _channelShutdownAsync -= value;
+  }
+
+  /// <summary>
+  /// Simulates channel shutdown for testing.
+  /// </summary>
+  public async Task SimulateShutdownAsync(ShutdownInitiator initiator, string reason, Exception? exception = null) {
+    ShutdownEventArgs args;
+    if (exception != null) {
+      args = new ShutdownEventArgs(initiator, 320, reason, exception: exception);
+    } else {
+      args = new ShutdownEventArgs(initiator, 320, reason);
+    }
+    if (_channelShutdownAsync != null) {
+      await _channelShutdownAsync.Invoke(this, args);
+    }
+  }
 
   // Implement methods used by PublishAsync
   public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
@@ -127,7 +160,7 @@ internal class FakeChannel : IChannel {
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }
 
-  public Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+  public virtual Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
     QueueBindAsyncCalled = true;
     return Task.CompletedTask;
   }

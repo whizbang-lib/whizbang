@@ -308,6 +308,7 @@ if (type == typeof(global::System.Collections.Generic.List<__INTERFACE_TYPE__>))
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,
     string propertyName,
+    string jsonPropertyName,
     Func<object, TProperty> getter,
     Action<object, TProperty?>? setter,
     JsonTypeInfo<TProperty> propertyTypeInfo) {
@@ -320,7 +321,7 @@ private JsonPropertyInfo CreateProperty<TProperty>(
     Getter = getter,
     Setter = setter,
     PropertyName = propertyName,
-    JsonPropertyName = propertyName
+    JsonPropertyName = jsonPropertyName
   };
 
   return JsonMetadataServices.CreatePropertyInfo(options, propertyInfo);
@@ -639,6 +640,7 @@ var ctorParams = new JsonParameterInfoValues[0];
 properties[__INDEX__] = CreateProperty<__PROPERTY_TYPE__>(
     options,
     "__PROPERTY_NAME__",
+    "__JSON_PROPERTY_NAME__",
     obj => ((__MESSAGE_TYPE__)obj).__PROPERTY_NAME__,
     __SETTER__,
     GetOrCreateTypeInfo<__PROPERTY_TYPE__>(options));

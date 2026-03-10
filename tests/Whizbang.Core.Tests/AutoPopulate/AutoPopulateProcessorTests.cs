@@ -520,7 +520,7 @@ public class AutoPopulateProcessorTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          SecurityContext = new SecurityContext { UserId = userId, TenantId = tenantId }
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = tenantId })
         }
       ]
     };

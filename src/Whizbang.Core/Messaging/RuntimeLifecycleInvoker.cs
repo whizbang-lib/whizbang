@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Messaging;
 
@@ -64,9 +65,14 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
       return;
     }
 
-    // Extract parent context from envelope hops for trace correlation
-    // This ensures receptor spans are parented to the original request even on background threads
-    var parentContext = _extractParentContext(envelope.Hops);
+    // Extract both trace context and scope from envelope hops
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    // Establish scope context from envelope data (security propagation via AsyncLocal)
+    if (extracted.Scope is not null) {
+      ScopeContextAccessor.CurrentContext = extracted.Scope;
+    }
 
     // Invoke all registered receptors with individual tracing
     var handlerIndex = 0;
@@ -98,19 +104,4 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
     }
   }
 
-  /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
-  /// </summary>
-  private static ActivityContext _extractParentContext(IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
-    }
-
-    return default;
-  }
 }

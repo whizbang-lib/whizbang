@@ -787,5 +787,6 @@ public class OrderedStreamProcessorTests {
     }
 
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 }

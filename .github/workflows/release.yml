@@ -317,6 +317,7 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
+      # Create release as DRAFT so nuget-publish.yml can add assets before publishing
       - name: Create GitHub Release (stable only)
         if: ${{ !contains(needs.check-release.outputs.version, '-') }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -325,6 +326,7 @@ jobs:
           name: Release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: false
+          draft: true
 
       - name: Create GitHub Pre-Release
         if: ${{ contains(needs.check-release.outputs.version, '-') }}
@@ -334,6 +336,7 @@ jobs:
           name: Pre-release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: true
+          draft: true
 
       - name: Summary
         env:
@@ -357,3 +360,58 @@ jobs:
     # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
     # which relies on id-token permission (declared in the called workflow),
     # not repository secrets
+
+  # Sync main back to develop after successful release
+  sync-develop:
+    name: Sync Main to Develop
+    needs: [check-release, publish]
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge main into develop
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
+        run: |
+          echo "Syncing main → develop after v$RELEASE_VERSION release"
+
+          # Fetch all branches
+          git fetch origin main develop
+
+          # Checkout develop
+          git checkout develop
+
+          # Merge main into develop (should be fast-forward or simple merge)
+          if git merge origin/main --no-edit -m "chore: sync main into develop after v$RELEASE_VERSION release"; then
+            echo "✅ Successfully merged main into develop"
+            git push origin develop
+          else
+            echo "⚠️ Merge conflict detected"
+            echo "This usually means develop has commits not in main."
+            echo "Manual intervention may be required."
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Summary
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
+        run: |
+          echo "## Develop Branch Synced" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Main has been merged into develop after v$RELEASE_VERSION release." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This ensures develop has all release commits (version bumps, etc.)." >> $GITHUB_STEP_SUMMARY

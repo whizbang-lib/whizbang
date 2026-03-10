@@ -127,8 +127,8 @@ public class InMemoryTraceStore : ITraceStore {
 
     // Sort by timestamp
     results.Sort((a, b) => {
-      var aTime = a.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
-      var bTime = b.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
+      var aTime = a.Hops?.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
+      var bTime = b.Hops?.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
       return aTime.CompareTo(bTime);
     });
 
@@ -173,10 +173,10 @@ public class InMemoryTraceStore : ITraceStore {
   public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
-        var timestamp = e.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
+        var timestamp = e.Hops?.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
         return timestamp >= from && timestamp <= toTime;
       })
-      .OrderBy(e => e.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue)
+      .OrderBy(e => e.Hops?.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue)
       .ToList();
 
     return Task.FromResult(results);

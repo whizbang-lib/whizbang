@@ -218,6 +218,11 @@ public class SecurityContextHelperTests {
         ScopeContextAccessor.CurrentContext = value; // Also set the real AsyncLocal
       }
     }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
+    }
   }
 
   [Test]
@@ -311,6 +316,35 @@ public class SecurityContextHelperTests {
     // Assert
     await Assert.That(messageContextAccessor.Current).IsNotNull();
     await Assert.That(messageContextAccessor.Current!.TenantId).IsEqualTo(expectedTenantId);
+  }
+
+  /// <summary>
+  /// CRITICAL: Verifies that ScopeContext is set on MessageContext.
+  /// This was a bug where ScopeContext was not being propagated, causing
+  /// IMessageContext.ScopeContext to return null even when envelope had scope.
+  /// </summary>
+  /// <tests>SecurityContextHelper.SetMessageContextFromEnvelope</tests>
+  [Test]
+  public async Task SetMessageContextFromEnvelope_WithSecurityContext_SetsScopeContextAsync() {
+    // Arrange
+    var expectedUserId = "user-scope-test";
+    var expectedTenantId = "tenant-scope-test";
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(
+        new TestSecurityMessage("test"),
+        expectedUserId,
+        expectedTenantId);
+    var messageContextAccessor = new MessageContextAccessor();
+    var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
+
+    // Act
+    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, services);
+
+    // Assert - ScopeContext should NOT be null when envelope has scope information
+    await Assert.That(messageContextAccessor.Current).IsNotNull();
+    await Assert.That(messageContextAccessor.Current!.ScopeContext).IsNotNull()
+      .Because("ScopeContext must be propagated from envelope to MessageContext");
+    await Assert.That(messageContextAccessor.Current.ScopeContext!.Scope.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(messageContextAccessor.Current.ScopeContext.Scope.TenantId).IsEqualTo(expectedTenantId);
   }
 
   [Test]
@@ -832,6 +866,11 @@ public class SecurityContextHelperTests {
       get => _explicitContext;
       set { /* Ignore sets - we're simulating explicit context that shouldn't be overwritten */ }
     }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set => ScopeContextAccessor.CurrentInitiatingContext = value;
+    }
   }
 
   // === Argument Validation Tests ===
@@ -969,7 +1008,7 @@ public class SecurityContextHelperTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          SecurityContext = new SecurityContext { UserId = userId, TenantId = "test-tenant" }
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = "test-tenant" })
         }
       ]
     };
@@ -992,7 +1031,7 @@ public class SecurityContextHelperTests {
           },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "test-topic",
-          SecurityContext = new SecurityContext { UserId = userId, TenantId = tenantId }
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = tenantId })
         }
       ]
     };

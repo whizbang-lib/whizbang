@@ -56,12 +56,14 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
   /// <inheritdoc />
   /// <remarks>
   /// Creates an envelope with security context from the ambient scope and delegates to the inner store.
+  /// Uses <see cref="CascadeContext.GetSecurityFromAmbient()"/> for consistent security extraction.
   /// </remarks>
   public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default)
       where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(message);
 
-    var securityContext = _getSecurityContextForPropagation();
+    // Use unified security extraction via CascadeContext
+    var securityContext = CascadeContext.GetSecurityFromAmbient();
 
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
@@ -71,35 +73,12 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
-          SecurityContext = securityContext
+          Scope = ScopeDelta.FromSecurityContext(securityContext)
         }
       ]
     };
 
     return _inner.AppendAsync(streamId, envelope, cancellationToken);
-  }
-
-  /// <summary>
-  /// Extracts security context from the ambient scope if propagation is enabled.
-  /// Returns null if no context is available or propagation is disabled.
-  /// </summary>
-  /// <remarks>
-  /// This mirrors the pattern from <see cref="Dispatcher._getSecurityContextForPropagation()"/>.
-  /// </remarks>
-  private static SecurityContext? _getSecurityContextForPropagation() {
-    // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
-    if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
-      return null;
-    }
-
-    if (!ctx.ShouldPropagate) {
-      return null;
-    }
-
-    return new SecurityContext {
-      UserId = ctx.Scope.UserId,
-      TenantId = ctx.Scope.TenantId
-    };
   }
 
   /// <inheritdoc />

@@ -380,7 +380,7 @@ public static class JsonContextRegistry {
     properties[2] = _createProperty<List<MessageHop>, MessageEnvelope<TBase>>(
       _options,
       "Hops",
-      obj => obj.Hops.ToList(),
+      obj => obj.Hops?.ToList() ?? [],
       null);
 
     // Constructor parameters for deserialization

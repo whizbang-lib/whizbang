@@ -327,5 +327,6 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     }
 
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 }
