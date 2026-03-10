@@ -398,6 +398,7 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
   #region Fake Implementations
 
   private sealed class FakePerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     public SyncResult ResultToReturn { get; set; } = new(SyncOutcome.Synced, 1, TimeSpan.FromMilliseconds(10));
 
     public Task<SyncResult> WaitAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) {
@@ -420,6 +421,8 @@ public sealed class AppendAndWaitEventStoreDecoratorCallbackTests {
   }
 
   private sealed class FakeEventCompletionAwaiter(bool completesImmediately) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
     public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       return Task.FromResult(completesImmediately);
     }

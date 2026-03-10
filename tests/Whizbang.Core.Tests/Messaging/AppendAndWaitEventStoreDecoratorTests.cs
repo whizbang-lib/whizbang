@@ -266,6 +266,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   private sealed class FakePerspective { }
 
   private sealed class FakePerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     public bool WaitForStreamAsyncCalled { get; private set; }
     public Type? LastPerspectiveType { get; private set; }
     public Guid? LastStreamId { get; private set; }

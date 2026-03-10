@@ -93,4 +93,11 @@ public interface IMessageContext {
   /// </remarks>
   /// <docs>core-concepts/cascade-context#scope-context</docs>
   Security.IScopeContext? ScopeContext { get; }
+
+  /// <summary>
+  /// Caller information from the code that dispatched this message.
+  /// Null when caller info is unavailable (e.g., <see cref="MessageContext.New()"/> or test contexts).
+  /// </summary>
+  /// <docs>core-concepts/message-context#caller-info</docs>
+  Observability.ICallerInfo? CallerInfo { get; }
 }

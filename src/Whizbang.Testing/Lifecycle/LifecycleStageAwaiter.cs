@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Lifecycle;
 
@@ -10,11 +12,13 @@ namespace Whizbang.Testing.Lifecycle;
 /// Encapsulates TaskCompletionSource creation with RunContinuationsAsynchronously to prevent deadlocks.
 /// </summary>
 /// <typeparam name="TMessage">The message type to wait for.</typeparam>
-public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
+public sealed class LifecycleStageAwaiter<TMessage> : IAwaiterIdentity, IDisposable
   where TMessage : IMessage {
 
   private readonly TaskCompletionSource<TMessage> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
   private readonly ILifecycleReceptorRegistry _registry;
   private readonly LifecycleStage _stage;
@@ -73,14 +77,8 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
   /// <returns>The message that triggered completion.</returns>
   /// <exception cref="TimeoutException">Thrown if not completed within timeout.</exception>
   public async Task<TMessage> WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      return await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"Lifecycle stage {_stage} not completed within {timeout}");
-    }
+    return await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"Lifecycle stage {_stage} not completed within {timeout}", cancellationToken);
   }
 
   /// <summary>

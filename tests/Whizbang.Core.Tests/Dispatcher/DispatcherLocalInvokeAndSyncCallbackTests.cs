@@ -287,6 +287,8 @@ public sealed class DispatcherLocalInvokeAndSyncCallbackTests {
 
   // Fake implementations
   private sealed class FakeEventCompletionAwaiter(bool completesImmediately) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
     public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default) {
       return Task.FromResult(completesImmediately);
     }

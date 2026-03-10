@@ -434,7 +434,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
             var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>("__RECEPTOR_CLASS__")
                         ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
@@ -469,7 +469,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Try keyed service first (generated registrations), fall back to non-keyed (manual/test registrations)
             var receptor = sp.GetKeyedService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>("__RECEPTOR_CLASS__")
                         ?? sp.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
@@ -500,7 +500,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
             var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();
@@ -573,7 +573,7 @@ public class DispatcherSnippets {
         new global::Whizbang.Core.Messaging.ReceptorInfo(
           MessageType: typeof(__MESSAGE_TYPE__),
           ReceptorId: "__RECEPTOR_CLASS__",
-          InvokeAsync: async (sp, msg, ct) => {
+          InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
             // Capture timing with debug-aware clock
             var clock = sp.GetService<global::Whizbang.Core.Diagnostics.IDebuggerAwareClock>();
             var startTime = clock?.GetCurrentTimestamp() ?? System.Diagnostics.Stopwatch.GetTimestamp();

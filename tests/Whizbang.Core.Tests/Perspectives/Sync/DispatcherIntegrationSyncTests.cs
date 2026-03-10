@@ -131,8 +131,7 @@ public class DispatcherIntegrationSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // === STEP 3: Perspective worker processes Event B ===
     var perspectiveTask = Task.Run(async () => {

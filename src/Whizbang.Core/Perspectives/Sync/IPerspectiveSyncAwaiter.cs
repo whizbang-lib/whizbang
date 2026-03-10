@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
-public interface IPerspectiveSyncAwaiter {
+public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// <summary>
   /// Waits until perspectives are caught up per the sync options.
   /// </summary>
