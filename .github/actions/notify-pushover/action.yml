@@ -165,7 +165,7 @@ runs:
             USERS="${USERS}${key}"$'\n'
           fi
         done
-        USERS=$(echo "$USERS" | grep -v '^$')
+        USERS=$(echo "$USERS" | grep -v '^$' || true)
 
         if [ -z "$USERS" ]; then
           echo "::warning::No user keys configured. Set PUSHOVER_USER_KEY_1, etc. in GitHub Secrets."
