@@ -16,6 +16,29 @@ on:
         description: 'Tag to publish'
         required: true
         type: string
+    secrets:
+      PUSHOVER_API_TOKEN:
+        required: false
+      PUSHOVER_USER_KEY_1:
+        required: false
+      PUSHOVER_USER_KEY_2:
+        required: false
+      PUSHOVER_USER_KEY_3:
+        required: false
+      PUSHOVER_USER_KEY_4:
+        required: false
+      PUSHOVER_USER_KEY_5:
+        required: false
+      PUSHOVER_USER_KEY_6:
+        required: false
+      PUSHOVER_USER_KEY_7:
+        required: false
+      PUSHOVER_USER_KEY_8:
+        required: false
+      PUSHOVER_USER_KEY_9:
+        required: false
+      PUSHOVER_USER_KEY_10:
+        required: false
 
 jobs:
   publish:
@@ -132,6 +155,7 @@ jobs:
     name: Notify Deployed
     needs: [publish]
     if: success() && vars.PUSHOVER_ENABLED == 'true'
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -163,6 +187,7 @@ jobs:
     name: Notify Deploy Failed
     needs: [publish]
     if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
