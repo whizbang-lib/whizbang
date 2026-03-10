@@ -6,6 +6,7 @@ using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
@@ -596,10 +597,10 @@ public class SystemEventEmitterTests {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             TenantId = "tenant-123",
             UserId = "user-456"
-          },
+          }),
           CorrelationId = new CorrelationId(testCorrelationId)
         }
       ]

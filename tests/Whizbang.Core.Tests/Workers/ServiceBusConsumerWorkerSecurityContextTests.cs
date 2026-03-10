@@ -214,10 +214,10 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
-          }
+          })
         }
       }
     };
@@ -237,7 +237,7 @@ public class ServiceBusConsumerWorkerSecurityContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = null  // No security context
+          Scope = null  // No security context
         }
       }
     };

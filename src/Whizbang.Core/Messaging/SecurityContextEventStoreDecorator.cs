@@ -73,7 +73,7 @@ public sealed class SecurityContextEventStoreDecorator : IEventStore {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = Activity.Current?.Id,
-          SecurityContext = securityContext
+          Scope = ScopeDelta.FromSecurityContext(securityContext)
         }
       ]
     };

@@ -53,14 +53,37 @@ public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityCont
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(scopedProvider);
 
+    // Defensive: Verify internal state is valid (should never be null after constructor)
+    if (_options is null) {
+      throw new InvalidOperationException("MessageSecurityOptions is null - provider not properly initialized");
+    }
+
+    if (_extractors is null) {
+      throw new InvalidOperationException("Extractors list is null - provider not properly initialized");
+    }
+
     // Check for cancellation first
     cancellationToken.ThrowIfCancellationRequested();
 
+    // Defensive: Handle null Payload gracefully
+    if (envelope.Payload is null) {
+      // No payload means no type to check - return null for anonymous processing
+      if (_options.AllowAnonymous) {
+        return null;
+      }
+      throw new ArgumentNullException(nameof(envelope), "Message envelope has null Payload");
+    }
+
     // Check if message type is exempt
     var payloadType = envelope.Payload.GetType();
-    if (_options.ExemptMessageTypes.Contains(payloadType)) {
+    if (_options.ExemptMessageTypes?.Contains(payloadType) == true) {
       return null;
     }
+
+    // Track if payload is JsonElement - an intermediate representation from outbox
+    // before deserialization. For JsonElement, we try extractors but don't REQUIRE
+    // security (it will be checked again after deserialization with the real type).
+    var isJsonElement = payloadType == typeof(System.Text.Json.JsonElement);
 
     // Try extractors in priority order with timeout
     SecurityExtraction? extraction = null;
@@ -70,6 +93,11 @@ public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityCont
 
     try {
       foreach (var extractor in _extractors) {
+        // Defensive: Skip null extractors
+        if (extractor is null) {
+          continue;
+        }
+
         linkedCts.Token.ThrowIfCancellationRequested();
 
         extraction = await extractor.ExtractAsync(envelope, _options, linkedCts.Token);
@@ -85,7 +113,9 @@ public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityCont
 
     // No extraction and anonymous not allowed
     if (extraction is null) {
-      if (!_options.AllowAnonymous) {
+      // JsonElement is an intermediate representation (outbox) - don't require security
+      // The real message type will be checked after deserialization
+      if (!_options.AllowAnonymous && !isJsonElement) {
         throw new SecurityContextRequiredException(payloadType);
       }
 

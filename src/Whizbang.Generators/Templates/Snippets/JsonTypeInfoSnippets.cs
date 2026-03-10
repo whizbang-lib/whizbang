@@ -54,21 +54,25 @@ internal class JsonTypeInfoSnippets {
   private JsonTypeInfo<MessageEnvelope<T>> CreateMessageEnvelope<T>(JsonSerializerOptions options, JsonTypeInfo<T> payloadTypeInfo) where T : class {
     var properties = new JsonPropertyInfo[3];
 
+    // Use short JSON property names per [JsonPropertyName] attributes on MessageEnvelope<T>
     properties[0] = CreateProperty<MessageId>(
         options,
         "MessageId",
+        "id",  // [JsonPropertyName("id")]
         obj => ((MessageEnvelope<T>)obj).MessageId,
         GetOrCreateTypeInfo<MessageId>(options));
 
     properties[1] = CreateProperty<T>(
         options,
         "Payload",
+        "p",  // [JsonPropertyName("p")]
         obj => ((MessageEnvelope<T>)obj).Payload,
         payloadTypeInfo);
 
     properties[2] = CreateProperty<List<MessageHop>>(
         options,
         "Hops",
+        "h",  // [JsonPropertyName("h")]
         obj => ((MessageEnvelope<T>)obj).Hops,
         GetOrCreateTypeInfo<List<MessageHop>>(options));
 
@@ -111,6 +115,7 @@ internal class JsonTypeInfoSnippets {
   private JsonPropertyInfo CreateProperty<TProperty>(
       JsonSerializerOptions options,
       string propertyName,
+      string jsonPropertyName,
       Func<object, TProperty> getter,
       JsonTypeInfo<TProperty> propertyTypeInfo) {
 
@@ -122,7 +127,7 @@ internal class JsonTypeInfoSnippets {
       Getter = getter,
       Setter = null,
       PropertyName = propertyName,
-      JsonPropertyName = propertyName
+      JsonPropertyName = jsonPropertyName
     };
 
     return JsonMetadataServices.CreatePropertyInfo(options, propertyInfo);

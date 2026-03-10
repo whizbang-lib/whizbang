@@ -339,10 +339,10 @@ public class SecurityContextHelperInitiatingContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
-          }
+          })
         }
       }
     };
@@ -365,7 +365,7 @@ public class SecurityContextHelperInitiatingContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = null
+          Scope = null
         }
       }
     };
@@ -392,10 +392,10 @@ public class SecurityContextHelperInitiatingContextTests {
             HostName = "test-host",
             ProcessId = 1234
           },
-          SecurityContext = new SecurityContext {
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
             UserId = userId,
             TenantId = tenantId
-          }
+          })
         }
       }
     };

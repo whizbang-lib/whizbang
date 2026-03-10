@@ -2,6 +2,7 @@ using System.Text.Json;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.AutoPopulate;
 
@@ -76,7 +77,7 @@ public sealed class AutoPopulateProcessor : IAutoPopulateProcessor {
       Timestamp = currentHop.Timestamp,
       Topic = currentHop.Topic,
       StreamId = currentHop.StreamId,
-      SecurityContext = currentHop.SecurityContext,
+      Scope = currentHop.Scope,
       CorrelationId = currentHop.CorrelationId,
       Metadata = metadata
     };
@@ -88,6 +89,11 @@ public sealed class AutoPopulateProcessor : IAutoPopulateProcessor {
   /// Gets the current (most recent) hop from the envelope.
   /// </summary>
   private static MessageHop? _getCurrentHop(IMessageEnvelope envelope) {
+    // Defensive: Handle null Hops gracefully
+    if (envelope.Hops == null) {
+      return null;
+    }
+
     for (int i = envelope.Hops.Count - 1; i >= 0; i--) {
       if (envelope.Hops[i].Type == HopType.Current) {
         return envelope.Hops[i];
@@ -130,13 +136,18 @@ public sealed class AutoPopulateProcessor : IAutoPopulateProcessor {
   /// Extracts a security context value as JsonElement.
   /// </summary>
   private static JsonElement? _extractContextElement(AutoPopulateRegistration registration, MessageHop hop) {
-    if (hop.SecurityContext == null) {
+    if (hop.Scope?.Values == null || !hop.Scope.Values.TryGetValue(ScopeProp.Scope, out var scopeElement)) {
       return (JsonElement?)null;
     }
 
+    // Extract TenantId/UserId from the scope JsonElement
     var value = registration.ContextKind switch {
-      ContextKind.UserId => hop.SecurityContext.UserId,
-      ContextKind.TenantId => hop.SecurityContext.TenantId,
+      ContextKind.UserId => scopeElement.TryGetProperty("u", out var u) && u.ValueKind != JsonValueKind.Null
+        ? u.GetString()
+        : null,
+      ContextKind.TenantId => scopeElement.TryGetProperty("t", out var t) && t.ValueKind != JsonValueKind.Null
+        ? t.GetString()
+        : null,
       _ => (string?)null
     };
 

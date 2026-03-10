@@ -1668,21 +1668,21 @@ namespace TestNamespace {
     await Assert.That(runnerSource!).Contains("GetService<IMessageSecurityContextProvider>()");
     await Assert.That(runnerSource!).Contains("EstablishContextAsync");
     await Assert.That(runnerSource!).Contains("GetService<IScopeContextAccessor>()");
-    await Assert.That(runnerSource!).Contains("scopeContextAccessor.Current = establishedContext");
+    await Assert.That(runnerSource!).Contains("scopeContextAccessor.Current = securityContext");
 
     // Step 2: Should get IMessageContextAccessor from service provider
     await Assert.That(runnerSource!).Contains("GetService<IMessageContextAccessor>()");
 
-    // Should get security context from envelope
-    await Assert.That(runnerSource!).Contains("GetCurrentSecurityContext()");
+    // Should get scope context from envelope (renamed from GetCurrentSecurityContext)
+    await Assert.That(runnerSource!).Contains("GetCurrentScope()");
 
     // Should set messageContextAccessor.Current with TenantId from envelope
     // This is the critical fix - the template must populate IMessageContextAccessor.Current
     // BEFORE invoking PostPerspectiveAsync lifecycle receptors
-    await Assert.That(runnerSource!).Contains("messageContextAccessor.Current = new MessageContext");
+    await Assert.That(runnerSource!).Contains("messageContextAccessor.Current = messageContext");
 
-    // Should extract TenantId from security context
-    await Assert.That(runnerSource!).Contains("TenantId = securityContext?.TenantId");
+    // Should extract TenantId from scope context
+    await Assert.That(runnerSource!).Contains("TenantId = scopeForMessageContext?.Scope?.TenantId");
   }
 
   #region IPerspectiveWithActionsFor Integration Tests

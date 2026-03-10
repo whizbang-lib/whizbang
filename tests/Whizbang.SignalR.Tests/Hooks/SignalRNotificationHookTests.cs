@@ -131,7 +131,7 @@ public class SignalRNotificationHookTests {
       Message = message,
       MessageType = typeof(TestOrderEvent),
       Payload = payload,
-      Scope = scope
+      Scope = (Core.Security.IScopeContext)scope
     };
 
     // Act

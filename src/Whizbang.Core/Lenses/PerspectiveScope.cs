@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Lenses;
@@ -27,11 +28,14 @@ public class ScopeExtension {
   /// <summary>
   /// The extension key.
   /// </summary>
+  [JsonPropertyName("k")]
   public string Key { get; set; } = string.Empty;
 
   /// <summary>
   /// The extension value.
   /// </summary>
+  [JsonPropertyName("v")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? Value { get; set; }
 }
 
@@ -78,21 +82,29 @@ public class PerspectiveScope {
   /// <summary>
   /// The tenant identifier for multi-tenancy isolation.
   /// </summary>
+  [JsonPropertyName("t")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? TenantId { get; set; }
 
   /// <summary>
   /// The customer identifier for customer-level isolation.
   /// </summary>
+  [JsonPropertyName("c")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? CustomerId { get; set; }
 
   /// <summary>
   /// The user identifier for user-level isolation.
   /// </summary>
+  [JsonPropertyName("u")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? UserId { get; set; }
 
   /// <summary>
   /// The organization identifier for organization-level isolation.
   /// </summary>
+  [JsonPropertyName("o")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public string? OrganizationId { get; set; }
 
   /// <summary>
@@ -114,6 +126,7 @@ public class PerspectiveScope {
   /// <see cref="SecurityPrincipalId"/> has implicit conversion to/from string, so you can
   /// still use the factory methods when populating this list.
   /// </remarks>
+  [JsonPropertyName("ap")]
   public List<string> AllowedPrincipals { get; set; } = [];
 
   /// <summary>
@@ -125,6 +138,7 @@ public class PerspectiveScope {
   /// Dictionary is NOT supported with ToJson() (GitHub #29825).
   /// Query extensions with LINQ: <c>.Where(r =&gt; r.Scope.Extensions.Any(e =&gt; e.Key == "region"))</c>
   /// </remarks>
+  [JsonPropertyName("ex")]
   public List<ScopeExtension> Extensions { get; set; } = [];
 
   /// <summary>

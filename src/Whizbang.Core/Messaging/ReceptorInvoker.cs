@@ -139,11 +139,14 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     // This invoker is registered as scoped and uses the ambient scope from the worker
     var securityProvider = _scopedProvider.GetService<IMessageSecurityContextProvider>();
 
+    // Hoist securityContext so it can be used for MessageContext below
+    IScopeContext? securityContext = null;
+
     // Establish security context from the envelope BEFORE checking for receptors
     // This enables scoped services (like UserContextManager) to access security information
     // even when there are no receptors registered for this message type/stage
     if (securityProvider is not null) {
-      var securityContext = await securityProvider
+      securityContext = await securityProvider
         .EstablishContextAsync(envelope, _scopedProvider, cancellationToken)
         .ConfigureAwait(false);
 
@@ -160,14 +163,53 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
     var messageContextAccessor = _scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
-      var envelopeSecurityContext = envelope.GetCurrentSecurityContext();
+      // FIX: Use established security context first, fall back to envelope.GetCurrentScope()
+      // The security provider extracts context from the envelope via extractors - use that result!
+      // envelope.GetCurrentScope() may be null if hops don't have scope data
+      IScopeContext? scopeForContext = securityContext ?? envelope.GetCurrentScope();
+
+      // CRITICAL FIX: When extraction fails (securityContext is null) but envelope has scope,
+      // we must wrap the scope in ImmutableScopeContext with ShouldPropagate=true so that
+      // CascadeContext.GetSecurityFromAmbient() can find it when receptors return events.
+      // GetSecurityFromAmbient() requires ImmutableScopeContext with propagation enabled.
+      if (securityContext is null && scopeForContext is not null) {
+        var extraction = new SecurityExtraction {
+          Scope = scopeForContext.Scope,
+          Roles = scopeForContext.Roles,
+          Permissions = scopeForContext.Permissions,
+          SecurityPrincipals = scopeForContext.SecurityPrincipals,
+          Claims = scopeForContext.Claims,
+          ActualPrincipal = scopeForContext.ActualPrincipal,
+          EffectivePrincipal = scopeForContext.EffectivePrincipal,
+          ContextType = scopeForContext.ContextType,
+          Source = "EnvelopeHop"
+        };
+        var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+        scopeForContext = immutableScope;
+
+        // Set on accessor so GetSecurityFromAmbient() can find it
+        var accessor = _scopedProvider.GetService<IScopeContextAccessor>();
+        if (accessor is not null) {
+          accessor.Current = immutableScope;
+        }
+
+        // Invoke security callbacks so JDNext's UserContextManagerCallback sets TenantContext
+        var callbacks = _scopedProvider.GetServices<ISecurityContextCallback>();
+        foreach (var callback in callbacks) {
+          cancellationToken.ThrowIfCancellationRequested();
+          await callback.OnContextEstablishedAsync(immutableScope, envelope, _scopedProvider, cancellationToken)
+            .ConfigureAwait(false);
+        }
+      }
+
       var messageContext = new MessageContext {
         MessageId = envelope.MessageId,
         CorrelationId = envelope.GetCorrelationId() ?? ValueObjects.CorrelationId.New(),
         CausationId = envelope.GetCausationId() ?? ValueObjects.MessageId.New(),
         Timestamp = envelope.GetMessageTimestamp(),
-        UserId = envelopeSecurityContext?.UserId,
-        TenantId = envelopeSecurityContext?.TenantId
+        UserId = scopeForContext?.Scope?.UserId,
+        TenantId = scopeForContext?.Scope?.TenantId,
+        ScopeContext = scopeForContext
       };
       messageContextAccessor.Current = messageContext;
 
@@ -194,9 +236,14 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
-    // Extract parent context from envelope hops for trace correlation
-    // This ensures receptor spans are parented to the original request even on background threads
-    var parentContext = _extractParentContext(envelope.Hops);
+    // Extract both trace context and scope from envelope hops
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    // Establish ambient scope context from envelope data (security propagation via AsyncLocal)
+    if (extracted.Scope is not null) {
+      ScopeContextAccessor.CurrentContext = extracted.Scope;
+    }
 
     foreach (var receptor in receptors) {
       // Start activity for this receptor invocation - enables per-handler tracing
@@ -289,26 +336,13 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     // (e.g., BffService consuming AccountCreatedEvent from UserService)
     var tagProcessor = _scopedProvider.GetService<IMessageTagProcessor>();
     if (tagProcessor is not null) {
-      Console.WriteLine($"[RECEPTOR INVOKER] Processing tags for {messageType.Name} at stage {stage}");
-      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scope: null, cancellationToken).ConfigureAwait(false);
+      // Get scope from message context accessor (established earlier in this method)
+      // The scope is already set from security context extraction or envelope hops
+      var scopeForTags = messageContextAccessor?.Current?.ScopeContext;
+      await tagProcessor.ProcessTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
     }
   }
 
-  /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
-  /// </summary>
-  private static ActivityContext _extractParentContext(System.Collections.Generic.IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
-    }
-
-    return default;
-  }
 }
 
 /// <summary>

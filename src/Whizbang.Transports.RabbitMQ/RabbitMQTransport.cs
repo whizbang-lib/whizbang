@@ -397,11 +397,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
             // Handle message processing failures (but not channel closure - that propagates to outer catch)
             await _handleMessageFailureAsync(channel, args, queueName, ex);
           }
-        } catch (AlreadyClosedException) {
-          // Channel/connection closed during message handling - this is expected during shutdown
+        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+          // Channel/connection closed or disposed during message handling - this is expected during shutdown
           // Message will be redelivered when consumer reconnects
           _logger?.LogWarning(
-            "RabbitMQ channel closed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
+            "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
             args.BasicProperties.MessageId ?? "unknown",
             queueName
           );
@@ -433,6 +433,18 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       }
 
       return subscription;
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      // TaskCanceledException thrown by RabbitMQ (network timeout, not user cancellation)
+      _logger?.LogError(
+        ex,
+        "RabbitMQ operation timed out while creating subscription for exchange {ExchangeName}, queue {QueueName}",
+        exchangeName,
+        queueName
+      );
+      throw new InvalidOperationException(
+        $"RabbitMQ operation timed out while creating subscription for exchange '{exchangeName}', queue '{queueName}'. This may indicate network issues or broker unavailability.",
+        ex
+      );
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger?.LogError(
         ex,
@@ -661,11 +673,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, true);
       }
-    } catch (AlreadyClosedException) {
-      // Channel/connection was closed during shutdown - this is expected
+    } catch (Exception channelEx) when (channelEx is AlreadyClosedException or ObjectDisposedException) {
+      // Channel/connection was closed or disposed during shutdown - this is expected
       // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(
-        "RabbitMQ channel closed during failure handling for message {MessageId} - message will be redelivered on reconnection",
+        "RabbitMQ channel closed/disposed during failure handling for message {MessageId} - message will be redelivered on reconnection",
         args.BasicProperties.MessageId ?? "unknown"
       );
     }

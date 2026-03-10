@@ -104,6 +104,13 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
       throw new ArgumentException("Message type name cannot be null or whitespace.", nameof(messageTypeName));
     }
 
+    // Validate the JsonElement is in a valid state for deserialization
+    if (jsonElement.ValueKind == JsonValueKind.Undefined) {
+      throw new InvalidOperationException(
+        $"Cannot deserialize message type '{messageTypeName}': JsonElement is Undefined. " +
+        $"This may indicate the payload was never set or was disposed.");
+    }
+
     // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
     var jsonTypeInfo = JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions);
 

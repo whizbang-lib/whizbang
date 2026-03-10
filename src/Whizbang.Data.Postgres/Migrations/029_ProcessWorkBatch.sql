@@ -518,13 +518,13 @@ BEGIN
       SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
       __SCHEMA__.normalize_event_type(bv.message_type),
       -- Extract just the Payload from the envelope for event_data
-      -- Handle both PascalCase (default) and camelCase (when app uses PropertyNamingPolicy.CamelCase)
-      COALESCE(bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload') as event_data,
+      -- Handle short names (p), PascalCase (Payload), and camelCase (payload)
+      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload') as event_data,
       -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
-      -- Handle both PascalCase and camelCase input from serialization
+      -- Handle short names (id, h), PascalCase, and camelCase input from serialization
       jsonb_build_object(
-        'MessageId', COALESCE(bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
-        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        'MessageId', COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
+        'Hops', COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
       bv.base_version + bv.row_num as version,
@@ -633,13 +633,13 @@ BEGIN
       SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
       __SCHEMA__.normalize_event_type(bv.message_type),
       -- Extract just the Payload from the envelope for event_data
-      -- Handle both PascalCase (default) and camelCase (when app uses PropertyNamingPolicy.CamelCase)
-      COALESCE(bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload') as event_data,
+      -- Handle short names (p), PascalCase (Payload), and camelCase (payload)
+      COALESCE(bv.event_data::jsonb -> 'p', bv.event_data::jsonb -> 'Payload', bv.event_data::jsonb -> 'payload') as event_data,
       -- Build EnvelopeMetadata structure (PascalCase keys for System.Text.Json compatibility)
-      -- Handle both PascalCase and camelCase input from serialization
+      -- Handle short names (id, h), PascalCase, and camelCase input from serialization
       jsonb_build_object(
-        'MessageId', COALESCE(bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
-        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
+        'MessageId', COALESCE(bv.event_data::jsonb -> 'id', bv.event_data::jsonb -> 'MessageId', bv.event_data::jsonb -> 'messageId'),
+        'Hops', COALESCE(bv.event_data::jsonb -> 'h', bv.event_data::jsonb -> 'Hops', bv.event_data::jsonb -> 'hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
       bv.base_version + bv.row_num as version,

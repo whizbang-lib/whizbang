@@ -300,7 +300,8 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Extract trace context from envelope hops FIRST to parent all lifecycle spans
         // This ensures all outbox processing appears as children of the original request trace
-        var latestHop = work.Envelope.Hops.LastOrDefault();
+        // Defensive: Handle null Hops gracefully (shouldn't happen but be safe)
+        var latestHop = work.Envelope.Hops?.LastOrDefault();
         ActivityContext traceContext = default;
         var traceParentValue = latestHop?.TraceParent;
         var parseSucceeded = false;
@@ -373,7 +374,7 @@ public partial class WorkCoordinatorPublisherWorker(
           activity?.SetTag("whizbang.message.destination", work.Destination ?? "local");
           activity?.SetTag("whizbang.message.attempts", work.Attempts);
           activity?.SetTag("whizbang.trace.context_restored", traceContext != default);
-          activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops.Count);
+          activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops?.Count ?? 0);
           activity?.SetTag("whizbang.trace.traceparent_raw", traceParentValue ?? "(null)");
           activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
 

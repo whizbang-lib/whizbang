@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -43,7 +44,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var messageIdJson = JsonSerializer.Serialize(source.MessageId.Value.ToString(), stringTypeInfo);
     var correlationIdJson = JsonSerializer.Serialize(correlationId?.Value.ToString() ?? string.Empty, stringTypeInfo);
     var causationIdJson = JsonSerializer.Serialize(causationId?.Value.ToString() ?? string.Empty, stringTypeInfo);
-    var hopsJson = JsonSerializer.Serialize(source.Hops.ToList(), hopsTypeInfo);
+    var hopsJson = JsonSerializer.Serialize(source.Hops?.ToList() ?? [], hopsTypeInfo);
 
     var metadataDict = new Dictionary<string, JsonElement> {
       ["message_id"] = JsonDocument.Parse(messageIdJson).RootElement.Clone(),
@@ -55,16 +56,16 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
 
-    // 3. Scope: Extract from first hop's SecurityContext if available (AOT-compatible with JsonElement)
+    // 3. Scope: Extract from envelope's current scope (walks hops and merges deltas)
     string? scopeJson = null;
-    var firstHop = source.Hops.FirstOrDefault();
-    if (firstHop?.SecurityContext != null) {
+    var currentScope = source.GetCurrentScope();
+    if (currentScope?.Scope != null) {
       var scopeDict = new Dictionary<string, JsonElement?> {
-        ["tenant_id"] = !string.IsNullOrEmpty(firstHop.SecurityContext.TenantId)
-          ? JsonDocument.Parse(JsonSerializer.Serialize(firstHop.SecurityContext.TenantId, stringTypeInfo)).RootElement.Clone()
+        ["tenant_id"] = !string.IsNullOrEmpty(currentScope.Scope.TenantId)
+          ? JsonDocument.Parse(JsonSerializer.Serialize(currentScope.Scope.TenantId, stringTypeInfo)).RootElement.Clone()
           : (JsonElement?)null,
-        ["user_id"] = !string.IsNullOrEmpty(firstHop.SecurityContext.UserId)
-          ? JsonDocument.Parse(JsonSerializer.Serialize(firstHop.SecurityContext.UserId, stringTypeInfo)).RootElement.Clone()
+        ["user_id"] = !string.IsNullOrEmpty(currentScope.Scope.UserId)
+          ? JsonDocument.Parse(JsonSerializer.Serialize(currentScope.Scope.UserId, stringTypeInfo)).RootElement.Clone()
           : (JsonElement?)null
       };
       var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
@@ -115,7 +116,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       hops = [];
     }
 
-    // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
+    // Restore ScopeDelta from Scope column if present (snake_case keys: tenant_id, user_id)
     if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
       var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
                               ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
@@ -132,9 +133,9 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
         }
 
         if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-          // Update first hop with SecurityContext
+          // Update first hop with ScopeDelta
           var firstHop = hops[0];
-          hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+          hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
         }
       }
     }

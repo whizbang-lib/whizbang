@@ -202,13 +202,13 @@ public class TransportManager(
     TMessage message,
     IMessageContext context
   ) {
-    // Extract security context from IMessageContext (UserId/TenantId)
-    SecurityContext? securityContext = null;
+    // Extract scope from IMessageContext (UserId/TenantId)
+    ScopeDelta? scopeDelta = null;
     if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
-      securityContext = new SecurityContext {
+      scopeDelta = ScopeDelta.FromSecurityContext(new SecurityContext {
         UserId = context.UserId,
         TenantId = context.TenantId
-      };
+      });
     }
 
     return new MessageEnvelope<TMessage> {
@@ -221,7 +221,7 @@ public class TransportManager(
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = context.CorrelationId,
           CausationId = context.CausationId,
-          SecurityContext = securityContext,
+          Scope = scopeDelta,
           TraceParent = System.Diagnostics.Activity.Current?.Id
         }
       ]

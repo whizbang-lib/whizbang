@@ -55,9 +55,17 @@ public sealed class CascadeContextFactory {
     var correlationId = envelope.GetCorrelationId() ?? CorrelationId.New();
     var causationId = envelope.MessageId;
 
-    // Prefer ambient security, fall back to envelope's security
-    var securityContext = CascadeContext.GetSecurityFromAmbient()
-      ?? envelope.GetCurrentSecurityContext();
+    // Prefer ambient security, fall back to envelope's scope
+    var securityContext = CascadeContext.GetSecurityFromAmbient();
+    if (securityContext == null) {
+      var scopeContext = envelope.GetCurrentScope();
+      if (scopeContext?.Scope != null) {
+        securityContext = new SecurityContext {
+          TenantId = scopeContext.Scope.TenantId,
+          UserId = scopeContext.Scope.UserId
+        };
+      }
+    }
 
     var context = new CascadeContext {
       CorrelationId = correlationId,

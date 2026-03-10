@@ -5,6 +5,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Schema;
@@ -2520,11 +2521,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     """;
 
     // Create envelope with metadata indicating this is an event with stream_id
+    // Use short property names: id, p, h (as defined by [JsonPropertyName] attributes)
     var envelope = $$"""
     {
-      "MessageId": "{{messageId}}",
-      "Payload": {{eventPayload}},
-      "Hops": []
+      "id": "{{messageId}}",
+      "p": {{eventPayload}},
+      "h": []
     }
     """;
 
@@ -2622,5 +2624,149 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     } finally {
       await connection.CloseAsync();
     }
+  }
+
+  // ===== SCOPEDELTA ROUND-TRIP TESTS =====
+
+  /// <summary>
+  /// **Given**: Outbox message with ScopeDelta in MessageHop (AsSystem() scenario)
+  /// **When**: Message stored in PostgreSQL JSONB and retrieved via ProcessWorkBatchAsync
+  /// **Then**: ScopeDelta.Values[ScopeProp.Scope] is preserved with correct enum dictionary keys
+  ///
+  /// **VERIFIED**: This test confirms that Dictionary&lt;ScopeProp, JsonElement&gt; correctly
+  /// round-trips through PostgreSQL JSONB. The enum keys are preserved and
+  /// MessageHopSecurityExtractor.ExtractFromHopScope() can successfully extract the scope.
+  /// </summary>
+  /// <docs>messaging/scope-propagation#scopedelta-serialization</docs>
+  [Test]
+  [Category("Integration")]
+  public async Task ProcessWorkBatchAsync_ScopeDeltaInHop_PostgresRoundTrip_PreservesEnumKeysAsync() {
+    // Arrange - Create instance
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // Create ScopeDelta like AsSystem() does - with Dictionary<ScopeProp, JsonElement>
+    var scopeDelta = new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Scope] = JsonSerializer.SerializeToElement(new {
+          t = "tenant-123",
+          u = "SYSTEM"
+        })
+      }
+    };
+
+    // Create MessageHop with ScopeDelta
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        HostName = "test-host",
+        ProcessId = 12345,
+        InstanceId = _instanceId
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = scopeDelta  // The key part - ScopeDelta with enum dictionary keys
+    };
+
+    // Create OutboxMessageData with hop containing ScopeDelta
+    var outboxMessageData = new OutboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = [hop]  // Hop with ScopeDelta
+    };
+
+    // Insert directly via DbContext to test PostgreSQL JSONB storage
+    await using (var dbContext = CreateDbContext()) {
+      var partitionNumber = await ComputePartitionAsync(streamId);
+
+      dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
+        MessageId = messageId,
+        Destination = "test-topic",
+        MessageType = typeof(TestMessageEnvelope).AssemblyQualifiedName!,
+        MessageData = outboxMessageData,
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] },
+        Scope = null,
+        StatusFlags = MessageProcessingStatus.Stored,
+        Attempts = 0,
+        CreatedAt = DateTimeOffset.UtcNow,
+        StreamId = streamId,
+        PartitionNumber = partitionNumber
+      });
+
+      await dbContext.SaveChangesAsync();
+    }
+
+    // Act - Retrieve via ProcessWorkBatchAsync (simulates real outbox processing)
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Work should be claimed
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
+      .Because("The outbox message should be claimed");
+
+    var work = result.OutboxWork.First();
+
+    // Assert - Envelope.Hops should have ScopeDelta
+    await Assert.That(work.Envelope.Hops).Count().IsEqualTo(1)
+      .Because("The hop with ScopeDelta should be preserved");
+
+    var retrievedHop = work.Envelope.Hops.First();
+    await Assert.That(retrievedHop.Scope).IsNotNull()
+      .Because("The ScopeDelta should be preserved after PostgreSQL round-trip");
+
+    await Assert.That(retrievedHop.Scope!.Values).IsNotNull()
+      .Because("ScopeDelta.Values should not be null");
+
+    // THE CRITICAL ASSERTION - This is where the bug manifests
+    // The enum key ScopeProp.Scope (value 0) should be preserved
+    await Assert.That(retrievedHop.Scope.Values!.ContainsKey(ScopeProp.Scope)).IsTrue()
+      .Because("ScopeDelta.Values should have ScopeProp.Scope key after PostgreSQL JSONB round-trip. " +
+               "If this fails, the Dictionary<ScopeProp, JsonElement> is not correctly serializing/deserializing enum keys.");
+
+    // Verify the scope data itself
+    var scopeValue = retrievedHop.Scope.Values[ScopeProp.Scope];
+    await Assert.That(scopeValue.TryGetProperty("t", out var tenantProp)).IsTrue()
+      .Because("Scope should have 't' property (TenantId)");
+    await Assert.That(tenantProp.GetString()).IsEqualTo("tenant-123")
+      .Because("TenantId should match");
+    await Assert.That(scopeValue.TryGetProperty("u", out var userProp)).IsTrue()
+      .Because("Scope should have 'u' property (UserId)");
+    await Assert.That(userProp.GetString()).IsEqualTo("SYSTEM")
+      .Because("UserId should match");
+  }
+
+  /// <summary>
+  /// Helper to compute partition number from stream ID.
+  /// </summary>
+  private async Task<int> ComputePartitionAsync(Guid streamId) {
+    await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+    await using var command = new Npgsql.NpgsqlCommand(
+      "SELECT compute_partition(@streamId::uuid, 10000)",
+      connection);
+    command.Parameters.AddWithValue("streamId", streamId);
+    return (int)(await command.ExecuteScalarAsync() ?? 0);
+  }
+
+  /// <summary>
+  /// Test implementation of IMessageEnvelope for testing.
+  /// </summary>
+  private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+    public required MessageId MessageId { get; init; }
+    public required JsonElement Payload { get; init; }
+    public List<MessageHop> Hops { get; init; } = [];
+    object IMessageEnvelope.Payload => Payload;
+    public void AddHop(MessageHop hop) => Hops.Add(hop);
+    public DateTimeOffset GetMessageTimestamp() => Hops.FirstOrDefault()?.Timestamp ?? DateTimeOffset.MinValue;
+    public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
+    public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
+    public JsonElement? GetMetadata(string key) => null;
+    public ScopeContext? GetCurrentScope() => null;
+    public SecurityContext? GetCurrentSecurityContext() => null;
   }
 }

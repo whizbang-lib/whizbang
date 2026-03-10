@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -56,51 +57,53 @@ public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.
     var message = envelope.Payload;
     var messageType = message.GetType();
 
+    // Extract both trace context and scope from envelope hops
+    // CRITICAL: Must happen BEFORE routing so all receptors see ambient scope
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    // Establish scope context from envelope data (security propagation)
+    if (extracted.Scope is not null) {
+      ScopeContextAccessor.CurrentContext = extracted.Scope;
+    }
+
     // Generated compile-time routing based on [FireAt] attributes
     #region LIFECYCLE_ROUTING
     // This region will be replaced with generated lifecycle routing code
     #endregion
 
-    // Extract parent context from envelope hops for trace correlation
-    // This ensures receptor spans are parented to the original request even on background threads
-    var parentContext = _extractParentContext(envelope.Hops);
-
     // Check for runtime-registered receptors (AOT-compatible via delegates)
-    using var registryScope = _scopeFactory.CreateScope();
-    var registry = registryScope.ServiceProvider.GetService<ILifecycleReceptorRegistry>();
-    if (registry is not null) {
-      var handlers = registry.GetHandlers(messageType, stage);
-      var handlerIndex = 0;
-      foreach (var handler in handlers) {
-        // Create activity for each lifecycle receptor invocation
-        // Pass parentContext to ensure proper parenting when Activity.Current is null (background threads)
-        using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
-          $"LifecycleReceptor {messageType.Name}[{handlerIndex}]",
-          ActivityKind.Internal,
-          parentContext: parentContext);
-        receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
-        receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
-        receptorActivity?.SetTag("whizbang.receptor.index", handlerIndex);
+    // Gracefully handle ObjectDisposedException during app shutdown
+    IServiceScope? registryScope;
+    try {
+      registryScope = _scopeFactory.CreateScope();
+    } catch (ObjectDisposedException) {
+      // App is shutting down, service provider is disposed - return gracefully
+      return;
+    }
 
-        await handler(message, context, cancellationToken);
-        handlerIndex++;
+    try {
+      var registry = registryScope.ServiceProvider.GetService<ILifecycleReceptorRegistry>();
+      if (registry is not null) {
+        var handlers = registry.GetHandlers(messageType, stage);
+        var handlerIndex = 0;
+        foreach (var handler in handlers) {
+          // Create activity for each lifecycle receptor invocation
+          // Pass parentContext to ensure proper parenting when Activity.Current is null (background threads)
+          using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
+            $"LifecycleReceptor {messageType.Name}[{handlerIndex}]",
+            ActivityKind.Internal,
+            parentContext: parentContext);
+          receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
+          receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
+          receptorActivity?.SetTag("whizbang.receptor.index", handlerIndex);
+
+          await handler(message, context, cancellationToken);
+          handlerIndex++;
+        }
       }
+    } finally {
+      registryScope.Dispose();
     }
-  }
-
-  /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link receptor spans to the original HTTP request.
-  /// </summary>
-  private static ActivityContext _extractParentContext(IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
-    }
-
-    return default;
   }
 }

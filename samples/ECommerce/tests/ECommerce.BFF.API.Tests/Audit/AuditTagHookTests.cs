@@ -83,7 +83,7 @@ public class AuditTagHookTests {
       Message = new TestEvent { Name = "TenantEvent" },
       MessageType = typeof(TestEvent),
       Payload = JsonSerializer.SerializeToElement(new { Name = "TenantEvent" }),
-      Scope = scope
+      Scope = (Whizbang.Core.Security.IScopeContext)scope
     };
 
     // Act
@@ -227,7 +227,7 @@ public class AuditTagHookTests {
       Message = new TestEvent { Name = "PartialScopeEvent" },
       MessageType = typeof(TestEvent),
       Payload = JsonSerializer.SerializeToElement(new { Name = "PartialScopeEvent" }),
-      Scope = scope
+      Scope = (Whizbang.Core.Security.IScopeContext)scope
     };
 
     // Act

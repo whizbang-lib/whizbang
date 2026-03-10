@@ -8,6 +8,7 @@ using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Dapper.Custom;
@@ -187,9 +188,9 @@ public abstract class DapperEventStoreBase : IEventStore {
           }
 
           if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-            // Update first hop with SecurityContext
+            // Update first hop with ScopeDelta
             var firstHop = hops[0];
-            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+            hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
           }
         }
       }
@@ -288,9 +289,9 @@ public abstract class DapperEventStoreBase : IEventStore {
           }
 
           if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-            // Update first hop with SecurityContext
+            // Update first hop with ScopeDelta
             var firstHop = hops[0];
-            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+            hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
           }
         }
       }

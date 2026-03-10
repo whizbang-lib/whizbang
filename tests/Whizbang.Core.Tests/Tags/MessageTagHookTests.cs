@@ -5,6 +5,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -94,16 +96,22 @@ public class MessageTagHookTests {
   public async Task Hook_CanAccessScopeDataAsync() {
     // Arrange
     var hook = new ScopeAccessingHook();
-    var scope = new Dictionary<string, object?> {
-      ["TenantId"] = "tenant-123",
-      ["UserId"] = "user-456"
-    };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
     var context = new TagContext<SignalTagAttribute> {
       Attribute = new SignalTagAttribute { Tag = "test" },
       Message = new TestOrderEvent(Guid.NewGuid(), Guid.NewGuid()),
       MessageType = typeof(TestOrderEvent),
       Payload = JsonSerializer.SerializeToElement(new { }),
-      Scope = scope
+      Scope = scopeContext
     };
 
     // Act
@@ -256,8 +264,8 @@ public class MessageTagHookTests {
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
         CancellationToken _) {
-      LastReceivedTenantId = context.Scope?["TenantId"]?.ToString();
-      LastReceivedUserId = context.Scope?["UserId"]?.ToString();
+      LastReceivedTenantId = context.Scope?.Scope?.TenantId;
+      LastReceivedUserId = context.Scope?.Scope?.UserId;
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }

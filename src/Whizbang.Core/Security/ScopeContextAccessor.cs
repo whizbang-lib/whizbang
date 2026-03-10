@@ -28,20 +28,34 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
 
   /// <summary>
   /// Static accessor for the current scope context.
-  /// Reads FROM the initiating message context's ScopeContext.
+  /// Prioritizes ImmutableScopeContext with propagation (for security propagation),
+  /// then falls back to initiating context's ScopeContext, then _current.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Messages carry state in event-sourced systems. The ScopeContext is OWNED by
-  /// the IMessageContext, and this property reads FROM it.
+  /// Priority order:
+  /// 1. _current if it's an ImmutableScopeContext with ShouldPropagate=true
+  ///    (set by ReceptorInvoker after EstablishContextAsync - needed for security propagation)
+  /// 2. InitiatingContext.ScopeContext (the message context's scope)
+  /// 3. _current (backward compatibility fallback)
   /// </para>
   /// <para>
-  /// Fallback: If no InitiatingContext is set, falls back to _current for backward
-  /// compatibility during migration.
+  /// This ensures that when security infrastructure explicitly sets an ImmutableScopeContext
+  /// with propagation enabled (e.g., for cascaded events), it takes precedence over the
+  /// initiating context's scope which may not have propagation enabled.
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CascadeToOutboxIntegrationTests.cs:InitiatingContext_DoesNotShadow_ImmutableScopeContextWithPropagationAsync</tests>
   public static IScopeContext? CurrentContext {
-    get => _initiatingContext.Value?.ScopeContext ?? _current.Value;
+    get {
+      // Priority 1: _current if it's an ImmutableScopeContext with propagation enabled
+      // This is critical for security propagation to cascaded events
+      if (_current.Value is ImmutableScopeContext { ShouldPropagate: true }) {
+        return _current.Value;
+      }
+      // Priority 2: InitiatingContext's ScopeContext, then _current fallback
+      return _initiatingContext.Value?.ScopeContext ?? _current.Value;
+    }
     set => _current.Value = value;
   }
 
