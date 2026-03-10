@@ -68,8 +68,7 @@ public class CrossCommandPerspectiveSyncTests {
         mockCoordinator,
         clock,
         logger,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // === STEP 3: Simulate perspective worker processing B after a delay ===
     // This represents C.Apply(B) firing and completing
@@ -188,7 +187,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Mark event as processed for C only
     _ = Task.Run(async () => {
@@ -228,7 +227,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Act - C never processes B, so this should timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -277,7 +276,7 @@ public class CrossCommandPerspectiveSyncTests {
 
     var awaiter = new PerspectiveSyncAwaiter(
         mockCoordinator, clock, logger,
-        tracker: null, syncEventTracker: singletonTracker);
+        singletonTracker);
 
     // Act
     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -288,11 +287,11 @@ public class CrossCommandPerspectiveSyncTests {
         timeout: TimeSpan.FromMilliseconds(500));
     sw.Stop();
 
-    // Assert - should sync quickly via DB discovery returning "no pending"
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("DB returned no pending events, so sync should succeed");
+    // Assert - with empty SyncEventTracker and no tracked events, returns NoPendingEvents immediately
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
     await Assert.That(sw.ElapsedMilliseconds).IsLessThan(200)
-      .Because("Should complete quickly when DB says no pending events");
+      .Because("Should complete quickly when no events are tracked");
   }
 }
 

@@ -93,8 +93,7 @@ public class UserScenarioReproductionTests {
         mockCoordinator,
         new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
         NullLogger<PerspectiveSyncAwaiter>.Instance,
-        tracker: null,
-        syncEventTracker: singletonTracker);
+        singletonTracker);
 
       // Signal that sync is about to start waiting
       syncWaitingStarted.SetResult();
@@ -176,8 +175,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - wait with short timeout (perspective never calls MarkProcessed)
     var result = await awaiter.WaitForStreamAsync(
@@ -217,8 +215,7 @@ public class UserScenarioReproductionTests {
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: singletonTracker);
+      singletonTracker);
 
     // Act - no events tracked, should sync immediately
     var result = await awaiter.WaitForStreamAsync(
@@ -227,9 +224,9 @@ public class UserScenarioReproductionTests {
       eventTypes: [typeof(UserScenarioEventB)],
       timeout: TimeSpan.FromSeconds(5));
 
-    // Assert - should sync immediately (no pending events)
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced)
-      .Because("Sync should complete immediately when no events are pending");
+    // Assert - with empty tracker and no tracked events, returns NoPendingEvents
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
 
     // Cleanup
     SyncEventTypeRegistrations.Clear();

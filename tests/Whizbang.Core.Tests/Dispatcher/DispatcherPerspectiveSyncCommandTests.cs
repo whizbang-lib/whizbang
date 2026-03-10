@@ -160,6 +160,8 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
   /// is actually being triggered (for events) vs skipped (for commands).
   /// </summary>
   private sealed class TimeoutPerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
     public Task<SyncResult> WaitAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) {
       throw new PerspectiveSyncTimeoutException(perspectiveType, options.Timeout, "Test timeout");
     }

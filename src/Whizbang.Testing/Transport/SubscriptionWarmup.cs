@@ -1,5 +1,8 @@
+using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Transport;
 
@@ -147,9 +150,11 @@ public static class SubscriptionWarmup {
 /// A simple signal awaiter that completes when signaled once.
 /// Thread-safe and uses RunContinuationsAsynchronously to prevent deadlocks.
 /// </summary>
-public sealed class SignalAwaiter {
+public sealed class SignalAwaiter : IAwaiterIdentity {
   private readonly TaskCompletionSource<bool> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
   /// <summary>
   /// Gets whether the signal has been received.
@@ -168,13 +173,7 @@ public sealed class SignalAwaiter {
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown if not signaled within timeout.</exception>
   public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      await _tcs.Task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException($"Signal not received within {timeout}");
-    }
+    await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+        _tcs.Task, timeout, $"Signal not received within {timeout}", cancellationToken);
   }
 }
