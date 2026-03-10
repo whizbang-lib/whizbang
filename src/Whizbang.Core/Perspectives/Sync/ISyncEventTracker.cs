@@ -14,6 +14,12 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// The implementation must be thread-safe for concurrent access from multiple
 /// request scopes simultaneously.
 /// </para>
+/// <para>
+/// Wait methods accept an optional <c>awaiterId</c> parameter that keys waiter
+/// registrations. This enables precise cleanup via <see cref="UnregisterAwaiter"/>
+/// when an awaiter is cancelled — without affecting other awaiters waiting on
+/// the same events.
+/// </para>
 /// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync#event-tracking</docs>
 public interface ISyncEventTracker {
@@ -57,9 +63,14 @@ public interface ISyncEventTracker {
   /// </summary>
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if all events were processed within timeout, false otherwise.</returns>
-  Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken cancellationToken = default);
+  Task<bool> WaitForEventsAsync(
+      IReadOnlyList<Guid> eventIds,
+      TimeSpan timeout,
+      Guid? awaiterId = null,
+      CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Mark events as processed by a specific perspective.
@@ -87,6 +98,7 @@ public interface ISyncEventTracker {
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="perspectiveName">The perspective to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if the perspective processed all events within timeout, false otherwise.</returns>
   /// <remarks>
@@ -97,6 +109,7 @@ public interface ISyncEventTracker {
       IReadOnlyList<Guid> eventIds,
       string perspectiveName,
       TimeSpan timeout,
+      Guid? awaiterId = null,
       CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -105,6 +118,7 @@ public interface ISyncEventTracker {
   /// </summary>
   /// <param name="eventIds">The event IDs to wait for.</param>
   /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="awaiterId">Optional awaiter ID for per-awaiter cleanup. Auto-generated if null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>True if all perspectives processed all events within timeout, false otherwise.</returns>
   /// <remarks>
@@ -114,5 +128,13 @@ public interface ISyncEventTracker {
   Task<bool> WaitForAllPerspectivesAsync(
       IReadOnlyList<Guid> eventIds,
       TimeSpan timeout,
+      Guid? awaiterId = null,
       CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Unregisters all waiter entries for a specific awaiter, cancelling any pending TCS.
+  /// Called when an awaiter is cancelled or disposed to prevent stale TCS accumulation.
+  /// </summary>
+  /// <param name="awaiterId">The awaiter ID whose entries should be removed and cancelled.</param>
+  void UnregisterAwaiter(Guid awaiterId);
 }

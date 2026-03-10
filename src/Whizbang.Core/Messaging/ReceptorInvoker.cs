@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
@@ -41,11 +42,12 @@ namespace Whizbang.Core.Messaging;
 /// <docs>core-concepts/lifecycle-receptors</docs>
 /// <docs>observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
-public sealed class ReceptorInvoker : IReceptorInvoker {
+public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
   private readonly IServiceProvider _scopedProvider;
   private readonly IEventCascader? _eventCascader;
   private readonly IPerspectiveSyncAwaiter? _syncAwaiter;
+  private ILogger? _logger;
 
   /// <summary>
   /// Creates a new ReceptorInvoker.
@@ -158,6 +160,22 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
       }
     }
 
+    // Extract caller info from the first Current hop (captured at dispatch time)
+    // Hoisted to method scope so it's available both for MessageContext and receptor invocation
+    CallerInfo? callerInfo = null;
+    if (envelope.Hops is { Count: > 0 }) {
+      for (int i = 0; i < envelope.Hops.Count; i++) {
+        var hop = envelope.Hops[i];
+        if (hop.Type == HopType.Current && hop.CallerMemberName is not null) {
+          callerInfo = new CallerInfo(
+              hop.CallerMemberName,
+              hop.CallerFilePath ?? string.Empty,
+              hop.CallerLineNumber ?? 0);
+          break;
+        }
+      }
+    }
+
     // Set message context from envelope for injectable IMessageContext
     // This enables code to inject IMessageContext and access MessageId, CorrelationId, UserId, TenantId, etc.
     // CRITICAL: This must happen BEFORE early return to ensure InitiatingContext is always set
@@ -209,7 +227,8 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
         Timestamp = envelope.GetMessageTimestamp(),
         UserId = scopeForContext?.Scope?.UserId,
         TenantId = scopeForContext?.Scope?.TenantId,
-        ScopeContext = scopeForContext
+        ScopeContext = scopeForContext,
+        CallerInfo = callerInfo
       };
       messageContextAccessor.Current = messageContext;
 
@@ -308,9 +327,18 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
           }
         }
 
+        // Log caller info for debugging dispatch-to-receptor traceability
+        if (callerInfo is not null) {
+          _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");
+          if (_logger is not null) {
+            var callerInfoString = callerInfo.ToString();
+            Log.ReceptorInvokedFromCaller(_logger, receptor.ReceptorId, callerInfoString);
+          }
+        }
+
         // InvokeAsync is a pre-compiled delegate (no reflection)
         // Pass the scoped provider so receptor can be resolved with its dependencies
-        var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);
+        var result = await receptor.InvokeAsync(_scopedProvider, message, envelope, callerInfo, cancellationToken).ConfigureAwait(false);
 
         receptorActivity?.SetStatus(ActivityStatusCode.Ok);
         receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
@@ -343,6 +371,13 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
     }
   }
 
+  private static partial class Log {
+    [LoggerMessage(
+      EventId = 1,
+      Level = LogLevel.Debug,
+      Message = "Invoking receptor {ReceptorId} called from {CallerInfo}")]
+    public static partial void ReceptorInvokedFromCaller(ILogger logger, string receptorId, string callerInfo);
+  }
 }
 
 /// <summary>

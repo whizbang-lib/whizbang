@@ -1,5 +1,6 @@
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
@@ -384,5 +385,6 @@ public class ScopedMessageContextTests {
     public string? TenantId { get; init; }
     public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
     public IScopeContext? ScopeContext { get; init; }
+    public ICallerInfo? CallerInfo => null;
   }
 }

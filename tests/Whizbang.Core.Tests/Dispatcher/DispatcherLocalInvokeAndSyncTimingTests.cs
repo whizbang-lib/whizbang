@@ -285,6 +285,7 @@ public sealed class DispatcherLocalInvokeAndSyncTimingTests {
   private sealed class DelayingEventCompletionAwaiter(
       TimeSpan delay,
       bool respectsTimeout = false) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     public bool WaitWasCalled { get; private set; }
     public int WaitCallCount { get; private set; }
     public IReadOnlyList<Guid>? LastEventIds { get; private set; }
@@ -314,6 +315,8 @@ public sealed class DispatcherLocalInvokeAndSyncTimingTests {
   private sealed class SequenceTrackingEventCompletionAwaiter(
       SequenceTracker sequenceTracker,
       TimeSpan delay) : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
+
     public async Task<bool> WaitForEventsAsync(
         IReadOnlyList<Guid> eventIds,
         TimeSpan timeout,

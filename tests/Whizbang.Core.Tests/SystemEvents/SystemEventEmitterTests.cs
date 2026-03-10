@@ -742,6 +742,7 @@ public class SystemEventEmitterTests {
 
     public string? TenantId => throw new NotImplementedException();
     public Core.Security.IScopeContext? ScopeContext => null;
+    public ICallerInfo? CallerInfo => null;
 
     IReadOnlyDictionary<string, object> IMessageContext.Metadata => Metadata;
   }

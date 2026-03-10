@@ -123,15 +123,19 @@ public class SignalRNotificationHookTests {
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var scope = new Dictionary<string, object?> {
-      { "TenantId", "tenant-123" }
+    var scope = new Core.Security.ScopeContext {
+      Scope = new Core.Lenses.PerspectiveScope { TenantId = "tenant-123" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Core.Security.Permission>(),
+      SecurityPrincipals = new HashSet<Core.Security.SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<SignalTagAttribute> {
       Attribute = attribute,
       Message = message,
       MessageType = typeof(TestOrderEvent),
       Payload = payload,
-      Scope = (Core.Security.IScopeContext)scope
+      Scope = scope
     };
 
     // Act
