@@ -538,7 +538,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         var messageId = firstMessage.MessageId;
         var destination = firstMessage.Destination;
         var envelopeType = firstMessage.EnvelopeType;
-        var hopsCount = firstMessage.Envelope.Hops.Count;
+        var hopsCount = firstMessage.Envelope.Hops?.Count ?? 0;
         _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
           messageId, destination, envelopeType, hopsCount);
         var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;

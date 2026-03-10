@@ -3,6 +3,7 @@ using System.Text.Json;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Observability.Tests.Generated;
 
@@ -228,7 +229,7 @@ public class SerializationTests {
           PartitionIndex = 5,
           SequenceNumber = 100,
           ExecutionStrategy = "SerialExecutor",
-          SecurityContext = new SecurityContext { UserId = "user-1", TenantId = "tenant-a" },
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "user-1", TenantId = "tenant-a" }),
           Metadata = new Dictionary<string, JsonElement> {
             ["priority"] = JsonSerializer.SerializeToElement("high"),
             ["retryCount"] = JsonSerializer.SerializeToElement(0)
@@ -259,7 +260,8 @@ public class SerializationTests {
     await Assert.That(hop.ServiceInstance.ServiceName).IsEqualTo("Dispatcher");
     await Assert.That(hop.Topic).IsEqualTo("orders");
     await Assert.That(hop.PartitionIndex).IsEqualTo(5);
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-1");
+    var scope = deserialized.GetCurrentScope();
+    await Assert.That(scope?.Scope?.UserId).IsEqualTo("user-1");
     await Assert.That(hop.Trail!.Decisions).Count().IsEqualTo(1);
   }
 

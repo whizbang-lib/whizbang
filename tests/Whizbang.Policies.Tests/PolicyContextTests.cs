@@ -469,6 +469,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
   public JsonElement? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
   public SecurityContext? GetCurrentSecurityContext() => null;
+  public ScopeContext? GetCurrentScope() => null;
 
   // Explicit implementation of base interface Payload property
   object IMessageEnvelope.Payload => Payload!;

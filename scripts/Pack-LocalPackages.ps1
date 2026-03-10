@@ -25,10 +25,10 @@
     over -IncrementVersion. Useful for testing specific versions or matching CI builds.
     For example: 0.9.0-alpha.119
 
-.PARAMETER Version
-    Explicit version to use for all packages. When specified, this takes precedence
-    over -IncrementVersion. Useful for testing specific versions or matching CI builds.
-    For example: 0.9.0-alpha.119
+.PARAMETER EnableFrameworkDebugging
+    Packs a debuggable version of the packages with the WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+    compiler directive set to true. Appends '-debug' to the version suffix so debug packages
+    are distinguishable from standard packages.
 
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
@@ -45,6 +45,10 @@
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1 -Version 0.9.0-alpha.119
     Uses the specified version for all packages (no auto-increment).
+
+.EXAMPLE
+    ./scripts/Pack-LocalPackages.ps1 -EnableFrameworkDebugging
+    Packs all packages with WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING defined.
 #>
 
 param(
@@ -55,7 +59,9 @@ param(
 
     [switch]$IncrementVersion = $true,
 
-    [string]$Version
+    [string]$Version,
+
+    [switch]$EnableFrameworkDebugging
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,6 +76,15 @@ $repoRoot = Split-Path $scriptDir -Parent
 # Handle version: explicit -Version takes precedence over -IncrementVersion
 $propsFile = Join-Path $repoRoot "Directory.Build.props"
 $propsContent = Get-Content $propsFile -Raw
+
+# Strip any leftover -debug suffix from a previous debug pack before version parsing
+if ($propsContent -match '<Version>([^<]+)-debug</Version>') {
+    $debugVersion = $Matches[1] + "-debug"
+    $cleanVersion = $Matches[1]
+    $propsContent = $propsContent -replace "<Version>$([regex]::Escape($debugVersion))</Version>", "<Version>$cleanVersion</Version>"
+    Set-Content $propsFile $propsContent -NoNewline
+    Write-Host "Stripped debug suffix: $debugVersion -> $cleanVersion" -ForegroundColor Yellow
+}
 
 if ($Version) {
     # Use explicit version
@@ -129,6 +144,26 @@ elseif ($IncrementVersion) {
     }
 }
 
+# Apply debug version suffix if framework debugging is enabled
+if ($EnableFrameworkDebugging) {
+    $propsContent = Get-Content $propsFile -Raw
+    if ($propsContent -match '<Version>([^<]+)</Version>') {
+        $currentVersion = $Matches[1]
+        if ($currentVersion -notmatch '-debug$') {
+            $debugVersion = "$currentVersion-debug"
+            $propsContent = $propsContent -replace "<Version>$([regex]::Escape($currentVersion))</Version>", "<Version>$debugVersion</Version>"
+            Set-Content $propsFile $propsContent -NoNewline
+            Write-Host "Debug version: $currentVersion -> $debugVersion" -ForegroundColor Magenta
+        }
+    }
+}
+
+# Build extra pack arguments for compiler directives
+$extraPackArgs = @()
+if ($EnableFrameworkDebugging) {
+    $extraPackArgs += '/p:DefineConstants="$(DefineConstants);WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING"'
+}
+
 $localPackagesDir = Join-Path $repoRoot "local-packages"
 $srcDir = Join-Path $repoRoot "src"
 
@@ -138,6 +173,9 @@ Write-Host ""
 Write-Host "Repository: $repoRoot"
 Write-Host "Output:     $localPackagesDir"
 Write-Host "Config:     $Configuration"
+if ($EnableFrameworkDebugging) {
+    Write-Host "Directives: WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING" -ForegroundColor Magenta
+}
 Write-Host ""
 
 # Clean if requested
@@ -186,7 +224,7 @@ foreach ($project in $projects) {
     $projectName = $project.BaseName
     Write-Host "Packing $projectName..." -ForegroundColor Cyan -NoNewline
 
-    $output = dotnet pack $project.FullName -o $localPackagesDir -c $Configuration 2>&1
+    $output = dotnet pack $project.FullName -o $localPackagesDir -c $Configuration @extraPackArgs 2>&1
     $exitCode = $LASTEXITCODE
 
     # Check for success (package created)

@@ -1103,4 +1103,268 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.Length).IsEqualTo(0);
   }
+
+  // ===========================
+  // Polymorphic Envelope Fallback Tests
+  // ===========================
+  // These tests verify the transport fallback mechanism:
+  // When GetTypeInfoByName returns null for MessageEnvelope<IEvent>,
+  // transports should use GetPolymorphicEnvelopeTypeInfo<IEvent>() as fallback.
+
+  /// <summary>
+  /// Test event for polymorphic envelope fallback tests.
+  /// </summary>
+  internal sealed record PolymorphicFallbackTestEvent(string Data, Guid EventId) : IEvent;
+
+  /// <summary>
+  /// Test JsonSerializerContext for polymorphic fallback tests.
+  /// </summary>
+  [JsonSerializable(typeof(PolymorphicFallbackTestEvent))]
+  [JsonSerializable(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>))]
+  internal sealed partial class PolymorphicFallbackTestJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithInterfaceEnvelopeTypeName_ReturnsNullAsync() {
+    // Arrange - The exact type name sent by transports for interface-typed envelopes
+    // This simulates what happens when a service publishes MessageEnvelope<IEvent>
+    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - GetTypeInfoByName won't find MessageEnvelope<IEvent> because only concrete types are registered
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(interfaceEnvelopeTypeName, options);
+
+    // Assert - Should be null (this is the expected gap that requires fallback)
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetPolymorphicEnvelopeTypeInfo_ForIEvent_ReturnsValidTypeInfoAsync() {
+    // Arrange
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - This is the fallback method transports should use
+    var typeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+
+    // Assert - Should return valid type info for polymorphic deserialization
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<IEvent>));
+  }
+
+  [Test]
+  public async Task PolymorphicFallback_DeserializesConcreteEventFromInterfaceEnvelopeAsync() {
+    // Arrange - Simulate transport deserialization flow:
+    // 1. Message arrives with EnvelopeType header = "MessageEnvelope<IEvent>"
+    // 2. GetTypeInfoByName returns null
+    // 3. Transport falls back to GetPolymorphicEnvelopeTypeInfo<IEvent>()
+    // 4. Deserialization succeeds using $type discriminator
+
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Create a concrete envelope and serialize it
+    var eventId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
+    var originalEnvelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // Serialize using polymorphic envelope type info (as publisher would do)
+    var publisherTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(publisherTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(originalEnvelope, publisherTypeInfo!);
+
+    // Verify JSON contains $type discriminator
+    await Assert.That(json).Contains("\"$type\":\"PolymorphicFallbackTestEvent\"");
+
+    // Simulate transport fallback: GetTypeInfoByName returns null...
+    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core]], Whizbang.Core";
+    var directLookup = JsonContextRegistry.GetTypeInfoByName(interfaceEnvelopeTypeName, options);
+    await Assert.That(directLookup).IsNull(); // Confirms fallback is needed
+
+    // ...so use polymorphic fallback (this is what the transport fix does)
+    var fallbackTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(fallbackTypeInfo).IsNotNull();
+
+    // Act - Deserialize using fallback type info
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, fallbackTypeInfo!);
+
+    // Assert - Should successfully deserialize to concrete type
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Payload).IsTypeOf<PolymorphicFallbackTestEvent>();
+
+    var concretePayload = (PolymorphicFallbackTestEvent)deserialized.Payload;
+    await Assert.That(concretePayload.Data).IsEqualTo("test-data");
+    await Assert.That(concretePayload.EventId).IsEqualTo(eventId);
+  }
+
+  [Test]
+  public async Task PolymorphicFallback_WithHops_PreservesMessageContextAsync() {
+    // Arrange - Test that hops are preserved during polymorphic deserialization
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var messageId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var payload = new PolymorphicFallbackTestEvent("hop-test", Guid.NewGuid());
+
+    var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestPublisher",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = correlationId,
+      Topic = "test-topic"
+    };
+
+    var originalEnvelope = new MessageEnvelope<IEvent>(messageId, payload, [hop]);
+
+    // Serialize
+    var publisherTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    var json = JsonSerializer.Serialize(originalEnvelope, publisherTypeInfo!);
+
+    // Act - Deserialize using fallback
+    var fallbackTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, fallbackTypeInfo!);
+
+    // Assert - Hops should be preserved
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Hops.Count).IsEqualTo(1);
+    await Assert.That(deserialized.Hops[0].ServiceInstance.ServiceName).IsEqualTo("TestPublisher");
+    await Assert.That(deserialized.Hops[0].CorrelationId).IsEqualTo(correlationId);
+    await Assert.That(deserialized.Hops[0].Topic).IsEqualTo("test-topic");
+  }
+
+  [Test]
+  public async Task BrokenPath_SerializeWithConcreteType_DeserializeWithPolymorphic_PayloadIsNullAsync() {
+    // This test demonstrates the BROKEN PATH that existed before the fix:
+    // 1. Outbox stores envelope with EnvelopeType = "MessageEnvelope<IEvent>"
+    // 2. Publisher serializes using concrete type (NO $type discriminator)
+    // 3. Consumer tries to deserialize with polymorphic type info
+    // 4. Payload is null because there's no $type to identify the concrete type
+
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Create envelope with concrete payload
+    var eventId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
+    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // BROKEN: Serialize using CONCRETE type info (no $type discriminator)
+    var concreteTypeInfo = options.GetTypeInfo(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>));
+    await Assert.That(concreteTypeInfo).IsNotNull();
+
+    // Cast to concrete envelope type for serialization (simulates runtime behavior)
+    var concreteEnvelope = new MessageEnvelope<PolymorphicFallbackTestEvent>(messageId, payload, []);
+    var json = JsonSerializer.Serialize(concreteEnvelope, concreteTypeInfo!);
+
+    // Verify NO $type discriminator in the JSON
+    await Assert.That(json).DoesNotContain("\"$type\"");
+
+    // Try to deserialize using polymorphic type info (as consumer would do)
+    var polymorphicTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(polymorphicTypeInfo).IsNotNull();
+
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, polymorphicTypeInfo!);
+
+    // BROKEN RESULT: Envelope exists but Payload is null (no $type to identify concrete type)
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNull(); // THIS IS THE BUG!
+  }
+
+  [Test]
+  public async Task FixedPath_SerializeWithPolymorphicType_DeserializeWithPolymorphic_PayloadIsConcreteAsync() {
+    // This test demonstrates the FIXED PATH:
+    // 1. When envelopeTypeName indicates interface (IEvent), use polymorphic serialization
+    // 2. JSON includes $type discriminator
+    // 3. Consumer deserializes with polymorphic type info
+    // 4. Payload is correctly deserialized to concrete type
+
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Create envelope with concrete payload
+    var eventId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
+    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // FIXED: Serialize using POLYMORPHIC type info (includes $type discriminator)
+    var polymorphicTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    await Assert.That(polymorphicTypeInfo).IsNotNull();
+    var json = JsonSerializer.Serialize(envelope, polymorphicTypeInfo!);
+
+    // Verify $type discriminator IS in the JSON
+    await Assert.That(json).Contains("\"$type\":\"PolymorphicFallbackTestEvent\"");
+
+    // Deserialize using same polymorphic type info
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, polymorphicTypeInfo!);
+
+    // FIXED RESULT: Envelope and Payload both exist with correct concrete type
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNotNull(); // PAYLOAD IS NOT NULL!
+    await Assert.That(deserialized.Payload).IsTypeOf<PolymorphicFallbackTestEvent>();
+
+    var concretePayload = (PolymorphicFallbackTestEvent)deserialized.Payload;
+    await Assert.That(concretePayload.Data).IsEqualTo("test-data");
+    await Assert.That(concretePayload.EventId).IsEqualTo(eventId);
+  }
+
+  [Test]
+  public async Task TransportSimulation_DetectInterfaceEnvelopeTypeName_UsePolymorphicSerializationAsync() {
+    // This test simulates what the transport fix does:
+    // 1. Check if envelopeTypeName contains "IEvent" (interface indicator)
+    // 2. If yes, use GetPolymorphicEnvelopeTypeInfo for serialization
+    // 3. Result: JSON includes $type discriminator
+
+    JsonContextRegistry.RegisterDerivedType<IEvent, PolymorphicFallbackTestEvent>("PolymorphicFallbackTestEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicFallbackTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Simulate outbox storing the interface envelope type name
+    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+
+    // Create envelope with concrete payload
+    var eventId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    var payload = new PolymorphicFallbackTestEvent("transport-test", eventId);
+    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+
+    // Transport detection: check if envelopeTypeName indicates interface type
+    var isInterfaceEnvelope = envelopeTypeName.Contains("Whizbang.Core.IEvent,") ||
+                              envelopeTypeName.Contains(".IEvent,");
+    await Assert.That(isInterfaceEnvelope).IsTrue();
+
+    // Transport action: use polymorphic serialization when interface envelope detected
+    JsonTypeInfo? typeInfo = isInterfaceEnvelope
+      ? JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options)
+      : options.GetTypeInfo(envelope.GetType());
+
+    await Assert.That(typeInfo).IsNotNull();
+
+    // Serialize
+    var json = JsonSerializer.Serialize(envelope, typeInfo!);
+
+    // Verify polymorphic serialization was used (includes $type)
+    await Assert.That(json).Contains("\"$type\":\"PolymorphicFallbackTestEvent\"");
+
+    // Full round-trip: deserialize on consumer side
+    var deserializeTypeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IEvent>(options);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<IEvent>>(json, deserializeTypeInfo!);
+
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.Payload).IsNotNull();
+    await Assert.That(deserialized.Payload).IsTypeOf<PolymorphicFallbackTestEvent>();
+  }
 }

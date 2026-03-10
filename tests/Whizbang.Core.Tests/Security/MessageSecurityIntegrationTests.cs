@@ -329,7 +329,7 @@ public class MessageSecurityIntegrationTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = null
+      Scope = null
     };
 
     return new MessageEnvelope<T> {
@@ -344,7 +344,7 @@ public class MessageSecurityIntegrationTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = securityContext
+      Scope = ScopeDelta.FromSecurityContext(securityContext)
     };
 
     return new MessageEnvelope<TestMessage> {
@@ -359,7 +359,7 @@ public class MessageSecurityIntegrationTests {
       Type = HopType.Current,
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
-      SecurityContext = null
+      Scope = null
     };
 
     return new MessageEnvelope<TestMessage> {

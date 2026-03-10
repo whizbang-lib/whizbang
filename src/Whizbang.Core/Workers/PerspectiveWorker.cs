@@ -616,11 +616,13 @@ public partial class PerspectiveWorker(
               foreach (var envelope in processedEvents) {
                 var eventPayload = envelope.Payload;
                 var eventType = eventPayload.GetType();
+                // Extract scope from envelope hops using shared helper
+                var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
                 await tagProcessor.ProcessTagsAsync(
                   eventPayload,
                   eventType,
                   LifecycleStage.PostPerspectiveInline,
-                  scope: null,
+                  extractedScope,
                   cancellationToken
                 ).ConfigureAwait(false);
               }
@@ -798,10 +800,13 @@ public partial class PerspectiveWorker(
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
 
+    // Hoist securityContext declaration so it can be used for MessageContext below
+    IScopeContext? securityContext = null;
+
     // Establish security context from envelope (same pattern as ReceptorInvoker)
     var securityProvider = scopedProvider.GetService<IMessageSecurityContextProvider>();
     if (securityProvider is not null) {
-      var securityContext = await securityProvider
+      securityContext = await securityProvider
         .EstablishContextAsync(envelope, scopedProvider, cancellationToken)
         .ConfigureAwait(false);
 
@@ -813,18 +818,69 @@ public partial class PerspectiveWorker(
       }
     }
 
-    // Set message context with UserId and TenantId from security context
+    // Set message context with UserId and TenantId from scope context
+    // FIX: Use extractor result first, fall back to envelope.GetCurrentScope()
+    var scopeForMessageContext = securityContext ?? envelope.GetCurrentScope();
+
+    // CRITICAL FIX: When extraction fails (securityContext is null) but envelope has scope,
+    // we must:
+    // 1. Wrap the scope in ImmutableScopeContext with ShouldPropagate=true so that
+    //    CascadeContext.GetSecurityFromAmbient() can find it when lifecycle handlers append events
+    // 2. Invoke callbacks manually so UserContextManagerCallback sets TenantContext
+    if (securityContext is null && scopeForMessageContext is not null) {
+      // Convert envelope scope to ImmutableScopeContext for propagation
+      var extraction = new SecurityExtraction {
+        Scope = scopeForMessageContext.Scope,
+        Roles = scopeForMessageContext.Roles,
+        Permissions = scopeForMessageContext.Permissions,
+        SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
+        Claims = scopeForMessageContext.Claims,
+        ActualPrincipal = scopeForMessageContext.ActualPrincipal,
+        EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
+        ContextType = scopeForMessageContext.ContextType,
+        Source = "EnvelopeHop"
+      };
+      var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
+
+      // Use the immutable scope for both accessor and message context
+      scopeForMessageContext = immutableScope;
+
+      // Set IScopeContextAccessor.Current with ImmutableScopeContext (required for GetSecurityFromAmbient)
+      var accessor = scopedProvider.GetService<IScopeContextAccessor>();
+      if (accessor is not null) {
+        accessor.Current = immutableScope;
+      }
+
+      // Invoke callbacks with the immutable scope
+      var callbacks = scopedProvider.GetServices<ISecurityContextCallback>();
+      foreach (var callback in callbacks) {
+        cancellationToken.ThrowIfCancellationRequested();
+        await callback.OnContextEstablishedAsync(immutableScope, envelope, scopedProvider, cancellationToken)
+          .ConfigureAwait(false);
+      }
+    }
+
     var messageContextAccessor = scopedProvider.GetService<IMessageContextAccessor>();
     if (messageContextAccessor is not null) {
-      var securityContext = envelope.GetCurrentSecurityContext();
-      messageContextAccessor.Current = new MessageContext {
+      var messageContext = new MessageContext {
         MessageId = envelope.MessageId,
         CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
         CausationId = envelope.GetCausationId() ?? MessageId.New(),
         Timestamp = envelope.GetMessageTimestamp(),
-        UserId = securityContext?.UserId,
-        TenantId = securityContext?.TenantId
+        UserId = scopeForMessageContext?.Scope?.UserId,
+        TenantId = scopeForMessageContext?.Scope?.TenantId,
+        ScopeContext = scopeForMessageContext
       };
+      messageContextAccessor.Current = messageContext;
+
+      // CRITICAL: Set InitiatingContext on IScopeContextAccessor (same pattern as ReceptorInvoker)
+      // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
+      // Required for CascadeContext.GetSecurityFromAmbient() to find the scope when
+      // lifecycle handlers append events via SecurityContextEventStoreDecorator.
+      var scopeContextAccessor = scopedProvider.GetService<IScopeContextAccessor>();
+      if (scopeContextAccessor is not null) {
+        scopeContextAccessor.InitiatingContext = messageContext;
+      }
     }
   }
 

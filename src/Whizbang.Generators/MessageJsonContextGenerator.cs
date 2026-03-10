@@ -62,6 +62,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
   private const string PLACEHOLDER_PROPERTY_NAME = "__PROPERTY_NAME__";
+  private const string PLACEHOLDER_JSON_PROPERTY_NAME = "__JSON_PROPERTY_NAME__";
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
@@ -1310,10 +1311,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             ? "null"
             : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
+        // For regular messages, JSON name equals C# property name (no [JsonPropertyName] attribute overrides)
         var propertyCode = propertyCreationSnippet
             .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
             .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
             .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
+            .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, prop.Name)
             .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
             .Replace(PLACEHOLDER_SETTER, setter);
 
@@ -1365,31 +1368,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
       sb.AppendLine();
 
-      // Property 0: MessageId using snippet
+      // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
       var messageIdProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "0")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, PLACEHOLDER_MESSAGE_ID)
           .Replace(PLACEHOLDER_PROPERTY_NAME, PLACEHOLDER_MESSAGE_ID)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "id")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(messageIdProperty);
       sb.AppendLine();
 
-      // Property 1: Payload using snippet
+      // Property 1: Payload using snippet - JSON name is "p" per [JsonPropertyName] on MessageEnvelope
       var payloadProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "1")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, message.FullyQualifiedName)
           .Replace(PLACEHOLDER_PROPERTY_NAME, "Payload")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "p")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(payloadProperty);
       sb.AppendLine();
 
-      // Property 2: Hops using snippet
+      // Property 2: Hops using snippet - JSON name is "h" per [JsonPropertyName] on MessageEnvelope
       var hopsProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "2")
           .Replace(PLACEHOLDER_PROPERTY_TYPE, "List<MessageHop>")
           .Replace(PLACEHOLDER_PROPERTY_NAME, "Hops")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "h")
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(hopsProperty);

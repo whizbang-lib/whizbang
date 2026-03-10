@@ -1,4 +1,5 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
 
@@ -24,7 +25,7 @@ public interface IMessageTagProcessor {
   /// <param name="message">The processed message.</param>
   /// <param name="messageType">The message type.</param>
   /// <param name="stage">The lifecycle stage at which tags are being processed.</param>
-  /// <param name="scope">Optional scope data from message context (tenant, user, etc.).</param>
+  /// <param name="scope">Optional security scope context from message context (tenant, user, roles, permissions, etc.).</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>A task representing the asynchronous operation.</returns>
   /// <remarks>
@@ -43,6 +44,6 @@ public interface IMessageTagProcessor {
       object message,
       Type messageType,
       LifecycleStage stage,
-      IReadOnlyDictionary<string, object?>? scope = null,
+      IScopeContext? scope = null,
       CancellationToken ct = default);
 }

@@ -21,6 +21,7 @@ public static class MessageSecurityServiceCollectionExtensions {
   /// This method registers:
   /// - IMessageSecurityContextProvider (DefaultMessageSecurityContextProvider)
   /// - IScopeContextAccessor (scoped)
+  /// - IScopeContext (scoped factory) - directly injectable, reads from accessor
   /// - IMessageContextAccessor (scoped) - provides access to current message context
   /// - IMessageContext (scoped) - injectable message context with UserId from security context
   /// - MessageHopSecurityExtractor (default extractor, priority 100)
@@ -58,6 +59,16 @@ public static class MessageSecurityServiceCollectionExtensions {
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+
+    // Register IScopeContext as factory that reads from accessor (enables direct DI injection)
+    services.TryAddScoped<IScopeContext>(sp => {
+      var accessor = sp.GetRequiredService<IScopeContextAccessor>();
+      return accessor.Current
+        ?? throw new InvalidOperationException(
+          "IScopeContext is not available. This service can only be injected within a message " +
+          "processing context (receptors, handlers, workers). For services that may run outside " +
+          "message context, inject IScopeContextAccessor instead and check .Current for null.");
+    });
 
     // Register scoped IMessageContextAccessor for accessing current message context
     services.TryAddScoped<IMessageContextAccessor, MessageContextAccessor>();

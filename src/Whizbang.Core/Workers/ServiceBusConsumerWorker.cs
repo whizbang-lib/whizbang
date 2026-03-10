@@ -146,7 +146,7 @@ public partial class ServiceBusConsumerWorker(
       );
       inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
       inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
+      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
     }
 
     try {
@@ -467,7 +467,7 @@ public partial class ServiceBusConsumerWorker(
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops.FirstOrDefault();
+    var firstHop = envelope.Hops?.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();

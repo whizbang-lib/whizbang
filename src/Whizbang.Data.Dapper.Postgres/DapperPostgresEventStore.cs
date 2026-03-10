@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 
@@ -339,9 +340,9 @@ public class DapperPostgresEventStore(
           }
 
           if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-            // Update first hop with SecurityContext
+            // Update first hop with ScopeDelta
             var firstHop = hops[0];
-            hops[0] = firstHop with { SecurityContext = new SecurityContext { TenantId = tenantId, UserId = userId } };
+            hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
           }
         }
       }

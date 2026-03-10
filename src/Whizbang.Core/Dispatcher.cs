@@ -85,7 +85,8 @@ public abstract partial class Dispatcher(
   IScopedEventTracker? scopedEventTracker = null,
   ISyncEventTracker? syncEventTracker = null,
   ITrackedEventTypeRegistry? trackedEventTypeRegistry = null,
-  IOptionsMonitor<TracingOptions>? tracingOptions = null
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
+  CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -127,6 +128,8 @@ public abstract partial class Dispatcher(
   private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
+  // Cascade context factory for unified context propagation
+  private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? serviceProvider.GetService<CascadeContextFactory>() ?? new CascadeContextFactory(null);
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
   private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = serviceProvider.GetService<IEventCompletionAwaiter>();
   // Security context accessor is resolved lazily from scope - it's a scoped service
@@ -137,11 +140,40 @@ public abstract partial class Dispatcher(
   private readonly IReceptorInvoker? __ = receptorInvoker;
 
   // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
+  // Uses try-catch to handle ObjectDisposedException during shutdown gracefully
   private ILogger? _cascadeLogger;
   private ILogger? _securityLogger;
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
-  private ILogger CascadeLogger => _cascadeLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-  private ILogger SecurityLogger => _securityLogger ??= _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Security") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+  private ILogger CascadeLogger {
+    get {
+      if (_cascadeLogger is not null) {
+        return _cascadeLogger;
+      }
+      try {
+        _cascadeLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Cascade")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during shutdown - use null logger
+        _cascadeLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      }
+      return _cascadeLogger;
+    }
+  }
+  private ILogger SecurityLogger {
+    get {
+      if (_securityLogger is not null) {
+        return _securityLogger;
+      }
+      try {
+        _securityLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Security")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during shutdown - use null logger
+        _securityLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      }
+      return _securityLogger;
+    }
+  }
 #pragma warning restore IDE1006
 
   /// <summary>
@@ -150,35 +182,6 @@ public abstract partial class Dispatcher(
   private static HashSet<string> _resolveOwnedDomains(IServiceProvider sp) {
     var routingOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>()?.Value;
     return routingOptions?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
-  }
-
-  /// <summary>
-  /// Extracts security context from the ambient scope if propagation is enabled.
-  /// Returns null if no context is available or propagation is disabled.
-  /// </summary>
-  /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherSecurityPropagationTests.cs</tests>
-  private SecurityContext? _getSecurityContextForPropagation() {
-    // Use static accessor - IScopeContextAccessor is scoped but AsyncLocal is static
-    if (ScopeContextAccessor.CurrentContext is not ImmutableScopeContext ctx) {
-      return null;
-    }
-
-    if (!ctx.ShouldPropagate) {
-      return null;
-    }
-
-    var userId = ctx.Scope.UserId;
-
-    // Warn if propagating an empty GUID as UserId - this indicates the source didn't have proper user context
-    if (!string.IsNullOrEmpty(userId) && Guid.TryParse(userId, out var parsedUserId) && parsedUserId == Guid.Empty) {
-      Log.EmptyGuidUserIdPropagated(SecurityLogger, ctx.Scope.TenantId);
-    }
-
-    return new SecurityContext {
-      UserId = userId,
-      TenantId = ctx.Scope.TenantId
-    };
   }
 
   /// <summary>
@@ -350,13 +353,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _sendAsyncInternalAsync<TMessage>(message, context);
   }
 
   /// <summary>
   /// Sends a message and returns a delivery receipt (not the business result).
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// For AOT compatibility, use the generic overload SendAsync&lt;TMessage&gt;.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
@@ -364,7 +368,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public Task<IDeliveryReceipt> SendAsync(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return SendAsync(message, context);
   }
 
@@ -522,12 +527,14 @@ public abstract partial class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _sendAsyncInternalWithOptionsAsync<TMessage>(message, context, options);
   }
 
   /// <summary>
   /// Sends a message with dispatch options.
+  /// Uses CascadeContextFactory for proper security propagation.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -535,7 +542,8 @@ public abstract partial class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return SendAsync(message, context, options);
   }
 
@@ -882,13 +890,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync<TResult>((object)message, context);
   }
 
   /// <summary>
   /// Invokes a receptor in-process and returns the typed business result.
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// PERFORMANCE: Zero allocation when trace store is null, target &lt; 20ns per invocation.
   /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage, TResult&gt;.
   /// </summary>
@@ -897,7 +906,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync<TResult>(message, context);
   }
 
@@ -1499,13 +1509,14 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync((object)message, context);
   }
 
   /// <summary>
   /// Invokes a void receptor in-process without returning a business result.
-  /// Creates a new message context automatically.
+  /// Creates a new message context automatically using CascadeContextFactory for proper security propagation.
   /// PERFORMANCE: Zero allocation target for command/event patterns.
   /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage&gt;.
   /// </summary>
@@ -1514,7 +1525,8 @@ public abstract partial class Dispatcher(
   [StackTraceHidden]
 #endif
   public ValueTask LocalInvokeAsync(object message) {
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return LocalInvokeAsync(message, context);
   }
 
@@ -1843,12 +1855,14 @@ public abstract partial class Dispatcher(
 #endif
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _localInvokeWithOptionsAsync<TResult>(message, context, options);
   }
 
   /// <summary>
   /// Invokes a void receptor in-process with dispatch options.
+  /// Uses CascadeContextFactory for proper security propagation.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -1856,7 +1870,8 @@ public abstract partial class Dispatcher(
 #endif
   public ValueTask LocalInvokeAsync(object message, DispatchOptions options) {
     options.CancellationToken.ThrowIfCancellationRequested();
-    var context = MessageContext.New();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
     return _localInvokeVoidWithOptionsAsync(message, context, options);
   }
 
@@ -2064,6 +2079,24 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Gets ScopeDelta for hop propagation.
+  /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
+  /// This ensures context flows correctly even when AsyncLocal scope has ended.
+  /// </summary>
+  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) {
+    // Priority 1: IMessageContext (set via CascadeContextFactory or explicit)
+    if (!string.IsNullOrEmpty(context.UserId) || !string.IsNullOrEmpty(context.TenantId)) {
+      return ScopeDelta.FromSecurityContext(new SecurityContext {
+        UserId = context.UserId,
+        TenantId = context.TenantId
+      });
+    }
+
+    // Priority 2: Ambient AsyncLocal scope
+    return ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+  }
+
+  /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// Generic version - preserves type information at compile time.
   /// </summary>
@@ -2093,7 +2126,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation(),
+      Scope = _getScopeDeltaForHop(context),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
@@ -2138,7 +2171,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      SecurityContext = _getSecurityContextForPropagation(),
+      Scope = _getScopeDeltaForHop(context),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
@@ -2368,9 +2401,9 @@ public abstract partial class Dispatcher(
     }
 
     Console.WriteLine("[DISPATCHER] Calling ProcessTagsAsync at AfterReceptorCompletion...");
-    // Pass scope as null for now - scope extraction can be enhanced in future phases
-    // The processor can access ambient scope via ScopeContextAccessor if needed
-    await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope: null, ct);
+    // Use static AsyncLocal accessor - designed for singleton services like Dispatcher
+    var scope = ScopeContextAccessor.CurrentContext;
+    await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
     Console.WriteLine("[DISPATCHER] ProcessTagsAsync completed");
   }
 
@@ -2685,7 +2718,24 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
 
     // Create scope to resolve scoped IWorkCoordinatorStrategy
-    var scope = _scopeFactory.CreateScope();
+    // Guard against ObjectDisposedException during application shutdown or hot reload
+    IServiceScope scope;
+    try {
+      scope = _scopeFactory.CreateScope();
+    } catch (ObjectDisposedException) {
+      // Service provider is disposed - application is shutting down
+      // Dropping events during shutdown is acceptable behavior
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        var eventTypeName = eventType.Name;
+        CascadeLogger.LogWarning(
+          "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
+          eventTypeName, messageId);
+      }
+#pragma warning restore CA1848
+      return;
+    }
+
     try {
       var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -2743,10 +2793,12 @@ public abstract partial class Dispatcher(
 
       // Add hop indicating message is being stored to outbox
       // When destination is null (event-store-only), use "(event-store)" as topic indicator
-      // SecurityContext: First try ambient context, then inherit from source envelope
-      var propagatedSecurityContext = _getSecurityContextForPropagation();
-      var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
-      var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
+      // Scope: First try ambient context, then inherit from source envelope
+      var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+      var sourceScope = sourceEnvelope?.GetCurrentScope() is { } s
+        ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = s.Scope?.TenantId, UserId = s.Scope?.UserId })
+        : null;
+      var finalScope = propagatedScope ?? sourceScope;
 
       var hop = new MessageHop {
         Type = HopType.Current,
@@ -2754,7 +2806,7 @@ public abstract partial class Dispatcher(
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = finalSecurityContext,
+        Scope = finalScope,
         TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       envelope.AddHop(hop);
@@ -2857,13 +2909,17 @@ public abstract partial class Dispatcher(
       var hopMetadata = _createHopMetadata(eventData, eventType);
 
       // Add hop indicating message is being stored to outbox
+      var propagatedScope2 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+      var sourceScope2 = sourceEnvelope?.GetCurrentScope() is { } sc
+        ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
+        : null;
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
         Topic = destination ?? "(event-store)",
         Timestamp = DateTimeOffset.UtcNow,
         Metadata = hopMetadata,
-        SecurityContext = _getSecurityContextForPropagation() ?? sourceEnvelope?.GetCurrentSecurityContext(),
+        Scope = propagatedScope2 ?? sourceScope2,
         TraceParent = System.Diagnostics.Activity.Current?.Id
       };
       jsonEnvelope.AddHop(hop);
@@ -2880,7 +2936,7 @@ public abstract partial class Dispatcher(
         Envelope = jsonEnvelope,
         Metadata = new EnvelopeMetadata {
           MessageId = jsonEnvelope.MessageId,
-          Hops = jsonEnvelope.Hops.ToList()
+          Hops = jsonEnvelope.Hops?.ToList() ?? []
         },
         EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
         StreamId = streamId,
@@ -3534,13 +3590,15 @@ public abstract partial class Dispatcher(
         localMessages.Add(message);
       } else {
         // No local receptor - route to outbox
-        outboxMessages.Add((message, messageType, MessageContext.New()));
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
     }
 
     // Process local messages individually (fast path)
     foreach (var message in localMessages) {
-      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.New());
+      var cascade = _cascadeContextFactory.NewRoot();
+      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
       receipts.Add(receipt);
     }
 
@@ -3581,7 +3639,8 @@ public abstract partial class Dispatcher(
         localMessages.Add((message, messageType));
       } else {
         // No local receptor - route to outbox
-        outboxMessages.Add((message, messageType, MessageContext.New()));
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
     }
 
@@ -3651,9 +3710,11 @@ public abstract partial class Dispatcher(
     var hopMetadata = _createHopMetadata(eventData!, eventType);
 
     // 4. Add hop indicating message is being deferred
-    var propagatedSecurityContext = _getSecurityContextForPropagation();
-    var sourceSecurityContext = sourceEnvelope?.GetCurrentSecurityContext();
-    var finalSecurityContext = propagatedSecurityContext ?? sourceSecurityContext;
+    var propagatedScope3 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+    var sourceScope3 = sourceEnvelope?.GetCurrentScope() is { } sc3
+      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc3.Scope?.TenantId, UserId = sc3.Scope?.UserId })
+      : null;
+    var finalScope3 = propagatedScope3 ?? sourceScope3;
 
     var hop = new MessageHop {
       Type = HopType.Current,
@@ -3661,7 +3722,7 @@ public abstract partial class Dispatcher(
       Topic = destination ?? "(event-store)",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
-      SecurityContext = finalSecurityContext,
+      Scope = finalScope3,
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
     envelope.AddHop(hop);
@@ -3729,7 +3790,7 @@ public abstract partial class Dispatcher(
       Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
-        Hops = envelope.Hops.ToList()
+        Hops = envelope.Hops?.ToList() ?? []
       },
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
@@ -3762,7 +3823,8 @@ public abstract partial class Dispatcher(
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Check first hop for stream ID (stored as "AggregateId" for backward compatibility)
-    var firstHop = envelope.Hops.FirstOrDefault();
+    // Defensive: Handle null Hops gracefully
+    var firstHop = envelope.Hops?.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();

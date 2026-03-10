@@ -8,7 +8,7 @@ namespace Whizbang.Core.Security;
 /// </summary>
 /// <remarks>
 /// Implement this interface to extract security information from different sources:
-/// - MessageHop.SecurityContext (propagated from previous hop)
+/// - MessageHop.Scope (propagated from previous hop via ScopeDelta)
 /// - Message payload (e.g., embedded JWT token)
 /// - Transport metadata (Service Bus properties, Kafka headers)
 ///

@@ -47,23 +47,34 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
         $"The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
     }
 
-    // CRITICAL: Capture envelope type BEFORE serialization
-    // If we serialize first and then call envelope.GetType(), we get MessageEnvelope<JsonElement>
-    var envelopeType = envelope.GetType();
-    var envelopeTypeName = envelopeType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Envelope type {envelopeType.Name} must have an assembly-qualified name");
+    // CRITICAL: Construct envelope type from PAYLOAD runtime type, not TMessage
+    // When TMessage is an interface (e.g., IEvent from List<IEvent>), envelope.GetType() returns
+    // MessageEnvelope<IEvent> instead of MessageEnvelope<ConcreteEvent>. The receiving service
+    // won't have JsonTypeInfo for MessageEnvelope<IEvent>, only for concrete types.
+    // FIX: Always use the payload's runtime type to construct the envelope type name.
+    var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core";
 
     var messageTypeName = payloadType.AssemblyQualifiedName
       ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
 
-    // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
-    // This allows AOT-compatible storage without runtime type resolution
-    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
-    var envelopeJson = JsonSerializer.Serialize((object)envelope, objectTypeInfo);
+    // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
+    // Get type info to serialize the payload to JsonElement
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType);
+    if (payloadTypeInfo == null) {
+      throw new InvalidOperationException(
+        $"No JSON type info found for payload type '{payloadType.FullName}'. " +
+        $"Ensure the type is registered in a JsonSerializerContext. MessageId: {envelope.MessageId}");
+    }
 
-    var jsonEnvelopeTypeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
+    // Serialize the payload to JsonElement
+    var payloadJson = JsonSerializer.SerializeToElement(payload, payloadTypeInfo);
+
+    // Create the JsonElement envelope with proper property structure
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = envelope.MessageId,
+      Payload = payloadJson,
+      Hops = envelope.Hops?.ToList() ?? []
+    };
 
     return new SerializedEnvelope(
       JsonEnvelope: jsonEnvelope,

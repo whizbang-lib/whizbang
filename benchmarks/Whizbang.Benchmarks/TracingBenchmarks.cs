@@ -4,6 +4,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Benchmarks;
@@ -157,9 +158,9 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public SecurityContext? GetCurrentSecurityContextFromEnvelope() {
+  public ScopeContext? GetCurrentScopeFromEnvelope() {
     var envelope = _createTypedEnvelope();
-    return envelope.GetCurrentSecurityContext();
+    return envelope.GetCurrentScope();
   }
 
   [Benchmark]

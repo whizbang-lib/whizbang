@@ -125,11 +125,16 @@ public sealed partial class DispatcherSecurityBuilder {
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       return await _dispatcher.SendAsync(message);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 
@@ -150,11 +155,16 @@ public sealed partial class DispatcherSecurityBuilder {
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       return await _dispatcher.SendAsync(message, context, callerMemberName, callerFilePath, callerLineNumber);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 
@@ -172,11 +182,16 @@ public sealed partial class DispatcherSecurityBuilder {
     options.CancellationToken.ThrowIfCancellationRequested();
 
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       return await _dispatcher.SendAsync(message, options);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 
@@ -188,11 +203,17 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <returns>Delivery receipt with correlation information.</returns>
   public async Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData) {
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Also clear InitiatingContext to ensure explicit context takes precedence
+      // The getter reads InitiatingContext.ScopeContext first, so we must clear it
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       return await _dispatcher.PublishAsync(eventData);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 
@@ -205,11 +226,16 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <returns>The typed business result from the receptor.</returns>
   public async ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       return await _dispatcher.LocalInvokeAsync<TMessage, TResult>(message);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 
@@ -221,11 +247,16 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <returns>ValueTask representing the completion.</returns>
   public async ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull {
     var previousContext = ScopeContextAccessor.CurrentContext;
+    var previousInitiating = ScopeContextAccessor.CurrentInitiatingContext;
     try {
-      ScopeContextAccessor.CurrentContext = _createExplicitContext();
+      var explicitContext = _createExplicitContext();
+      ScopeContextAccessor.CurrentContext = explicitContext;
+      // CRITICAL: Clear InitiatingContext to ensure explicit context takes precedence
+      ScopeContextAccessor.CurrentInitiatingContext = null;
       await _dispatcher.LocalInvokeAsync(message);
     } finally {
       ScopeContextAccessor.CurrentContext = previousContext;
+      ScopeContextAccessor.CurrentInitiatingContext = previousInitiating;
     }
   }
 

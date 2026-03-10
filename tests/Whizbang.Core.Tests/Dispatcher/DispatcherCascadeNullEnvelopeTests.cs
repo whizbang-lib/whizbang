@@ -134,7 +134,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with RunAs to set UserId in parent scope
-    await dispatcher.RunAs("user-123").SendAsync(command);
+    await dispatcher.RunAs("user-123").ForAllTenants().SendAsync(command);
 
     // Assert - Event receptor should see UserId from parent scope
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);
@@ -154,7 +154,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with WithTenant to set TenantId in parent scope
-    await dispatcher.AsSystem().WithTenant("tenant-456").SendAsync(command);
+    await dispatcher.AsSystem().ForTenant("tenant-456").SendAsync(command);
 
     // Assert - Event receptor should see TenantId from parent scope
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);
@@ -174,7 +174,7 @@ public class DispatcherCascadeNullEnvelopeTests {
     var command = new NullEnvelopeCommand("test-data", Guid.NewGuid());
 
     // Act - Dispatch with both UserId and TenantId
-    await dispatcher.RunAs("user-999").WithTenant("tenant-789").SendAsync(command);
+    await dispatcher.RunAs("user-999").ForTenant("tenant-789").SendAsync(command);
 
     // Assert - Event receptor should see both
     await Assert.That(NullEnvelopeCascadeTracker.Count).IsEqualTo(1);

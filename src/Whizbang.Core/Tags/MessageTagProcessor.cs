@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
 
@@ -62,7 +63,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       object message,
       Type messageType,
       LifecycleStage stage,
-      IReadOnlyDictionary<string, object?>? scope = null,
+      IScopeContext? scope = null,
       CancellationToken ct = default) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (TagLogger.IsEnabled(LogLevel.Debug)) {
@@ -112,7 +113,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       object message,
       Type messageType,
       LifecycleStage stage,
-      IReadOnlyDictionary<string, object?>? scope,
+      IScopeContext? scope,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
     // Get tag registrations for this message type from the registry
@@ -137,7 +138,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       MessageTagAttribute attribute,
       JsonElement payload,
       LifecycleStage stage,
-      IReadOnlyDictionary<string, object?>? scope,
+      IScopeContext? scope,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
     // Get hooks that match this attribute type AND the specified lifecycle stage
@@ -193,7 +194,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       object message,
       Type messageType,
       JsonElement payload,
-      IReadOnlyDictionary<string, object?>? scope) {
+      IScopeContext? scope) {
     // Create the appropriate typed context based on attribute type
     if (attribute is SignalTagAttribute notificationAttr) {
       return new TagContext<SignalTagAttribute> {

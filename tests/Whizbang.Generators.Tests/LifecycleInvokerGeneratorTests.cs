@@ -648,4 +648,121 @@ public class PostHandler : IReceptor<SharedEvent> {
     await Assert.That(sharedEventCount).IsGreaterThanOrEqualTo(2)
         .Because("Both PreHandler and PostHandler should have routing for SharedEvent");
   }
+
+  // ========================================
+  // OBJECT DISPOSED EXCEPTION HANDLING TESTS
+  // These tests verify the fix for ObjectDisposedException during app shutdown
+  // when the ServiceProvider is disposed while lifecycle invocation is in progress.
+  // ========================================
+
+  /// <summary>
+  /// CRITICAL TEST: Verifies that generated code handles ObjectDisposedException gracefully.
+  /// This prevents crashes during app shutdown when ScopedWorkCoordinatorStrategy.FlushAsync
+  /// is still processing messages but the ServiceProvider has been disposed.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/LifecycleInvokerDisposalTests.cs</tests>
+  [Test]
+  [Category("Disposal")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_LifecycleInvoker_HandlesObjectDisposedException_GracefullyAsync() {
+    // Arrange - Receptor with [FireAt] attribute
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record ShutdownEvent : IEvent;
+
+[FireAt(LifecycleStage.PostDistributeInline)]
+public class ShutdownHandler : IReceptor<ShutdownEvent> {
+  public ValueTask HandleAsync(ShutdownEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate LifecycleInvoker.g.cs with ObjectDisposedException handling
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    // CRITICAL: Generated code MUST catch ObjectDisposedException from CreateScope()
+    await Assert.That(lifecycleInvoker!)
+        .Contains("catch (ObjectDisposedException)")
+        .Because("Generated code must handle ObjectDisposedException during app shutdown");
+
+    // Should have try-finally pattern for proper scope disposal
+    await Assert.That(lifecycleInvoker)
+        .Contains("finally")
+        .Because("Generated code should dispose scope in finally block");
+  }
+
+  /// <summary>
+  /// Verifies the generated code returns gracefully when ObjectDisposedException is caught.
+  /// </summary>
+  [Test]
+  [Category("Disposal")]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_LifecycleInvoker_ReturnsGracefully_WhenServiceProviderDisposedAsync() {
+    // Arrange
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Receptors;
+
+public record TestEvent : IEvent;
+
+[FireAt(LifecycleStage.PostInboxInline)]
+public class TestHandler : IReceptor<TestEvent> {
+  public ValueTask HandleAsync(TestEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var lifecycleInvoker = GeneratorTestHelper.GetGeneratedSource(result, "LifecycleInvoker.g.cs");
+    await Assert.That(lifecycleInvoker).IsNotNull();
+
+    // Generated code should return early when ObjectDisposedException is caught
+    // Pattern: catch (ObjectDisposedException) { return; }
+    var catchBlock = _extractCatchBlock(lifecycleInvoker!, "ObjectDisposedException");
+    await Assert.That(catchBlock).Contains("return")
+        .Because("Generated code should return gracefully when ServiceProvider is disposed");
+  }
+
+  /// <summary>
+  /// Helper to extract catch block content for a specific exception type.
+  /// </summary>
+  private static string _extractCatchBlock(string source, string exceptionType) {
+    var catchStart = source.IndexOf($"catch ({exceptionType})", StringComparison.Ordinal);
+    if (catchStart < 0) {
+      return string.Empty;
+    }
+
+    var blockStart = source.IndexOf('{', catchStart);
+    if (blockStart < 0) {
+      return string.Empty;
+    }
+
+    var blockEnd = source.IndexOf('}', blockStart);
+    if (blockEnd < 0) {
+      return string.Empty;
+    }
+
+    return source.Substring(blockStart, blockEnd - blockStart + 1);
+  }
 }

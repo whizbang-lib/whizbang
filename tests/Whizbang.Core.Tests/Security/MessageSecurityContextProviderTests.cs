@@ -476,6 +476,103 @@ public class MessageSecurityContextProviderTests {
     await Assert.That(auditEvents[0].Scope.TenantId).IsEqualTo("tenant-1");
   }
 
+  // === Events Without Security Context Tests ===
+
+  /// <summary>
+  /// CRITICAL: Verifies that events published without security context (e.g., from system seeding)
+  /// throw SecurityContextRequiredException when AllowAnonymous is false.
+  /// This reproduces the issue where system events like FilterSubscriptionTemplateCreatedEvent
+  /// fail during PerspectiveWorker or ReceptorInvoker processing.
+  ///
+  /// FIX: Use dispatcher.AsSystem().PublishAsync() for system-initiated events.
+  /// </summary>
+  /// <tests>DefaultMessageSecurityContextProvider.EstablishContextAsync</tests>
+  [Test]
+  public async Task EstablishContextAsync_EventWithoutSecurityContext_ThrowsSecurityContextRequiredExceptionAsync() {
+    // Arrange - Simulates an event envelope that was published without security context
+    // This happens when code calls dispatcher.PublishAsync() without AsSystem()
+    // during system seeding or background jobs
+    var options = new MessageSecurityOptions { AllowAnonymous = false };
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [],  // No extractors that can extract context from envelope
+      callbacks: [],
+      options: options
+    );
+
+    // Create envelope with NO scope in hops (simulating event published without security context)
+    var envelope = new MessageEnvelope<SystemSeedingEvent> {
+      MessageId = MessageId.New(),
+      Payload = new SystemSeedingEvent("FilterSubscriptionTemplateCreated"),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 1234
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "system-seeding",
+          Scope = null  // NO security context - this is the problem!
+        }
+      ]
+    };
+
+    // Act & Assert - Should throw because no security context and AllowAnonymous = false
+    var exception = await Assert.That(async () =>
+      await provider.EstablishContextAsync(envelope, _createServiceProvider(), CancellationToken.None)
+    ).ThrowsExactly<SecurityContextRequiredException>();
+
+    await Assert.That(exception!.Message).Contains("SystemSeedingEvent");
+  }
+
+  /// <summary>
+  /// Verifies that events published WITH security context (via AsSystem()) are processed successfully.
+  /// This demonstrates the correct pattern for system-initiated events.
+  /// </summary>
+  /// <tests>DefaultMessageSecurityContextProvider.EstablishContextAsync</tests>
+  [Test]
+  public async Task EstablishContextAsync_EventWithSystemSecurityContext_SucceedsAsync() {
+    // Arrange - Add an extractor that can read security context from envelope hops
+    var extractor = new HopSecurityContextExtractor();
+    var options = new MessageSecurityOptions { AllowAnonymous = false };
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [extractor],
+      callbacks: [],
+      options: options
+    );
+
+    // Create envelope WITH security context in hops (simulating AsSystem().PublishAsync())
+    var envelope = new MessageEnvelope<SystemSeedingEvent> {
+      MessageId = MessageId.New(),
+      Payload = new SystemSeedingEvent("FilterSubscriptionTemplateCreated"),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "localhost",
+            ProcessId = 1234
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "system-seeding",
+          // Security context IS set - this is what AsSystem() does
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
+            UserId = "SYSTEM",
+            TenantId = null  // System operations may not have tenant
+          })
+        }
+      ]
+    };
+
+    // Act - Should succeed because security context is present
+    var result = await provider.EstablishContextAsync(envelope, _createServiceProvider(), CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Scope.UserId).IsEqualTo("SYSTEM");
+  }
+
   // === Helper Methods ===
 
   private static ServiceProvider _createServiceProvider() {
@@ -564,6 +661,41 @@ public class MessageSecurityContextProviderTests {
       CancellationToken cancellationToken = default) {
       _onCallback?.Invoke(context);
       return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Test event simulating system seeding events like FilterSubscriptionTemplateCreatedEvent.
+  /// </summary>
+  private sealed record SystemSeedingEvent(string EventName) : IEvent;
+
+  /// <summary>
+  /// Test extractor that reads security context from envelope hops.
+  /// This simulates how the real system extracts security context from message hops.
+  /// </summary>
+  private sealed class HopSecurityContextExtractor : ISecurityContextExtractor {
+    public int Priority => 100;
+
+    public ValueTask<SecurityExtraction?> ExtractAsync(
+      IMessageEnvelope envelope,
+      MessageSecurityOptions options,
+      CancellationToken cancellationToken = default) {
+      // Try to extract security context from envelope hops (like the real system does)
+      var scopeContext = envelope.GetCurrentScope();
+      if (scopeContext?.Scope is null) {
+        return ValueTask.FromResult<SecurityExtraction?>(null);
+      }
+
+      var extraction = new SecurityExtraction {
+        Scope = scopeContext.Scope,
+        Roles = scopeContext.Roles ?? new HashSet<string>(),
+        Permissions = scopeContext.Permissions ?? new HashSet<Permission>(),
+        SecurityPrincipals = scopeContext.SecurityPrincipals ?? new HashSet<SecurityPrincipalId>(),
+        Claims = scopeContext.Claims ?? new Dictionary<string, string>(),
+        Source = "HopSecurityContextExtractor"
+      };
+
+      return ValueTask.FromResult<SecurityExtraction?>(extraction);
     }
   }
 }

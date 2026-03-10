@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Registry;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
 
@@ -45,7 +46,7 @@ public static class MessageTagHookDispatcherRegistry {
       object message,
       Type messageType,
       JsonElement payload,
-      IReadOnlyDictionary<string, object?>? scope) {
+      IScopeContext? scope) {
     foreach (var dispatcher in AssemblyRegistry<IMessageTagHookDispatcher>.GetOrderedContributions()) {
       var context = dispatcher.TryCreateContext(attributeType, attribute, message, messageType, payload, scope);
       if (context is not null) {

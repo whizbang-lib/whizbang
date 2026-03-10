@@ -343,7 +343,7 @@ public class DapperWorkCoordinator(
       var messageId = firstMessage.MessageId;
       var destination = firstMessage.Destination;
       var envelopeType = firstMessage.EnvelopeType;
-      var hopsCount = firstMessage.Envelope.Hops.Count;
+      var hopsCount = firstMessage.Envelope.Hops?.Count ?? 0;
       var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
 
       _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
@@ -436,7 +436,7 @@ public class DapperWorkCoordinator(
     // Log result for debugging
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       var messageId = envelope.MessageId;
-      var hopsCount = envelope.Hops.Count;
+      var hopsCount = envelope.Hops?.Count ?? 0;
       _logger.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", messageId, hopsCount);
     }
 

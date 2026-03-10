@@ -12,8 +12,8 @@ namespace Whizbang.Core.Tests.Dispatcher;
 
 /// <summary>
 /// Tests for automatic security context propagation to outgoing message hops.
-/// Verifies that the Dispatcher attaches SecurityContext from IScopeContextAccessor.Current
-/// to MessageHop.SecurityContext when ShouldPropagate is true.
+/// Verifies that the Dispatcher attaches ScopeDelta from IScopeContextAccessor.Current
+/// to MessageHop.Scope when ShouldPropagate is true.
 /// </summary>
 /// <docs>core-concepts/message-security#automatic-security-propagation</docs>
 [Category("Security")]
@@ -61,14 +61,15 @@ public class DispatcherSecurityPropagationTests {
     await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = envelope.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-123");
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("tenant-456");
+    await Assert.That(hop.Scope).IsNotNull();
+    var scopeContext = envelope.GetCurrentScope();
+    await Assert.That(scopeContext?.Scope?.UserId).IsEqualTo("user-123");
+    await Assert.That(scopeContext?.Scope?.TenantId).IsEqualTo("tenant-456");
   }
 
   /// <summary>
   /// When IScopeContextAccessor.Current contains an ImmutableScopeContext with ShouldPropagate=false,
-  /// the Dispatcher should NOT attach the SecurityContext to the outgoing message hop.
+  /// the Dispatcher should NOT attach the ScopeDelta to the outgoing message hop.
   /// </summary>
   [Test]
   public async Task Dispatcher_WithScopeContextNotPropagate_DoesNotPropagateAsync() {
@@ -100,7 +101,7 @@ public class DispatcherSecurityPropagationTests {
     // Act
     await dispatcher.SendAsync(command, context);
 
-    // Assert - SecurityContext should be null because ShouldPropagate=false
+    // Assert - Scope should be null because ShouldPropagate=false
     var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
     await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
 
@@ -108,15 +109,15 @@ public class DispatcherSecurityPropagationTests {
     await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = envelope.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNull();
+    await Assert.That(hop.Scope).IsNull();
   }
 
   /// <summary>
   /// When IScopeContextAccessor.Current is null (no security context established),
-  /// the Dispatcher should leave SecurityContext null on the outgoing message hop.
+  /// the Dispatcher should leave Scope null on the outgoing message hop.
   /// </summary>
   [Test]
-  public async Task Dispatcher_WithNoScopeContext_HopHasNullSecurityContextAsync() {
+  public async Task Dispatcher_WithNoScopeContext_HopHasNullScopeAsync() {
     // Arrange
     var scopeContextAccessor = new ScopeContextAccessor();
     var traceStore = new InMemoryTraceStore();
@@ -132,7 +133,7 @@ public class DispatcherSecurityPropagationTests {
     // Act
     await dispatcher.SendAsync(command, context);
 
-    // Assert - SecurityContext should be null because no context is set
+    // Assert - Scope should be null because no context is set
     var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
     await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
 
@@ -140,15 +141,15 @@ public class DispatcherSecurityPropagationTests {
     await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = envelope.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNull();
+    await Assert.That(hop.Scope).IsNull();
   }
 
   /// <summary>
   /// When IScopeContextAccessor is not registered in DI,
-  /// the Dispatcher should gracefully handle it and leave SecurityContext null.
+  /// the Dispatcher should gracefully handle it and leave Scope null.
   /// </summary>
   [Test]
-  public async Task Dispatcher_WithNullScopeContextAccessor_HopHasNullSecurityContextAsync() {
+  public async Task Dispatcher_WithNullScopeContextAccessor_HopHasNullScopeAsync() {
     // Arrange - Create dispatcher WITHOUT IScopeContextAccessor registered
     var traceStore = new InMemoryTraceStore();
     var correlationId = CorrelationId.New();
@@ -160,7 +161,7 @@ public class DispatcherSecurityPropagationTests {
     // Act
     await dispatcher.SendAsync(command, context);
 
-    // Assert - SecurityContext should be null because accessor is not registered
+    // Assert - Scope should be null because accessor is not registered
     var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
     await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
 
@@ -168,7 +169,7 @@ public class DispatcherSecurityPropagationTests {
     await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = envelope.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNull();
+    await Assert.That(hop.Scope).IsNull();
   }
 
   /// <summary>
@@ -267,7 +268,7 @@ public class DispatcherSecurityPropagationTests {
     // Act - Should succeed and log warning (covers the empty GUID UserId check)
     await dispatcher.SendAsync(command, context);
 
-    // Assert - SecurityContext should still be propagated with the empty GUID
+    // Assert - Scope should still be propagated with the empty GUID
     var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
     await Assert.That(envelopes).Count().IsGreaterThanOrEqualTo(1);
 
@@ -275,9 +276,10 @@ public class DispatcherSecurityPropagationTests {
     await Assert.That(envelope.Hops).Count().IsGreaterThanOrEqualTo(1);
 
     var hop = envelope.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNotNull();
-    await Assert.That(hop.SecurityContext!.UserId).IsEqualTo(Guid.Empty.ToString());
-    await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("test-tenant");
+    await Assert.That(hop.Scope).IsNotNull();
+    var scopeContext = envelope.GetCurrentScope();
+    await Assert.That(scopeContext?.Scope?.UserId).IsEqualTo(Guid.Empty.ToString());
+    await Assert.That(scopeContext?.Scope?.TenantId).IsEqualTo("test-tenant");
   }
 
   /// <summary>

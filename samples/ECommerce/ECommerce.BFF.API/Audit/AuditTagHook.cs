@@ -55,8 +55,8 @@ public sealed class AuditTagHook : IMessageTagHook<AuditEventAttribute> {
     var attribute = context.Attribute;
 
     // Extract scope values for logging
-    var tenantId = context.Scope?.TryGetValue("TenantId", out var t) == true ? t?.ToString() : null;
-    var userId = context.Scope?.TryGetValue("UserId", out var u) == true ? u?.ToString() : null;
+    var tenantId = context.Scope?.Scope?.TenantId;
+    var userId = context.Scope?.Scope?.UserId;
 
     // Log the audit event
     _logger.LogInformation(

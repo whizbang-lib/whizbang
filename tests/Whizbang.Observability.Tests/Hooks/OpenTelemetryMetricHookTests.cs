@@ -3,6 +3,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Observability.Hooks;
 
@@ -135,9 +137,12 @@ public class OpenTelemetryMetricHookTests {
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var scope = new Dictionary<string, object?> {
-      { "TenantId", "scope-tenant" },
-      { "Environment", "production" }
+    var scope = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "scope-tenant" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -337,9 +342,12 @@ public class OpenTelemetryMetricHookTests {
 
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var scope = new Dictionary<string, object?> {
-      { "TenantId", "valid-tenant" },
-      { "NullValue", null } // This should be skipped
+    var scope = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "valid-tenant" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -396,8 +404,12 @@ public class OpenTelemetryMetricHookTests {
 
     const string json = """{"Id":"00000000-0000-0000-0000-000000000001","TenantId":"payload-tenant"}""";
     var payload = JsonDocument.Parse(json).RootElement;
-    var scope = new Dictionary<string, object?> {
-      { "TenantId", "scope-tenant" } // Should NOT override payload value
+    var scope = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "scope-tenant" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
