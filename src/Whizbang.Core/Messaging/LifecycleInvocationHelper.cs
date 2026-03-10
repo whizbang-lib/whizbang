@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Messaging;
 
@@ -180,22 +181,6 @@ public static class LifecycleInvocationHelper {
   }
 
   /// <summary>
-  /// Extracts parent ActivityContext from message hops for trace correlation.
-  /// Uses the last hop's TraceParent to link lifecycle spans to the original HTTP request.
-  /// </summary>
-  private static ActivityContext _extractParentContext(IReadOnlyList<MessageHop> hops) {
-    var traceParent = hops
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      return parentContext;
-    }
-
-    return default;
-  }
-
-  /// <summary>
   /// Processes outbox messages for a given lifecycle stage.
   /// </summary>
   private static async Task _processOutboxMessagesAsync(
@@ -206,7 +191,13 @@ public static class LifecycleInvocationHelper {
       bool enableLifecycleTracing,
       CancellationToken ct) {
     foreach (var outboxMsg in messages) {
-      var parentContext = _extractParentContext(outboxMsg.Envelope.Hops);
+      var extracted = EnvelopeContextExtractor.ExtractFromHops(outboxMsg.Envelope.Hops);
+      var parentContext = extracted.TraceContext;
+
+      // Establish ambient scope context from envelope data
+      if (extracted.Scope is not null) {
+        ScopeContextAccessor.CurrentContext = extracted.Scope;
+      }
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Outbox);
@@ -228,7 +219,13 @@ public static class LifecycleInvocationHelper {
       bool enableLifecycleTracing,
       CancellationToken ct) {
     foreach (var inboxMsg in messages) {
-      var parentContext = _extractParentContext(inboxMsg.Envelope.Hops);
+      var extracted = EnvelopeContextExtractor.ExtractFromHops(inboxMsg.Envelope.Hops);
+      var parentContext = extracted.TraceContext;
+
+      // Establish ambient scope context from envelope data
+      if (extracted.Scope is not null) {
+        ScopeContextAccessor.CurrentContext = extracted.Scope;
+      }
 
       using (enableLifecycleTracing ? WhizbangActivitySource.Tracing.StartActivity($"Lifecycle {stage}", ActivityKind.Internal, parentContext: parentContext) : null) {
         var context = _createLifecycleContext(stage, MessageSource.Inbox);

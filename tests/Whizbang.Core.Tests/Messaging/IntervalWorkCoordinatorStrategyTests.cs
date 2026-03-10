@@ -857,5 +857,6 @@ public class IntervalWorkCoordinatorStrategyTests {
     }
 
     public SecurityContext? GetCurrentSecurityContext() => null;
+    public ScopeContext? GetCurrentScope() => null;
   }
 }

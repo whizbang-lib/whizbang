@@ -642,8 +642,8 @@ public class DispatcherReceptorIntegrationTests {
     await Assert.That(envelopes).Count().IsEqualTo(1);
     await Assert.That(envelopes[0].Hops).Count().IsEqualTo(1);
 
-    // Security context is null for now, but the structure supports it
+    // Scope is null for now, but the structure supports it
     // In the future, we'll populate this automatically from ambient context
-    await Assert.That(envelopes[0].Hops[0].SecurityContext).IsNull();
+    await Assert.That(envelopes[0].Hops[0].Scope).IsNull();
   }
 }

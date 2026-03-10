@@ -1671,6 +1671,57 @@ public class ReceptorInvokerTests {
   }
 
   /// <summary>
+  /// CRITICAL: Verifies that ScopeContext is set on MessageContext when envelope has scope.
+  /// This was a bug where ScopeContext was not being propagated, causing
+  /// IMessageContext.ScopeContext to return null even when envelope had scope information.
+  /// </summary>
+  /// <tests>ReceptorInvoker.InvokeAsync</tests>
+  [Test]
+  public async Task InvokeAsync_WithEnvelopeScope_SetsScopeContextOnMessageContextAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var expectedUserId = "user-scope-test";
+    var expectedTenantId = "tenant-scope-test";
+
+    // Create envelope with scope information in hops
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("scope-context-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext {
+            UserId = expectedUserId,
+            TenantId = expectedTenantId
+          })
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert - ScopeContext should NOT be null when envelope has scope information
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.ScopeContext).IsNotNull()
+      .Because("ScopeContext must be propagated from envelope hops to MessageContext");
+    await Assert.That(accessor.LastSetContext.ScopeContext!.Scope.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(accessor.LastSetContext.ScopeContext.Scope.TenantId).IsEqualTo(expectedTenantId);
+  }
+
+  /// <summary>
   /// Verifies that receptor exceptions propagate correctly.
   /// </summary>
   [Test]

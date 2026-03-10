@@ -87,7 +87,7 @@ public sealed class MessageSecurityOptions {
   /// </summary>
   /// <remarks>
   /// When enabled, the established security context is automatically
-  /// included in MessageHop.SecurityContext for outgoing messages,
+  /// included in MessageHop.Scope (via ScopeDelta) for outgoing messages,
   /// allowing downstream services to inherit the caller's identity.
   /// </remarks>
   public bool PropagateToOutgoingMessages { get; set; } = true;

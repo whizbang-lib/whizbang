@@ -5,6 +5,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -119,13 +121,18 @@ public class TagContextTests {
   }
 
   [Test]
-  public async Task TagContext_Scope_CanBeSetWithDictionaryAsync() {
+  public async Task TagContext_Scope_CanBeSetWithScopeContextAsync() {
     // Arrange
-    var scope = new Dictionary<string, object?> {
-      ["TenantId"] = "tenant-123",
-      ["UserId"] = "user-456",
-      ["UserName"] = "John Doe"
-    };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
 
     // Act
     var context = new TagContext<SignalTagAttribute> {
@@ -133,23 +140,28 @@ public class TagContextTests {
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { }),
-      Scope = scope
+      Scope = scopeContext
     };
 
     // Assert
     await Assert.That(context.Scope).IsNotNull();
-    await Assert.That(context.Scope!["TenantId"]).IsEqualTo("tenant-123");
-    await Assert.That(context.Scope!["UserId"]).IsEqualTo("user-456");
-    await Assert.That(context.Scope!["UserName"]).IsEqualTo("John Doe");
+    await Assert.That(context.Scope!.Scope?.TenantId).IsEqualTo("tenant-123");
+    await Assert.That(context.Scope!.Scope?.UserId).IsEqualTo("user-456");
   }
 
   [Test]
   public async Task TagContext_Scope_CanContainNullValuesAsync() {
-    // Arrange
-    var scope = new Dictionary<string, object?> {
-      ["TenantId"] = "tenant-123",
-      ["UserId"] = null
-    };
+    // Arrange - Only TenantId set, UserId is null
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new PerspectiveScope { TenantId = "tenant-123", UserId = null },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
 
     // Act
     var context = new TagContext<SignalTagAttribute> {
@@ -157,13 +169,13 @@ public class TagContextTests {
       Message = new TestMessage(Guid.NewGuid()),
       MessageType = typeof(TestMessage),
       Payload = JsonSerializer.SerializeToElement(new { }),
-      Scope = scope
+      Scope = scopeContext
     };
 
     // Assert
     await Assert.That(context.Scope).IsNotNull();
-    await Assert.That(context.Scope!["TenantId"]).IsEqualTo("tenant-123");
-    await Assert.That(context.Scope!["UserId"]).IsNull();
+    await Assert.That(context.Scope!.Scope?.TenantId).IsEqualTo("tenant-123");
+    await Assert.That(context.Scope!.Scope?.UserId).IsNull();
   }
 
   [Test]

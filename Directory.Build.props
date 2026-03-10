@@ -36,7 +36,7 @@
   <PropertyGroup>
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
-    <Version>0.9.3-local.204</Version>
+    <Version>0.9.3-local.256-debug</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
@@ -59,6 +59,12 @@
 
     <!-- Deterministic builds -->
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Framework Debugging Directive -->
+  <!-- Usage: dotnet build /p:WhizbangFrameworkDebugging=true -->
+  <PropertyGroup Condition="'$(WhizbangFrameworkDebugging)' == 'true'">
+    <DefineConstants>$(DefineConstants);WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING</DefineConstants>
   </PropertyGroup>
 
   <!-- Include README and logo in packages -->

@@ -245,6 +245,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("using System.Text.Json;");
     sb.AppendLine("using System.Threading;");
     sb.AppendLine("using System.Threading.Tasks;");
+    sb.AppendLine("using Whizbang.Core.Security;");
     sb.AppendLine("using Whizbang.Core.Tags;");
     sb.AppendLine("using Whizbang.Core.Attributes;");
     sb.AppendLine();
@@ -275,7 +276,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      object message,");
     sb.AppendLine("      Type messageType,");
     sb.AppendLine("      JsonElement payload,");
-    sb.AppendLine("      IReadOnlyDictionary<string, object?>? scope) {");
+    sb.AppendLine("      IScopeContext? scope) {");
     sb.AppendLine();
 
     foreach (var attrType in customAttributeTypes) {
@@ -305,10 +306,15 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     foreach (var attrType in customAttributeTypes) {
+      var id = _sanitizeIdentifier(attrType);
       sb.AppendLine($"    if (attributeType == typeof({attrType}) &&");
-      sb.AppendLine($"        hookInstance is IMessageTagHook<{attrType}> hook_{_sanitizeIdentifier(attrType)} &&");
-      sb.AppendLine($"        context is TagContext<{attrType}> ctx_{_sanitizeIdentifier(attrType)}) {{");
-      sb.AppendLine($"      return await hook_{_sanitizeIdentifier(attrType)}.OnTaggedMessageAsync(ctx_{_sanitizeIdentifier(attrType)}, ct);");
+      sb.AppendLine($"        hookInstance is IMessageTagHook<{attrType}> hook_{id} &&");
+      sb.AppendLine($"        context is TagContext<{attrType}> ctx_{id}) {{");
+      sb.AppendLine($"      // Establish ambient scope from TagContext so hooks can access ScopeContextAccessor.CurrentContext");
+      sb.AppendLine($"      if (ctx_{id}.Scope is not null) {{");
+      sb.AppendLine($"        ScopeContextAccessor.CurrentContext = ctx_{id}.Scope;");
+      sb.AppendLine($"      }}");
+      sb.AppendLine($"      return await hook_{id}.OnTaggedMessageAsync(ctx_{id}, ct);");
       sb.AppendLine($"    }}");
       sb.AppendLine();
     }

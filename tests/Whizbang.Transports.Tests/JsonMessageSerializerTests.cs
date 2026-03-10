@@ -150,10 +150,11 @@ public class JsonMessageSerializerTests {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
+    // Use short property names to match actual serialization format
     var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
-        ""MessageId"": ""invalid-guid"",
-        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
-        ""Hops"": []
+        ""id"": ""invalid-guid"",
+        ""p"": { ""Content"": ""test"", ""Value"": 1 },
+        ""h"": []
       }");
 
     // Act & Assert - AOT serialization throws FormatException for invalid GUID
@@ -166,10 +167,11 @@ public class JsonMessageSerializerTests {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
+    // Use short property names to match actual serialization format
     var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
-        ""MessageId"": null,
-        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
-        ""Hops"": []
+        ""id"": null,
+        ""p"": { ""Content"": ""test"", ""Value"": 1 },
+        ""h"": []
       }");
 
     // Act & Assert - AOT serialization throws ArgumentNullException for null MessageId
@@ -183,14 +185,15 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
+    // Use short property names to match actual serialization format
     var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""CorrelationId"": ""invalid-guid""
+        ""id"": ""{messageId.Value}"",
+        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
+        ""h"": [{{
+          ""ty"": 0,
+          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
+          ""ts"": ""2025-01-01T00:00:00Z"",
+          ""co"": ""invalid-guid""
         }}]
       }}");
 
@@ -205,14 +208,15 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
+    // Use short property names to match actual serialization format
     var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""CorrelationId"": null
+        ""id"": ""{messageId.Value}"",
+        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
+        ""h"": [{{
+          ""ty"": 0,
+          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
+          ""ts"": ""2025-01-01T00:00:00Z"",
+          ""co"": null
         }}]
       }}");
 
@@ -282,15 +286,15 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
-    // Metadata is an array instead of object
+    // Metadata is an array instead of object - use short property names
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": []
+        ""id"": ""{messageId.Value}"",
+        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
+        ""h"": [{{
+          ""ty"": 0,
+          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
+          ""ts"": ""2025-01-01T00:00:00Z"",
+          ""md"": []
         }}]
       }}";
     var jsonWithInvalidMetadata = Encoding.UTF8.GetBytes(json);
@@ -331,14 +335,15 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Array value in metadata - now supported as JsonElement
+    // Use short property names to match actual serialization format
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": [""array"", ""value""] }}
+        ""id"": ""{messageId.Value}"",
+        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
+        ""h"": [{{
+          ""ty"": 0,
+          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
+          ""ts"": ""2025-01-01T00:00:00Z"",
+          ""md"": {{ ""key"": [""array"", ""value""] }}
         }}]
       }}";
     var jsonWithArrayValue = Encoding.UTF8.GetBytes(json);
@@ -409,14 +414,15 @@ public class JsonMessageSerializerTests {
     var messageId = MessageId.New();
     // Malformed JSON with null property name (this is unlikely in practice but tests the null check)
     // We'll test the ReadValue path for null by using a valid metadata with null value
+    // Use short property names to match actual serialization format
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": null }}
+        ""id"": ""{messageId.Value}"",
+        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
+        ""h"": [{{
+          ""ty"": 0,
+          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
+          ""ts"": ""2025-01-01T00:00:00Z"",
+          ""md"": {{ ""key"": null }}
         }}]
       }}";
     var jsonWithNullMetadataValue = Encoding.UTF8.GetBytes(json);

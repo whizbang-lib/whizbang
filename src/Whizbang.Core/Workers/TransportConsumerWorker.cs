@@ -311,7 +311,7 @@ public class TransportConsumerWorker : BackgroundService {
     // Restore distributed trace context from the incoming message's TraceParent
     // This enables cross-service tracing by linking spans from sender to receiver
     Activity? inboxActivity = null;
-    var traceParent = envelope.Hops
+    var traceParent = envelope.Hops?
       .Where(h => h.Type == HopType.Current)
       .Select(h => h.TraceParent)
       .LastOrDefault(tp => tp is not null);
@@ -326,7 +326,7 @@ public class TransportConsumerWorker : BackgroundService {
       );
       inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
       inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops.Count);
+      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
     }
 
     try {
@@ -643,7 +643,8 @@ public class TransportConsumerWorker : BackgroundService {
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops.FirstOrDefault();
+    // Defensive: Handle null Hops gracefully
+    var firstHop = envelope.Hops?.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
         streamIdElem.ValueKind == JsonValueKind.String) {
       var streamIdStr = streamIdElem.GetString();

@@ -10,6 +10,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Core.Tests.Tags;
@@ -186,11 +187,20 @@ public class MessageTagProcessorTests {
     var options = new TagOptions();
     options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
-    var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-123" };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-123" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { },
-      scope
+      scopeContext
     );
 
     // Act
@@ -198,8 +208,7 @@ public class MessageTagProcessorTests {
 
     // Assert
     await Assert.That(hook.ReceivedScope is not null).IsTrue();
-    var tenantId = hook.ReceivedScope!["TenantId"];
-    await Assert.That(tenantId).IsEqualTo("tenant-123");
+    await Assert.That(hook.ReceivedScope!.Scope?.TenantId).IsEqualTo("tenant-123");
   }
 
   [Test]
@@ -236,7 +245,7 @@ public class MessageTagProcessorTests {
   private static TagContext<TAttribute> _createProcessContext<TAttribute>(
       TAttribute attribute,
       object payloadData,
-      IReadOnlyDictionary<string, object?>? scope = null)
+      IScopeContext? scope = null)
       where TAttribute : MessageTagAttribute {
     return new TagContext<TAttribute> {
       Attribute = attribute,
@@ -332,7 +341,7 @@ public class MessageTagProcessorTests {
   }
 
   private sealed class ScopeTrackingHook : IMessageTagHook<SignalTagAttribute> {
-    public IReadOnlyDictionary<string, object?>? ReceivedScope { get; private set; }
+    public IScopeContext? ReceivedScope { get; private set; }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
@@ -506,14 +515,23 @@ public class MessageTagProcessorTests {
     options.UseHook<SignalTagAttribute, ScopeTrackingHook>();
     var processor = new MessageTagProcessor(options, type => type == typeof(ScopeTrackingHook) ? hook : null);
     var message = new TaggedTestMessage("123");
-    var scope = new Dictionary<string, object?> { ["TenantId"] = "tenant-456" };
+    var scopeContext = new ImmutableScopeContext(
+      new SecurityExtraction {
+        Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-456" },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Test"
+      },
+      shouldPropagate: true);
 
     // Act
-    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion, scope);
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.AfterReceptorCompletion, scopeContext);
 
     // Assert
     await Assert.That(hook.ReceivedScope is not null).IsTrue();
-    await Assert.That(hook.ReceivedScope!["TenantId"]).IsEqualTo("tenant-456");
+    await Assert.That(hook.ReceivedScope!.Scope?.TenantId).IsEqualTo("tenant-456");
   }
 
   [Test]
@@ -1080,7 +1098,7 @@ public class MessageTagProcessorTests {
         object message,
         Type messageType,
         JsonElement payload,
-        IReadOnlyDictionary<string, object?>? scope) {
+        IScopeContext? scope) {
       TryCreateContextCallCount++;
 
       if (attributeType == typeof(CustomTestTagAttribute) && attribute is CustomTestTagAttribute customAttr) {

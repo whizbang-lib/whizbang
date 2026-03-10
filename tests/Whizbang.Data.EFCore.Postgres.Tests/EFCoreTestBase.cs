@@ -169,9 +169,10 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
   /// <summary>
   /// Creates a test message envelope for integration tests.
+  /// Uses the real MessageEnvelope type to ensure proper JSON serialization with short property names.
   /// </summary>
-  protected static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
-    return new TestMessageEnvelope {
+  protected static MessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Hops = [],
       Payload = JsonDocument.Parse("{}").RootElement  // Empty JSON object for testing
@@ -197,26 +198,4 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     };
   }
 
-  /// <summary>
-  /// Simple test message envelope for integration tests.
-  /// Uses JsonElement for AOT-compatible, type-safe serialization.
-  /// </summary>
-  protected class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
-    public required MessageId MessageId { get; init; }
-    public required List<MessageHop> Hops { get; init; }
-    public required JsonElement Payload { get; init; }
-
-    // Explicit implementation of base interface Payload property
-    object IMessageEnvelope.Payload => Payload;
-
-    public void AddHop(MessageHop hop) {
-      Hops.Add(hop);
-    }
-
-    public DateTimeOffset GetMessageTimestamp() => DateTimeOffset.UtcNow;
-    public CorrelationId? GetCorrelationId() => null;
-    public MessageId? GetCausationId() => null;
-    public JsonElement? GetMetadata(string key) => null;
-    public SecurityContext? GetCurrentSecurityContext() => null;
-  }
 }

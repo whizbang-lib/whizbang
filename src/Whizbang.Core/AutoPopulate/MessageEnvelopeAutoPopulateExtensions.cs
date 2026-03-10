@@ -117,6 +117,11 @@ public static class MessageEnvelopeAutoPopulateExtensions {
     const string prefix = AutoPopulateProcessor.METADATA_PREFIX;
     var keys = new HashSet<string>();
 
+    // Defensive: Handle null Hops gracefully
+    if (envelope.Hops == null) {
+      return keys;
+    }
+
     // Scan all current hops for auto-populate metadata
     for (int i = envelope.Hops.Count - 1; i >= 0; i--) {
       var hop = envelope.Hops[i];

@@ -368,7 +368,7 @@ public class CascadeContextFactoryTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           CorrelationId = correlationId,
-          SecurityContext = securityContext
+          Scope = securityContext != null ? ScopeDelta.FromSecurityContext(securityContext) : null
         }
       ]
     };
@@ -382,7 +382,7 @@ public class CascadeContextFactoryTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           CorrelationId = null,
-          SecurityContext = null
+          Scope = null
         }
       ]
     };

@@ -51,16 +51,17 @@ public sealed class SecurityContextEventStoreDecoratorTests {
       // Assert
       await Assert.That(capturingStore.CapturedEnvelope).IsNotNull();
       var hop = capturingStore.CapturedEnvelope!.Hops[0];
-      await Assert.That(hop.SecurityContext).IsNotNull();
-      await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-123");
-      await Assert.That(hop.SecurityContext!.TenantId).IsEqualTo("tenant-456");
+      await Assert.That(hop.Scope).IsNotNull();
+      var scopeContext = capturingStore.CapturedEnvelope.GetCurrentScope();
+      await Assert.That(scopeContext?.Scope?.UserId).IsEqualTo("user-123");
+      await Assert.That(scopeContext?.Scope?.TenantId).IsEqualTo("tenant-456");
     } finally {
       ScopeContextAccessor.CurrentContext = null;
     }
   }
 
   [Test]
-  public async Task AppendAsync_WithMessage_WithoutAmbientContext_CreatesEnvelopeWithNullSecurityContextAsync() {
+  public async Task AppendAsync_WithMessage_WithoutAmbientContext_CreatesEnvelopeWithNullScopeAsync() {
     // Arrange
     var capturingStore = new CapturingEventStore();
     var decorator = new SecurityContextEventStoreDecorator(capturingStore);
@@ -74,7 +75,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
     // Assert
     await Assert.That(capturingStore.CapturedEnvelope).IsNotNull();
     var hop = capturingStore.CapturedEnvelope!.Hops[0];
-    await Assert.That(hop.SecurityContext).IsNull();
+    await Assert.That(hop.Scope).IsNull();
   }
 
   [Test]
@@ -105,7 +106,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
       // Assert
       await Assert.That(capturingStore.CapturedEnvelope).IsNotNull();
       var hop = capturingStore.CapturedEnvelope!.Hops[0];
-      await Assert.That(hop.SecurityContext).IsNull();
+      await Assert.That(hop.Scope).IsNull();
     } finally {
       ScopeContextAccessor.CurrentContext = null;
     }
@@ -124,7 +125,7 @@ public sealed class SecurityContextEventStoreDecoratorTests {
         new MessageHop {
           ServiceInstance = ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
-          SecurityContext = new SecurityContext { UserId = "original-user" }
+          Scope = ScopeDelta.FromSecurityContext(new SecurityContext { UserId = "original-user" })
         }
       ]
     };
