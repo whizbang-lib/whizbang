@@ -681,7 +681,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -737,7 +737,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForPerspectiveEventsAsync([eventId], "TestPerspective", TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -779,7 +779,7 @@ public class SyncEventTrackerTests {
     using var cts = new CancellationTokenSource();
 
     // Start waiting
-    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cts.Token);
+    var waitTask = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), cancellationToken: cts.Token);
 
     // Cancel
     cts.Cancel();
@@ -886,5 +886,140 @@ public class SyncEventTrackerTests {
 
     await Assert.That(pendingA.Count).IsEqualTo(1);
     await Assert.That(pendingB.Count).IsEqualTo(1);
+  }
+
+  // ==========================================================================
+  // UnregisterAwaiter tests
+  // ==========================================================================
+
+  [Test]
+  public async Task UnregisterAwaiter_RemovesAllTcsForAwaiterAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    // Unregister should cancel the TCS
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task UnregisterAwaiter_CancelsTcsEntriesAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    // Task should complete with false (cancellation handled internally)
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task UnregisterAwaiter_LeavesOtherAwaitersIntactAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiter1 = Guid.NewGuid();
+    var awaiter2 = Guid.NewGuid();
+
+    var task1 = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiter1);
+    var task2 = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiter2);
+
+    // Only unregister awaiter1
+    tracker.UnregisterAwaiter(awaiter1);
+
+    // Signal event
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result1 = await task1;
+    var result2 = await task2;
+
+    await Assert.That(result1).IsFalse().Because("Awaiter 1 was unregistered");
+    await Assert.That(result2).IsTrue().Because("Awaiter 2 should complete normally");
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithAwaiterId_RegistersCorrectlyAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId);
+
+    // Complete the event
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result = await task;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForPerspectiveEventsAsync_WithNullAwaiterId_AutoGeneratesIdAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    // null awaiterId should still work
+    var task = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], "P1", TimeSpan.FromSeconds(5), awaiterId: null);
+
+    tracker.MarkProcessedByPerspective([eventId], "P1");
+
+    var result = await task;
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task WaitForEventsAsync_WithAwaiterId_CanBeUnregisteredAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForEventsAsync([eventId], TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task WaitForAllPerspectivesAsync_WithAwaiterId_CanBeUnregisteredAsync() {
+    var tracker = new SyncEventTracker();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, "P1");
+
+    var awaiterId = Guid.NewGuid();
+    var task = tracker.WaitForAllPerspectivesAsync([eventId], TimeSpan.FromSeconds(5), awaiterId);
+
+    tracker.UnregisterAwaiter(awaiterId);
+
+    var result = await task;
+    await Assert.That(result).IsFalse();
   }
 }

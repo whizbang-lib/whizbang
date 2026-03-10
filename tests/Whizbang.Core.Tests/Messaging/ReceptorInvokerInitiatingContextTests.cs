@@ -129,7 +129,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestReceptor",
-        InvokeAsync: async (provider, message, ct) => {
+        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
           // Capture InitiatingContext during receptor execution
           capturedInitiating = ScopeContextAccessor.CurrentInitiatingContext;
           await Task.CompletedTask;
@@ -260,7 +260,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestScopedContextReceptor",
-        InvokeAsync: async (provider, message, ct) => {
+        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
           // Get ScopedMessageContext from DI - this is what real receptors do
           var scopedMessageContext = provider.GetRequiredService<IMessageContext>();
 
@@ -323,7 +323,7 @@ public class ReceptorInvokerInitiatingContextTests {
       new ReceptorInfo(
         MessageType: typeof(JsonElement),
         ReceptorId: "TestPriorityReceptor",
-        InvokeAsync: async (provider, message, ct) => {
+        InvokeAsync: async (provider, message, envelope, callerInfo, ct) => {
           // First, set a conflicting IScopeContext (should NOT be used)
           var scopeAccessor = provider.GetRequiredService<IScopeContextAccessor>();
           var extraction = new SecurityExtraction {

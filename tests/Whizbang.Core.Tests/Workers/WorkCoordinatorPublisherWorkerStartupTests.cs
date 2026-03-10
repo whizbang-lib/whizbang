@@ -338,8 +338,11 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
     await Task.WhenAny(signalTask, timeoutTask);
 
-    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
-    await Task.Delay(50);
+    // Wait for all 12 messages to be published (up to 5s safety timeout)
+    var publishDeadline = DateTime.UtcNow.AddSeconds(5);
+    while (publishStrategy.PublishedWork.Count < 12 && DateTime.UtcNow < publishDeadline) {
+      await Task.Delay(10);
+    }
 
     cts.Cancel();
 

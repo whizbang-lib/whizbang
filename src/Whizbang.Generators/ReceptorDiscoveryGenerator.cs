@@ -1596,7 +1596,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"new global::Whizbang.Core.Messaging.ReceptorInfo(");
     sb.AppendLine($"  MessageType: typeof({receptor.MessageType}),");
     sb.AppendLine($"  ReceptorId: \"{receptor.ClassName}\",");
-    sb.AppendLine($"  InvokeAsync: async (sp, msg, ct) => {{");
+    sb.AppendLine($"  InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {{");
 
     if (receptor.IsVoid) {
       sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}>>();");

@@ -1090,13 +1090,13 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     await Assert.That(registry).IsNotNull();
     await Assert.That(registry!).Contains("sealed class GeneratedReceptorRegistry");
     // NOTE: GeneratedReceptorRegistry no longer has IServiceProvider field.
-    // Instead, the InvokeAsync delegate accepts (sp, msg, ct) where sp is the scoped provider.
+    // Instead, the InvokeAsync delegate accepts (sp, msg, envelope, callerInfo, ct) where sp is the scoped provider.
     await Assert.That(registry).Contains("GetReceptorsFor(Type messageType, LifecycleStage stage)");
     await Assert.That(registry).Contains("ReceptorInfo[]");
     await Assert.That(registry).Contains("ReceptorId:");
     await Assert.That(registry).Contains("InvokeAsync:");
-    // Verify the delegate signature accepts IServiceProvider as first parameter (sp)
-    await Assert.That(registry).Contains("(sp, msg, ct)");
+    // Verify the delegate signature accepts IServiceProvider, message, envelope, callerInfo, and cancellation token
+    await Assert.That(registry).Contains("(sp, msg, envelope, callerInfo, ct)");
   }
 
   [Test]

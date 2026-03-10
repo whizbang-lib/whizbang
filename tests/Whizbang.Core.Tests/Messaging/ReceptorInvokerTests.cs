@@ -444,7 +444,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           // sp is the scoped service provider (not used in tests)
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
@@ -470,7 +470,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(returnValue);
         }
@@ -499,7 +499,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             callback();
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -523,7 +523,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             checkCallback(sp);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -548,7 +548,7 @@ public class ReceptorInvokerTests {
       list.Add(new ReceptorInfo(
           typeof(TMessage),
           receptorId,
-          (sp, msg, ct) => {
+          (sp, msg, envelope, callerInfo, ct) => {
             callOrderCallback?.Invoke([$"ReceptorInvoked:{receptorId}"]);
             _tracker.RecordInvocation(receptorId, stage);
             return ValueTask.FromResult<object?>(null);
@@ -1065,6 +1065,7 @@ public class ReceptorInvokerTests {
   /// Test sync awaiter that tracks wait calls.
   /// </summary>
   private sealed class TestSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitCalls { get; } = [];
     public List<string> CallOrder { get; } = [];
     public bool SimulateTimeout { get; set; }
@@ -1273,7 +1274,7 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "CaptureReceptor",
-            (sp, msg, ct) => {
+            (sp, msg, envelope, callerInfo, ct) => {
               ReceivedMessage = msg;
               return ValueTask.FromResult<object?>(null);
             })];
@@ -1538,7 +1539,7 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessageWithStreamId),
             _receptorId,
-            (sp, msg, ct) => {
+            (sp, msg, envelope, callerInfo, ct) => {
               // Try to get SyncContext from accessor (AsyncLocal pattern)
               _contextCallback(SyncContextAccessor.CurrentContext);
               return ValueTask.FromResult<object?>(null);
@@ -1553,6 +1554,7 @@ public class ReceptorInvokerTests {
   /// Sync awaiter that tracks calls to WaitAsync and WaitForStreamAsync separately.
   /// </summary>
   private sealed class StreamIdTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     private readonly Guid _expectedStreamId;
     private readonly bool _simulateTimeout;
     private readonly TimeSpan _elapsedTime;
@@ -1806,10 +1808,99 @@ public class ReceptorInvokerTests {
         return [new ReceptorInfo(
             typeof(TestMessage),
             "ThrowingReceptor",
-            (sp, msg, ct) => throw new InvalidOperationException("Test exception"))];
+            (sp, msg, envelope, callerInfo, ct) => throw new InvalidOperationException("Test exception"))];
       }
       return [];
     }
+  }
+
+  #endregion
+
+  // ========================================
+  // CALLER INFO POPULATION TESTS
+  // ========================================
+
+  #region CallerInfo Tests
+
+  /// <summary>
+  /// Verifies that CallerInfo is populated from the first Current hop with CallerMemberName.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_PopulatesCallerInfo_FromFirstCurrentHopAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("caller-info-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          CallerMemberName = "HandleOrderAsync",
+          CallerFilePath = "/src/Orders/OrderHandler.cs",
+          CallerLineNumber = 42
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.CallerInfo).IsNotNull();
+    await Assert.That(accessor.LastSetContext.CallerInfo!.CallerMemberName).IsEqualTo("HandleOrderAsync");
+    await Assert.That(accessor.LastSetContext.CallerInfo.CallerFilePath).IsEqualTo("/src/Orders/OrderHandler.cs");
+    await Assert.That(accessor.LastSetContext.CallerInfo.CallerLineNumber).IsEqualTo(42);
+  }
+
+  /// <summary>
+  /// Verifies that CallerInfo is null when no hops have CallerMemberName.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_CallerInfoIsNull_WhenNoHopsHaveCallerMemberNameAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestMessage>("TestReceptor", LifecycleStage.PostInboxInline);
+
+    var services = new ServiceCollection();
+    var accessor = new TestMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(accessor);
+    var provider = services.BuildServiceProvider();
+
+    var invoker = new ReceptorInvoker(registry, provider);
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(Guid.CreateVersion7()),
+      Payload = new TestMessage("no-caller-info-test"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = ServiceInstanceInfo.Unknown
+          // No CallerMemberName set
+        }
+      ]
+    };
+
+    // Act
+    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    // Assert
+    await Assert.That(accessor.WasSet).IsTrue();
+    await Assert.That(accessor.LastSetContext).IsNotNull();
+    await Assert.That(accessor.LastSetContext!.CallerInfo).IsNull();
   }
 
   #endregion

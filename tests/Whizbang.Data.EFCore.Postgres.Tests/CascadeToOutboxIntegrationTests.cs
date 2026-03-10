@@ -929,6 +929,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
     public string? TenantId { get; init; }
     public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
     public IScopeContext? ScopeContext { get; init; }
+    public ICallerInfo? CallerInfo => null;
   }
 
   #region Raw JSONB Round-Trip Tests

@@ -1,3 +1,5 @@
+using Whizbang.Core.ValueObjects;
+
 namespace Whizbang.Core.Perspectives.Sync;
 
 /// <summary>
@@ -18,6 +20,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <docs>core-concepts/perspectives/event-completion</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs</tests>
 public sealed class EventCompletionAwaiter : IEventCompletionAwaiter {
+  /// <inheritdoc />
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
+
   private readonly ISyncEventTracker _syncEventTracker;
 
   /// <summary>
@@ -35,7 +40,7 @@ public sealed class EventCompletionAwaiter : IEventCompletionAwaiter {
       TimeSpan timeout,
       CancellationToken cancellationToken = default) {
     // Use WaitForAllPerspectivesAsync - waits until ALL perspectives have processed
-    return _syncEventTracker.WaitForAllPerspectivesAsync(eventIds, timeout, cancellationToken);
+    return _syncEventTracker.WaitForAllPerspectivesAsync(eventIds, timeout, AwaiterId, cancellationToken);
   }
 
   /// <inheritdoc />
