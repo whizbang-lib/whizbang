@@ -49,6 +49,27 @@ public static class AutoPopulateRegistry {
   }
 
   /// <summary>
+  /// Find registrations by message type name (AOT-safe, avoids Type.GetType()).
+  /// Matches against FullName, AssemblyQualifiedName, or prefix of the type name.
+  /// </summary>
+  /// <param name="messageTypeName">The type name to search for.</param>
+  /// <returns>All matching registrations across all registered assemblies.</returns>
+  public static IEnumerable<AutoPopulateRegistration> FindRegistrationsByTypeName(string messageTypeName) {
+    foreach (var registry in AssemblyRegistry<IAutoPopulateRegistry>.GetOrderedContributions()) {
+      foreach (var registration in registry.GetAllRegistrations()) {
+        var fullName = registration.MessageType.FullName;
+        var assemblyQualifiedName = registration.MessageType.AssemblyQualifiedName;
+
+        if (fullName == messageTypeName ||
+            assemblyQualifiedName == messageTypeName ||
+            (fullName != null && messageTypeName.StartsWith(fullName, StringComparison.Ordinal))) {
+          yield return registration;
+        }
+      }
+    }
+  }
+
+  /// <summary>
   /// Count of registered auto-populate registries (for diagnostics/testing).
   /// </summary>
   public static int Count => AssemblyRegistry<IAutoPopulateRegistry>.Count;
