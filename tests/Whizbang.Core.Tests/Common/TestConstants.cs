@@ -43,7 +43,7 @@ public static class TestConstants {
   ///     GenerateStreamIdOnlyIfEmptyCommandReceptor, NoGenerateStreamIdCommandReceptor, SimpleCommandReceptor,
   ///     InheritedStreamIdCommandReceptor, InheritedOnlyIfEmptyCommandReceptor)
   ///
-  /// Total: 80 receptors
+  /// Total: 84 receptors (includes 4 from scope/cascade integration test types)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 80;
+  public const int EXPECTED_RECEPTOR_COUNT = 84;
 }
