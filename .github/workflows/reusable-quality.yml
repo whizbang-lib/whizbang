@@ -149,6 +149,13 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
         run: |
+          # SonarCloud free plan only supports main branch + PR analysis.
+          # Skip SonarCloud entirely for push events to non-main branches (e.g. develop).
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Skipping SonarCloud analysis for non-main branch push (free plan limitation)"
+            exit 0
+          fi
+
           # Build PR-specific parameters if this is a pull request
           PR_PARAMS=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
