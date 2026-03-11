@@ -644,4 +644,256 @@ public class AutoPopulateDiscoveryGeneratorTests {
     // Internal type should NOT be in the registry
     await Assert.That(code.Contains("InternalEvent")).IsFalse();
   }
+
+  // ============================================================================
+  // Populator Generation Tests
+  // ============================================================================
+
+  /// <summary>
+  /// Test that generator creates populator for record types with TimestampKind.SentAt.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithSentAtTimestamp_GeneratesPopulatorAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateTimestamp(TimestampKind.SentAt)] DateTimeOffset? SentAt = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryPopulateSent");
+    await Assert.That(code).Contains("OrderCreatedEvent");
+    await Assert.That(code).Contains("hop.Timestamp");
+  }
+
+  /// <summary>
+  /// Test that populator generates QueuedAt method for QueuedAt timestamps.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithQueuedAtTimestamp_GeneratesQueuedMethodAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderQueuedEvent(
+              Guid OrderId,
+              [property: PopulateTimestamp(TimestampKind.QueuedAt)] DateTimeOffset? QueuedAt = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryPopulateQueued");
+    await Assert.That(code).Contains("OrderQueuedEvent");
+    await Assert.That(code).Contains("timestamp");
+  }
+
+  /// <summary>
+  /// Test that populator generates DeliveredAt method for DeliveredAt timestamps.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithDeliveredAtTimestamp_GeneratesDeliveredMethodAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderDeliveredEvent(
+              Guid OrderId,
+              [property: PopulateTimestamp(TimestampKind.DeliveredAt)] DateTimeOffset? DeliveredAt = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TryPopulateDelivered");
+    await Assert.That(code).Contains("OrderDeliveredEvent");
+  }
+
+  /// <summary>
+  /// Test that populator generates context extraction for PopulateFromContext attributes.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithContextAttribute_GeneratesContextExtractionAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromContext(ContextKind.UserId)] string? CreatedBy = null,
+              [property: PopulateFromContext(ContextKind.TenantId)] string? TenantId = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("_extractUserId(hop)");
+    await Assert.That(code).Contains("_extractTenantId(hop)");
+  }
+
+  /// <summary>
+  /// Test that populator generates service info extraction.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithServiceAttribute_GeneratesServiceExtractionAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromService(ServiceKind.ServiceName)] string? OriginService = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("hop.ServiceInstance.ServiceName");
+  }
+
+  /// <summary>
+  /// Test that populator generates identifier extraction.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithIdentifierAttribute_GeneratesIdentifierExtractionAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateFromIdentifier(IdentifierKind.MessageId)] Guid? OrderMessageId = null,
+              [property: PopulateFromIdentifier(IdentifierKind.CorrelationId)] Guid? CorrelationId = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("messageId.Value");
+    await Assert.That(code).Contains("hop.CorrelationId?.Value.Value");
+  }
+
+  /// <summary>
+  /// Test that populator is NOT generated for non-record types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithNonRecordType_DoesNotGeneratePopulatorAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public class OrderCreatedEvent {
+              public Guid OrderId { get; set; }
+              [PopulateTimestamp(TimestampKind.SentAt)]
+              public DateTimeOffset? SentAt { get; set; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    // Registry should still be generated
+    var registryCode = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
+    await Assert.That(registryCode).IsNotNull();
+    await Assert.That(registryCode!).Contains("OrderCreatedEvent");
+
+    // Populator should NOT be generated for non-record types
+    var populatorCode = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(populatorCode).IsNull();
+  }
+
+  /// <summary>
+  /// Test that populator generates with expression for multiple properties.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithMultipleAttributes_GeneratesCompoundWithExpressionAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateTimestamp(TimestampKind.SentAt)] DateTimeOffset? SentAt = null,
+              [property: PopulateFromContext(ContextKind.UserId)] string? CreatedBy = null,
+              [property: PopulateFromService(ServiceKind.ServiceName)] string? OriginService = null,
+              [property: PopulateFromIdentifier(IdentifierKind.MessageId)] Guid? OrderMessageId = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulatePopulator.g.cs");
+    await Assert.That(code).IsNotNull();
+    // Should have a single 'with' expression containing all SentAt-phase properties
+    await Assert.That(code!).Contains("hop.Timestamp");
+    await Assert.That(code).Contains("_extractUserId(hop)");
+    await Assert.That(code).Contains("hop.ServiceInstance.ServiceName");
+    await Assert.That(code).Contains("messageId.Value");
+  }
+
+  /// <summary>
+  /// Test that generated registry includes GetAllRegistrations method.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_GeneratedRegistry_IncludesGetAllRegistrationsAsync() {
+    var source = """
+            using System;
+            using Whizbang.Core.Attributes;
+
+            namespace TestApp;
+
+            public record OrderCreatedEvent(
+              Guid OrderId,
+              [property: PopulateTimestamp(TimestampKind.SentAt)] DateTimeOffset? SentAt = null
+            );
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<AutoPopulateDiscoveryGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "AutoPopulateRegistry.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("GetAllRegistrations");
+    await Assert.That(code).Contains("return _registrations;");
+  }
 }

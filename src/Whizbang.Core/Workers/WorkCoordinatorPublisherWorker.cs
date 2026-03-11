@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -348,6 +350,9 @@ public partial class WorkCoordinatorPublisherWorker(
             await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
           }
         }
+
+        // Populate QueuedAt timestamp on the message payload (JSON-level, AOT-safe)
+        _populateQueuedAtTimestamp(work);
 
         // Publish via strategy
         LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
@@ -827,6 +832,22 @@ public partial class WorkCoordinatorPublisherWorker(
     Message = "Work processing idle (active → idle) after {EmptyPolls} empty polls"
   )]
   static partial void LogWorkProcessingIdle(ILogger logger, int emptyPolls);
+
+  /// <summary>
+  /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
+  /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
+  /// </summary>
+  private static void _populateQueuedAtTimestamp(OutboxWork work) {
+    if (work.Envelope is not MessageEnvelope<JsonElement> concreteEnvelope) {
+      return;
+    }
+
+    concreteEnvelope.Payload = JsonAutoPopulateHelper.PopulateTimestampByName(
+        concreteEnvelope.Payload,
+        work.MessageType,
+        TimestampKind.QueuedAt,
+        DateTimeOffset.UtcNow);
+  }
 }
 
 

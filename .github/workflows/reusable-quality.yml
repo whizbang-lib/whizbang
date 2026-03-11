@@ -149,16 +149,17 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          # Build PR-specific or branch-specific parameters
+          # SonarCloud free plan only supports main branch + PR analysis.
+          # Skip SonarCloud entirely for push events to non-main branches (e.g. develop).
+          if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Skipping SonarCloud analysis for non-main branch push (free plan limitation)"
+            exit 0
+          fi
+
+          # Build PR-specific parameters if this is a pull request
           PR_PARAMS=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_PARAMS="/d:sonar.pullrequest.key=$PR_NUMBER /d:sonar.pullrequest.branch=$HEAD_REF /d:sonar.pullrequest.base=$BASE_REF"
-          else
-            # For push events, explicitly set branch name so SonarCloud associates
-            # the analysis with the correct branch (without this, SonarCloud may
-            # fail to find the project during quality gate checks on non-main branches)
-            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-            PR_PARAMS="/d:sonar.branch.name=$BRANCH_NAME"
           fi
 
           dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
