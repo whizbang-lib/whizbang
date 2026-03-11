@@ -445,13 +445,6 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
-      // 1. The dispatcher already invokes the business receptor via the generated delegate above
-      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
-      //    (they are registered at default stages: LocalImmediateInline, PreOutboxInline, PostInboxInline)
-      // 3. IReceptorInvoker lifecycle invocation is meant for TransportConsumerWorker (PostInbox) and
-      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
-      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -642,13 +635,6 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
-      // 1. The dispatcher already invokes the business receptor via the generated delegate above
-      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
-      //    (they are registered at default stages: LocalImmediateInline, PreOutboxInline, PostInboxInline)
-      // 3. IReceptorInvoker lifecycle invocation is meant for TransportConsumerWorker (PostInbox) and
-      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
-      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -720,11 +706,6 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
-      // 1. The dispatcher already invokes the business receptor via the generated delegate above
-      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
-      // 3. IReceptorInvoker lifecycle invocation is for transport workers, not local dispatch
-      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -1302,13 +1283,9 @@ public abstract partial class Dispatcher(
     // Get strongly-typed delegate from generated code
     var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
-    // Check if receptor has [AwaitPerspectiveSync] attributes - requires async path
-    var hasSyncAttributes = _receptorRegistry?.GetReceptorsFor(messageType, LifecycleStage.LocalImmediateInline)
-      .Any(r => r.SyncAttributes is { Count: > 0 }) ?? false;
-
-    // OPTIMIZATION: Skip envelope creation when trace store is null
+    // OPTIMIZATION: Skip envelope creation when trace store is null and no receptor registry
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _receptorRegistry != null || hasSyncAttributes) {
+    if (_traceStore != null || _receptorRegistry != null) {
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
@@ -1658,8 +1635,8 @@ public abstract partial class Dispatcher(
     // Try async receptor first (async takes precedence)
     var asyncInvoker = GetVoidReceptorInvoker(actualMessage, messageType);
     if (asyncInvoker != null) {
-      // If sync attributes exist or tracing/lifecycle is enabled, go through async path
-      if (_traceStore != null || _receptorRegistry != null || hasSyncAttributes) {
+      // hasSyncAttributes is redundant: if _receptorRegistry is null, hasSyncAttributes is always false
+      if (_traceStore != null || _receptorRegistry != null) {
         return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, actualMessage, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
       }
 
@@ -2300,45 +2277,6 @@ public abstract partial class Dispatcher(
   /// Creates a scope per invocation to ensure proper scoped dependency resolution,
   /// full security context propagation, and event cascading.
   /// </summary>
-  private async ValueTask _invokeLifecycleStagesAsync(
-    IMessageEnvelope envelope,
-    LifecycleStage[] stages,
-    MessageSource messageSource,
-    CancellationToken cancellationToken) {
-    foreach (var stage in stages) {
-      IServiceScope? scope;
-      try {
-        scope = _scopeFactory.CreateScope();
-      } catch (ObjectDisposedException) {
-        // App is shutting down - return gracefully
-        return;
-      }
-
-      try {
-        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-        if (receptorInvoker is null) {
-          continue;
-        }
-
-        var lifecycleContext = new LifecycleExecutionContext {
-          CurrentStage = stage,
-          EventId = null,
-          StreamId = null,
-          LastProcessedEventId = null,
-          MessageSource = messageSource,
-          AttemptNumber = null
-        };
-        await receptorInvoker.InvokeAsync(envelope, stage, lifecycleContext, cancellationToken);
-      } finally {
-        if (scope is IAsyncDisposable asyncDisposable) {
-          await asyncDisposable.DisposeAsync();
-        } else {
-          scope.Dispose();
-        }
-      }
-    }
-  }
-
   private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
     Console.WriteLine($"[DISPATCHER] _processTagsIfEnabledAsync called for {messageType.Name}");
 
