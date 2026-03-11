@@ -153,7 +153,7 @@ public class InboxLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -236,7 +236,7 @@ public class InboxLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -320,7 +320,7 @@ public class InboxLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Create receptors for all 4 stages
     var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -394,7 +394,7 @@ public class InboxLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxInline);
 
     try {

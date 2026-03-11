@@ -31,7 +31,6 @@ public partial class PerspectiveWorker(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   IEventTypeProvider? eventTypeProvider = null,
   IPerspectiveSyncSignaler? syncSignaler = null,
   ISyncEventTracker? syncEventTracker = null,
@@ -41,7 +40,6 @@ public partial class PerspectiveWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
@@ -194,9 +192,10 @@ public partial class PerspectiveWorker(
     // This cascades parent context even when batch span is disabled
     var effectiveParent = batchActivity?.Context ?? parentContext;
 
-    // Create a scope to resolve scoped IWorkCoordinator
+    // Create a scope to resolve scoped IWorkCoordinator and IReceptorInvoker
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
     // DIAGNOSTIC: Log which service/instance is processing checkpoints
     LogProcessingWorkBatchForService(_logger, _instanceProvider.ServiceName, _instanceProvider.InstanceId);
@@ -372,7 +371,7 @@ public partial class PerspectiveWorker(
       LogLifecycleDependenciesResolved(_logger,
         perspectiveName,
         streamId,
-        _lifecycleInvoker is not null,
+        receptorInvoker is not null,
         eventStore is not null,
         _eventTypeProvider is not null);
 
@@ -440,7 +439,7 @@ public partial class PerspectiveWorker(
         // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
         // Events are already loaded above for trace context extraction
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal) : null) {
-          if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
+          if (receptorInvoker is not null && upcomingEvents is { Count: > 0 }) {
             try {
               var context = new LifecycleExecutionContext {
                 CurrentStage = LifecycleStage.PrePerspectiveAsync,
@@ -453,7 +452,7 @@ public partial class PerspectiveWorker(
               // PrePerspectiveAsync (non-blocking)
               foreach (var envelope in upcomingEvents) {
                 await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                await _lifecycleInvoker.InvokeAsync(
+                await receptorInvoker.InvokeAsync(
                   envelope,
                   LifecycleStage.PrePerspectiveAsync,
                   context,
@@ -469,7 +468,7 @@ public partial class PerspectiveWorker(
 
         // PrePerspectiveInline (blocking) - reuse already loaded events
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal) : null) {
-          if (_lifecycleInvoker is not null && upcomingEvents is { Count: > 0 }) {
+          if (receptorInvoker is not null && upcomingEvents is { Count: > 0 }) {
             try {
               var context = new LifecycleExecutionContext {
                 CurrentStage = LifecycleStage.PrePerspectiveInline,
@@ -481,7 +480,7 @@ public partial class PerspectiveWorker(
 
               foreach (var envelope in upcomingEvents) {
                 await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                await _lifecycleInvoker.InvokeAsync(
+                await receptorInvoker.InvokeAsync(
                   envelope,
                   LifecycleStage.PrePerspectiveInline,
                   context,
@@ -517,9 +516,9 @@ public partial class PerspectiveWorker(
 
         // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
         // Only load once to avoid duplicate queries and potential transaction issues
-        var shouldLoadEvents = _lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
+        var shouldLoadEvents = receptorInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var hasInvoker = _lifecycleInvoker is not null;
+          var hasInvoker = receptorInvoker is not null;
           var hasStore = eventStore is not null;
           var statusStr = result.Status.ToString();
           var lastProcessed = lastProcessedEventId.GetValueOrDefault();
@@ -573,10 +572,10 @@ public partial class PerspectiveWorker(
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
         // Always trace lifecycle stages even when no receptors are registered
-        LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, _lifecycleInvoker is not null);
+        LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, receptorInvoker is not null);
 
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal) : null) {
-          if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+          if (processedEvents.Count > 0 && receptorInvoker is not null) {
             LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
 
             await _invokeLifecycleReceptorsForEventsAsync(
@@ -599,7 +598,7 @@ public partial class PerspectiveWorker(
                 LogDiagnosticNoEvents(_logger, perspectiveName, streamId, lastProcessed, current);
               }
             }
-            if (_lifecycleInvoker is null) {
+            if (receptorInvoker is null) {
               LogSkippingPostPerspectiveInlineNoInvoker(_logger);
               if (_logger.IsEnabled(LogLevel.Debug)) {
                 LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
@@ -750,10 +749,11 @@ public partial class PerspectiveWorker(
       IServiceProvider scopedProvider,
       CancellationToken cancellationToken) {
 
-    if (_lifecycleInvoker is null) {
+    var scopedReceptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
+    if (scopedReceptorInvoker is null) {
       throw new InvalidOperationException(
-        $"ILifecycleInvoker is required for lifecycle stage invocation but was not registered. " +
-        $"Ensure AddWhizbangLifecycleInvoker() is called during DI setup.");
+        $"IReceptorInvoker is required for lifecycle stage invocation but was not registered. " +
+        $"Ensure AddWhizbangReceptorInvoker() is called during DI setup.");
     }
 
     try {
@@ -772,7 +772,7 @@ public partial class PerspectiveWorker(
         // Establish security context BEFORE invoking lifecycle receptors
         await _establishSecurityContextAsync(envelope, scopedProvider, cancellationToken);
 
-        await _lifecycleInvoker.InvokeAsync(
+        await scopedReceptorInvoker.InvokeAsync(
           envelope,
           stage,
           context,

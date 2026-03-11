@@ -1621,8 +1621,9 @@ namespace TestNamespace {
   public async Task PerspectiveRunnerGenerator_PostPerspectiveAsync_EstablishesSecurityContextAsync() {
     // Arrange - This test verifies that PostPerspectiveAsync lifecycle handlers
     // have access to TenantId from the message envelope's security context.
-    // The generated runner MUST establish IMessageContextAccessor.Current before
-    // invoking PostPerspectiveAsync lifecycle receptors.
+    // Security context is now established by ReceptorInvoker.InvokeAsync() internally,
+    // not by the generated template. The template uses scoped IReceptorInvoker which
+    // handles ALL security context setup (IScopeContextAccessor, IMessageContextAccessor).
     var source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
@@ -1657,32 +1658,20 @@ namespace TestNamespace {
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
 
-    // CRITICAL: The generated code MUST establish FULL security context BEFORE
-    // invoking PostPerspectiveAsync lifecycle handlers.
-    // This ensures IMessageContext.TenantId is available in handlers.
-    // Pattern must match PerspectiveWorker._establishSecurityContextAsync:
-    // 1. Call IMessageSecurityContextProvider.EstablishContextAsync (sets IScopeContextAccessor)
-    // 2. Set IMessageContextAccessor.Current with envelope security context
+    // The generated template now uses scoped IReceptorInvoker for lifecycle invocation.
+    // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally:
+    // - Calls IMessageSecurityContextProvider.EstablishContextAsync
+    // - Sets IScopeContextAccessor.Current
+    // - Sets IMessageContextAccessor.Current with TenantId from envelope
 
-    // Step 1: Should get IMessageSecurityContextProvider and establish context
-    await Assert.That(runnerSource!).Contains("GetService<IMessageSecurityContextProvider>()");
-    await Assert.That(runnerSource!).Contains("EstablishContextAsync");
-    await Assert.That(runnerSource!).Contains("GetService<IScopeContextAccessor>()");
-    await Assert.That(runnerSource!).Contains("scopeContextAccessor.Current = securityContext");
+    // Should resolve IReceptorInvoker from scoped service provider
+    await Assert.That(runnerSource!).Contains("GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>()");
 
-    // Step 2: Should get IMessageContextAccessor from service provider
-    await Assert.That(runnerSource!).Contains("GetService<IMessageContextAccessor>()");
+    // Should invoke lifecycle via ReceptorInvoker with PostPerspectiveAsync stage
+    await Assert.That(runnerSource!).Contains("receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveAsync");
 
-    // Should get scope context from envelope (renamed from GetCurrentSecurityContext)
-    await Assert.That(runnerSource!).Contains("GetCurrentScope()");
-
-    // Should set messageContextAccessor.Current with TenantId from envelope
-    // This is the critical fix - the template must populate IMessageContextAccessor.Current
-    // BEFORE invoking PostPerspectiveAsync lifecycle receptors
-    await Assert.That(runnerSource!).Contains("messageContextAccessor.Current = messageContext");
-
-    // Should extract TenantId from scope context
-    await Assert.That(runnerSource!).Contains("TenantId = scopeForMessageContext?.Scope?.TenantId");
+    // Should create a scope for lifecycle invocation
+    await Assert.That(runnerSource!).Contains("_scopeFactory.CreateAsyncScope()");
   }
 
   #region IPerspectiveWithActionsFor Integration Tests

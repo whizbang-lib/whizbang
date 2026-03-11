@@ -327,6 +327,14 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
           }
         }
 
+        // Set lifecycle context for runtime-registered receptors (IAcceptsLifecycleContext support)
+        if (context is not null) {
+          var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
+          if (lifecycleContextAccessor is not null) {
+            lifecycleContextAccessor.Current = context;
+          }
+        }
+
         // Log caller info for debugging dispatch-to-receptor traceability
         if (callerInfo is not null) {
           _logger ??= _scopedProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Messaging.ReceptorInvoker");

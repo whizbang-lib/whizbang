@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
 using ECommerce.OrderService.API.Receptors;
@@ -69,6 +70,26 @@ public class CreateOrderReceptorTests {
         Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
+      throw new NotImplementedException();
+    }
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) {
+      throw new NotImplementedException();
+    }
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message, IMessageContext context, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) where TMessage : notnull {
+      throw new NotImplementedException();
+    }
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) {
+      throw new NotImplementedException();
+    }
+
+    public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
+      throw new NotImplementedException();
+    }
   }
 
   [Test]

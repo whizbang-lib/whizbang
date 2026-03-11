@@ -16,7 +16,7 @@ namespace Whizbang.Testing.Lifecycle;
 public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDisposable
   where TEvent : IEvent {
 
-  private readonly List<(IHost Host, ILifecycleReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
+  private readonly List<(IHost Host, IReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
 
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
   private bool _disposed;
@@ -33,7 +33,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
         continue;  // Skip hosts with no expected perspectives
       }
 
-      var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var registry = host.Services.GetRequiredService<IReceptorRegistry>();
       // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
       var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
       var receptor = new CountingReceptor(tcs, expectedPerspectives);

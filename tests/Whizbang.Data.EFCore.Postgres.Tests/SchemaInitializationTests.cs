@@ -263,6 +263,52 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(count).IsGreaterThanOrEqualTo(10);
   }
 
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_ClearsConnectionPoolsAfterMigrationsAsync() {
+    // This test verifies the ClearAllPools fix: after migrations run (CREATE OR REPLACE FUNCTION),
+    // pooled connections with stale function OID caches must be discarded. ClearAllPools forces this.
+    //
+    // Strategy: warm up the connection pool, re-run initialization (which calls ClearAllPools),
+    // then verify old pooled connections were discarded by checking backend PIDs changed.
+
+    // Arrange: Start with clean state and initialize
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Warm up the legacy connection pool: open connections and return them to the pool.
+    // These connections cache PostgreSQL type/function OID mappings internally.
+    var oldPids = new HashSet<int>();
+    for (var i = 0; i < 3; i++) {
+      await using var conn = new NpgsqlConnection(ConnectionString);
+      await conn.OpenAsync();
+      await using var cmd = new NpgsqlCommand("SELECT pg_backend_pid()", conn);
+      oldPids.Add((int)(await cmd.ExecuteScalarAsync())!);
+    }
+
+    // Act: Re-initialize (simulates service restart where migrations re-run).
+    // EnsureWhizbangDatabaseInitializedAsync runs CREATE OR REPLACE FUNCTION migrations
+    // and then calls NpgsqlConnection.ClearAllPools() to discard stale connections.
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert: Old pooled connections should have been discarded by ClearAllPools.
+    // New connections will get new PostgreSQL backend PIDs because the physical
+    // connections were closed and re-established.
+    var newPids = new HashSet<int>();
+    for (var i = 0; i < 3; i++) {
+      await using var conn = new NpgsqlConnection(ConnectionString);
+      await conn.OpenAsync();
+      await using var cmd = new NpgsqlCommand("SELECT pg_backend_pid()", conn);
+      newPids.Add((int)(await cmd.ExecuteScalarAsync())!);
+    }
+
+    // If ClearAllPools worked, old connections were discarded and new ones were created.
+    // PostgreSQL assigns new backend PIDs for new connections, so there should be no overlap.
+    var reusedPids = oldPids.Intersect(newPids).Count();
+    await Assert.That(reusedPids).IsEqualTo(0);
+  }
+
   /// <summary>
   /// Helper method to drop all Whizbang tables for clean test state.
   /// </summary>

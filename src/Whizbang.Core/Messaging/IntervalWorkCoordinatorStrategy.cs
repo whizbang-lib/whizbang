@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
+using Whizbang.Core.Validation;
 
 namespace Whizbang.Core.Messaging;
 
@@ -24,7 +26,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly Timer _flushTimer;
@@ -53,7 +55,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
     ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
+    IServiceScopeFactory? scopeFactory = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null
   ) {
@@ -61,7 +63,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
-    _lifecycleInvoker = lifecycleInvoker;
+    _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
 
@@ -87,6 +89,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueOutbox", message.MessageType);
 
     lock (_lock) {
       _queuedOutboxMessages.Add(message);
@@ -102,6 +105,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueInbox", message.MessageType);
 
     lock (_lock) {
       _queuedInboxMessages.Add(message);
@@ -264,7 +268,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LifecycleStage.PreDistributeInline,
         outboxMessages,
         inboxMessages,
-        _lifecycleInvoker,
+        _scopeFactory,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,
@@ -276,7 +280,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LifecycleStage.DistributeAsync,
         outboxMessages,
         inboxMessages,
-        _lifecycleInvoker,
+        _scopeFactory,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,
@@ -319,7 +323,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LifecycleStage.PostDistributeInline,
         outboxMessages,
         inboxMessages,
-        _lifecycleInvoker,
+        _scopeFactory,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,

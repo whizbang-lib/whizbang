@@ -39,8 +39,16 @@ public static class TestConstants {
   /// - 2 receptors from DispatcherLocalInvokeAndSyncTimingTests.cs (TimedCommandReceptor, TimedCommandWithResultReceptor)
   /// - 6 receptors from new test files added during cascade security context implementation
   /// - 3 receptors added during ScopeDelta/unified scope propagation changes
+  /// - 6 receptors from DispatcherStreamIdGenerationTests.cs (GenerateStreamIdCommandReceptor,
+  ///     GenerateStreamIdOnlyIfEmptyCommandReceptor, NoGenerateStreamIdCommandReceptor, SimpleCommandReceptor,
+  ///     InheritedStreamIdCommandReceptor, InheritedOnlyIfEmptyCommandReceptor)
   ///
-  /// Total: 74 receptors
+  /// - 7 receptors from DispatcherNewCodeCoverageTests.cs (SyncOnlyCommandReceptor, PropagateStreamIdCommandReceptor,
+  ///     PropagatedStreamIdEventTrackerReceptor, VoidOptionsCommandReceptor, VoidOptionsEventTrackerReceptor,
+  ///     SyncOptionsCommandReceptor, EmptyStreamIdEventReceptor)
+  /// - 2 receptors from DispatcherInvokeWithReceiptTests.cs (ReceiptTestCommandReceptor, ReceiptTestVoidCommandReceptor)
+  ///
+  /// Total: 93 receptors (includes 4 from scope/cascade integration test types)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 74;
+  public const int EXPECTED_RECEPTOR_COUNT = 93;
 }
