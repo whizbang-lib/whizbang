@@ -10,6 +10,10 @@ on:
         description: 'Tag to publish (e.g., v0.3.0-alpha.26)'
         required: true
         type: string
+      source_branch:
+        description: 'Source branch to build from (e.g., develop). Creates release branch + tag. Leave empty to use existing tag.'
+        required: false
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -52,7 +56,45 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         fetch-depth: 0  # Full history for GitVersion
-        ref: ${{ inputs.tag || github.ref }}
+        ref: ${{ inputs.source_branch || inputs.tag || github.ref }}
+
+    - name: Create Release Branch and Tag
+      if: inputs.source_branch != ''
+      env:
+        INPUT_TAG: ${{ inputs.tag }}
+        SOURCE_BRANCH: ${{ inputs.source_branch }}
+      run: |
+        # Extract version from tag input
+        VERSION=$(echo "$INPUT_TAG" | sed 's|refs/tags/||; s|^v||')
+        TAG="$INPUT_TAG"
+        # Ensure tag has v prefix
+        [[ "$TAG" != v* ]] && TAG="v$VERSION"
+        RELEASE_BRANCH="release/$TAG"
+
+        echo "Creating release branch: $RELEASE_BRANCH from $SOURCE_BRANCH"
+        echo "Version: $VERSION, Tag: $TAG"
+
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Create release branch from source
+        git checkout -b "$RELEASE_BRANCH"
+
+        # Update version in Directory.Build.props
+        sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|g" Directory.Build.props
+        echo "Updated Directory.Build.props to version $VERSION:"
+        grep "<Version>" Directory.Build.props
+
+        git add Directory.Build.props
+        git commit -m "chore(release): bump version to $VERSION"
+        git push origin "$RELEASE_BRANCH"
+
+        # Create and push tag
+        git tag -a "$TAG" -m "Release $TAG"
+        git push origin "$TAG"
+
+        echo "Created release branch: $RELEASE_BRANCH"
+        echo "Created tag: $TAG"
 
     - name: Extract Version from Tag
       id: version
@@ -70,6 +112,9 @@ jobs:
         echo "| **Version** | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
         echo "| **Ref** | \`$VERSION_REF\` |" >> $GITHUB_STEP_SUMMARY
         echo "| **Commit** | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ inputs.source_branch }}" ]; then
+          echo "| **Source Branch** | \`${{ inputs.source_branch }}\` |" >> $GITHUB_STEP_SUMMARY
+        fi
         echo ""
         echo "Publishing version: $VERSION"
         echo "From ref: $VERSION_REF"
@@ -132,12 +177,15 @@ jobs:
           echo "Release type: Stable"
         fi
 
-    # Note: GitHub Release is created as DRAFT by release.yml
-    # This step uploads assets and publishes the release (removes draft status)
+    # Note: GitHub Release may already exist as DRAFT (from release.yml),
+    # or this step creates a new one (for manual/source_branch publishes)
     - name: Upload Assets and Publish GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
         tag_name: ${{ inputs.tag || github.ref_name }}
+        name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release {0}', inputs.tag || github.ref_name) || format('Release {0}', inputs.tag || github.ref_name) }}
+        generate_release_notes: true
+        prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
         files: |
           ./packages/*.nupkg
           ./packages/*.sha256
