@@ -40,7 +40,7 @@ public static class TestConstants {
   /// - 6 receptors from new test files added during cascade security context implementation
   /// - 3 receptors added during ScopeDelta/unified scope propagation changes
   ///
-  /// Total: 74 receptors
+  /// Total: 74 receptors (3 removed from deleted test files, 3 added from RuntimeRegistration tests)
   /// </summary>
   public const int EXPECTED_RECEPTOR_COUNT = 74;
 }

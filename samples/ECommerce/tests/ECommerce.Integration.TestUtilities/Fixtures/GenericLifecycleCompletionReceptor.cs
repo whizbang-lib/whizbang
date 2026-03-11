@@ -26,7 +26,7 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// );
 ///
 /// // Register with runtime registry
-/// var registry = host.Services.GetRequiredService&lt;ILifecycleReceptorRegistry&gt;();
+/// var registry = host.Services.GetRequiredService&lt;IReceptorRegistry&gt;();
 /// registry.Register&lt;CreateProductCommand&gt;(receptor, LifecycleStage.ImmediateAsync);
 ///
 /// try {

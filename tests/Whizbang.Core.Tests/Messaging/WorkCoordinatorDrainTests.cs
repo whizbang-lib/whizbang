@@ -165,7 +165,7 @@ public class WorkCoordinatorDrainTests {
       new ServiceInstanceProvider(configuration: null),
       new WorkCoordinatorOptions(),
       logger: null,
-      lifecycleInvoker: null,
+      scopeFactory: null,
       lifecycleMessageDeserializer: null,
       tracingOptions: null,
       deferredChannel: deferredChannel

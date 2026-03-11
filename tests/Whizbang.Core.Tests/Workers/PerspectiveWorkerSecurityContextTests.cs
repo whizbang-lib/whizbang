@@ -87,6 +87,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -98,7 +99,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -167,6 +167,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
     // NO IMessageSecurityContextProvider registered
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -178,7 +179,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -245,6 +245,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IEventStore>(eventStore);
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -256,7 +257,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -332,6 +332,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -343,7 +344,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -427,6 +427,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -438,7 +439,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -511,6 +511,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     // NO IMessageContextAccessor registered
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -522,7 +523,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -616,6 +616,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -627,7 +628,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -713,6 +713,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -724,7 +725,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -809,6 +809,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageSecurityContextProvider>(securityProvider);
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -820,7 +821,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -925,6 +925,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     // Register callback - this is the key: callbacks should be invoked even when extraction fails
     services.AddSingleton<ISecurityContextCallback>(testCallback);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -936,7 +937,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -1167,6 +1167,7 @@ public class PerspectiveWorkerSecurityContextTests {
     services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
     services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
     services.AddSingleton<ISecurityContextCallback>(testCallback);
+    services.AddScoped<IReceptorInvoker>(_ => lifecycleInvoker);
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -1178,7 +1179,6 @@ public class PerspectiveWorkerSecurityContextTests {
       tracingOptions: null,
       new InstantCompletionStrategy(),
       databaseReadiness,
-      lifecycleInvoker,
       eventTypeProvider
     );
 
@@ -1206,7 +1206,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
   private sealed record TestEvent(Guid Id, string Data) : IEvent;
 
-  private sealed class CapturingLifecycleInvoker : ILifecycleInvoker {
+  private sealed class CapturingLifecycleInvoker : IReceptorInvoker {
     private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke;
 
     public CapturingLifecycleInvoker(

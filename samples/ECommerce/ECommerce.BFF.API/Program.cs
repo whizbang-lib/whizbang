@@ -109,12 +109,7 @@ _ = builder.Services.AddPerspectiveRunners();
 // For now, skip dispatcher registration (SeedMutations will fail until refactored)
 // builder.Services.AddWhizbangDispatcher();
 
-// Register lifecycle invoker and message deserializer for Inbox lifecycle stages
-builder.Services.AddWhizbangLifecycleInvoker();
 builder.Services.AddWhizbangLifecycleMessageDeserializer();
-
-// Register lifecycle receptor registry for runtime receptor registration (used in tests)
-builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleReceptorRegistry>();
 
 // Register lenses (readonly repositories - high-level interface)
 builder.Services.AddScoped<IOrderLens, OrderLens>();

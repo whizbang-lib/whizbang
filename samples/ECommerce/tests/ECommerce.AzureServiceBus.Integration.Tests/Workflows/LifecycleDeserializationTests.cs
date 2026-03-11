@@ -64,7 +64,7 @@ public class LifecycleDeserializationTests {
     var completionSource = new TaskCompletionSource<ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new DistributeStageTestReceptor(completionSource);
 
-    var registry = fixture.InventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
 
     try {
@@ -143,7 +143,7 @@ public class LifecycleDeserializationTests {
       }
     });
 
-    var registry = fixture.InventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(countingReceptor, LifecycleStage.PostDistributeInline);
 
     try {

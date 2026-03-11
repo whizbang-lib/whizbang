@@ -9,8 +9,7 @@ namespace Whizbang.Core.Observability;
 
 /// <summary>
 /// Extracts context (both tracing and security) from message envelopes.
-/// Consolidates duplicate code from RuntimeLifecycleInvoker, LifecycleInvocationHelper,
-/// ReceptorInvoker, and LifecycleInvokerTemplate.
+/// Consolidates duplicate code from ReceptorInvoker and LifecycleInvokerTemplate.
 /// </summary>
 /// <remarks>
 /// <para>

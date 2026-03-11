@@ -120,7 +120,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveInline);
 
     try {
@@ -196,7 +196,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -279,7 +279,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -332,7 +332,7 @@ public class PerspectiveLifecycleTests {
       postInlineCompletion,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostPerspectiveAsync);
     registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostPerspectiveInline);
 
@@ -417,7 +417,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
     try {
@@ -518,7 +518,7 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Create receptors for all 4 stages
     var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -598,7 +598,7 @@ public class PerspectiveLifecycleTests {
       completionSource,
       perspectiveName: "ProductCatalogPerspective");
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
 
     try {

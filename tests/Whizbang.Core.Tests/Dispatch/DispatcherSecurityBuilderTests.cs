@@ -1190,7 +1190,10 @@ public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<Dispatcher
     DispatcherSecurityBuilderTestCommand message,
     CancellationToken cancellationToken = default) {
     // Capture the context during execution for test verification
-    CapturedContext = _scopeContextAccessor.Current;
+    // Use ??= to capture only on first invocation - lifecycle system may re-invoke
+    // the receptor at default stages, but we want the context from the primary dispatch
+    var current = _scopeContextAccessor.Current;
+    CapturedContext ??= current;
     return ValueTask.FromResult(new DispatcherSecurityBuilderTestResult($"Processed: {message.Data}"));
   }
 }
@@ -1211,7 +1214,8 @@ public class DispatcherSecurityBuilderVoidReceptor : IReceptor<DispatcherSecurit
   public ValueTask HandleAsync(
     DispatcherSecurityBuilderVoidCommand message,
     CancellationToken cancellationToken = default) {
-    CapturedContext = _scopeContextAccessor.Current;
+    // Use ??= to capture only on first invocation - lifecycle system may re-invoke
+    CapturedContext ??= _scopeContextAccessor.Current;
     return ValueTask.CompletedTask;
   }
 }

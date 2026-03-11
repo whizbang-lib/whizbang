@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
@@ -16,8 +17,8 @@ namespace Whizbang.Core.Messaging;
 /// Groups optional lifecycle and tracing dependencies for <see cref="ScopedWorkCoordinatorStrategy"/>.
 /// </summary>
 public record ScopedWorkCoordinatorDependencies {
-  /// <summary>Lifecycle invoker for message lifecycle hooks.</summary>
-  public ILifecycleInvoker? LifecycleInvoker { get; init; }
+  /// <summary>Service scope factory for resolving lifecycle invokers.</summary>
+  public IServiceScopeFactory? ScopeFactory { get; init; }
   /// <summary>Deserializer for lifecycle messages.</summary>
   public ILifecycleMessageDeserializer? LifecycleMessageDeserializer { get; init; }
   /// <summary>Tracing options monitor for controlling span emission.</summary>
@@ -169,7 +170,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.PreDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _dependencies.LifecycleInvoker,
+      _dependencies.ScopeFactory,
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
@@ -181,7 +182,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.DistributeAsync,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _dependencies.LifecycleInvoker,
+      _dependencies.ScopeFactory,
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
@@ -234,7 +235,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LifecycleStage.PostDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _dependencies.LifecycleInvoker,
+      _dependencies.ScopeFactory,
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,

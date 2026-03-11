@@ -308,6 +308,14 @@ public sealed class ReceptorInvoker : IReceptorInvoker {
           }
         }
 
+        // Set lifecycle context for runtime-registered receptors (IAcceptsLifecycleContext support)
+        if (context is not null) {
+          var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
+          if (lifecycleContextAccessor is not null) {
+            lifecycleContextAccessor.Current = context;
+          }
+        }
+
         // InvokeAsync is a pre-compiled delegate (no reflection)
         // Pass the scoped provider so receptor can be resolved with its dependencies
         var result = await receptor.InvokeAsync(_scopedProvider, message, cancellationToken).ConfigureAwait(false);

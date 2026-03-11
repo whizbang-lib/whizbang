@@ -46,7 +46,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -86,7 +85,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -132,7 +130,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -179,7 +176,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -227,7 +223,6 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 

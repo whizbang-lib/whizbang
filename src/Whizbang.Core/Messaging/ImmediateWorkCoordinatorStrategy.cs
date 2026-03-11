@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
@@ -24,7 +25,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger;
-  private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IDeferredOutboxChannel? _deferredChannel;
@@ -42,7 +43,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
     ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
+    IServiceScopeFactory? scopeFactory = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     IDeferredOutboxChannel? deferredChannel = null
@@ -51,7 +52,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
-    _lifecycleInvoker = lifecycleInvoker;
+    _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _deferredChannel = deferredChannel;
@@ -171,7 +172,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       LifecycleStage.PreDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
+      _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
@@ -183,7 +184,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       LifecycleStage.DistributeAsync,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
+      _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
@@ -221,7 +222,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       LifecycleStage.PostDistributeInline,
       _queuedOutboxMessages,
       _queuedInboxMessages,
-      _lifecycleInvoker,
+      _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
