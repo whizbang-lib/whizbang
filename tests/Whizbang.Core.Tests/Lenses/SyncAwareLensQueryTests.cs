@@ -52,7 +52,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
@@ -66,7 +66,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
@@ -80,7 +80,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().WithTimeout(TimeSpan.FromMilliseconds(100)).Build();
 
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
@@ -99,7 +99,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
@@ -120,7 +120,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var syncQuery = mockQuery.WithSync<TestModel, TestPerspective>(awaiter, options);
@@ -137,7 +137,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var result = await mockQuery.GetByIdAsync<TestModel, TestPerspective>(testId, awaiter, options);
@@ -156,7 +156,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var syncQuery = mockQuery.WithSync(awaiter, typeof(TestPerspective), options);
@@ -173,7 +173,7 @@ public class SyncAwareLensQueryTests {
     var tracker = new ScopedEventTracker();
     var coordinator = new MockWorkCoordinator();
     var clock = new DebuggerAwareClock(new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled });
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, tracker);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, NullLogger<PerspectiveSyncAwaiter>.Instance, new SyncEventTracker(), tracker);
     var options = SyncFilter.All().Build();
 
     var result = await mockQuery.GetByIdAsync(testId, awaiter, typeof(TestPerspective), options);

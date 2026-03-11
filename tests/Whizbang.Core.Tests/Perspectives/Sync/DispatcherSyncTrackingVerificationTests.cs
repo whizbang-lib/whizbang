@@ -312,13 +312,12 @@ public class DispatcherSyncTrackingVerificationTests {
     // Create a mock work coordinator that returns PendingCount > 0 (never synced)
     var mockCoordinator = MockWorkCoordinator.WithSyncResults(pendingCount: 1);
 
-    // Create awaiter with very short timeout
+    // Create awaiter with empty SyncEventTracker
     var awaiter = new PerspectiveSyncAwaiter(
       mockCoordinator,
       new DebuggerAwareClock(new() { Mode = DebuggerDetectionMode.Disabled }),
       NullLogger<PerspectiveSyncAwaiter>.Instance,
-      tracker: null,
-      syncEventTracker: null);
+      syncEventTracker: new SyncEventTracker());
 
     // Act - call WaitForStreamAsync with a very short timeout
     var result = await awaiter.WaitForStreamAsync(
@@ -328,9 +327,10 @@ public class DispatcherSyncTrackingVerificationTests {
       timeout: TimeSpan.FromMilliseconds(50) // Very short timeout
     );
 
-    // Assert - sync should timeout (since mock returns pending)
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut)
-      .Because("With pending events and short timeout, sync should timeout");
+    // Assert - with empty SyncEventTracker and no tracked events, returns NoPendingEvents
+    // No more DB fallback - empty tracker means nothing to wait for
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents)
+      .Because("No events tracked in SyncEventTracker - nothing to wait for");
 
     // CRITICAL: The generated code currently ignores this result!
     // The receptor would still fire even though sync timed out.

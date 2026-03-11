@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;
+using Whizbang.Core.Async;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Testing.Lifecycle;
 
@@ -11,10 +13,12 @@ namespace Whizbang.Testing.Lifecycle;
 /// Useful for integration tests with separate Inventory and BFF hosts that both process the same events.
 /// </summary>
 /// <typeparam name="TEvent">The event type being processed by perspectives.</typeparam>
-public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
+public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDisposable
   where TEvent : IEvent {
 
   private readonly List<(IHost Host, IReceptorRegistry Registry, CountingReceptor Receptor, TaskCompletionSource<bool> Tcs)> _hostRegistrations = [];
+
+  public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
   private bool _disposed;
 
   /// <summary>
@@ -50,13 +54,11 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IDisposable
       return;  // Nothing to wait for
     }
 
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
+    var tasks = _hostRegistrations.Select(r => r.Tcs.Task);
     try {
-      var tasks = _hostRegistrations.Select(r => r.Tcs.Task);
-      await Task.WhenAll(tasks).WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      await AsyncTimeoutHelper.WaitWithTimeoutAsync(
+          Task.WhenAll(tasks), timeout, string.Empty, cancellationToken);
+    } catch (TimeoutException) {
       var status = string.Join(", ", _hostRegistrations.Select(r =>
         $"{r.Host.Services.GetType().Name}: {r.Receptor.Count}/{r.Receptor.Expected}"));
       throw new TimeoutException($"Not all perspectives completed within {timeout}. Status: [{status}]");

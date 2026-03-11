@@ -470,4 +470,31 @@ public class MessageContextTests {
       ScopeContextAccessor.CurrentInitiatingContext = null;
     }
   }
+
+  // ==========================================================================
+  // CallerInfo
+  // ==========================================================================
+
+  [Test]
+  public async Task CallerInfo_IsNullByDefaultAsync() {
+    var context = new MessageContext();
+    await Assert.That(context.CallerInfo).IsNull();
+  }
+
+  [Test]
+  public async Task New_CallerInfo_IsNullAsync() {
+    var context = MessageContext.New();
+    await Assert.That(context.CallerInfo).IsNull();
+  }
+
+  [Test]
+  public async Task CallerInfo_CanBeSetViaInitializerAsync() {
+    var callerInfo = new CallerInfo("TestMethod", "/test/file.cs", 42);
+    var context = new MessageContext { CallerInfo = callerInfo };
+
+    await Assert.That(context.CallerInfo).IsNotNull();
+    await Assert.That(context.CallerInfo!.CallerMemberName).IsEqualTo("TestMethod");
+    await Assert.That(context.CallerInfo.CallerFilePath).IsEqualTo("/test/file.cs");
+    await Assert.That(context.CallerInfo.CallerLineNumber).IsEqualTo(42);
+  }
 }

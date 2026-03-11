@@ -73,6 +73,7 @@ public class AuditTagHookTests {
       Reason = "Tenant Access"
     };
 
+    // Create a scope context with TenantId and UserId
     var scope = new Whizbang.Core.Security.ScopeContext {
       Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" },
       Roles = new HashSet<string>(),
@@ -221,8 +222,9 @@ public class AuditTagHookTests {
       Reason = "Test"
     };
 
+    // Create a scope context with no TenantId or UserId
     var scope = new Whizbang.Core.Security.ScopeContext {
-      Scope = new Whizbang.Core.Lenses.PerspectiveScope(), // No TenantId or UserId
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope(),
       Roles = new HashSet<string>(),
       Permissions = new HashSet<Whizbang.Core.Security.Permission>(),
       SecurityPrincipals = new HashSet<Whizbang.Core.Security.SecurityPrincipalId>(),

@@ -235,6 +235,7 @@ public sealed class DispatcherLocalInvokeAndSyncTests {
 
   // Fake implementations for testing
   private sealed class FakeEventCompletionAwaiter : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     private readonly bool _completesImmediately;
 
     public bool WaitForEventsWasCalled { get; private set; }

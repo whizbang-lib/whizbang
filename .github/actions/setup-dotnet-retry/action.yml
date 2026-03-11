@@ -26,14 +26,24 @@ runs:
         retry_wait_seconds: ${{ inputs.retry-wait-seconds }}
         shell: bash
         command: |
-          # Extract major version from input (e.g., "10.0.x" -> "10.0")
-          DOTNET_CHANNEL="${{ inputs.dotnet-version }}"
-          DOTNET_CHANNEL="${DOTNET_CHANNEL%.x}"  # Remove trailing .x if present
+          # Read SDK version from global.json to determine the correct feature band
+          # This avoids installing a broken SDK from a newer feature band
+          if [ -f "global.json" ]; then
+            SDK_VERSION=$(python3 -c "import json; print(json.load(open('global.json'))['sdk']['version'])" 2>/dev/null || echo "")
+          fi
 
-          echo "Installing .NET SDK channel: $DOTNET_CHANNEL"
-
-          # Install .NET SDK using the official install script
-          curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
+          if [ -n "$SDK_VERSION" ]; then
+            # Convert version (e.g., "10.0.100") to feature band channel (e.g., "10.0.1xx")
+            FEATURE_BAND="${SDK_VERSION%[0-9][0-9]}"xx
+            echo "Installing .NET SDK feature band: $FEATURE_BAND (from global.json version $SDK_VERSION)"
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$FEATURE_BAND" --install-dir "$HOME/.dotnet"
+          else
+            # Fall back to channel-based install from input
+            DOTNET_CHANNEL="${{ inputs.dotnet-version }}"
+            DOTNET_CHANNEL="${DOTNET_CHANNEL%.x}"  # Remove trailing .x if present
+            echo "Installing .NET SDK channel: $DOTNET_CHANNEL"
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
+          fi
 
           # Add to PATH for subsequent steps
           echo "$HOME/.dotnet" >> $GITHUB_PATH

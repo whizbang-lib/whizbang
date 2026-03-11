@@ -75,4 +75,8 @@ internal sealed class ScopedMessageContext : IMessageContext {
   public IScopeContext? ScopeContext =>
     _scopeContextAccessor.InitiatingContext?.ScopeContext
     ?? _scopeContextAccessor.Current;
+
+  /// <inheritdoc />
+  public Observability.ICallerInfo? CallerInfo =>
+    _messageContextAccessor.Current?.CallerInfo;
 }

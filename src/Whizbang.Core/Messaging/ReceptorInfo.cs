@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Messaging;
@@ -18,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <param name="ReceptorId">Unique identifier for this receptor (typically the type name).</param>
 /// <param name="InvokeAsync">
 /// Pre-compiled delegate for AOT-compatible invocation.
-/// Parameters: (service provider for scoped resolution, message object, cancellation token)
+/// Parameters: (service provider for scoped resolution, message object, source envelope for debugging/logging, caller info from dispatch site, cancellation token)
 /// Returns: The receptor's return value (null for void receptors, IEvent for event-producing receptors).
 /// The service provider should be from a scope created by the invoker.
 /// </param>
@@ -26,13 +27,18 @@ namespace Whizbang.Core.Messaging;
 /// Optional list of perspective sync attributes from the receptor class.
 /// When present, the invoker will await perspective sync before invoking the receptor.
 /// </param>
+/// <param name="CallerInfo">
+/// Optional caller info captured from the dispatch site.
+/// Populated by the invoker from the envelope's first Current hop before invocation.
+/// </param>
 /// <docs>core-concepts/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
-    Func<IServiceProvider, object, CancellationToken, ValueTask<object?>> InvokeAsync,
-    IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null
+    Func<IServiceProvider, object, IMessageEnvelope, ICallerInfo?, CancellationToken, ValueTask<object?>> InvokeAsync,
+    IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null,
+    ICallerInfo? CallerInfo = null
 );
 
 /// <summary>

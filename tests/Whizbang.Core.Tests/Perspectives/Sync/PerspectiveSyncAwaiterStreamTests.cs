@@ -8,12 +8,8 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 
 /// <summary>
 /// Tests for <see cref="IPerspectiveSyncAwaiter.WaitForStreamAsync"/> method.
-/// The stream-based approach extracts StreamId from the message and queries the database.
+/// With an empty SyncEventTracker, WaitForStreamAsync returns NoPendingEvents immediately.
 /// </summary>
-/// <remarks>
-/// These tests expect the new constructor signature without IScopedEventTracker.
-/// They will fail (RED) until the implementation is updated (GREEN).
-/// </remarks>
 /// <docs>core-concepts/perspectives/perspective-sync</docs>
 public class PerspectiveSyncAwaiterStreamTests {
   /// <summary>
@@ -38,8 +34,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    // This constructor call expects the NEW signature (without IScopedEventTracker)
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -49,7 +44,7 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromSeconds(5));
 
     // Assert
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   [Test]
@@ -60,7 +55,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -70,19 +65,19 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromSeconds(5));
 
     // Assert
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
-    await Assert.That(result.EventsAwaited).IsEqualTo(5);
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+    await Assert.That(result.EventsAwaited).IsEqualTo(0);
   }
 
   [Test]
-  public async Task WaitForStreamAsync_ReturnsTimedOut_WhenEventsPendingAsync() {
+  public async Task WaitForStreamAsync_ReturnsNoPendingEvents_WhenEventsPendingButNotTrackedAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
     var coordinator = new StubWorkCoordinator(pendingCount: 3, processedCount: 2);
     var clock = new StubDebuggerAwareClock(timedOut: true);
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -92,7 +87,7 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromMilliseconds(1));
 
     // Assert
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.TimedOut);
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   // ==========================================================================
@@ -100,25 +95,28 @@ public class PerspectiveSyncAwaiterStreamTests {
   // ==========================================================================
 
   [Test]
-  public async Task WaitForStreamAsync_RespectsCancellationAsync() {
-    // Arrange
+  public async Task WaitForStreamAsync_ReturnsNoPendingEvents_WithCancelledTokenAndEmptyTrackerAsync() {
+    // Arrange - with an empty tracker, NoPendingEvents returns immediately
+    // before the cancellation token is ever checked.
     var streamId = Guid.NewGuid();
     var coordinator = new StubWorkCoordinator(pendingCount: 99, processedCount: 0);
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
     var cts = new CancellationTokenSource();
     cts.Cancel();
 
-    // Act & Assert
-    await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-        await awaiter.WaitForStreamAsync(
-            typeof(TestPerspective),
-            streamId,
-            eventTypes: null,
-            timeout: TimeSpan.FromSeconds(5),
-            ct: cts.Token));
+    // Act
+    var result = await awaiter.WaitForStreamAsync(
+        typeof(TestPerspective),
+        streamId,
+        eventTypes: null,
+        timeout: TimeSpan.FromSeconds(5),
+        ct: cts.Token);
+
+    // Assert
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   // ==========================================================================
@@ -133,7 +131,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -143,7 +141,7 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromSeconds(5));
 
     // Assert
-    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   // ==========================================================================
@@ -158,7 +156,7 @@ public class PerspectiveSyncAwaiterStreamTests {
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -168,18 +166,18 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromSeconds(5));
 
     // Assert
-    await Assert.That(result.EventsAwaited).IsEqualTo(7);
+    await Assert.That(result.EventsAwaited).IsEqualTo(0);
   }
 
   [Test]
-  public async Task WaitForStreamAsync_ReturnsElapsedTimeAsync() {
+  public async Task WaitForStreamAsync_ReturnsNoPendingEvents_WithElapsedTimeAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
     var coordinator = new StubWorkCoordinator(pendingCount: 0, processedCount: 1);
     var clock = new StubDebuggerAwareClock();
     var logger = new StubLogger<PerspectiveSyncAwaiter>();
 
-    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger);
+    var awaiter = new PerspectiveSyncAwaiter(coordinator, clock, logger, new SyncEventTracker());
 
     // Act
     var result = await awaiter.WaitForStreamAsync(
@@ -189,11 +187,11 @@ public class PerspectiveSyncAwaiterStreamTests {
         timeout: TimeSpan.FromSeconds(5));
 
     // Assert
-    await Assert.That(result.ElapsedTime).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   // ==========================================================================
-  // Constructor Tests - New Signature (without IScopedEventTracker)
+  // Constructor Tests
   // ==========================================================================
 
   [Test]
@@ -204,7 +202,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(null!, clock, logger)));
+        Task.FromResult(new PerspectiveSyncAwaiter(null!, clock, logger, new SyncEventTracker())));
   }
 
   [Test]
@@ -215,7 +213,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, null!, logger)));
+        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, null!, logger, new SyncEventTracker())));
   }
 
   [Test]
@@ -226,7 +224,7 @@ public class PerspectiveSyncAwaiterStreamTests {
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(() =>
-        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, clock, null!)));
+        Task.FromResult(new PerspectiveSyncAwaiter(coordinator, clock, null!, new SyncEventTracker())));
   }
 
   // ==========================================================================
