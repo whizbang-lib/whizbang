@@ -138,6 +138,95 @@ jobs:
           fi
 
   # ============================================================================
+  # Prerelease NuGet Publish - Auto-publish on develop push
+  # ============================================================================
+
+  prerelease-publish:
+    name: Publish Prerelease NuGet
+    needs: [version, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: nuget-publish
+    permissions:
+      contents: read
+      id-token: write  # Required for NuGet trusted publishing (OIDC)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Display Version
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+          FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
+          IS_PRERELEASE: ${{ needs.version.outputs.is_prerelease }}
+        run: |
+          echo "Publishing prerelease version: $SEMVER"
+          echo "Full SemVer: $FULLSEMVER"
+          echo "Is prerelease: $IS_PRERELEASE"
+
+      - name: Verify Prerelease Version
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+        run: |
+          # Safety check: only publish prerelease versions from develop
+          if [[ ! "$SEMVER" =~ -[a-zA-Z] ]]; then
+            echo "::error::Version $SEMVER is not a prerelease version. Refusing to publish stable version from develop branch."
+            exit 1
+          fi
+          echo "Verified: $SEMVER is a prerelease version"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+        run: dotnet build --configuration Release --no-restore -maxcpucount:1 -p:Version=$SEMVER
+
+      - name: Pack NuGet packages
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+        run: |
+          # NU5017 false positive for analyzer packages in .NET 10 SDK
+          dotnet pack --configuration Release --no-build --output ./packages -p:Version=$SEMVER || true
+          # Verify packages were created
+          PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
+          if [ "$PACKAGE_COUNT" -eq 0 ]; then
+            echo "::error::No packages were created"
+            exit 1
+          fi
+          echo "Created $PACKAGE_COUNT packages"
+          ls -la ./packages/*.nupkg
+
+      - name: NuGet Login (OIDC Trusted Publishing)
+        uses: nuget/login@d22cc5f58ff5b88bf9bd452535b4335137e24544 # v1
+        id: nuget-login
+        with:
+          user: phil.carbone
+
+      - name: Publish to NuGet
+        run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Summary
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+        run: |
+          PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
+          echo "## Prerelease Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`$SEMVER\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Packages**: $PACKAGE_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source**: develop branch auto-publish" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View on NuGet: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$SEMVER" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
   # Notifications - Send push notifications on build completion
   # ============================================================================
 
