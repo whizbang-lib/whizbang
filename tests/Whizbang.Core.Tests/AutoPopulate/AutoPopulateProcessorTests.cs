@@ -481,6 +481,10 @@ public class AutoPopulateProcessorTests {
     public IEnumerable<AutoPopulateRegistration> GetRegistrationsFor(Type messageType) {
       return _registrations.Where(r => r.MessageType == messageType);
     }
+
+    public IEnumerable<AutoPopulateRegistration> GetAllRegistrations() {
+      return _registrations;
+    }
   }
 
   private static MessageEnvelope<TestAutoPopulateMessage> _createTestEnvelope() {

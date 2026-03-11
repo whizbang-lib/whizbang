@@ -2126,9 +2126,12 @@ public abstract partial class Dispatcher(
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
+    // Populate SentAt-phase properties directly on the message record
+    var populatedMessage = (TMessage)AutoPopulatePopulatorRegistry.PopulateSent(message!, hop, messageId);
+
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = messageId,
-      Payload = message!,
+      Payload = populatedMessage,
       Hops = []
     };
 
@@ -2177,9 +2180,12 @@ public abstract partial class Dispatcher(
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
+    // Populate SentAt-phase properties directly on the message record
+    var populatedMessage = AutoPopulatePopulatorRegistry.PopulateSent(message, hop, messageId);
+
     var envelope = new MessageEnvelope<object> {
       MessageId = messageId,
-      Payload = message,
+      Payload = populatedMessage,
       Hops = []
     };
 

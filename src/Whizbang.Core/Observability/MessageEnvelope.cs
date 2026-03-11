@@ -29,7 +29,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   [JsonPropertyName("p")]
-  public required TMessage Payload { get; init; }
+  public required TMessage Payload { get; set; }
 
   /// <summary>
   /// Explicit implementation of non-generic Payload property.

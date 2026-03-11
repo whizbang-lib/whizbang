@@ -24,4 +24,10 @@ public interface IAutoPopulateRegistry {
   /// has no auto-populated properties in this assembly.
   /// </returns>
   IEnumerable<AutoPopulateRegistration> GetRegistrationsFor(Type messageType);
+
+  /// <summary>
+  /// Gets all registrations from this registry.
+  /// </summary>
+  /// <returns>All auto-populate registrations in this assembly.</returns>
+  IEnumerable<AutoPopulateRegistration> GetAllRegistrations();
 }
