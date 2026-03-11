@@ -4,6 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.SignalR.Hooks;
 
@@ -123,11 +125,11 @@ public class SignalRNotificationHookTests {
     };
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
     var payload = JsonSerializer.SerializeToElement(message);
-    var scope = new Core.Security.ScopeContext {
-      Scope = new Core.Lenses.PerspectiveScope { TenantId = "tenant-123" },
+    var scope = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "tenant-123" },
       Roles = new HashSet<string>(),
-      Permissions = new HashSet<Core.Security.Permission>(),
-      SecurityPrincipals = new HashSet<Core.Security.SecurityPrincipalId>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
       Claims = new Dictionary<string, string>()
     };
     var context = new TagContext<SignalTagAttribute> {

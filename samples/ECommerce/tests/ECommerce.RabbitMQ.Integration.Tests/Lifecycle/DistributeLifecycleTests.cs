@@ -212,7 +212,7 @@ public class DistributeLifecycleTests {
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.DistributeAsync);
 
     try {
@@ -332,7 +332,7 @@ public class DistributeLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Create receptors for all 5 stages
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
@@ -415,7 +415,7 @@ public class DistributeLifecycleTests {
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
 
     try {

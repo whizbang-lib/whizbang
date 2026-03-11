@@ -76,8 +76,8 @@ public class PostPerspectiveInlineCommitTest {
       perspectiveName: "ProductCatalogPerspective");
     Console.WriteLine("[TEST] Created GenericLifecycleCompletionReceptor for ProductCatalog perspective");
 
-    Console.WriteLine("[TEST] Getting ILifecycleReceptorRegistry from BffHost...");
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    Console.WriteLine("[TEST] Getting IReceptorRegistry from BffHost...");
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
     Console.WriteLine($"[TEST] Got registry: {registry.GetType().Name}");
 
     Console.WriteLine("[TEST] Registering receptor for PostPerspectiveInline stage...");

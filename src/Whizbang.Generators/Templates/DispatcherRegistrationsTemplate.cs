@@ -109,7 +109,6 @@ namespace Whizbang.Core.Generated {
         var envelopeSerializer = sp.GetService<IEnvelopeSerializer>();
         var envelopeRegistry = sp.GetService<IEnvelopeRegistry>();
         var outboxRoutingStrategy = sp.GetService<IOutboxRoutingStrategy>();
-        var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
         // IReceptorRegistry is singleton - safe to resolve here
         // IReceptorInvoker is scoped - resolved by workers per-message, not by Dispatcher
         var receptorRegistry = sp.GetService<IReceptorRegistry>();
@@ -121,21 +120,9 @@ namespace Whizbang.Core.Generated {
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, receptorRegistry, scopedEventTracker: null, syncEventTracker, trackedEventTypeRegistry);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
-      return services;
-    }
-
-    /// <summary>
-    /// Registers the generated zero-reflection lifecycle invoker.
-    /// Stateless routing component registered as Singleton for optimal performance.
-    /// Routes lifecycle invocations based on message type and lifecycle stage from [FireAt] attributes.
-    /// </summary>
-    [ExcludeFromCodeCoverage]
-    [DebuggerNonUserCode]
-    public static IServiceCollection AddWhizbangLifecycleInvoker(this IServiceCollection services) {
-      services.AddSingleton<ILifecycleInvoker, GeneratedLifecycleInvoker>();
       return services;
     }
 

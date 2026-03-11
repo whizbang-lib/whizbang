@@ -199,8 +199,8 @@ public class MessageHopSecurityExtractorTests {
   // ========================================
 
   [Test]
-  public async Task ExtractAsync_ReturnsEmptyRoles_SinceHopSecurityContextHasNoRolesAsync() {
-    // Arrange
+  public async Task ExtractAsync_WithNoCollections_ReturnsEmptyRolesAsync() {
+    // Arrange - ScopeDelta with only Values (no Collections)
     var extractor = new MessageHopSecurityExtractor();
     var securityContext = new SecurityContext {
       TenantId = "tenant",
@@ -212,13 +212,13 @@ public class MessageHopSecurityExtractorTests {
     // Act
     var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
 
-    // Assert
+    // Assert - no roles in ScopeDelta means empty roles
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Roles.Count).IsEqualTo(0);
   }
 
   [Test]
-  public async Task ExtractAsync_ReturnsEmptyPermissions_SinceHopSecurityContextHasNoPermissionsAsync() {
+  public async Task ExtractAsync_WithNoCollections_ReturnsEmptyPermissionsAsync() {
     // Arrange
     var extractor = new MessageHopSecurityExtractor();
     var securityContext = new SecurityContext {
@@ -237,7 +237,7 @@ public class MessageHopSecurityExtractorTests {
   }
 
   [Test]
-  public async Task ExtractAsync_ReturnsEmptySecurityPrincipals_SinceHopSecurityContextHasNoneAsync() {
+  public async Task ExtractAsync_WithNoCollections_ReturnsEmptySecurityPrincipalsAsync() {
     // Arrange
     var extractor = new MessageHopSecurityExtractor();
     var securityContext = new SecurityContext {
@@ -256,7 +256,7 @@ public class MessageHopSecurityExtractorTests {
   }
 
   [Test]
-  public async Task ExtractAsync_ReturnsEmptyClaims_SinceHopSecurityContextHasNoClaimsAsync() {
+  public async Task ExtractAsync_WithNoCollections_ReturnsEmptyClaimsAsync() {
     // Arrange
     var extractor = new MessageHopSecurityExtractor();
     var securityContext = new SecurityContext {
@@ -272,6 +272,139 @@ public class MessageHopSecurityExtractorTests {
     // Assert
     await Assert.That(result).IsNotNull();
     await Assert.That(result!.Claims.Count).IsEqualTo(0);
+  }
+
+  // ========================================
+  // Full ScopeDelta Extraction Tests
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithRolesInScopeDelta_ExtractsRolesAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+    var envelope = _createEnvelopeWithScopeAndRoles("user-1", "tenant-1", ["Admin", "User"]);
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Scope.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(result.Roles).Contains("Admin");
+    await Assert.That(result.Roles).Contains("User");
+    await Assert.That(result.Roles.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithPermissionsInScopeDelta_ExtractsPermissionsAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+    var envelope = _createEnvelopeWithScopeAndPermissions("user-1", "tenant-1", ["orders.read", "orders.write"]);
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Permissions.Count).IsEqualTo(2);
+    await Assert.That(result.Permissions).Contains(new Permission("orders.read"));
+    await Assert.That(result.Permissions).Contains(new Permission("orders.write"));
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithMultipleHops_MergesRolesFromAllHopsAsync() {
+    // Arrange - first hop sets roles, second hop adds more
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = "tenant-1", u = "user-1" });
+    string[] firstRolesArray = ["User"];
+    string[] addedRolesArray = ["Admin"];
+    var firstRoles = System.Text.Json.JsonSerializer.SerializeToElement(firstRolesArray);
+    var addedRoles = System.Text.Json.JsonSerializer.SerializeToElement(addedRolesArray);
+
+    var firstHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance("service-1"),
+      Timestamp = DateTimeOffset.UtcNow.AddMinutes(-5),
+      Scope = new ScopeDelta {
+        Values = new Dictionary<ScopeProp, System.Text.Json.JsonElement> {
+          [ScopeProp.Scope] = scopeElement
+        },
+        Collections = new Dictionary<ScopeProp, CollectionChanges> {
+          [ScopeProp.Roles] = new CollectionChanges { Set = firstRoles }
+        }
+      }
+    };
+
+    var secondHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance("service-2"),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta {
+        Collections = new Dictionary<ScopeProp, CollectionChanges> {
+          [ScopeProp.Roles] = new CollectionChanges { Add = addedRoles }
+        }
+      }
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [firstHop, secondHop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert - should have merged roles from both hops
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Roles).Contains("User");
+    await Assert.That(result.Roles).Contains("Admin");
+    await Assert.That(result.Roles.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithActualAndEffectivePrincipal_ExtractsPrincipalsAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = "tenant-1", u = "user-1" });
+    var actualElement = System.Text.Json.JsonSerializer.SerializeToElement("admin@example.com");
+    var effectiveElement = System.Text.Json.JsonSerializer.SerializeToElement("service-account");
+    var typeElement = System.Text.Json.JsonSerializer.SerializeToElement((int)SecurityContextType.Impersonated);
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta {
+        Values = new Dictionary<ScopeProp, System.Text.Json.JsonElement> {
+          [ScopeProp.Scope] = scopeElement,
+          [ScopeProp.Actual] = actualElement,
+          [ScopeProp.Effective] = effectiveElement,
+          [ScopeProp.Type] = typeElement
+        }
+      }
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.ActualPrincipal).IsEqualTo("admin@example.com");
+    await Assert.That(result.EffectivePrincipal).IsEqualTo("service-account");
+    await Assert.That(result.ContextType).IsEqualTo(SecurityContextType.Impersonated);
   }
 
   // ========================================
@@ -329,6 +462,58 @@ public class MessageHopSecurityExtractorTests {
       ServiceInstance = _createServiceInstance(),
       Timestamp = DateTimeOffset.UtcNow,
       Scope = null
+    };
+
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test-payload"),
+      Hops = [hop]
+    };
+  }
+
+  private static MessageEnvelope<TestMessage> _createEnvelopeWithScopeAndRoles(
+      string userId, string tenantId, string[] roles) {
+    var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = tenantId, u = userId });
+    var rolesElement = System.Text.Json.JsonSerializer.SerializeToElement(roles);
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta {
+        Values = new Dictionary<ScopeProp, System.Text.Json.JsonElement> {
+          [ScopeProp.Scope] = scopeElement
+        },
+        Collections = new Dictionary<ScopeProp, CollectionChanges> {
+          [ScopeProp.Roles] = new CollectionChanges { Set = rolesElement }
+        }
+      }
+    };
+
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test-payload"),
+      Hops = [hop]
+    };
+  }
+
+  private static MessageEnvelope<TestMessage> _createEnvelopeWithScopeAndPermissions(
+      string userId, string tenantId, string[] permissions) {
+    var scopeElement = System.Text.Json.JsonSerializer.SerializeToElement(new { t = tenantId, u = userId });
+    var permsElement = System.Text.Json.JsonSerializer.SerializeToElement(permissions);
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta {
+        Values = new Dictionary<ScopeProp, System.Text.Json.JsonElement> {
+          [ScopeProp.Scope] = scopeElement
+        },
+        Collections = new Dictionary<ScopeProp, CollectionChanges> {
+          [ScopeProp.Perms] = new CollectionChanges { Set = permsElement }
+        }
+      }
     };
 
     return new MessageEnvelope<TestMessage> {

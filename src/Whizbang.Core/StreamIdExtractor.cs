@@ -36,4 +36,14 @@ public sealed class StreamIdExtractor : IStreamIdExtractor {
     // For other message types (e.g., perspective DTOs), try generic extraction
     return StreamIdExtractors.TryResolveAsGuid(message);
   }
+
+  /// <inheritdoc />
+  public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    return StreamIdExtractors.GetGenerationPolicy(message);
+  }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, Guid streamId) {
+    return StreamIdExtractors.SetStreamId(message, streamId);
+  }
 }

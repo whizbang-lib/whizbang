@@ -116,7 +116,15 @@ public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityCont
       // JsonElement is an intermediate representation (outbox) - don't require security
       // The real message type will be checked after deserialization
       if (!_options.AllowAnonymous && !isJsonElement) {
-        throw new SecurityContextRequiredException(payloadType);
+        // Check if envelope already carries scope from an upstream security check.
+        // After outbox/transport serialization, the typed message may have no extractor,
+        // but the envelope's hops contain the ScopeDelta from the original authentication.
+        // If scope data exists on the envelope, the message was already authenticated —
+        // return null so callers can use envelope.GetCurrentScope() as fallback.
+        var envelopeScope = envelope.GetCurrentScope();
+        if (envelopeScope is null) {
+          throw new SecurityContextRequiredException(payloadType);
+        }
       }
 
       return null;

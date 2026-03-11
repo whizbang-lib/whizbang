@@ -30,8 +30,8 @@ namespace Whizbang.Testing.Lifecycle;
 public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   where TEvent : IEvent {
 
-  private readonly ILifecycleReceptorRegistry _inventoryRegistry;
-  private readonly ILifecycleReceptorRegistry _bffRegistry;
+  private readonly IReceptorRegistry _inventoryRegistry;
+  private readonly IReceptorRegistry _bffRegistry;
   private readonly CountingPerspectiveReceptor<TEvent> _inventoryReceptor;
   private readonly CountingPerspectiveReceptor<TEvent> _bffReceptor;
   private readonly TaskCompletionSource<bool> _inventoryCompletionSource;
@@ -50,8 +50,8 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="bffPerspectives">Number of perspectives expected on BFF host.</param>
   /// <param name="logger">Optional logger.</param>
   public PerspectiveCompletionWaiter(
-    ILifecycleReceptorRegistry inventoryRegistry,
-    ILifecycleReceptorRegistry bffRegistry,
+    IReceptorRegistry inventoryRegistry,
+    IReceptorRegistry bffRegistry,
     int inventoryPerspectives,
     int bffPerspectives,
     ILogger<PerspectiveCompletionWaiter<TEvent>>? logger = null) {

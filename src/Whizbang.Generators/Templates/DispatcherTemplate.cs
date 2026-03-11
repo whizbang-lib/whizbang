@@ -40,12 +40,11 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     IEnvelopeSerializer? envelopeSerializer = null,
     IEnvelopeRegistry? envelopeRegistry = null,
     IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-    ILifecycleInvoker? lifecycleInvoker = null,
     IReceptorRegistry? receptorRegistry = null,
     global::Whizbang.Core.Perspectives.Sync.IScopedEventTracker? scopedEventTracker = null,
     global::Whizbang.Core.Perspectives.Sync.ISyncEventTracker? syncEventTracker = null,
     global::Whizbang.Core.Perspectives.Sync.ITrackedEventTypeRegistry? trackedEventTypeRegistry = null
-  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, lifecycleInvoker, streamIdExtractor: null, receptorRegistry, scopedEventTracker, syncEventTracker, trackedEventTypeRegistry) {
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, receptorInvoker: null, envelopeSerializer, envelopeRegistry, outboxRoutingStrategy, streamIdExtractor: null, receptorRegistry, scopedEventTracker, syncEventTracker, trackedEventTypeRegistry) {
     _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 

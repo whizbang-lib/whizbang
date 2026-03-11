@@ -419,9 +419,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
-    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure security to allow anonymous messages for testing
@@ -536,7 +534,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -622,9 +619,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .WithDriver.Postgres;
 
     // Register lifecycle services for Distribute stage support
-    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
-    builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure security to allow anonymous messages for testing
@@ -730,7 +725,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetRequiredService<ILifecycleInvoker>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -807,7 +801,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         inventoryPerspectives
       );
 
-      var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
       inventoryRegistry.Register<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
       tasksToWait.Add(inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
     } else {
@@ -822,7 +816,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         bffPerspectives
       );
 
-      var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
       bffRegistry.Register<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
       tasksToWait.Add(bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
     } else {
@@ -844,11 +838,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     } finally {
       // Unregister receptors
       if (inventoryCountingReceptor != null) {
-        var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
         inventoryRegistry.Unregister<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
       if (bffCountingReceptor != null) {
-        var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
         bffRegistry.Unregister<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
     }
@@ -882,8 +876,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     int bffPerspectives)
     where TEvent : IEvent {
 
-    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
+    var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
     var loggerFactory = _bffHost!.Services.GetRequiredService<ILoggerFactory>();
     var logger = loggerFactory.CreateLogger<PerspectiveCompletionWaiter<TEvent>>();
 

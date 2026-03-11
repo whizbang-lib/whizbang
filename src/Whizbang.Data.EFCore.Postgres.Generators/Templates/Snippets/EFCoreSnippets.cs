@@ -182,7 +182,7 @@ __PHYSICAL_FIELD_CONFIGS__
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
       var dependencies = new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
-        LifecycleInvoker = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleInvoker>(),
+        ScopeFactory = sp.GetService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
         LifecycleMessageDeserializer = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
         TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
       };

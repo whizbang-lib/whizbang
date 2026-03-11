@@ -22,7 +22,7 @@ public static class MessageExtractor {
   /// <returns>Flattened collection of all messages found</returns>
   /// <docs>core-concepts/dispatcher#automatic-message-cascade</docs>
   /// <tests>tests/Whizbang.Core.Tests/Internal/MessageExtractorTests.cs</tests>
-  public static IEnumerable<IMessage> ExtractMessages(object? result) {
+  public static IEnumerable<IMessage> ExtractMessages(object? result, Action<Type>? onNonMessageValue = null) {
     if (result == null) {
       yield break;
     }
@@ -85,6 +85,8 @@ public static class MessageExtractor {
     }
 
     // Non-message, non-enumerable value - ignore
+    // Log at error level so developers know their receptor returned something unexpected
+    onNonMessageValue?.Invoke(result.GetType());
   }
 
   /// <summary>
@@ -98,8 +100,9 @@ public static class MessageExtractor {
   /// <tests>tests/Whizbang.Core.Tests/Internal/MessageExtractorRoutingTests.cs</tests>
   public static IEnumerable<(IMessage Message, DispatchMode Mode)> ExtractMessagesWithRouting(
     object? result,
-    DispatchMode? receptorDefault = null) {
-    return _extractMessagesWithRoutingInternal(result, receptorDefault, null, null);
+    DispatchMode? receptorDefault = null,
+    Action<Type>? onNonMessageValue = null) {
+    return _extractMessagesWithRoutingInternal(result, receptorDefault, null, null, onNonMessageValue);
   }
 
   /// <summary>
@@ -109,7 +112,8 @@ public static class MessageExtractor {
     object? result,
     DispatchMode? receptorDefault,
     DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode) {
+    DispatchMode? collectionWrapperMode,
+    Action<Type>? onNonMessageValue = null) {
     if (result == null) {
       yield break;
     }
@@ -130,8 +134,8 @@ public static class MessageExtractor {
         foreach (var item in _extractMessagesWithRoutingInternal(
           innerValue, receptorDefault,
           individualWrapperMode: wrapperMode,  // Pass as individual
-          collectionWrapperMode))              // Preserve outer collection mode
-        {
+          collectionWrapperMode,               // Preserve outer collection mode
+          onNonMessageValue)) {
           yield return item;
         }
       } else {
@@ -139,8 +143,8 @@ public static class MessageExtractor {
         foreach (var item in _extractMessagesWithRoutingInternal(
           innerValue, receptorDefault,
           individualWrapperMode,               // Preserve inner individual mode
-          collectionWrapperMode: wrapperMode)) // Pass as collection
-        {
+          collectionWrapperMode: wrapperMode,  // Pass as collection
+          onNonMessageValue)) {
           yield return item;
         }
       }
@@ -188,7 +192,7 @@ public static class MessageExtractor {
         if (item != null) {
           // Recursively extract messages from tuple items
           foreach (var extracted in _extractMessagesWithRoutingInternal(
-            item, receptorDefault, individualWrapperMode, collectionWrapperMode)) {
+            item, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
             yield return extracted;
           }
         }
@@ -202,7 +206,7 @@ public static class MessageExtractor {
         if (item != null) {
           // Recursively extract messages from enumerable items
           foreach (var extracted in _extractMessagesWithRoutingInternal(
-            item, receptorDefault, individualWrapperMode, collectionWrapperMode)) {
+            item, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
             yield return extracted;
           }
         }
@@ -211,6 +215,7 @@ public static class MessageExtractor {
     }
 
     // Non-message, non-enumerable value - ignore
+    onNonMessageValue?.Invoke(result.GetType());
   }
 
   /// <summary>
