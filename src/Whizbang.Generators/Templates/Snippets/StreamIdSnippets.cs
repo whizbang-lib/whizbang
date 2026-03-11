@@ -183,6 +183,19 @@ public class StreamIdSnippets {
     return null;
   }
 
+  /// <summary>
+  /// Example method showing snippet structure for generation policy dispatch routing.
+  /// </summary>
+  public (bool, bool) GenerationPolicyExample() {
+    #region GENERATION_POLICY_CASE
+    if (message is __EVENT_TYPE__) {
+      return (__SHOULD_GENERATE__, __ONLY_IF_EMPTY__);
+    }
+    #endregion
+
+    return (false, false);
+  }
+
   // ========================================
   // COMMAND SNIPPETS
   // ========================================

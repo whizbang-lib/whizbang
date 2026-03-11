@@ -66,8 +66,25 @@ public static class StreamIdExtractorRegistry {
   /// <summary>
   /// Composite IStreamIdExtractor that delegates to the registry.
   /// </summary>
+  /// <summary>
+  /// Get generation policy by trying all registered extractors in priority order.
+  /// Returns the first (ShouldGenerate=true) result, or (false, false) if none match.
+  /// </summary>
+  public static (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    foreach (var extractor in AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()) {
+      var result = extractor.GetGenerationPolicy(message);
+      if (result.ShouldGenerate) {
+        return result;
+      }
+    }
+    return (false, false);
+  }
+
   private sealed class CompositeStreamIdExtractor : IStreamIdExtractor {
     public Guid? ExtractStreamId(object message, Type messageType) =>
         StreamIdExtractorRegistry.ExtractStreamId(message, messageType);
+
+    public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) =>
+        StreamIdExtractorRegistry.GetGenerationPolicy(message);
   }
 }

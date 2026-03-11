@@ -94,11 +94,16 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // Look for [StreamId] on properties (including inherited properties)
     var streamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
     if (streamIdProperty is not null) {
+      // Check for [GenerateStreamId] on the property itself
+      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(streamIdProperty, typeSymbol);
+
       return new StreamIdInfo(
           EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
           PropertyName: streamIdProperty.Name,
           PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
-          IsPropertyValueType: streamIdProperty.Type.IsValueType
+          IsPropertyValueType: streamIdProperty.Type.IsValueType,
+          HasGenerate: hasGenerate,
+          OnlyIfEmpty: onlyIfEmpty
       );
     }
 
@@ -116,11 +121,28 @@ public class StreamIdGenerator : IIncrementalGenerator {
               .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
 
           if (property is not null) {
+            // Check for [GenerateStreamId] on the parameter or on the class
+            var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
+                a.AttributeClass is not null &&
+                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+            var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
+            var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
+
+            var onlyIfEmpty = false;
+            if (hasGenerateOnParam) {
+              onlyIfEmpty = _extractOnlyIfEmptyFromAttributes(parameter.GetAttributes());
+            } else if (hasGenerateOnClass) {
+              onlyIfEmpty = classOnlyIfEmpty;
+            }
+
             return new StreamIdInfo(
                 EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
                 PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType
+                IsPropertyValueType: property.Type.IsValueType,
+                HasGenerate: hasGenerate,
+                OnlyIfEmpty: onlyIfEmpty
             );
           }
         }
@@ -274,6 +296,31 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // Replace namespace region with assembly-specific namespace
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
+
+    // Generate GetGenerationPolicy dispatch cases
+    var eventsWithGenerate = eventsWithStreamId.Where(e => e.HasGenerate).ToImmutableArray();
+    if (!eventsWithGenerate.IsEmpty) {
+      var generationPolicySnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly,
+          "StreamIdSnippets.cs",
+          "GENERATION_POLICY_CASE"
+      );
+
+      var generationPolicyCode = new StringBuilder();
+      generationPolicyCode.AppendLine("// Type-based dispatch for generation policy");
+      foreach (var info in eventsWithGenerate) {
+        var caseCode = generationPolicySnippet
+            .Replace("__EVENT_TYPE__", info.EventType)
+            .Replace("__SHOULD_GENERATE__", "true")
+            .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+
+        generationPolicyCode.AppendLine(caseCode);
+      }
+
+      template = TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", generationPolicyCode.ToString().TrimEnd());
+    } else {
+      template = TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", "");
+    }
 
     // Generate dispatch cases
     if (!eventsWithStreamId.IsEmpty) {
@@ -593,5 +640,66 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // For nullable value types and other reference types
     return "COMMAND_TRY_EXTRACTOR_OTHER";
+  }
+
+  /// <summary>
+  /// Extracts [GenerateStreamId] info from a property or its owning class.
+  /// Checks property first, then falls back to class-level attribute.
+  /// </summary>
+  private static (bool HasGenerate, bool OnlyIfEmpty) _extractGenerateStreamIdInfo(
+      IPropertySymbol property,
+      INamedTypeSymbol typeSymbol) {
+    // Check for [GenerateStreamId] on the property itself
+    var propertyAttr = property.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass is not null &&
+        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+    if (propertyAttr is not null) {
+      var onlyIfEmpty = _extractOnlyIfEmptyFromAttribute(propertyAttr);
+      return (true, onlyIfEmpty);
+    }
+
+    // Check for [GenerateStreamId] on the class/record itself (for inherited [StreamId] scenarios)
+    return _extractGenerateStreamIdFromClass(typeSymbol);
+  }
+
+  /// <summary>
+  /// Checks for [GenerateStreamId] on the class/record declaration.
+  /// </summary>
+  private static (bool HasGenerate, bool OnlyIfEmpty) _extractGenerateStreamIdFromClass(INamedTypeSymbol typeSymbol) {
+    var classAttr = typeSymbol.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass is not null &&
+        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+    if (classAttr is not null) {
+      var onlyIfEmpty = _extractOnlyIfEmptyFromAttribute(classAttr);
+      return (true, onlyIfEmpty);
+    }
+
+    return (false, false);
+  }
+
+  /// <summary>
+  /// Extracts OnlyIfEmpty named argument from a single AttributeData.
+  /// </summary>
+  private static bool _extractOnlyIfEmptyFromAttribute(AttributeData attr) {
+    foreach (var namedArg in attr.NamedArguments) {
+      if (namedArg.Key == "OnlyIfEmpty" && namedArg.Value.Value is bool boolValue) {
+        return boolValue;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Extracts OnlyIfEmpty from a collection of attributes.
+  /// </summary>
+  private static bool _extractOnlyIfEmptyFromAttributes(
+      System.Collections.Immutable.ImmutableArray<AttributeData> attributes) {
+    var attr = attributes.FirstOrDefault(a =>
+        a.AttributeClass is not null &&
+        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+    return attr is not null ? _extractOnlyIfEmptyFromAttribute(attr) : false;
   }
 }

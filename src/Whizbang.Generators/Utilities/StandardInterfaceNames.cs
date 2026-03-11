@@ -44,6 +44,7 @@ internal static class StandardInterfaceNames {
   public const string TOPIC_FILTER_ATTRIBUTE = "global::Whizbang.Core.TopicFilterAttribute";
   public const string WHIZBANG_ID_ATTRIBUTE = "global::Whizbang.Core.WhizbangIdAttribute";
   public const string WHIZBANG_SERIALIZABLE = "global::Whizbang.Core.WhizbangSerializableAttribute";
+  public const string GENERATE_STREAM_ID_ATTRIBUTE = "global::Whizbang.Core.GenerateStreamIdAttribute";
 
   // Other core types
   public const string I_WHIZBANG_ID = "global::Whizbang.Core.IWhizbangId";

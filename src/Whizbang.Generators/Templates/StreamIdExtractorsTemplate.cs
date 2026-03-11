@@ -135,6 +135,20 @@ public static partial class StreamIdExtractors {
     return null;
   }
 
+  /// <summary>
+  /// Returns the generation policy for an event type based on [GenerateStreamId] attribute.
+  /// Used by the Dispatcher to determine if a StreamId should be auto-generated.
+  /// </summary>
+  /// <param name="message">The message to check for generation policy</param>
+  /// <returns>A tuple of (ShouldGenerate, OnlyIfEmpty) indicating the generation policy</returns>
+  public static (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    #region GENERATION_POLICY_DISPATCH
+    // Type-based dispatch to determine generation policy
+    #endregion
+
+    return (false, false);
+  }
+
   #region EVENT_EXTRACTORS
   // Individual extractor methods for each event type
   #endregion
@@ -175,6 +189,11 @@ internal sealed class GeneratedStreamIdExtractor : global::Whizbang.Core.IStream
 
     // For other message types (e.g., perspective DTOs)
     return StreamIdExtractors.TryResolveAsGuid(message);
+  }
+
+  /// <inheritdoc />
+  public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
+    return StreamIdExtractors.GetGenerationPolicy(message);
   }
 }
 
