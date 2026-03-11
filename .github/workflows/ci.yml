@@ -16,50 +16,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-
-      - name: Detect changed paths
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            code:
-              - 'src/**'
-              - 'tests/**'
-              - 'samples/**'
-              - 'tools/**'
-              - 'benchmarks/**'
-              - '*.sln*'
-              - '**/*.csproj'
-              - '**/*.props'
-              - '**/*.targets'
-              - 'Directory.Build.*'
-              - 'Directory.Packages.props'
-              - 'global.json'
-              - 'nuget.config'
-
   version:
     name: Version
     uses: ./.github/workflows/reusable-version.yml
 
   build:
     name: Build
-    needs: [version, changes]
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: version
     uses: ./.github/workflows/reusable-build.yml
 
+  # Tests and quality only run on PRs and main pushes.
+  # Non-main push events (e.g. develop merge) skip these since the PR already validated everything.
   unit-tests:
     name: Unit Tests
     needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
       # Use pre-built artifacts with in-job instrumentation for coverage
@@ -68,6 +39,7 @@ jobs:
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -75,6 +47,7 @@ jobs:
   inmemory-integration:
     name: InMemory Integration
     needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -82,6 +55,7 @@ jobs:
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -89,6 +63,7 @@ jobs:
   servicebus-integration:
     name: Service Bus Integration
     needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       artifact-name: build-${{ github.run_id }}
@@ -96,6 +71,7 @@ jobs:
   quality:
     name: Quality
     needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-quality.yml
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -143,10 +119,11 @@ jobs:
 
   notify-success:
     name: Notify Success
-    needs: [changes, quality]
+    needs: [build, quality]
     if: |
       always() &&
-      (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
+      needs.build.result == 'success' &&
+      (needs.quality.result == 'success' || needs.quality.result == 'skipped') &&
       vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
