@@ -79,6 +79,13 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
 
       logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
+
+      // Clear all Npgsql connection pools after migrations complete.
+      // CREATE OR REPLACE FUNCTION assigns new OIDs to functions, but connections
+      // already in the pool still cache the old OIDs. Clearing pools forces new
+      // connections with correct OID mappings. This only runs once at startup.
+      Npgsql.NpgsqlConnection.ClearAllPools();
+      logger?.LogInformation("Cleared Npgsql connection pools to refresh function OID mappings");
     } finally {
       // Release advisory lock - allows other services waiting on initialization to proceed
       await dbContext.Database.ExecuteSqlRawAsync(
