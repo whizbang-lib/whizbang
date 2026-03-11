@@ -440,7 +440,7 @@ public abstract partial class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
       // Pass messageType so we can look up receptor's [DefaultRouting] attribute
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -553,7 +553,7 @@ public abstract partial class Dispatcher(
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -637,7 +637,7 @@ public abstract partial class Dispatcher(
       var result = await invoker(message);
 
       // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -715,7 +715,7 @@ public abstract partial class Dispatcher(
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -925,8 +925,14 @@ public abstract partial class Dispatcher(
     // Invoke synchronously
     var result = syncInvoker(message);
 
-    // Auto-cascade any events (still async for publishing)
-    var cascadeTask = _cascadeEventsFromResultAsync(result, messageType);
+    // Create a proper envelope so cascaded events carry full context (scope, correlation, trace).
+    // NOTE: This adds allocation overhead vs the previous lightweight envelope approach.
+    // Revisit if profiling shows this is a hot path — could use a pooled or minimal envelope
+    // that only populates scope + streamId without caller info and auto-populate processing.
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+    var sourceEnvelope = _createEnvelope(message, context, "", "", 0);
+    var cascadeTask = _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: sourceEnvelope);
 
     // Unwrap Routed<T> from result if receptor returned a wrapped value
     // This enables receptors to return Route.Local(event) for cascade control
@@ -979,13 +985,23 @@ public abstract partial class Dispatcher(
     object message,
     Type messageType
   ) {
+    // Create a proper envelope so cascaded events carry full context (scope, correlation, trace).
+    // _createEnvelope also handles [GenerateStreamId] auto-generation before hop metadata extraction.
+    // NOTE: This adds allocation overhead vs a lightweight envelope approach.
+    // Revisit if profiling shows this is a hot path — could use a pooled or minimal envelope
+    // that only populates scope + streamId without caller info and auto-populate processing.
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+    var sourceEnvelope = _createEnvelope(message, context, "", "", 0);
+
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
     dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
 
     var result = await invoker(message);
-    await _cascadeEventsFromResultAsync(result, messageType);
+
+    await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: sourceEnvelope);
 
     // Process tags after successful receptor completion
     await _processTagsIfEnabledAsync(message, messageType);
@@ -1153,6 +1169,15 @@ public abstract partial class Dispatcher(
     object message,
     Type messageType
   ) {
+    // Create a proper envelope so cascaded events carry full context (scope, correlation, trace).
+    // _createEnvelope also handles [GenerateStreamId] auto-generation before hop metadata extraction.
+    // NOTE: This adds allocation overhead vs a lightweight envelope approach.
+    // Revisit if profiling shows this is a hot path — could use a pooled or minimal envelope
+    // that only populates scope + streamId without caller info and auto-populate processing.
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+    var sourceEnvelope = _createEnvelope(message, context, "", "", 0);
+
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
@@ -1170,7 +1195,7 @@ public abstract partial class Dispatcher(
       CascadeLogger.LogDebug("[CASCADE] VoidWithAnyInvoker: Receptor returned {ResultType}, IsNull={IsNull}", resultTypeName, isNull);
     }
     if (result != null) {
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: sourceEnvelope);
     } else {
       CascadeLogger.LogWarning("[CASCADE] VoidWithAnyInvoker: Receptor returned null, no cascade will occur");
     }
@@ -1215,7 +1240,7 @@ public abstract partial class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -1339,7 +1364,7 @@ public abstract partial class Dispatcher(
 
       // Auto-cascade: Extract and publish any IEvent instances from receptor return value
       // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(actualMessage, messageType);
@@ -1891,7 +1916,7 @@ public abstract partial class Dispatcher(
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
-      await _cascadeEventsFromResultAsync(result, messageType);
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
 
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
@@ -1983,6 +2008,10 @@ public abstract partial class Dispatcher(
       Hops = []
     };
 
+    // Auto-generate StreamId for messages with [GenerateStreamId] attribute during envelope creation
+    // Must run BEFORE _createHopMetadata so the hop captures the generated StreamId
+    _autoGenerateStreamIdIfNeeded(message!, typeof(TMessage));
+
     // Extract aggregate ID and add to hop metadata (for streamId extraction)
     var hopMetadata = _createHopMetadata(message!, typeof(TMessage));
 
@@ -2027,8 +2056,12 @@ public abstract partial class Dispatcher(
       Hops = []
     };
 
-    // Extract aggregate ID and add to hop metadata (for streamId extraction)
+    // Auto-generate StreamId for messages with [GenerateStreamId] attribute during envelope creation
+    // Must run BEFORE _createHopMetadata so the hop captures the generated StreamId
     var messageType = message.GetType();
+    _autoGenerateStreamIdIfNeeded(message, messageType);
+
+    // Extract aggregate ID and add to hop metadata (for streamId extraction)
     var hopMetadata = _createHopMetadata(message, messageType);
 
     var hop = new MessageHop {
@@ -2081,7 +2114,7 @@ public abstract partial class Dispatcher(
   /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
-  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null) {
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null, IMessageEnvelope? sourceEnvelope = null) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var resultTypeName = result?.GetType().Name ?? "null";
@@ -2135,6 +2168,20 @@ public abstract partial class Dispatcher(
               CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
                 streamId, messageType.Name, onlyIfEmpty);
             }
+          }
+        }
+
+        // Cascade StreamId propagation: inherit from source command when event's StreamId is still empty
+        if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
+          var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+          if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
+            streamId = sourceStreamId.Value;
+            if (msg is IHasStreamId hasStreamIdForCascade) {
+              hasStreamIdForCascade.StreamId = streamId;
+            } else {
+              _streamIdExtractor.SetStreamId(msg, streamId);
+            }
+            Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
           }
         }
 
@@ -2203,7 +2250,7 @@ public abstract partial class Dispatcher(
             var msgTypeName = messageType.Name;
             CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
           }
-          await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: null, eventId: eventId);
+          await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
         }
       }
 
@@ -2214,7 +2261,7 @@ public abstract partial class Dispatcher(
           var msgTypeName = messageType.Name;
           CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
         }
-        await CascadeToOutboxAsync(msg, messageType, sourceEnvelope: null, eventId: eventId);
+        await CascadeToOutboxAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
       }
     }
 
@@ -2399,6 +2446,9 @@ public abstract partial class Dispatcher(
 
     var eventType = eventData.GetType();
 
+    // Auto-generate StreamId for events with [GenerateStreamId] attribute
+    _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+
     // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
     var messageId = MessageId.New();
 
@@ -2447,6 +2497,10 @@ public abstract partial class Dispatcher(
     options.CancellationToken.ThrowIfCancellationRequested();
 
     var eventType = eventData.GetType();
+
+    // Auto-generate StreamId for events with [GenerateStreamId] attribute
+    _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+
     var messageId = MessageId.New();
     var publisher = GetReceptorPublisher(eventData, eventType);
 
@@ -2501,18 +2555,29 @@ public abstract partial class Dispatcher(
       eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
+      // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
+      // This enables the pattern where [GenerateStreamId] is on the command and events inherit it
+      if (streamId == Guid.Empty && sourceEnvelope is not null && _streamIdExtractor is not null) {
+        var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+        if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
+          streamId = sourceStreamId.Value;
+          // Set the StreamId on the event object so hop metadata captures it
+          if (message is IHasStreamId hasStreamIdForCascade) {
+            hasStreamIdForCascade.StreamId = streamId;
+          } else {
+            _streamIdExtractor.SetStreamId(message, streamId);
+          }
+          Log.StreamIdPropagatedFromSource(CascadeLogger, streamId, sourceEnvelope.Payload!.GetType().Name, messageType.Name);
+        }
+      }
+
       // Auto-generate StreamId based on [GenerateStreamId] attribute policy
-      if (_streamIdExtractor is not null && message is IHasStreamId hasStreamId) {
+      if (streamId == Guid.Empty && _streamIdExtractor is not null && message is IHasStreamId hasStreamId) {
         var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(message);
         if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
           streamId = ValueObjects.TrackedGuid.NewMedo();
           hasStreamId.StreamId = streamId;
-#pragma warning disable CA1848
-          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-            CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
-              streamId, messageType.Name, onlyIfEmpty);
-          }
-#pragma warning restore CA1848
+          Log.StreamIdAutoGenerated(CascadeLogger, streamId, messageType.Name, onlyIfEmpty);
         }
       }
 
@@ -2696,6 +2761,23 @@ public abstract partial class Dispatcher(
       // When eventStoreOnly is true, use null destination to bypass transport
       string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
 
+      // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
+      // This enables the pattern where [GenerateStreamId] is on the command and events inherit it
+      if (sourceEnvelope is not null && _streamIdExtractor is not null) {
+        var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData!, eventType);
+        if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
+          var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+          if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
+            if (eventData is IHasStreamId hasStreamId) {
+              hasStreamId.StreamId = sourceStreamId.Value;
+            } else {
+              _streamIdExtractor.SetStreamId(eventData!, sourceStreamId.Value);
+            }
+            Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+          }
+        }
+      }
+
       // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
         MessageId = messageId,
@@ -2800,6 +2882,22 @@ public abstract partial class Dispatcher(
 
       // Resolve destination topic using registry and routing strategy
       string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
+
+      // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
+      if (sourceEnvelope is not null && _streamIdExtractor is not null) {
+        var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData, eventType);
+        if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
+          var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+          if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
+            if (eventData is IHasStreamId hasStreamId) {
+              hasStreamId.StreamId = sourceStreamId.Value;
+            } else {
+              _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
+            }
+            Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+          }
+        }
+      }
 
       // Serialize the message directly using the runtime type via JsonContextRegistry
       // This avoids creating MessageEnvelope<IEvent> which can't be serialized
@@ -3680,7 +3778,7 @@ public abstract partial class Dispatcher(
 
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox");
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", payload.GetType().FullName ?? payload.GetType().Name);
     }
 
     // Use centralized envelope serializer (REQUIRED)
@@ -3755,6 +3853,37 @@ public abstract partial class Dispatcher(
 
     // Fall back to message ID (ensures all messages have a stream)
     return envelope.MessageId.Value;
+  }
+
+  /// <summary>
+  /// Auto-generates StreamId for messages with [GenerateStreamId] attribute during envelope creation.
+  /// This ensures commands (and any IMessage) get their StreamId populated before dispatch,
+  /// using the same plumbing as [Populate*] attributes.
+  /// Events cascaded from receptors are handled separately in the cascade path.
+  /// </summary>
+  private void _autoGenerateStreamIdIfNeeded(object message, Type messageType) {
+    if (_streamIdExtractor is null) {
+      return;
+    }
+
+    var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(message);
+    if (!shouldGenerate) {
+      return;
+    }
+
+    var streamId = _streamIdExtractor.ExtractStreamId(message, messageType) ?? Guid.Empty;
+    if (!onlyIfEmpty || streamId == Guid.Empty) {
+      var newStreamId = ValueObjects.TrackedGuid.NewMedo();
+
+      // Try IHasStreamId first (direct interface), then fall back to generated setter
+      if (message is IHasStreamId hasStreamId) {
+        hasStreamId.StreamId = newStreamId;
+      } else {
+        _streamIdExtractor.SetStreamId(message, newStreamId);
+      }
+
+      Log.StreamIdAutoGenerated(CascadeLogger, newStreamId, messageType.Name, onlyIfEmpty);
+    }
   }
 
   /// <summary>
@@ -3896,5 +4025,17 @@ public abstract partial class Dispatcher(
                 "This may indicate the originating request didn't have proper user context. ContextType: {ContextType}, TenantId: {TenantId}",
       SkipEnabledCheck = true)]
     public static partial void EmptyGuidUserIdInExplicitContext(ILogger logger, string? contextType, string? tenantId);
+
+    [LoggerMessage(
+      EventId = 3,
+      Level = LogLevel.Debug,
+      Message = "[STREAM_ID] Auto-generated StreamId={StreamId} for MessageType={MessageType} (OnlyIfEmpty={OnlyIfEmpty})")]
+    public static partial void StreamIdAutoGenerated(ILogger logger, Guid streamId, string messageType, bool onlyIfEmpty);
+
+    [LoggerMessage(
+      EventId = 4,
+      Level = LogLevel.Debug,
+      Message = "[STREAM_ID] Propagated StreamId={StreamId} from source {SourceType} to cascaded {EventType}")]
+    public static partial void StreamIdPropagatedFromSource(ILogger logger, Guid streamId, string sourceType, string eventType);
   }
 }

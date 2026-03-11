@@ -73,9 +73,12 @@ public class AuditTagHookTests {
       Reason = "Tenant Access"
     };
 
-    var scope = new Dictionary<string, object?> {
-      ["TenantId"] = "tenant-123",
-      ["UserId"] = "user-456"
+    var scope = new Whizbang.Core.Security.ScopeContext {
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-123", UserId = "user-456" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Whizbang.Core.Security.Permission>(),
+      SecurityPrincipals = new HashSet<Whizbang.Core.Security.SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
 
     var context = new TagContext<AuditEventAttribute> {
@@ -83,7 +86,7 @@ public class AuditTagHookTests {
       Message = new TestEvent { Name = "TenantEvent" },
       MessageType = typeof(TestEvent),
       Payload = JsonSerializer.SerializeToElement(new { Name = "TenantEvent" }),
-      Scope = (Whizbang.Core.Security.IScopeContext)scope
+      Scope = scope
     };
 
     // Act
@@ -218,8 +221,12 @@ public class AuditTagHookTests {
       Reason = "Test"
     };
 
-    var scope = new Dictionary<string, object?> {
-      ["OtherKey"] = "some-value" // No TenantId or UserId
+    var scope = new Whizbang.Core.Security.ScopeContext {
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope(), // No TenantId or UserId
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Whizbang.Core.Security.Permission>(),
+      SecurityPrincipals = new HashSet<Whizbang.Core.Security.SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
     };
 
     var context = new TagContext<AuditEventAttribute> {
@@ -227,7 +234,7 @@ public class AuditTagHookTests {
       Message = new TestEvent { Name = "PartialScopeEvent" },
       MessageType = typeof(TestEvent),
       Payload = JsonSerializer.SerializeToElement(new { Name = "PartialScopeEvent" }),
-      Scope = (Whizbang.Core.Security.IScopeContext)scope
+      Scope = scope
     };
 
     // Act

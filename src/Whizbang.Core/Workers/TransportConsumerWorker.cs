@@ -557,7 +557,7 @@ public class TransportConsumerWorker : BackgroundService {
 
     // Guard: fail-fast if StreamId is Guid.Empty for events
     if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox");
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
     }
 
     return new InboxMessage {

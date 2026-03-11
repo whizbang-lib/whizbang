@@ -196,6 +196,34 @@ public class StreamIdSnippets {
     return (false, false);
   }
 
+  /// <summary>
+  /// Example method showing snippet structure for SetStreamId dispatch routing for events.
+  /// </summary>
+  public bool SetStreamIdEventExample() {
+    #region SET_STREAM_ID_EVENT_CASE
+    if (message is __EVENT_TYPE__ setE__INDEX__) {
+      setE__INDEX__.__PROPERTY_NAME__ = streamId;
+      return true;
+    }
+    #endregion
+
+    return false;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for SetStreamId dispatch routing for commands.
+  /// </summary>
+  public bool SetStreamIdCommandExample() {
+    #region SET_STREAM_ID_COMMAND_CASE
+    if (message is __COMMAND_TYPE__ setC__INDEX__) {
+      setC__INDEX__.__PROPERTY_NAME__ = streamId;
+      return true;
+    }
+    #endregion
+
+    return false;
+  }
+
   // ========================================
   // COMMAND SNIPPETS
   // ========================================

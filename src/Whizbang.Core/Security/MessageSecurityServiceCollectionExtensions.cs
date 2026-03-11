@@ -54,8 +54,10 @@ public static class MessageSecurityServiceCollectionExtensions {
     var options = new MessageSecurityOptions();
     configure?.Invoke(options);
 
-    // Register options as singleton
-    services.AddSingleton(options);
+    // Register options as singleton (TryAdd so first registration wins)
+    // This allows user-configured options (e.g., ExemptMessageTypes) to take precedence
+    // over the default options registered by AddWhizbang()/AddWhizbangDispatcher()
+    services.TryAddSingleton(options);
 
     // Register scoped IScopeContextAccessor
     services.TryAddScoped<IScopeContextAccessor, ScopeContextAccessor>();

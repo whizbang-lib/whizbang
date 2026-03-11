@@ -55,7 +55,7 @@ public class StreamIdGuardTests {
 
     // Act
     try {
-      StreamIdGuard.ThrowIfEmpty(Guid.Empty, messageId, "Dispatcher.Outbox");
+      StreamIdGuard.ThrowIfEmpty(Guid.Empty, messageId, "Dispatcher.Outbox", "OrderCreatedEvent");
     } catch (InvalidStreamIdException ex) {
       caught = ex;
     }
@@ -64,6 +64,7 @@ public class StreamIdGuardTests {
     await Assert.That(caught).IsNotNull();
     await Assert.That(caught!.Message).Contains(messageId.ToString());
     await Assert.That(caught.Message).Contains("Dispatcher.Outbox");
+    await Assert.That(caught.Message).Contains("OrderCreatedEvent");
     await Assert.That(caught.MessageId).IsEqualTo(messageId);
     await Assert.That(caught.Context).IsEqualTo("Dispatcher.Outbox");
     await Assert.That(caught.StreamId).IsEqualTo(Guid.Empty);

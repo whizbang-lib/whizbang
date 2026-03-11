@@ -390,7 +390,7 @@ public partial class ServiceBusConsumerWorker(
 
     // Guard: fail-fast if StreamId is Guid.Empty for events
     if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox");
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox", messageTypeName);
     }
 
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);

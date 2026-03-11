@@ -149,6 +149,21 @@ public static partial class StreamIdExtractors {
     return (false, false);
   }
 
+  /// <summary>
+  /// Sets the stream ID on a message using the [StreamId]-marked property.
+  /// Used by the Dispatcher for auto-generation without requiring IHasStreamId.
+  /// </summary>
+  /// <param name="message">The message to set the StreamId on</param>
+  /// <param name="streamId">The StreamId value to set</param>
+  /// <returns>True if the StreamId was set, false if the message type is not recognized</returns>
+  public static bool SetStreamId(object message, global::System.Guid streamId) {
+    #region SET_STREAM_ID_DISPATCH
+    // Type-based dispatch to set StreamId on the message
+    #endregion
+
+    return false;
+  }
+
   #region EVENT_EXTRACTORS
   // Individual extractor methods for each event type
   #endregion
@@ -194,6 +209,11 @@ internal sealed class GeneratedStreamIdExtractor : global::Whizbang.Core.IStream
   /// <inheritdoc />
   public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
     return StreamIdExtractors.GetGenerationPolicy(message);
+  }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, global::System.Guid streamId) {
+    return StreamIdExtractors.SetStreamId(message, streamId);
   }
 }
 

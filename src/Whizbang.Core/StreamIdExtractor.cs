@@ -41,4 +41,9 @@ public sealed class StreamIdExtractor : IStreamIdExtractor {
   public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) {
     return StreamIdExtractors.GetGenerationPolicy(message);
   }
+
+  /// <inheritdoc />
+  public bool SetStreamId(object message, Guid streamId) {
+    return StreamIdExtractors.SetStreamId(message, streamId);
+  }
 }

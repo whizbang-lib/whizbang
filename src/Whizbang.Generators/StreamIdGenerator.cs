@@ -103,7 +103,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
           PropertyType: TypeNameHelper.GetFullyQualifiedName(streamIdProperty.Type),
           IsPropertyValueType: streamIdProperty.Type.IsValueType,
           HasGenerate: hasGenerate,
-          OnlyIfEmpty: onlyIfEmpty
+          OnlyIfEmpty: onlyIfEmpty,
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(streamIdProperty)
       );
     }
 
@@ -142,7 +143,8 @@ public class StreamIdGenerator : IIncrementalGenerator {
                 PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
                 IsPropertyValueType: property.Type.IsValueType,
                 HasGenerate: hasGenerate,
-                OnlyIfEmpty: onlyIfEmpty
+                OnlyIfEmpty: onlyIfEmpty,
+                IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
             );
           }
         }
@@ -214,11 +216,17 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // Look for [StreamId] on properties (including inherited properties)
     var commandStreamIdProperty = typeSymbol.FindPropertyWithAttribute(StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
     if (commandStreamIdProperty is not null) {
+      // Check for [GenerateStreamId] on the property or class
+      var (hasGenerate, onlyIfEmpty) = _extractGenerateStreamIdInfo(commandStreamIdProperty, typeSymbol);
+
       return new CommandStreamIdInfo(
           CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
           PropertyName: commandStreamIdProperty.Name,
           PropertyType: TypeNameHelper.GetFullyQualifiedName(commandStreamIdProperty.Type),
-          IsPropertyValueType: commandStreamIdProperty.Type.IsValueType
+          IsPropertyValueType: commandStreamIdProperty.Type.IsValueType,
+          HasGenerate: hasGenerate,
+          OnlyIfEmpty: onlyIfEmpty,
+          IsPropertyInitOnly: _isInitOnlyOrReadOnly(commandStreamIdProperty)
       );
     }
 
@@ -236,11 +244,29 @@ public class StreamIdGenerator : IIncrementalGenerator {
               .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
 
           if (property is not null) {
+            // Check for [GenerateStreamId] on the parameter or on the class
+            var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
+                a.AttributeClass is not null &&
+                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+            var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
+            var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
+
+            var onlyIfEmpty = false;
+            if (hasGenerateOnParam) {
+              onlyIfEmpty = _extractOnlyIfEmptyFromAttributes(parameter.GetAttributes());
+            } else if (hasGenerateOnClass) {
+              onlyIfEmpty = classOnlyIfEmpty;
+            }
+
             return new CommandStreamIdInfo(
                 CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
                 PropertyName: property.Name,
                 PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType
+                IsPropertyValueType: property.Type.IsValueType,
+                HasGenerate: hasGenerate,
+                OnlyIfEmpty: onlyIfEmpty,
+                IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
             );
           }
         }
@@ -297,9 +323,10 @@ public class StreamIdGenerator : IIncrementalGenerator {
     // Replace namespace region with assembly-specific namespace
     template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
-    // Generate GetGenerationPolicy dispatch cases
+    // Generate GetGenerationPolicy dispatch cases (events AND commands)
     var eventsWithGenerate = eventsWithStreamId.Where(e => e.HasGenerate).ToImmutableArray();
-    if (!eventsWithGenerate.IsEmpty) {
+    var commandsWithGenerate = commandsWithStreamId.Where(c => c.HasGenerate).ToImmutableArray();
+    if (!eventsWithGenerate.IsEmpty || !commandsWithGenerate.IsEmpty) {
       var generationPolicySnippet = TemplateUtilities.ExtractSnippet(
           typeof(StreamIdGenerator).Assembly,
           "StreamIdSnippets.cs",
@@ -311,6 +338,15 @@ public class StreamIdGenerator : IIncrementalGenerator {
       foreach (var info in eventsWithGenerate) {
         var caseCode = generationPolicySnippet
             .Replace("__EVENT_TYPE__", info.EventType)
+            .Replace("__SHOULD_GENERATE__", "true")
+            .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+
+        generationPolicyCode.AppendLine(caseCode);
+      }
+
+      foreach (var info in commandsWithGenerate) {
+        var caseCode = generationPolicySnippet
+            .Replace("__EVENT_TYPE__", info.CommandType)
             .Replace("__SHOULD_GENERATE__", "true")
             .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
 
@@ -557,6 +593,51 @@ public class StreamIdGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
     template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
 
+    // Generate SetStreamId dispatch cases (events AND commands with Guid [StreamId] properties)
+    var setStreamIdCode = new StringBuilder();
+    var hasSetterCases = false;
+
+    // Only generate setter for types with Guid [StreamId] properties that have a regular set accessor
+    // (skip init-only and read-only properties)
+    var eventIndex = 0;
+    foreach (var info in eventsWithStreamId) {
+      if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
+        var setEventSnippet = TemplateUtilities.ExtractSnippet(
+            typeof(StreamIdGenerator).Assembly,
+            "StreamIdSnippets.cs",
+            "SET_STREAM_ID_EVENT_CASE"
+        );
+        var caseCode = setEventSnippet
+            .Replace("__EVENT_TYPE__", info.EventType)
+            .Replace("__PROPERTY_NAME__", info.PropertyName)
+            .Replace("__INDEX__", eventIndex.ToString(CultureInfo.InvariantCulture));
+        setStreamIdCode.AppendLine(caseCode);
+        hasSetterCases = true;
+      }
+      eventIndex++;
+    }
+
+    var commandIndex = 0;
+    foreach (var info in commandsWithStreamId) {
+      if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
+        var setCommandSnippet = TemplateUtilities.ExtractSnippet(
+            typeof(StreamIdGenerator).Assembly,
+            "StreamIdSnippets.cs",
+            "SET_STREAM_ID_COMMAND_CASE"
+        );
+        var caseCode = setCommandSnippet
+            .Replace("__COMMAND_TYPE__", info.CommandType)
+            .Replace("__PROPERTY_NAME__", info.PropertyName)
+            .Replace("__INDEX__", commandIndex.ToString(CultureInfo.InvariantCulture));
+        setStreamIdCode.AppendLine(caseCode);
+        hasSetterCases = true;
+      }
+      commandIndex++;
+    }
+
+    template = TemplateUtilities.ReplaceRegion(template, "SET_STREAM_ID_DISPATCH",
+        hasSetterCases ? setStreamIdCode.ToString().TrimEnd() : "");
+
     // Generate [ModuleInitializer] registration code
     // Only register if this assembly has extractors (events or commands with [StreamId])
     var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty;
@@ -640,6 +721,21 @@ public class StreamIdGenerator : IIncrementalGenerator {
 
     // For nullable value types and other reference types
     return "COMMAND_TRY_EXTRACTOR_OTHER";
+  }
+
+  /// <summary>
+  /// Checks if a property type is a Guid (for SetStreamId generation).
+  /// </summary>
+  private static bool _isGuidProperty(string propertyTypeName) {
+    var normalized = propertyTypeName.Replace("global::", "").Replace("System.", "");
+    return normalized is "Guid" or "System.Guid";
+  }
+
+  /// <summary>
+  /// Checks if a property is init-only or read-only (no settable set accessor).
+  /// </summary>
+  private static bool _isInitOnlyOrReadOnly(IPropertySymbol property) {
+    return property.SetMethod is null || property.SetMethod.IsInitOnly;
   }
 
   /// <summary>
