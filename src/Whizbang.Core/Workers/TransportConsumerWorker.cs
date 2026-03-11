@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -347,6 +349,9 @@ public class TransportConsumerWorker : BackgroundService {
         );
       }
 
+      // Populate DeliveredAt timestamp on the message payload (JSON-level, AOT-safe)
+      _populateDeliveredAtTimestamp(envelope, envelopeType);
+
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
 
@@ -682,5 +687,22 @@ public class TransportConsumerWorker : BackgroundService {
     _logger.LogInformation("TransportConsumerWorker stopped");
 
     await base.StopAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Populates DeliveredAt timestamp properties on the message payload using JSON manipulation.
+  /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
+  /// </summary>
+  private static void _populateDeliveredAtTimestamp(IMessageEnvelope envelope, string? envelopeType) {
+    if (envelopeType is null || envelope is not MessageEnvelope<JsonElement> concreteEnvelope) {
+      return;
+    }
+
+    var messageTypeName = _extractMessageTypeFromEnvelopeType(envelopeType);
+    concreteEnvelope.Payload = JsonAutoPopulateHelper.PopulateTimestampByName(
+        concreteEnvelope.Payload,
+        messageTypeName,
+        TimestampKind.DeliveredAt,
+        DateTimeOffset.UtcNow);
   }
 }

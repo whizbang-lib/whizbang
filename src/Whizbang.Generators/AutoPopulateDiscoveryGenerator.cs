@@ -39,6 +39,12 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         populatedProperties.Collect().Combine(assemblyName),
         static (ctx, data) => _generateRegistry(ctx, data.Left!, data.Right)
     );
+
+    // Generate populator (typed record population using 'with' expressions)
+    context.RegisterSourceOutput(
+        populatedProperties.Collect().Combine(assemblyName),
+        static (ctx, data) => _generatePopulator(ctx, data.Left!, data.Right)
+    );
   }
 
   /// <summary>
@@ -61,6 +67,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var isRecord = typeSymbol.IsRecord;
 
     // Get all properties including inherited ones (uses shared utility)
     var properties = typeSymbol.GetAllProperties();
@@ -73,10 +80,10 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         }
 
         AutoPopulateInfo? info = attributeName switch {
-          POPULATE_TIMESTAMP_ATTRIBUTE => _extractTimestampInfo(typeFullName, property, attribute),
-          POPULATE_FROM_CONTEXT_ATTRIBUTE => _extractContextInfo(typeFullName, property, attribute),
-          POPULATE_FROM_SERVICE_ATTRIBUTE => _extractServiceInfo(typeFullName, property, attribute),
-          POPULATE_FROM_IDENTIFIER_ATTRIBUTE => _extractIdentifierInfo(typeFullName, property, attribute),
+          POPULATE_TIMESTAMP_ATTRIBUTE => _extractTimestampInfo(typeFullName, property, attribute, isRecord),
+          POPULATE_FROM_CONTEXT_ATTRIBUTE => _extractContextInfo(typeFullName, property, attribute, isRecord),
+          POPULATE_FROM_SERVICE_ATTRIBUTE => _extractServiceInfo(typeFullName, property, attribute, isRecord),
+          POPULATE_FROM_IDENTIFIER_ATTRIBUTE => _extractIdentifierInfo(typeFullName, property, attribute, isRecord),
           _ => null
         };
 
@@ -90,7 +97,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private static AutoPopulateInfo? _extractTimestampInfo(
       string typeFullName,
       IPropertySymbol property,
-      AttributeData attribute) {
+      AttributeData attribute,
+      bool isRecord) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -110,14 +118,16 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         PopulateKind: "Timestamp",
-        SpecificKind: $"TimestampKind.{kindName}"
+        SpecificKind: $"TimestampKind.{kindName}",
+        IsRecord: isRecord
     );
   }
 
   private static AutoPopulateInfo? _extractContextInfo(
       string typeFullName,
       IPropertySymbol property,
-      AttributeData attribute) {
+      AttributeData attribute,
+      bool isRecord) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -136,14 +146,16 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         PopulateKind: "Context",
-        SpecificKind: $"ContextKind.{kindName}"
+        SpecificKind: $"ContextKind.{kindName}",
+        IsRecord: isRecord
     );
   }
 
   private static AutoPopulateInfo? _extractServiceInfo(
       string typeFullName,
       IPropertySymbol property,
-      AttributeData attribute) {
+      AttributeData attribute,
+      bool isRecord) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -164,14 +176,16 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         PopulateKind: "Service",
-        SpecificKind: $"ServiceKind.{kindName}"
+        SpecificKind: $"ServiceKind.{kindName}",
+        IsRecord: isRecord
     );
   }
 
   private static AutoPopulateInfo? _extractIdentifierInfo(
       string typeFullName,
       IPropertySymbol property,
-      AttributeData attribute) {
+      AttributeData attribute,
+      bool isRecord) {
 
     var kindArg = attribute.ConstructorArguments.FirstOrDefault();
     if (kindArg.Value is null) {
@@ -192,7 +206,8 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         PopulateKind: "Identifier",
-        SpecificKind: $"IdentifierKind.{kindName}"
+        SpecificKind: $"IdentifierKind.{kindName}",
+        IsRecord: isRecord
     );
   }
 
@@ -253,6 +268,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      }");
     sb.AppendLine("    }");
     sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine("  public IEnumerable<AutoPopulateRegistration> GetAllRegistrations() {");
+    sb.AppendLine("    return _registrations;");
+    sb.AppendLine("  }");
     sb.AppendLine("}");
     sb.AppendLine();
     sb.AppendLine("/// <summary>");
@@ -296,6 +316,190 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"    }},");
   }
 
+  private static void _generatePopulator(
+      SourceProductionContext context,
+      ImmutableArray<AutoPopulateInfo?> infos,
+      string assemblyName) {
+
+    // Only generate populator for record types
+    var recordInfos = infos.Where(i => i is not null && i.IsRecord).Select(i => i!).ToList();
+    if (recordInfos.Count == 0) {
+      return;
+    }
+
+    var sanitizedAssemblyName = _sanitizeIdentifier(assemblyName);
+    var className = $"GeneratedAutoPopulatePopulator_{sanitizedAssemblyName}";
+    var initializerClassName = $"AutoPopulatePopulatorInitializer_{sanitizedAssemblyName}";
+
+    // Group by type for switch expressions
+    var typeGroups = recordInfos.GroupBy(i => i.TypeFullName).ToList();
+
+    var sb = new StringBuilder();
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+    sb.AppendLine("using System;");
+    sb.AppendLine("using System.Linq;");
+    sb.AppendLine("using System.Runtime.CompilerServices;");
+    sb.AppendLine("using System.Text.Json;");
+    sb.AppendLine("using Whizbang.Core.AutoPopulate;");
+    sb.AppendLine("using Whizbang.Core.Attributes;");
+    sb.AppendLine("using Whizbang.Core.Observability;");
+    sb.AppendLine("using Whizbang.Core.ValueObjects;");
+    sb.AppendLine();
+    sb.AppendLine("namespace Whizbang.Core.Generated;");
+    sb.AppendLine();
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Auto-generated populator that sets auto-populate properties directly on message records.");
+    sb.AppendLine("/// Uses record 'with' expressions for AOT-compatible, zero-reflection population.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine($"internal sealed class {className} : IAutoPopulatePopulator {{");
+    sb.AppendLine($"  internal static readonly {className} Instance = new();");
+    sb.AppendLine();
+
+    // Generate TryPopulateSent
+    _generateSentMethod(sb, typeGroups);
+
+    // Generate TryPopulateQueued
+    _generateTimestampPhaseMethod(sb, typeGroups, "TryPopulateQueued", "QueuedAt");
+
+    // Generate TryPopulateDelivered
+    _generateTimestampPhaseMethod(sb, typeGroups, "TryPopulateDelivered", "DeliveredAt");
+
+    // Context helper methods
+    _generateContextHelpers(sb);
+
+    sb.AppendLine("}");
+    sb.AppendLine();
+
+    // Module initializer
+    sb.AppendLine($"internal static class {initializerClassName} {{");
+    sb.AppendLine("  [ModuleInitializer]");
+    sb.AppendLine("  internal static void Initialize() {");
+    sb.AppendLine($"    Whizbang.Core.AutoPopulate.AutoPopulatePopulatorRegistry.Register({className}.Instance, priority: 100);");
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+
+    context.AddSource("AutoPopulatePopulator.g.cs", sb.ToString());
+  }
+
+  private static void _generateSentMethod(
+      StringBuilder sb,
+      List<IGrouping<string, AutoPopulateInfo>> typeGroups) {
+
+    sb.AppendLine("  public object? TryPopulateSent(object message, MessageHop hop, MessageId messageId) {");
+    sb.AppendLine("    return message switch {");
+
+    foreach (var group in typeGroups) {
+      // SentAt phase: TimestampKind.SentAt + all Context + all Service + all Identifier
+      var sentProperties = group.Where(i =>
+          (i.PopulateKind == "Timestamp" && i.SpecificKind == "TimestampKind.SentAt") ||
+          i.PopulateKind == "Context" ||
+          i.PopulateKind == "Service" ||
+          i.PopulateKind == "Identifier"
+      ).ToList();
+
+      if (sentProperties.Count == 0) {
+        continue;
+      }
+
+      sb.AppendLine($"      {group.Key} m => m with {{");
+      foreach (var prop in sentProperties) {
+        var valueExpr = _getValueExpression(prop);
+        sb.AppendLine($"        {prop.PropertyName} = {valueExpr},");
+      }
+      sb.AppendLine("      },");
+    }
+
+    sb.AppendLine("      _ => null");
+    sb.AppendLine("    };");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+  }
+
+  private static void _generateTimestampPhaseMethod(
+      StringBuilder sb,
+      List<IGrouping<string, AutoPopulateInfo>> typeGroups,
+      string methodName,
+      string timestampKindName) {
+
+    sb.AppendLine($"  public object? {methodName}(object message, DateTimeOffset timestamp) {{");
+    sb.AppendLine("    return message switch {");
+
+    var hasAnyMatch = false;
+    foreach (var group in typeGroups) {
+      var timestampProperties = group.Where(i =>
+          i.PopulateKind == "Timestamp" && i.SpecificKind == $"TimestampKind.{timestampKindName}"
+      ).ToList();
+
+      if (timestampProperties.Count == 0) {
+        continue;
+      }
+
+      hasAnyMatch = true;
+      sb.AppendLine($"      {group.Key} m => m with {{");
+      foreach (var prop in timestampProperties) {
+        sb.AppendLine($"        {prop.PropertyName} = timestamp,");
+      }
+      sb.AppendLine("      },");
+    }
+
+    if (!hasAnyMatch) {
+      sb.AppendLine("      _ => null");
+    } else {
+      sb.AppendLine("      _ => null");
+    }
+
+    sb.AppendLine("    };");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+  }
+
+  private static string _getValueExpression(AutoPopulateInfo info) {
+    return info.PopulateKind switch {
+      "Timestamp" when info.SpecificKind == "TimestampKind.SentAt" => "hop.Timestamp",
+      "Context" when info.SpecificKind == "ContextKind.UserId" => "_extractUserId(hop)",
+      "Context" when info.SpecificKind == "ContextKind.TenantId" => "_extractTenantId(hop)",
+      "Service" when info.SpecificKind == "ServiceKind.ServiceName" => "hop.ServiceInstance.ServiceName",
+      "Service" when info.SpecificKind == "ServiceKind.InstanceId" => "hop.ServiceInstance.InstanceId",
+      "Service" when info.SpecificKind == "ServiceKind.HostName" => "hop.ServiceInstance.HostName",
+      "Service" when info.SpecificKind == "ServiceKind.ProcessId" => "hop.ServiceInstance.ProcessId",
+      "Identifier" when info.SpecificKind == "IdentifierKind.MessageId" => "messageId.Value",
+      "Identifier" when info.SpecificKind == "IdentifierKind.CorrelationId" => "hop.CorrelationId?.Value.Value",
+      "Identifier" when info.SpecificKind == "IdentifierKind.CausationId" => "hop.CausationId?.Value.Value",
+      "Identifier" when info.SpecificKind == "IdentifierKind.StreamId" => "hop.StreamId",
+      _ => "default"
+    };
+  }
+
+  private static void _generateContextHelpers(StringBuilder sb) {
+    sb.AppendLine("  private static string? _extractUserId(MessageHop hop) {");
+    sb.AppendLine("    return _extractScopeValue(hop, \"UserId\");");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  private static string? _extractTenantId(MessageHop hop) {");
+    sb.AppendLine("    return _extractScopeValue(hop, \"TenantId\");");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  private static string? _extractScopeValue(MessageHop hop, string propertyName) {");
+    sb.AppendLine("    if (hop.Scope?.Values == null) {");
+    sb.AppendLine("      return null;");
+    sb.AppendLine("    }");
+    sb.AppendLine();
+    sb.AppendLine("    // Look for the Scope key which contains UserId/TenantId");
+    sb.AppendLine("    foreach (var kvp in hop.Scope.Values) {");
+    sb.AppendLine("      if (kvp.Value.ValueKind == JsonValueKind.Object) {");
+    sb.AppendLine("        if (kvp.Value.TryGetProperty(propertyName, out var propValue) && propValue.ValueKind == JsonValueKind.String) {");
+    sb.AppendLine("          return propValue.GetString();");
+    sb.AppendLine("        }");
+    sb.AppendLine("      }");
+    sb.AppendLine("    }");
+    sb.AppendLine();
+    sb.AppendLine("    return null;");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+  }
+
   private static string _sanitizeIdentifier(string name) {
     // Replace dots and hyphens with underscores, remove other invalid chars
     var sb = new StringBuilder(name.Length);
@@ -318,5 +522,6 @@ internal sealed record AutoPopulateInfo(
     string PropertyName,
     string PropertyTypeFullName,
     string PopulateKind,
-    string SpecificKind
+    string SpecificKind,
+    bool IsRecord
 );
