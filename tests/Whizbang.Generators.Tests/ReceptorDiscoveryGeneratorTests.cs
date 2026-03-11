@@ -1163,7 +1163,7 @@ public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEv
     var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
     await Assert.That(registry).IsNotNull();
     await Assert.That(registry!).Contains("class GeneratedReceptorRegistry");
-    await Assert.That(registry).Contains("return _emptyList");
+    await Assert.That(registry).Contains("_emptyList");
   }
 
   #region Multiple Handler Validation Tests

@@ -79,7 +79,6 @@ public abstract partial class Dispatcher(
   IEnvelopeSerializer? envelopeSerializer = null,
   IEnvelopeRegistry? envelopeRegistry = null,
   IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   IStreamIdExtractor? streamIdExtractor = null,
   IReceptorRegistry? receptorRegistry = null,
   IScopedEventTracker? scopedEventTracker = null,
@@ -108,8 +107,6 @@ public abstract partial class Dispatcher(
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker ?? serviceProvider.GetService<ISyncEventTracker>();
   // Registry of event types that should be tracked for perspective sync
   private readonly ITrackedEventTypeRegistry? _trackedEventTypeRegistry = trackedEventTypeRegistry ?? serviceProvider.GetService<ITrackedEventTypeRegistry>();
-  // Lifecycle invoker for runtime-registered receptors (test infrastructure, observers)
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker ?? serviceProvider.GetService<ILifecycleInvoker>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
@@ -447,58 +444,13 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _receptorInvoker here for LocalImmediateInline because:
+      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
       // 1. The dispatcher already invokes the business receptor via the generated delegate above
-      // 2. Invoking _receptorInvoker would cause double invocation of receptors without [FireAt]
-      // 3. IReceptorInvoker is meant for TransportConsumerWorker (PostInbox) and
+      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
+      //    (they are registered at default stages: LocalImmediateInline, PreOutboxInline, PostInboxInline)
+      // 3. IReceptorInvoker lifecycle invocation is meant for TransportConsumerWorker (PostInbox) and
       //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
-
-      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
-      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.ImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateInline,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
-        }
-      }
+      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -689,54 +641,13 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
-
-      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
-      // These are registered via ILifecycleReceptorRegistry, not compile-time [FireAt] attributes
-      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.ImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, default);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, default);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateInline,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, default);
-        }
-      }
+      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
+      //    (they are registered at default stages: LocalImmediateInline, PreOutboxInline, PostInboxInline)
+      // 3. IReceptorInvoker lifecycle invocation is meant for TransportConsumerWorker (PostInbox) and
+      //    WorkCoordinatorPublisherWorker (PreOutbox), not for local dispatch
+      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       // Unregister envelope after receptor completes (or throws)
       _envelopeRegistry?.Unregister(envelope);
@@ -808,53 +719,11 @@ public abstract partial class Dispatcher(
       // Process tags after successful receptor completion
       await _processTagsIfEnabledAsync(message, messageType);
 
-      // NOTE: We do NOT invoke _receptorInvoker here - dispatcher already invoked receptor above
-
-      // Invoke runtime-registered lifecycle receptors (test infrastructure, observers)
-      // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle ImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.ImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateAsync", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateAsync, lifecycleContext, options.CancellationToken);
-        }
-      }
-
-      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle LocalImmediateInline", ActivityKind.Internal) : null) {
-        if (_lifecycleInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.LocalImmediateInline,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Local,
-            AttemptNumber = null
-          };
-          await _lifecycleInvoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, lifecycleContext, options.CancellationToken);
-        }
-      }
+      // NOTE: We do NOT invoke _invokeLifecycleStagesAsync here because:
+      // 1. The dispatcher already invokes the business receptor via the generated delegate above
+      // 2. Invoking lifecycle stages would cause double invocation of receptors without [FireAt]
+      // 3. IReceptorInvoker lifecycle invocation is for transport workers, not local dispatch
+      // This matches the LocalInvokeAsync path which also skips lifecycle invocation.
     } finally {
       _envelopeRegistry?.Unregister(envelope);
     }
@@ -2365,9 +2234,6 @@ public abstract partial class Dispatcher(
   /// Processes tags for a successfully handled message if tag processing is enabled.
   /// Called after cascade to invoke registered tag hooks.
   /// </summary>
-  /// <param name="message">The message that was processed.</param>
-  /// <param name="messageType">The runtime type of the message.</param>
-  /// <param name="ct">Cancellation token.</param>
   /// <returns>A task representing the asynchronous operation.</returns>
   /// <remarks>
   /// <para>
@@ -2379,6 +2245,50 @@ public abstract partial class Dispatcher(
   /// </remarks>
   /// <docs>core-concepts/message-tags#processing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
+  /// <summary>
+  /// Invokes lifecycle receptors at the specified stages via a scoped IReceptorInvoker.
+  /// Creates a scope per invocation to ensure proper scoped dependency resolution,
+  /// full security context propagation, and event cascading.
+  /// </summary>
+  private async ValueTask _invokeLifecycleStagesAsync(
+    IMessageEnvelope envelope,
+    LifecycleStage[] stages,
+    MessageSource messageSource,
+    CancellationToken cancellationToken) {
+    foreach (var stage in stages) {
+      IServiceScope? scope;
+      try {
+        scope = _scopeFactory.CreateScope();
+      } catch (ObjectDisposedException) {
+        // App is shutting down - return gracefully
+        return;
+      }
+
+      try {
+        var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+        if (receptorInvoker is null) {
+          continue;
+        }
+
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = stage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = messageSource,
+          AttemptNumber = null
+        };
+        await receptorInvoker.InvokeAsync(envelope, stage, lifecycleContext, cancellationToken);
+      } finally {
+        if (scope is IAsyncDisposable asyncDisposable) {
+          await asyncDisposable.DisposeAsync();
+        } else {
+          scope.Dispose();
+        }
+      }
+    }
+  }
+
   private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
     Console.WriteLine($"[DISPATCHER] _processTagsIfEnabledAsync called for {messageType.Name}");
 

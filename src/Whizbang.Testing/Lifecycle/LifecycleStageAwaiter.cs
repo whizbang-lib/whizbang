@@ -16,7 +16,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
   private readonly TaskCompletionSource<TMessage> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-  private readonly ILifecycleReceptorRegistry _registry;
+  private readonly IReceptorRegistry _registry;
   private readonly LifecycleStage _stage;
   private readonly LifecycleCompletionReceptor<TMessage> _receptor;
   private bool _disposed;
@@ -34,7 +34,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
   /// <summary>
   /// Creates a new lifecycle stage awaiter.
   /// </summary>
-  /// <param name="host">The host containing the ILifecycleReceptorRegistry.</param>
+  /// <param name="host">The host containing the IReceptorRegistry.</param>
   /// <param name="stage">The lifecycle stage to wait for.</param>
   /// <param name="perspectiveName">Optional perspective name to filter by.</param>
   /// <param name="messageFilter">Optional message filter predicate.</param>
@@ -52,7 +52,7 @@ public sealed class LifecycleStageAwaiter<TMessage> : IDisposable
 
     ArgumentNullException.ThrowIfNull(host);
 
-    _registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    _registry = host.Services.GetRequiredService<IReceptorRegistry>();
     _stage = stage;
     _receptor = new LifecycleCompletionReceptor<TMessage>(
       _tcs,

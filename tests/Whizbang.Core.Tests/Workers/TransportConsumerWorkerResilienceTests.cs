@@ -405,7 +405,6 @@ public class TransportConsumerWorkerResilienceTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
-      lifecycleInvoker: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
   }

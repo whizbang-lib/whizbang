@@ -89,12 +89,7 @@ builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevel
 // Register dispatcher for sending commands
 builder.Services.AddWhizbangDispatcher();
 
-// Register lifecycle invoker for lifecycle receptor invocation
-builder.Services.AddWhizbangLifecycleInvoker();
 builder.Services.AddWhizbangLifecycleMessageDeserializer();
-
-// Register lifecycle receptor registry for runtime receptor registration (used in tests)
-builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleReceptorRegistry>();
 
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();

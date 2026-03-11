@@ -9,9 +9,7 @@ using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core.Security;
 using Whizbang.Core.Tracing;
-using Whizbang.Core.ValueObjects;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -45,7 +43,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly ILogger<__RUNNER_CLASS_NAME__> _logger;
   private readonly IEventStore _eventStore;
   private readonly IPerspectiveStore<__MODEL_TYPE_NAME__> _perspectiveStore;
-  private readonly ILifecycleInvoker _lifecycleInvoker;
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
 
   public __RUNNER_CLASS_NAME__(
@@ -53,13 +51,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       ILogger<__RUNNER_CLASS_NAME__> logger,
       IEventStore eventStore,
       IPerspectiveStore<__MODEL_TYPE_NAME__> perspectiveStore,
-      ILifecycleInvoker lifecycleInvoker,
+      IServiceScopeFactory scopeFactory,
       IOptionsMonitor<TracingOptions>? tracingOptions = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _eventStore = eventStore ?? throw new ArgumentNullException(nameof(eventStore));
     _perspectiveStore = perspectiveStore ?? throw new ArgumentNullException(nameof(perspectiveStore));
-    _lifecycleInvoker = lifecycleInvoker ?? throw new ArgumentNullException(nameof(lifecycleInvoker));
+    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _tracingOptions = tracingOptions;
   }
 
@@ -147,21 +145,23 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing)
         // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
         // However, we track it to ensure completion before returning from RunAsync.
-        var preAsyncTask = _lifecycleInvoker.InvokeAsync(
-          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
-          LifecycleStage.PrePerspectiveAsync,
-          context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
-          cancellationToken
-        ).AsTask();  // Convert ValueTask to Task for tracking
+        var preAsyncTask = Task.Run(async () => {
+          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveAsync, context with { CurrentStage = LifecycleStage.PrePerspectiveAsync }, cancellationToken);
+          }
+        }, cancellationToken);
         backgroundTasks.Add(preAsyncTask);
 
         // Fire INLINE hooks (blocking, transactional)
-        await _lifecycleInvoker.InvokeAsync(
-          firstEnvelope,  // Pass envelope for type-based receptor routing and security context
-          LifecycleStage.PrePerspectiveInline,
-          context with { CurrentStage = LifecycleStage.PrePerspectiveInline },
-          cancellationToken
-        );
+        {
+          await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+          var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+          if (receptorInvoker is not null) {
+            await receptorInvoker.InvokeAsync(firstEnvelope, LifecycleStage.PrePerspectiveInline, context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
+          }
+        }
       }
 
       // Check if per-event tracing is enabled
@@ -275,93 +275,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
         // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
         // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
+        // ReceptorInvoker.InvokeAsync() handles ALL security context setup internally
         foreach (var envelope in processedEvents) {
-          // CRITICAL: Establish FULL security context BEFORE invoking lifecycle receptors
-          // This ensures IMessageContext.TenantId and UserId are available in handlers
-          // Pattern matches PerspectiveWorker._establishSecurityContextAsync exactly
-
-          // Hoist securityContext declaration so it can be used for MessageContext below
-          IScopeContext? securityContext = null;
-
-          // Step 1: Establish security context via provider (sets IScopeContextAccessor.Current)
-          var securityProvider = _serviceProvider.GetService<IMessageSecurityContextProvider>();
-          if (securityProvider is not null) {
-            securityContext = await securityProvider
-              .EstablishContextAsync(envelope, _serviceProvider, cancellationToken)
-              .ConfigureAwait(false);
-            if (securityContext is not null) {
-              var scopeContextAccessor = _serviceProvider.GetService<IScopeContextAccessor>();
-              if (scopeContextAccessor is not null) {
-                scopeContextAccessor.Current = securityContext;
-              }
-            }
-          }
-
-          // Step 2: Set message context with security info
-          // FIX: Use extractor result first, fall back to envelope.GetCurrentScope()
-          var scopeForMessageContext = securityContext ?? envelope.GetCurrentScope();
-
-          // CRITICAL FIX: When extraction fails (securityContext is null) but envelope has scope,
-          // we must:
-          // 1. Wrap the scope in ImmutableScopeContext with ShouldPropagate=true so that
-          //    CascadeContext.GetSecurityFromAmbient() can find it when lifecycle handlers append events
-          // 2. Invoke callbacks manually so UserContextManagerCallback sets TenantContext
-          if (securityContext is null && scopeForMessageContext is not null) {
-            // Convert envelope scope to ImmutableScopeContext for propagation
-            var extraction = new SecurityExtraction {
-              Scope = scopeForMessageContext.Scope,
-              Roles = scopeForMessageContext.Roles,
-              Permissions = scopeForMessageContext.Permissions,
-              SecurityPrincipals = scopeForMessageContext.SecurityPrincipals,
-              Claims = scopeForMessageContext.Claims,
-              ActualPrincipal = scopeForMessageContext.ActualPrincipal,
-              EffectivePrincipal = scopeForMessageContext.EffectivePrincipal,
-              ContextType = scopeForMessageContext.ContextType,
-              Source = "EnvelopeHop"
-            };
-            var immutableScope = new ImmutableScopeContext(extraction, shouldPropagate: true);
-
-            // Use the immutable scope for both accessor and message context
-            scopeForMessageContext = immutableScope;
-
-            // Set IScopeContextAccessor.Current with ImmutableScopeContext (required for GetSecurityFromAmbient)
-            var accessor = _serviceProvider.GetService<IScopeContextAccessor>();
-            if (accessor is not null) {
-              accessor.Current = immutableScope;
-            }
-
-            // Invoke callbacks with the immutable scope
-            var callbacks = _serviceProvider.GetServices<ISecurityContextCallback>();
-            foreach (var callback in callbacks) {
-              cancellationToken.ThrowIfCancellationRequested();
-              await callback.OnContextEstablishedAsync(immutableScope, envelope, _serviceProvider, cancellationToken)
-                .ConfigureAwait(false);
-            }
-          }
-
-          var messageContextAccessor = _serviceProvider.GetService<IMessageContextAccessor>();
-          if (messageContextAccessor is not null) {
-            var messageContext = new MessageContext {
-              MessageId = envelope.MessageId,
-              CorrelationId = envelope.GetCorrelationId() ?? CorrelationId.New(),
-              CausationId = envelope.GetCausationId() ?? MessageId.New(),
-              Timestamp = envelope.GetMessageTimestamp(),
-              UserId = scopeForMessageContext?.Scope?.UserId,
-              TenantId = scopeForMessageContext?.Scope?.TenantId,
-              ScopeContext = scopeForMessageContext
-            };
-            messageContextAccessor.Current = messageContext;
-
-            // CRITICAL: Set InitiatingContext on IScopeContextAccessor (same pattern as PerspectiveWorker)
-            // This establishes IMessageContext as the SOURCE OF TRUTH for security context.
-            // Required for CascadeContext.GetSecurityFromAmbient() to find the scope when
-            // lifecycle handlers append events via SecurityContextEventStoreDecorator.
-            var scopeContextAccessor = _serviceProvider.GetService<IScopeContextAccessor>();
-            if (scopeContextAccessor is not null) {
-              scopeContextAccessor.InitiatingContext = messageContext;
-            }
-          }
-
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
@@ -374,12 +289,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           // Note: We don't await this immediately, allowing perspective processing to complete.
           // However, we track it to ensure completion before returning from RunAsync.
           // Envelope passed to preserve security context from message hops
-          var postAsyncTask = _lifecycleInvoker.InvokeAsync(
-            envelope,
-            LifecycleStage.PostPerspectiveAsync,
-            context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
-            cancellationToken
-          ).AsTask();  // Convert ValueTask to Task for tracking
+          var postAsyncTask = Task.Run(async () => {
+            await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
+            var receptorInvoker = lifecycleScope.ServiceProvider.GetService<global::Whizbang.Core.Messaging.IReceptorInvoker>();
+            if (receptorInvoker is not null) {
+              await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostPerspectiveAsync, context with { CurrentStage = LifecycleStage.PostPerspectiveAsync }, cancellationToken);
+            }
+          }, cancellationToken);
           backgroundTasks.Add(postAsyncTask);
         }
       }

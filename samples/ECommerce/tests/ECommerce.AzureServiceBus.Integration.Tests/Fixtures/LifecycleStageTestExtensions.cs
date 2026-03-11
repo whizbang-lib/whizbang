@@ -297,7 +297,7 @@ public static class LifecycleStageTestExtensions {
       perspectiveName: perspectiveName);
 
     // Get registry from host
-    var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = host.Services.GetRequiredService<IReceptorRegistry>();
 
     // Register receptor at specified stage
     registry.Register<TMessage>(receptor, stage);

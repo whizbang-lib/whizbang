@@ -191,7 +191,7 @@ public class OutboxLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);
     using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
@@ -281,7 +281,7 @@ public class OutboxLifecycleTests {
       InitialStock = 10
     };
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
 
     // Create receptors for all 4 stages
     var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -355,7 +355,7 @@ public class OutboxLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxInline);
 
     try {

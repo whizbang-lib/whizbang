@@ -27,7 +27,6 @@ public partial class ServiceBusConsumerWorker(
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
   ServiceBusConsumerOptions? options = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
@@ -36,7 +35,6 @@ public partial class ServiceBusConsumerWorker(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
   private readonly List<ISubscription> _subscriptions = [];
@@ -213,7 +211,10 @@ public partial class ServiceBusConsumerWorker(
       // This provides better reliability, scalability, and separation of concerns.
 
       // PreInbox lifecycle stages (before local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+      // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)
+      var receptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
+
+      if (receptorInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
           // Reconstruct envelope with deserialized payload to preserve security context
@@ -228,10 +229,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
         }
       }
 
@@ -262,7 +263,7 @@ public partial class ServiceBusConsumerWorker(
       );
 
       // PostInbox lifecycle stages (after local receptor invocation)
-      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+      if (receptorInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
           var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
           // Reconstruct envelope with deserialized payload to preserve security context
@@ -277,10 +278,10 @@ public partial class ServiceBusConsumerWorker(
             AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
         }
       }
 

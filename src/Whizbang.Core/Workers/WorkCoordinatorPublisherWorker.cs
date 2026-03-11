@@ -74,7 +74,6 @@ public partial class WorkCoordinatorPublisherWorker(
   IOptions<WorkCoordinatorPublisherOptions> options,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-  ILifecycleInvoker? lifecycleInvoker = null,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
@@ -84,7 +83,6 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
@@ -320,7 +318,7 @@ public partial class WorkCoordinatorPublisherWorker(
         // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
         // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
             var lifecycleContext = new LifecycleExecutionContext {
@@ -331,17 +329,12 @@ public partial class WorkCoordinatorPublisherWorker(
               MessageSource = MessageSource.Outbox,
               AttemptNumber = work.Attempts
             };
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-            }
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-            }
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
           }
         }
 
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
             var lifecycleContext = new LifecycleExecutionContext {
@@ -352,12 +345,7 @@ public partial class WorkCoordinatorPublisherWorker(
               MessageSource = MessageSource.Outbox,
               AttemptNumber = work.Attempts
             };
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
-            }
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
-            }
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
           }
         }
 
@@ -394,7 +382,7 @@ public partial class WorkCoordinatorPublisherWorker(
         // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
         // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             // Reconstruct envelope with deserialized payload to preserve security context
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
@@ -408,19 +396,12 @@ public partial class WorkCoordinatorPublisherWorker(
               AttemptNumber = work.Attempts
             };
 
-            // Invoke compile-time business receptors
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-            }
-            // Invoke runtime test/lifecycle receptors
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-            }
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
           }
         }
 
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && (receptorInvoker is not null || _lifecycleInvoker is not null)) {
+          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
             var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
             // Reconstruct envelope with deserialized payload to preserve security context
             var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
@@ -434,12 +415,7 @@ public partial class WorkCoordinatorPublisherWorker(
               AttemptNumber = work.Attempts
             };
 
-            if (receptorInvoker is not null) {
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-            }
-            if (_lifecycleInvoker is not null) {
-              await _lifecycleInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-            }
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
           }
         }
 

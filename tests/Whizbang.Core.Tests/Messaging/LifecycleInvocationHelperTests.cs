@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -54,7 +55,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       null,
       null);
 
@@ -100,7 +101,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -124,7 +125,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -148,7 +149,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -171,7 +172,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -193,7 +194,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -218,7 +219,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -243,7 +244,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -293,7 +294,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       null,
       null);
 
@@ -339,7 +340,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -365,7 +366,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -391,7 +392,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -415,7 +416,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -445,7 +446,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       logger);
 
@@ -470,7 +471,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       logger);
 
@@ -494,7 +495,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.DistributeAsync,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -527,7 +528,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -558,7 +559,7 @@ public class LifecycleInvocationHelperTests {
       LifecycleStage.PostDistributeInline,
       outboxMessages,
       inboxMessages,
-      invoker,
+      _createScopeFactory(invoker),
       deserializer,
       null);
 
@@ -575,6 +576,13 @@ public class LifecycleInvocationHelperTests {
   // ========================================
   // Test Helpers
   // ========================================
+
+  private static IServiceScopeFactory _createScopeFactory(FakeLifecycleInvoker invoker) {
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(_ => invoker);
+    var sp = services.BuildServiceProvider();
+    return sp.GetRequiredService<IServiceScopeFactory>();
+  }
 
   private static OutboxMessage _createTestOutboxMessage() {
     var messageId = MessageId.New();
@@ -623,7 +631,7 @@ public class LifecycleInvocationHelperTests {
   // Test Fakes
   // ========================================
 
-  private sealed class FakeLifecycleInvoker : ILifecycleInvoker {
+  private sealed class FakeLifecycleInvoker : IReceptorInvoker {
     private readonly List<LifecycleInvocation> _invocations = [];
     private readonly object _lock = new();
 

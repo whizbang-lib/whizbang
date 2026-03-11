@@ -36,7 +36,7 @@
   <PropertyGroup>
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
-    <Version>0.9.3-local.256-debug</Version>
+    <Version>0.9.3-local.257-debug</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>

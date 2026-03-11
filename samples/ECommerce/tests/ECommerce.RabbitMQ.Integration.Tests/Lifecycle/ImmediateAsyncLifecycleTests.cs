@@ -114,7 +114,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {
@@ -171,7 +171,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {
@@ -243,7 +243,7 @@ public class ImmediateAsyncLifecycleTests {
     var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
     registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
     try {
