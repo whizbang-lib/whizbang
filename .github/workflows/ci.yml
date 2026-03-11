@@ -16,13 +16,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'tests/**'
+              - 'samples/**'
+              - 'tools/**'
+              - 'benchmarks/**'
+              - '*.sln*'
+              - '**/*.csproj'
+              - '**/*.props'
+              - '**/*.targets'
+              - 'Directory.Build.*'
+              - 'Directory.Packages.props'
+              - 'global.json'
+              - 'nuget.config'
+
   version:
     name: Version
     uses: ./.github/workflows/reusable-version.yml
 
   build:
     name: Build
-    needs: version
+    needs: [version, changes]
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/reusable-build.yml
 
   unit-tests:
@@ -111,8 +143,11 @@ jobs:
 
   notify-success:
     name: Notify Success
-    needs: [quality]
-    if: success() && vars.PUSHOVER_ENABLED == 'true'
+    needs: [changes, quality]
+    if: |
+      always() &&
+      (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
+      vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: success
