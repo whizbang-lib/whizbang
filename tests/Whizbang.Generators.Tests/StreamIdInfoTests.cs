@@ -79,13 +79,15 @@ public class StreamIdInfoTests {
     );
 
     // Act
-    var (eventType, propertyName, propertyType, isPropertyValueType) = info;
+    var (eventType, propertyName, propertyType, isPropertyValueType, hasGenerate, onlyIfEmpty) = info;
 
     // Assert
     await Assert.That(eventType).IsEqualTo("global::MyApp.Events.ProductCreatedEvent");
     await Assert.That(propertyName).IsEqualTo("ProductId");
     await Assert.That(propertyType).IsEqualTo("global::MyApp.ProductId");
     await Assert.That(isPropertyValueType).IsTrue();
+    await Assert.That(hasGenerate).IsFalse();
+    await Assert.That(onlyIfEmpty).IsFalse();
   }
 
   [Test]

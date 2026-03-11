@@ -8,6 +8,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
@@ -386,6 +387,11 @@ public partial class ServiceBusConsumerWorker(
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);
+
+    // Guard: fail-fast if StreamId is Guid.Empty for events
+    if (isEvent) {
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox");
+    }
 
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
