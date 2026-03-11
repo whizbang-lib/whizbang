@@ -17,8 +17,8 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// so the receptor sees the auto-generated StreamId and can propagate it to cascaded events.
 /// </summary>
 /// <remarks>
-/// Root cause: _localInvokeVoidWithAnyInvokerAndCascadeAsync skips envelope creation,
-/// which means _autoGenerateStreamIdIfNeeded is never called on the command.
+/// Root cause: The previous fast-path cascade method skipped envelope creation,
+/// which meant _autoGenerateStreamIdIfNeeded was never called on the command.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Dispatcher")]

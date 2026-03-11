@@ -37,8 +37,8 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
   public record ScopeTestEvent([property: StreamId] Guid Id) : IEvent;
 
   /// <summary>
-  /// Command handled by a non-void receptor. Used to test the fast-path cascade
-  /// (LocalInvokeAsync → _localInvokeVoidWithAnyInvokerAndCascadeAsync) where
+  /// Command handled by a non-void receptor. Used to test the void-with-any-invoker cascade
+  /// (LocalInvokeAsync → _localInvokeVoidWithAnyInvokerAndTracingAsync) where
   /// the source envelope must carry scope for cascaded events.
   /// </summary>
   public record ScopeCascadeCommand([property: StreamId] Guid Id);
@@ -230,7 +230,7 @@ public class ScopeContextPersistenceIntegrationTests : EFCoreTestBase {
     ScopeContextAccessor.CurrentContext = scopeContext;
 
     try {
-      // Act — void LocalInvokeAsync hits the fast path (_localInvokeVoidWithAnyInvokerAndCascadeAsync)
+      // Act — void LocalInvokeAsync hits the any-invoker tracing path (_localInvokeVoidWithAnyInvokerAndTracingAsync)
       // Receptor returns ScopeCascadeEvent which cascades to outbox
       await dispatcher.LocalInvokeAsync(command);
 
