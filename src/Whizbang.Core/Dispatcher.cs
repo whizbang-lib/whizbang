@@ -1822,6 +1822,258 @@ public abstract partial class Dispatcher(
     }
   }
 
+  // ========================================
+  // LOCAL INVOKE WITH RECEIPT — In-Process RPC with Dispatch Metadata
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and returns both the typed business result
+  /// AND a delivery receipt with dispatch metadata (AOT-compatible).
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+    return LocalInvokeWithReceiptAsync<TResult>((object)message, context);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process and returns both the typed business result AND a delivery receipt.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) {
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+    return LocalInvokeWithReceiptAsync<TResult>(message, context);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and explicit context, returning both
+  /// the typed business result AND a delivery receipt (AOT-compatible).
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    return LocalInvokeWithReceiptAsync<TResult>((object)message, context, callerMemberName, callerFilePath, callerLineNumber);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process with explicit context and returns both the typed business result
+  /// AND a delivery receipt.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+    object message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    // Set message context accessor so receptors can inject IMessageContext
+    MessageContextAccessor.CurrentContext = context;
+
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
+    var messageType = message.GetType();
+
+    // Try async receptor first
+    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    if (asyncInvoker != null) {
+      return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    // Fallback to sync receptor
+    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (syncInvoker != null) {
+      ReceptorInvoker<TResult> wrappedInvoker = (msg) => new ValueTask<TResult>(syncInvoker(msg));
+      return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, wrappedInvoker, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    throw new ReceptorNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process with dispatch options and returns both the typed business result
+  /// AND a delivery receipt.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    var cascade = _cascadeContextFactory.NewRoot();
+    var context = MessageContext.Create(cascade);
+
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Unwrap Routed<T> if needed
+    if (message is IRouted routed) {
+      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+      }
+      message = routed.Value;
+    }
+
+    var messageType = message.GetType();
+
+    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    if (asyncInvoker != null) {
+      var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, asyncInvoker, options);
+      await _waitForPerspectivesIfNeededAsync(options);
+      return invokeResult;
+    }
+
+    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (syncInvoker != null) {
+      ReceptorInvoker<TResult> wrappedInvoker = (msg) => new ValueTask<TResult>(syncInvoker(msg));
+      var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, wrappedInvoker, options);
+      await _waitForPerspectivesIfNeededAsync(options);
+      return invokeResult;
+    }
+
+    throw new ReceptorNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Internal tracing method for LocalInvokeWithReceipt. Always creates envelope and builds receipt.
+  /// </summary>
+  private async ValueTask<InvokeResult<TResult>> _localInvokeWithTracingAndReceiptAsync<TResult>(
+    object message,
+    Type messageType,
+    IMessageContext context,
+    ReceptorInvoker<TResult> invoker,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType);
+
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
+
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      var result = await invoker(message);
+
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // Unwrap Routed<T> from result if receptor returned a wrapped value
+      TResult unwrapped;
+      if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+        unwrapped = unwrappedResult;
+      } else {
+        unwrapped = result;
+      }
+
+      // Build delivery receipt from envelope metadata
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+      var destination = messageType.Name;
+      var receipt = DeliveryReceipt.Delivered(
+        envelope.MessageId,
+        destination,
+        context.CorrelationId,
+        context.CausationId,
+        streamId
+      );
+
+      return new InvokeResult<TResult>(unwrapped, receipt);
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+  }
+
+  /// <summary>
+  /// Internal tracing method for LocalInvokeWithReceipt with DispatchOptions.
+  /// </summary>
+  private async ValueTask<InvokeResult<TResult>> _localInvokeWithTracingAndReceiptAndOptionsAsync<TResult>(
+    object message,
+    Type messageType,
+    MessageContext context,
+    ReceptorInvoker<TResult> invoker,
+    DispatchOptions options
+  ) {
+    // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
+    await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
+
+    var envelope = _createEnvelope(message, context, "", "", 0);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope, options.CancellationToken);
+      }
+
+      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
+      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
+      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+
+      options.CancellationToken.ThrowIfCancellationRequested();
+      var result = await invoker(message);
+
+      await _cascadeEventsFromResultAsync(result, messageType, sourceEnvelope: envelope);
+      await _processTagsIfEnabledAsync(message, messageType);
+
+      // Unwrap Routed<T> from result
+      TResult unwrapped;
+      if (result is IRouted routedResult && routedResult.Value is TResult unwrappedResult) {
+        unwrapped = unwrappedResult;
+      } else {
+        unwrapped = result;
+      }
+
+      // Build delivery receipt from envelope metadata
+      var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
+      var destination = messageType.Name;
+      var receipt = DeliveryReceipt.Delivered(
+        envelope.MessageId,
+        destination,
+        context.CorrelationId,
+        context.CausationId,
+        streamId
+      );
+
+      return new InvokeResult<TResult>(unwrapped, receipt);
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+  }
+
   /// <summary>
   /// Gets ScopeDelta for hop propagation.
   /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.

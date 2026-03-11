@@ -273,6 +273,95 @@ public interface IDispatcher {
   ValueTask LocalInvokeAsync(object message, DispatchOptions options);
 
   // ========================================
+  // LOCAL INVOKE WITH RECEIPT — In-Process RPC with Dispatch Metadata
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and returns both the typed business result
+  /// AND a delivery receipt with dispatch metadata (AOT-compatible).
+  /// Always takes the tracing path since envelope data is needed for the receipt.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
+      TMessage message) where TMessage : notnull;
+
+  /// <summary>
+  /// Invokes a receptor in-process and returns both the typed business result
+  /// AND a delivery receipt with dispatch metadata.
+  /// Always takes the tracing path since envelope data is needed for the receipt.
+  /// For AOT compatibility, use the generic overload LocalInvokeWithReceiptAsync&lt;TMessage, TResult&gt;.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
+  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message);
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and explicit context, returning both
+  /// the typed business result AND a delivery receipt (AOT-compatible).
+  /// Captures caller information for debugging and observability.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="context">The message context</param>
+  /// <param name="callerMemberName">Caller method name (auto-captured)</param>
+  /// <param name="callerFilePath">Caller file path (auto-captured)</param>
+  /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
+  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
+      TMessage message,
+      IMessageContext context,
+      [CallerMemberName] string callerMemberName = "",
+      [CallerFilePath] string callerFilePath = "",
+      [CallerLineNumber] int callerLineNumber = 0)
+      where TMessage : notnull;
+
+  /// <summary>
+  /// Invokes a receptor in-process with explicit context and returns both the typed business result
+  /// AND a delivery receipt.
+  /// For AOT compatibility, use the generic overload LocalInvokeWithReceiptAsync&lt;TMessage, TResult&gt;.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="context">The message context</param>
+  /// <param name="callerMemberName">Caller method name (auto-captured)</param>
+  /// <param name="callerFilePath">Caller file path (auto-captured)</param>
+  /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
+  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message,
+      IMessageContext context,
+      [CallerMemberName] string callerMemberName = "",
+      [CallerFilePath] string callerFilePath = "",
+      [CallerLineNumber] int callerLineNumber = 0);
+
+  /// <summary>
+  /// Invokes a receptor in-process with dispatch options and returns both the typed business result
+  /// AND a delivery receipt.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
+  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
+      object message, DispatchOptions options);
+
+  // ========================================
   // PUBLISH PATTERN - Event Broadcasting
   // ========================================
 
