@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
+using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Security;
@@ -1036,6 +1037,134 @@ public class SecurityContextHelperTests {
       ]
     };
   }
+
+  // === SecurityContextRequiredException Graceful Handling Tests ===
+
+  [Test]
+  public async Task EstablishScopeContextAsync_ExemptTypedMessage_WithoutSecurityContext_DoesNotThrowAsync() {
+    // Arrange: Typed message (not JsonElement), no extractors, AllowAnonymous=false (production default).
+    // Messages like LoginAttemptEvent that inherently lack security context should be registered
+    // in ExemptMessageTypes — that's the proper mechanism, not catching exceptions.
+    var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)], // extractor returns null
+      callbacks: [],
+      options: new MessageSecurityOptions {
+        AllowAnonymous = false, // production default
+        ExemptMessageTypes = { typeof(TestLoginEvent) } // proper mechanism for exempt messages
+      }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act & Assert: Should NOT throw SecurityContextRequiredException
+    var result = await SecurityContextHelper.EstablishScopeContextAsync(envelope, sp, CancellationToken.None);
+
+    // Result should be null (no security context available), but no exception
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_ExemptTypedMessage_WithoutSecurityContext_DoesNotThrowAsync() {
+    // Arrange: Same scenario but through EstablishFullContextAsync (the path TransportConsumerWorker uses).
+    // Messages that inherently lack security context should be added to ExemptMessageTypes.
+    var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)],
+      callbacks: [],
+      options: new MessageSecurityOptions {
+        AllowAnonymous = false,
+        ExemptMessageTypes = { typeof(TestLoginEvent) }
+      }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act & Assert: Should NOT throw
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+  }
+
+  [Test]
+  public async Task EstablishScopeContextAsync_TypedMessage_WithEnvelopeScope_DoesNotThrowAsync() {
+    // Arrange: Typed message with no extractor BUT envelope has scope from upstream security check.
+    // This is the common case after transport deserialization — the envelope carries the ScopeDelta
+    // from the original authentication, so the provider returns null (not throws).
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(
+        new TestLoginEvent("test-user"), "user-123", "tenant-456");
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)], // extractor returns null
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = false }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act & Assert: Should NOT throw — envelope has scope data
+    var result = await SecurityContextHelper.EstablishScopeContextAsync(envelope, sp, CancellationToken.None);
+
+    // Provider returns null (no extraction), but no exception because envelope has scope
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task EstablishScopeContextAsync_TypedMessage_NoEnvelopeScope_ThrowsAsync() {
+    // Arrange: Typed message with no extractor AND no scope on envelope.
+    // This is a genuinely unauthenticated message at an entry point — should throw.
+    var envelope = _createTestEnvelope(new TestLoginEvent("test-user"));
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)], // extractor returns null
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = false }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act & Assert: Should throw — no scope anywhere
+    await Assert.That(async () =>
+        await SecurityContextHelper.EstablishScopeContextAsync(envelope, sp, CancellationToken.None))
+      .ThrowsExactly<SecurityContextRequiredException>();
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_TypedMessage_WithScopeDelta_EstablishesContextAsync() {
+    // Arrange: Typed message WITH scope on hops — should establish context from envelope fallback
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(
+        new TestLoginEvent("test-user"), "user-123", "tenant-456");
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)], // extractor returns null
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = false }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    var capturingAccessor = new CapturingScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(capturingAccessor);
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert: Scope should be established from envelope fallback (ImmutableScopeContext wrapping)
+    await Assert.That(capturingAccessor.CapturedContext).IsNotNull();
+    await Assert.That(capturingAccessor.CapturedContext!.Scope.UserId).IsEqualTo("user-123");
+    await Assert.That(capturingAccessor.CapturedContext!.Scope.TenantId).IsEqualTo("tenant-456");
+  }
+
+  /// <summary>
+  /// A strongly-typed message simulating LoginAttemptEvent — inherently has no
+  /// security context because the user hasn't authenticated yet.
+  /// </summary>
+  private sealed record TestLoginEvent(string Username);
 
   // Test message types
   private sealed record TestSecurityMessage(string Value);

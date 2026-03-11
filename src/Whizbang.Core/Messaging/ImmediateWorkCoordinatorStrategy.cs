@@ -64,7 +64,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox");
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox", message.MessageType);
     _queuedOutboxMessages.Add(message);
     if (_logger != null) {
       LogOutboxMessageQueued(_logger);
@@ -76,7 +76,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox");
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox", message.MessageType);
     _queuedInboxMessages.Add(message);
     if (_logger != null) {
       LogInboxMessageQueued(_logger);

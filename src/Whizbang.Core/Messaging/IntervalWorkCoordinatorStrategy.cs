@@ -89,7 +89,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueOutbox");
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueOutbox", message.MessageType);
 
     lock (_lock) {
       _queuedOutboxMessages.Add(message);
@@ -105,7 +105,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueInbox");
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueInbox", message.MessageType);
 
     lock (_lock) {
       _queuedInboxMessages.Add(message);
