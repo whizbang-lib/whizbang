@@ -239,7 +239,7 @@ public class ReceptorInvokerTagProcessorScopeTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, ct) => {
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
           _tracker.RecordInvocation(receptorId, stage);
           return ValueTask.FromResult<object?>(null);
         }));

@@ -34,7 +34,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_exempt_receptor_{stage}",
-      InvokeAsync: (sp, msg, ct) => {
+      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
@@ -67,7 +67,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_envelope_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, ct) => {
+      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
         receptorInvoked = true;
         return ValueTask.FromResult<object?>(null);
       }
@@ -97,7 +97,7 @@ public class ReceptorInvokerSecurityGracefulTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestLoginEvent),
       ReceptorId: $"test_with_security_receptor_{stage}",
-      InvokeAsync: (sp, msg, ct) => {
+      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);

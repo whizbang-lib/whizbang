@@ -44,6 +44,9 @@ public class MessageContext : IMessageContext {
   /// <docs>core-concepts/cascade-context#scope-context</docs>
   public IScopeContext? ScopeContext { get; init; }
 
+  /// <inheritdoc />
+  public ICallerInfo? CallerInfo { get; init; }
+
   private readonly Dictionary<string, object> _metadata = [];
 
   /// <inheritdoc />

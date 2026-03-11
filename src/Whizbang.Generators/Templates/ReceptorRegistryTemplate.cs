@@ -99,7 +99,7 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
       MessageType: typeof(TMessage),
       ReceptorId: "runtime_" + receptor.GetType().Name,
-      InvokeAsync: async (sp, msg, ct) => {
+      InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
         // IAcceptsLifecycleContext via compile-time pattern match (not reflection)
         if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
           var ctxAccessor = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleContextAccessor>();
@@ -131,7 +131,7 @@ public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.
     var info = new global::Whizbang.Core.Messaging.ReceptorInfo(
       MessageType: typeof(TMessage),
       ReceptorId: "runtime_" + receptor.GetType().Name,
-      InvokeAsync: async (sp, msg, ct) => {
+      InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {
         if (receptor is global::Whizbang.Core.Messaging.IAcceptsLifecycleContext contextAware) {
           var ctxAccessor = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleContextAccessor>();
           if (ctxAccessor?.Current is not null) contextAware.SetLifecycleContext(ctxAccessor.Current);

@@ -139,6 +139,7 @@ public class DispatcherSendAsyncSyncTests {
   /// Test sync awaiter that tracks when WaitForStreamAsync is called.
   /// </summary>
   private sealed class TestTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     private readonly Func<SyncResult> _onWaitForStreamAsync;
 
     public TestTrackingSyncAwaiter(Func<SyncResult> onWaitForStreamAsync) {
@@ -181,7 +182,7 @@ public class DispatcherSendAsyncSyncTests {
           new ReceptorInfo(
             MessageType: typeof(TestSyncCommand),
             ReceptorId: "TestSyncReceptor",
-            InvokeAsync: (sp, msg, ct) => {
+            InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
               _onInvoke();
               return ValueTask.FromResult<object?>(new TestSyncResult(true));
             },

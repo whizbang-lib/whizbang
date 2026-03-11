@@ -383,6 +383,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
 
   // Fake implementations
   private sealed class FakeEventCompletionAwaiter : IEventCompletionAwaiter {
+    public Guid AwaiterId { get; } = Guid.NewGuid();
     private readonly bool _completesImmediately;
 
     public bool WaitForEventsWasCalled { get; private set; }

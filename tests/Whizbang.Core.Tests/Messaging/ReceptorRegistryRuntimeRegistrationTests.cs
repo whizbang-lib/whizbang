@@ -121,7 +121,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     // Use a scoped provider since ILifecycleContextAccessor is registered as scoped
     using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
-    await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, CancellationToken.None);
+    await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
     // Assert
     await Assert.That(receptor.WasInvoked).IsTrue();
@@ -201,7 +201,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     // Act
     using var sp = _createServiceProvider();
     using var scope = sp.CreateScope();
-    var result = await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, CancellationToken.None);
+    var result = await runtimeEntry.InvokeAsync(scope.ServiceProvider, testMessage, null!, null, CancellationToken.None);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -286,7 +286,7 @@ public class ReceptorRegistryRuntimeRegistrationTests {
     var testMessage = new RuntimeRegistrationTestEvent(Guid.CreateVersion7(), "context-test");
 
     // Act - invoke through the delegate (which reads from ILifecycleContextAccessor)
-    await runtimeEntry.InvokeAsync(scopedProvider, testMessage, CancellationToken.None);
+    await runtimeEntry.InvokeAsync(scopedProvider, testMessage, null!, null, CancellationToken.None);
 
     // Assert
     await Assert.That(receptor.WasInvoked).IsTrue();
