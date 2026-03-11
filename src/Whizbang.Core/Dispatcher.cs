@@ -21,6 +21,7 @@ using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
@@ -2124,14 +2125,16 @@ public abstract partial class Dispatcher(
         eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
         var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
 
-        // Auto-generate StreamId if empty and message supports it (prevents Guid.Empty pollution)
-        // Controlled by WhizbangOptions.AutoGenerateStreamIds (default: true)
-        if (_whizbangOptions.AutoGenerateStreamIds && streamId == Guid.Empty && msg is IHasStreamId hasStreamId) {
-          streamId = ValueObjects.TrackedGuid.NewMedo();
-          hasStreamId.StreamId = streamId;
-          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-            CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (was Guid.Empty)",
-              streamId, messageType.Name);
+        // Auto-generate StreamId based on [GenerateStreamId] attribute policy
+        if (_streamIdExtractor is not null && msg is IHasStreamId hasStreamId) {
+          var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(msg);
+          if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
+            streamId = ValueObjects.TrackedGuid.NewMedo();
+            hasStreamId.StreamId = streamId;
+            if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+              CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
+                streamId, messageType.Name, onlyIfEmpty);
+            }
           }
         }
 
@@ -2498,17 +2501,19 @@ public abstract partial class Dispatcher(
       eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType) ?? Guid.Empty;
 
-      // Auto-generate StreamId if empty and message supports it (prevents Guid.Empty pollution)
-      // Controlled by WhizbangOptions.AutoGenerateStreamIds (default: true)
-      if (_whizbangOptions.AutoGenerateStreamIds && streamId == Guid.Empty && message is IHasStreamId hasStreamId) {
-        streamId = ValueObjects.TrackedGuid.NewMedo();
-        hasStreamId.StreamId = streamId;
+      // Auto-generate StreamId based on [GenerateStreamId] attribute policy
+      if (_streamIdExtractor is not null && message is IHasStreamId hasStreamId) {
+        var (shouldGenerate, onlyIfEmpty) = _streamIdExtractor.GetGenerationPolicy(message);
+        if (shouldGenerate && (!onlyIfEmpty || streamId == Guid.Empty)) {
+          streamId = ValueObjects.TrackedGuid.NewMedo();
+          hasStreamId.StreamId = streamId;
 #pragma warning disable CA1848
-        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-          CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (was Guid.Empty)",
-            streamId, messageType.Name);
-        }
+          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+            CascadeLogger.LogDebug("[STREAM_ID] Auto-generated StreamId={StreamId} for EventType={EventType} (OnlyIfEmpty={OnlyIfEmpty})",
+              streamId, messageType.Name, onlyIfEmpty);
+          }
 #pragma warning restore CA1848
+        }
       }
 
       // Track in scoped tracker (same request scope)
@@ -3672,6 +3677,11 @@ public abstract partial class Dispatcher(
 
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
+
+    // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
+    if (payload is IEvent) {
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox");
+    }
 
     // Use centralized envelope serializer (REQUIRED)
     if (_envelopeSerializer == null) {
