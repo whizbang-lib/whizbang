@@ -16,7 +16,9 @@ public sealed record StreamIdInfo(
     string EventType,
     string PropertyName,
     string PropertyType,
-    bool IsPropertyValueType
+    bool IsPropertyValueType,
+    bool HasGenerate = false,
+    bool OnlyIfEmpty = false
 );
 
 /// <summary>

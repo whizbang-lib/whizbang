@@ -10,6 +10,7 @@ using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Validation;
 
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance (not critical for worker startup/shutdown)
 
@@ -585,6 +586,11 @@ public class TransportConsumerWorker : BackgroundService {
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);
+
+    // Guard: fail-fast if StreamId is Guid.Empty for events
+    if (isEvent) {
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox");
+    }
 
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
