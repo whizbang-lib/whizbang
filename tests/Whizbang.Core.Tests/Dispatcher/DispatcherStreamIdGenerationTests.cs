@@ -17,6 +17,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Dispatcher")]
 [Category("StreamId")]
 [Category("GenerateStreamId")]
+[NotInParallel("StreamIdExtractorRegistry")]
 public class DispatcherStreamIdGenerationTests {
 
   // ========================================

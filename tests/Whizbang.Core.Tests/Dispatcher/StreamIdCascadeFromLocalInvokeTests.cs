@@ -25,6 +25,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("StreamId")]
 [Category("GenerateStreamId")]
 [Category("Cascade")]
+[NotInParallel("StreamIdExtractorRegistry")]
 public class StreamIdCascadeFromLocalInvokeTests {
 
   // ========================================

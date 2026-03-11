@@ -43,7 +43,12 @@ public static class TestConstants {
   ///     GenerateStreamIdOnlyIfEmptyCommandReceptor, NoGenerateStreamIdCommandReceptor, SimpleCommandReceptor,
   ///     InheritedStreamIdCommandReceptor, InheritedOnlyIfEmptyCommandReceptor)
   ///
-  /// Total: 84 receptors (includes 4 from scope/cascade integration test types)
+  /// - 7 receptors from DispatcherNewCodeCoverageTests.cs (SyncOnlyCommandReceptor, PropagateStreamIdCommandReceptor,
+  ///     PropagatedStreamIdEventTrackerReceptor, VoidOptionsCommandReceptor, VoidOptionsEventTrackerReceptor,
+  ///     SyncOptionsCommandReceptor, EmptyStreamIdEventReceptor)
+  /// - 2 receptors from DispatcherInvokeWithReceiptTests.cs (ReceiptTestCommandReceptor, ReceiptTestVoidCommandReceptor)
+  ///
+  /// Total: 93 receptors (includes 4 from scope/cascade integration test types)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 84;
+  public const int EXPECTED_RECEPTOR_COUNT = 93;
 }
