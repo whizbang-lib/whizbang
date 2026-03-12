@@ -71,4 +71,14 @@
     <EmbeddedResource Include="Templates\**\*.sql" />
   </ItemGroup>
 
+  <!-- Pack MSBuild props/targets for NuGet consumers (build/ for direct, buildTransitive/ for transitive) -->
+  <ItemGroup>
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.props" Pack="true" PackagePath="build\SoftwareExtravaganza.Whizbang.Generators.props" />
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.targets" Pack="true" PackagePath="build\SoftwareExtravaganza.Whizbang.Generators.targets" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.props" Pack="true" PackagePath="buildTransitive\SoftwareExtravaganza.Whizbang.Generators.props" CopyToOutputDirectory="Never" />
+    <None Include="build\SoftwareExtravaganza.Whizbang.Generators.targets" Pack="true" PackagePath="buildTransitive\SoftwareExtravaganza.Whizbang.Generators.targets" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+
 </Project>
