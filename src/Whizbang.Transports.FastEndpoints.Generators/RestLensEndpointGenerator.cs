@@ -87,7 +87,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     var maxPageSize = AttributeUtilities.GetIntValue(restLensAttr, "MaxPageSize", 100);
 
     // Generate endpoint class name from interface name
-    var endpointClassName = _getEndpointClassName(symbol.Name, modelType.Name);
+    var endpointClassName = _getEndpointClassName(symbol.Name);
 
     return new RestLensInfo(
         InterfaceName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -107,7 +107,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   /// Generate endpoint class name from interface name and model name.
   /// E.g., "IOrderLens" + "OrderReadModel" -> "OrderLensEndpoint"
   /// </summary>
-  private static string _getEndpointClassName(string interfaceName, string modelTypeName) {
+  private static string _getEndpointClassName(string interfaceName) {
     // Remove 'I' prefix if present
     var baseName = interfaceName.StartsWith("I", StringComparison.Ordinal)
         ? interfaceName.Substring(1)
