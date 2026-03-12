@@ -260,7 +260,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
       if (paramName.Contains("messageBus", StringComparison.OrdinalIgnoreCase) ||
           paramName.Contains("MessageBus", StringComparison.Ordinal)) {
-        var newName = _getDispatcherParamName(paramName);
+        var newName = _getDispatcherParamName();
         var newIdentifier = SyntaxFactory.Identifier(newName)
             .WithLeadingTrivia(node.Identifier.LeadingTrivia)
             .WithTrailingTrivia(node.Identifier.TrailingTrivia);
@@ -292,7 +292,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
                             parent is ArgumentSyntax;
 
         if (isMemberAccess) {
-          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : _getDispatcherParamName(name);
+          var newName = name.Contains('_') ? _getDispatcherFieldName(name) : _getDispatcherParamName();
 
           return SyntaxFactory.IdentifierName(newName)
               .WithLeadingTrivia(node.GetLeadingTrivia())
@@ -312,7 +312,7 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
       return "dispatcher";
     }
 
-    private static string _getDispatcherParamName(string paramName) {
+    private static string _getDispatcherParamName() {
       // messageBus -> dispatcher
       // bus -> dispatcher
       return "dispatcher";

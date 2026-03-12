@@ -15,7 +15,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Implements caching to avoid excessive health checks.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Simple health check logging - LoggerMessage delegates would be overkill for infrequent health checks")]
-public class ServiceBusReadinessCheck : ITransportReadinessCheck, IDisposable {
+public sealed class ServiceBusReadinessCheck : ITransportReadinessCheck, IDisposable {
   private readonly ITransport _transport;
   private readonly ServiceBusClient _client;
   private readonly ILogger<ServiceBusReadinessCheck> _logger;

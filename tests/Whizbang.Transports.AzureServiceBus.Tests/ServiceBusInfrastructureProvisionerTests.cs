@@ -160,7 +160,7 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient();
     var provisioner = new ServiceBusInfrastructureProvisioner(
       adminClient,
-      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
 
     // Act
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
@@ -181,7 +181,7 @@ public class ServiceBusInfrastructureProvisionerTests {
     };
     var provisioner = new ServiceBusInfrastructureProvisioner(
       adminClient,
-      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
 
     // Act
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
@@ -201,7 +201,7 @@ public class ServiceBusInfrastructureProvisionerTests {
     };
     var provisioner = new ServiceBusInfrastructureProvisioner(
       adminClient,
-      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
 
     // Act - should not throw
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
@@ -219,7 +219,7 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient();
     var provisioner = new ServiceBusInfrastructureProvisioner(
       adminClient,
-      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
 
     // Act
     await provisioner.EnsureTopicExistsAsync("MyApp.Orders");

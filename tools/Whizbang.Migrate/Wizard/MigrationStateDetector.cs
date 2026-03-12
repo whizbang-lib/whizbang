@@ -4,7 +4,7 @@ namespace Whizbang.Migrate.Wizard;
 /// Detects the current state of a migration for a project.
 /// </summary>
 /// <docs>migrate-from-marten-wolverine/cli-wizard</docs>
-public sealed class MigrationStateDetector {
+public static class MigrationStateDetector {
   /// <summary>
   /// Detects the current migration state for a project.
   /// </summary>

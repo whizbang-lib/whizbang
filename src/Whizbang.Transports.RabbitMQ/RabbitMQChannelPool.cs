@@ -126,5 +126,3 @@ public readonly struct PooledChannel : IDisposable {
     _pool.Return(Channel);
   }
 }
-
-// namespace

@@ -91,7 +91,7 @@ public class DapperWorkCoordinator(
 
     await using var connection = new NpgsqlConnection(_connectionString);
 
-    // Hook PostgreSQL RAISE NOTICE messages for debugging (before opening connection)
+    // Hook PostgreSQL RAISE DEBUG messages for debugging (before opening connection)
     // Notices are only generated when WorkBatchFlags.DebugMode is set in SQL function
     connection.Notice += _onNotice;
 
@@ -538,7 +538,7 @@ public class DapperWorkCoordinator(
   }
 
   /// <summary>
-  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
+  /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {

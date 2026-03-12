@@ -230,7 +230,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_sync_inquiries
       )";
 
-    // Hook PostgreSQL RAISE NOTICE messages for debugging
+    // Hook PostgreSQL RAISE DEBUG messages for debugging
     // Access the underlying NpgsqlConnection from EF Core's DbContext
     var dbConnection = _dbContext.Database.GetDbConnection();
     if (dbConnection is NpgsqlConnection npgsqlConnection && npgsqlConnection.State != System.Data.ConnectionState.Open) {
@@ -458,20 +458,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .ToList();
 
     // Only log when there's actual work to report
-    if (outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0 || syncInquiryResults.Count > 0) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-        var outboxCount = outboxWork.Count;
-        var inboxCount = inboxWork.Count;
-        var perspectiveCount = perspectiveWork.Count;
-        var syncResultsCount = syncInquiryResults.Count;
-        _logger.LogDebug(
-          "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
-          outboxCount,
-          inboxCount,
-          perspectiveCount,
-          syncResultsCount
-        );
-      }
+    if ((outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0 || syncInquiryResults.Count > 0) &&
+        _logger?.IsEnabled(LogLevel.Debug) == true) {
+      var outboxCount = outboxWork.Count;
+      var inboxCount = inboxWork.Count;
+      var perspectiveCount = perspectiveWork.Count;
+      var syncResultsCount = syncInquiryResults.Count;
+      _logger.LogDebug(
+        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
+        outboxCount,
+        inboxCount,
+        perspectiveCount,
+        syncResultsCount
+      );
     }
 
     return new WorkBatch {
@@ -930,7 +929,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
+  /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {

@@ -41,7 +41,9 @@ public static class SharedRabbitMqContainer {
   private static Uri? _managementApiUri;
   private static bool _initialized;
   private static bool _initializationFailed;
+#pragma warning disable S4487 // Written for diagnostics; available in debugger during test failures
   private static Exception? _lastInitializationError;
+#pragma warning restore S4487
 
   /// <summary>
   /// Gets the shared RabbitMQ connection string.

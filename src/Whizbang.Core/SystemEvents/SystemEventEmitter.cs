@@ -158,12 +158,11 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       TSystemEvent systemEvent,
       CancellationToken cancellationToken = default) where TSystemEvent : ISystemEvent {
     // Check if this specific system event type is enabled
-    if (!_options.IsEnabled<TSystemEvent>()) {
-      // Always allow audit events if any audit is enabled
-      if (!_options.AuditEnabled ||
-          (typeof(TSystemEvent) != typeof(EventAudited) && typeof(TSystemEvent) != typeof(CommandAudited))) {
-        return;
-      }
+    // Always allow audit events if any audit is enabled
+    if (!_options.IsEnabled<TSystemEvent>() &&
+        (!_options.AuditEnabled ||
+         (typeof(TSystemEvent) != typeof(EventAudited) && typeof(TSystemEvent) != typeof(CommandAudited)))) {
+      return;
     }
 
     // Create envelope for the system event

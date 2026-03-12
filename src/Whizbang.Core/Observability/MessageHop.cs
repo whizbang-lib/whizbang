@@ -260,22 +260,20 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
 
     // CausationId (optional) - deserialize using UUID7 format directly
     MessageId? causationId = null;
-    if (root.TryGetProperty("ca", out var caElem) || root.TryGetProperty("CausationId", out caElem)) {
-      if (caElem.ValueKind != JsonValueKind.Null) {
-        var uuid7String = caElem.GetString()!;
-        var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-        causationId = MessageId.From(uuid7.ToGuid());
-      }
+    if ((root.TryGetProperty("ca", out var caElem) || root.TryGetProperty("CausationId", out caElem)) &&
+        caElem.ValueKind != JsonValueKind.Null) {
+      var uuid7String = caElem.GetString()!;
+      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
+      causationId = MessageId.From(uuid7.ToGuid());
     }
 
     // CorrelationId (optional) - deserialize using UUID7 format directly
     CorrelationId? correlationId = null;
-    if (root.TryGetProperty("co", out var coElem) || root.TryGetProperty("CorrelationId", out coElem)) {
-      if (coElem.ValueKind != JsonValueKind.Null) {
-        var uuid7String = coElem.GetString()!;
-        var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-        correlationId = CorrelationId.From(uuid7.ToGuid());
-      }
+    if ((root.TryGetProperty("co", out var coElem) || root.TryGetProperty("CorrelationId", out coElem)) &&
+        coElem.ValueKind != JsonValueKind.Null) {
+      var uuid7String = coElem.GetString()!;
+      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
+      correlationId = CorrelationId.From(uuid7.ToGuid());
     }
 
     // CausationType (optional)
@@ -304,18 +302,16 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
 
     // PartitionIndex (optional)
     int? partitionIndex = null;
-    if (root.TryGetProperty("pi", out var piElem) || root.TryGetProperty("PartitionIndex", out piElem)) {
-      if (piElem.ValueKind != JsonValueKind.Null) {
-        partitionIndex = piElem.GetInt32();
-      }
+    if ((root.TryGetProperty("pi", out var piElem) || root.TryGetProperty("PartitionIndex", out piElem)) &&
+        piElem.ValueKind != JsonValueKind.Null) {
+      partitionIndex = piElem.GetInt32();
     }
 
     // SequenceNumber (optional)
     long? sequenceNumber = null;
-    if (root.TryGetProperty("sn", out var snElem) || root.TryGetProperty("SequenceNumber", out snElem)) {
-      if (snElem.ValueKind != JsonValueKind.Null) {
-        sequenceNumber = snElem.GetInt64();
-      }
+    if ((root.TryGetProperty("sn", out var snElem) || root.TryGetProperty("SequenceNumber", out snElem)) &&
+        snElem.ValueKind != JsonValueKind.Null) {
+      sequenceNumber = snElem.GetInt64();
     }
 
     // ExecutionStrategy (optional, defaults to empty)
@@ -326,29 +322,26 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
 
     // Scope (optional) - only get type info if property exists
     ScopeDelta? scope = null;
-    if (root.TryGetProperty("sc", out var scElem) || root.TryGetProperty("Scope", out scElem)) {
-      if (scElem.ValueKind != JsonValueKind.Null) {
-        var scopeDeltaTypeInfo = (JsonTypeInfo<ScopeDelta>)options.GetTypeInfo(typeof(ScopeDelta));
-        scope = scElem.Deserialize(scopeDeltaTypeInfo);
-      }
+    if ((root.TryGetProperty("sc", out var scElem) || root.TryGetProperty("Scope", out scElem)) &&
+        scElem.ValueKind != JsonValueKind.Null) {
+      var scopeDeltaTypeInfo = (JsonTypeInfo<ScopeDelta>)options.GetTypeInfo(typeof(ScopeDelta));
+      scope = scElem.Deserialize(scopeDeltaTypeInfo);
     }
 
     // Metadata (optional) - only get type info if property exists
     IReadOnlyDictionary<string, JsonElement>? metadata = null;
-    if (root.TryGetProperty("md", out var mdElem) || root.TryGetProperty("Metadata", out mdElem)) {
-      if (mdElem.ValueKind != JsonValueKind.Null) {
-        var metadataTypeInfo = (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
-        metadata = mdElem.Deserialize(metadataTypeInfo);
-      }
+    if ((root.TryGetProperty("md", out var mdElem) || root.TryGetProperty("Metadata", out mdElem)) &&
+        mdElem.ValueKind != JsonValueKind.Null) {
+      var metadataTypeInfo = (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+      metadata = mdElem.Deserialize(metadataTypeInfo);
     }
 
     // Trail (optional) - only get type info if property exists
     PolicyDecisionTrail? trail = null;
-    if (root.TryGetProperty("tr", out var trElem) || root.TryGetProperty("Trail", out trElem)) {
-      if (trElem.ValueKind != JsonValueKind.Null) {
-        var trailTypeInfo = (JsonTypeInfo<PolicyDecisionTrail>)options.GetTypeInfo(typeof(PolicyDecisionTrail));
-        trail = trElem.Deserialize(trailTypeInfo);
-      }
+    if ((root.TryGetProperty("tr", out var trElem) || root.TryGetProperty("Trail", out trElem)) &&
+        trElem.ValueKind != JsonValueKind.Null) {
+      var trailTypeInfo = (JsonTypeInfo<PolicyDecisionTrail>)options.GetTypeInfo(typeof(PolicyDecisionTrail));
+      trail = trElem.Deserialize(trailTypeInfo);
     }
 
     // CallerMemberName (optional)
@@ -365,10 +358,9 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
 
     // CallerLineNumber (optional)
     int? callerLineNumber = null;
-    if (root.TryGetProperty("cl", out var clElem) || root.TryGetProperty("CallerLineNumber", out clElem)) {
-      if (clElem.ValueKind != JsonValueKind.Null) {
-        callerLineNumber = clElem.GetInt32();
-      }
+    if ((root.TryGetProperty("cl", out var clElem) || root.TryGetProperty("CallerLineNumber", out clElem)) &&
+        clElem.ValueKind != JsonValueKind.Null) {
+      callerLineNumber = clElem.GetInt32();
     }
 
     // Duration (optional)

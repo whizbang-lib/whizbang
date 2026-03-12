@@ -43,7 +43,7 @@ public static class Program {
       }
 
       if (!Directory.Exists(sourceDir)) {
-        Console.Error.WriteLine($"Directory not found: {sourceDir}");
+        await Console.Error.WriteLineAsync($"Directory not found: {sourceDir}");
         return;
       }
 
@@ -158,7 +158,7 @@ public static class Program {
       DecisionFile? loadedDecisionFile = null;
       if (!string.IsNullOrEmpty(decisionFilePath)) {
         if (!File.Exists(decisionFilePath)) {
-          Console.Error.WriteLine($"Decision file not found: {decisionFilePath}");
+          await Console.Error.WriteLineAsync($"Decision file not found: {decisionFilePath}");
           return;
         }
         loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
@@ -186,7 +186,7 @@ public static class Program {
           managePackages);
 
       if (!result.Success) {
-        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
         return;
       }
 
@@ -264,7 +264,7 @@ public static class Program {
       var result = await statusCmd.ExecuteAsync(sourceDir);
 
       if (!result.Success) {
-        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
         return;
       }
 

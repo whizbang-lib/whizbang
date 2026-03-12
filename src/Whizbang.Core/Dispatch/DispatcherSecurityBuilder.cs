@@ -51,7 +51,9 @@ public sealed partial class DispatcherSecurityBuilder {
   private readonly string? _tenantId;
 
   // Lazy-resolved logger for security warnings
+#pragma warning disable S4487 // Backing field for _Logger lazy property
   private ILogger? _logger;
+#pragma warning restore S4487
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger _Logger => _logger ??= (_dispatcher as Dispatcher)?.InternalServiceProvider
     .GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatch.DispatcherSecurityBuilder")

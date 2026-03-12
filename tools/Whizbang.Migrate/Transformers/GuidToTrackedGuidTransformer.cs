@@ -196,7 +196,9 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
   }
 
   private static void _addMartenPatternWarnings(SyntaxNode root, List<string> warnings) {
+#pragma warning disable S125 // Descriptive comment with code-like example, not dead code
     // G03: Detect default StreamId check patterns (if (x.StreamId == default))
+#pragma warning restore S125
     var defaultChecks = root.DescendantNodes()
         .OfType<BinaryExpressionSyntax>()
         .Where(b => b.IsKind(SyntaxKind.EqualsExpression))

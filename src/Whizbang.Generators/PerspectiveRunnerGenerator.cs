@@ -587,7 +587,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var returnType = _classifyReturnType(method.ReturnType, modelTypeName);
+      var returnType = _classifyReturnType(method.ReturnType);
       returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
     }
 
@@ -597,7 +597,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Classifies the return type of an Apply method.
   /// </summary>
-  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType, string modelTypeName) {
+  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType) {
     var returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Check for ModelAction

@@ -161,19 +161,16 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
       }
 
       // Handle IntegrateWithWolverine - remove entirely
-      if (_methodsToRemove.Contains(methodName)) {
-        // Get the expression before the method call (the chained call)
-        if (node.Expression is MemberAccessExpressionSyntax memberAccess) {
-          _changes.Add(new CodeChange(
-              node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
-              ChangeType.MethodCallReplacement,
-              $"Removed '{methodName}()' (not needed in Whizbang)",
-              $".{methodName}()",
-              ""));
+      if (_methodsToRemove.Contains(methodName) && node.Expression is MemberAccessExpressionSyntax memberAccess) {
+        _changes.Add(new CodeChange(
+            node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.MethodCallReplacement,
+            $"Removed '{methodName}()' (not needed in Whizbang)",
+            $".{methodName}()",
+            ""));
 
-          // Return just the expression part, removing the method call
-          return Visit(memberAccess.Expression);
-        }
+        // Return just the expression part, removing the method call
+        return Visit(memberAccess.Expression);
       }
 
       // Handle AddWolverine -> AddWhizbang

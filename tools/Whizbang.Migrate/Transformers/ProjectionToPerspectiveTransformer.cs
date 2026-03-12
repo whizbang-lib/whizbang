@@ -406,7 +406,9 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
       var (action, needsReview) = _analyzeShouldDeleteBody(node);
 
       // Build the new Apply method
+#pragma warning disable S125 // Documents the code pattern being generated, not dead code
       // public ModelAction Apply(TModel current, TEvent @event) => ModelAction.Delete;
+#pragma warning restore S125
       var newMethod = SyntaxFactory.MethodDeclaration(
               SyntaxFactory.ParseTypeName("ModelAction"),
               SyntaxFactory.Identifier("Apply"))

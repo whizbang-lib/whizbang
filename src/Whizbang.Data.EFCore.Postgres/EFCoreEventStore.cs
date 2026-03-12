@@ -19,12 +19,12 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Stores events with stream-based organization using sequence numbers.
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
+#pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
 public sealed class EFCoreEventStore<TDbContext> : IEventStore
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
-  private readonly Whizbang.Core.Perspectives.IPerspectiveInvoker? _perspectiveInvoker;
 
   // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
   private static readonly bool _diagnosticLogging =
@@ -36,7 +36,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     Whizbang.Core.Perspectives.IPerspectiveInvoker? perspectiveInvoker = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
-    _perspectiveInvoker = perspectiveInvoker;
   }
 
   /// <summary>

@@ -20,7 +20,9 @@ namespace Whizbang.Transports.HotChocolate;
 /// [GraphQLLens(Scope = GraphQLLensScope.Default)]
 /// </example>
 [Flags]
+#pragma warning disable S2346 // Flags enums zero-value member named "Default" by design — "None" doesn't fit because Default means "use system-configured default"
 public enum GraphQLLensScope {
+#pragma warning restore S2346
   /// <summary>
   /// Use system-configured default from <see cref="WhizbangGraphQLOptions.DefaultScope"/>.
   /// When no explicit scope is set, the system default is applied at runtime.
