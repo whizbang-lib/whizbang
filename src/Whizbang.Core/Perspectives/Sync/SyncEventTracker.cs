@@ -130,12 +130,10 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       // Check if ALL perspectives for this event are now processed
       var hasRemainingPerspectives = _trackedEvents.Keys.Any(k => k.EventId == id);
 
-      if (!hasRemainingPerspectives) {
+      if (!hasRemainingPerspectives && _allPerspectivesWaiters.TryRemove(id, out var allWaiters)) {
         // Signal all-perspectives waiters
-        if (_allPerspectivesWaiters.TryRemove(id, out var allWaiters)) {
-          foreach (var kvp in allWaiters) {
-            kvp.Value.TrySetResult(true);
-          }
+        foreach (var kvp in allWaiters) {
+          kvp.Value.TrySetResult(true);
         }
       }
     }

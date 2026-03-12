@@ -113,11 +113,10 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       }
 
       // Recursively check nested class/struct types
-      if (propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) {
-        // Skip common system types that won't contain Dictionary
-        if (!_isSystemPrimitiveType(propType)) {
-          _checkForDictionary(context, propType, visited);
-        }
+      // Skip common system types that won't contain Dictionary
+      if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
+          !_isSystemPrimitiveType(propType)) {
+        _checkForDictionary(context, propType, visited);
       }
 
       // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)

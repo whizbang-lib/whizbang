@@ -174,10 +174,8 @@ public sealed class DomainOwnershipPrompt {
     var anyToggled = false;
 
     foreach (var part in parts) {
-      if (int.TryParse(part, out var index)) {
-        if (ToggleDomain(index)) {
-          anyToggled = true;
-        }
+      if (int.TryParse(part, out var index) && ToggleDomain(index)) {
+        anyToggled = true;
       }
     }
 

@@ -2907,10 +2907,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Include Whizbang.Core.ICommand and Whizbang.Core.IEvent for polymorphic collections
       // Skip other Whizbang.Core.* interfaces (IMessage, IHasId, etc.)
-      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal)) {
-        if (interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
-          continue;
-        }
+      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal) &&
+          interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
+        continue;
       }
 
       inheritanceList.Add(new InheritanceInfo(
