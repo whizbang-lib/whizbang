@@ -143,7 +143,7 @@ jobs:
 
   prerelease-publish:
     name: Publish Prerelease NuGet
-    needs: [version, build]
+    needs: [version]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment: nuget-publish
