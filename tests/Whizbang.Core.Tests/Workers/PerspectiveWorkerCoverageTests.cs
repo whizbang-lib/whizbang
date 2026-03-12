@@ -1,11 +1,17 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
+using Whizbang.Core.Tracing;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -17,6 +23,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// - Idle/active state transitions (OnWorkProcessingStarted/OnWorkProcessingIdle callbacks)
 /// - Acknowledgement count extraction fallback paths (outbox first row, inbox first row)
 /// - No work claimed path
+/// - Startup diagnostics (registry not available, empty registry, perspectives listed)
+/// - Sync signaler and sync event tracker invocation
+/// - Message tag processor invocation at PostPerspectiveInline
+/// - _loadProcessedEventsAsync with null event type provider and empty event types
+/// - Error during perspective run (failure reporting path)
+/// - Tracing enabled paths (batch span, perspective span, lifecycle span)
 /// </summary>
 public class PerspectiveWorkerCoverageTests {
 
@@ -213,6 +225,80 @@ public class PerspectiveWorkerCoverageTests {
       .Because("Counter should reset when database becomes ready");
   }
 
+  [Test]
+  public async Task Worker_DatabaseNotReadyOnStartup_SkipsInitialProcessingAsync() {
+    // Arrange - Database not ready at startup covers the "LogDatabaseNotReadyOnStartup" path
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = false };
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act - Start and let run briefly, then cancel
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - ProcessWorkBatch should NOT have been called because database was never ready
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+      .Because("No work batch should be processed when database is not ready");
+    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(0)
+      .Because("Database not ready checks should be counted");
+  }
+
+  [Test]
+  public async Task Worker_DatabaseNotReadyOver10Checks_LogsWarningAsync() {
+    // Arrange - Database stays not ready for > 10 consecutive checks to hit warning path
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = false };
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 10 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act - Let it run long enough for >10 cycles
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(500); // Should get >10 cycles at 10ms interval
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Should have exceeded the warning threshold
+    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThan(10)
+      .Because("Counter should exceed 10 to trigger warning log path");
+  }
+
   #endregion
 
   #region Acknowledgement Count Extraction - Metadata Paths
@@ -246,6 +332,82 @@ public class PerspectiveWorkerCoverageTests {
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert - Worker processed work (no crash from metadata extraction)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task Worker_MetadataOnOutboxFirstRow_ExtractsAcknowledgementCountsAsync() {
+    // Arrange - Metadata on outbox first row (no perspective work)
+    var (worker, coordinator, _) = _createWorker();
+
+    coordinator.WorkBatchOverride = new WorkBatch {
+      PerspectiveWork = [],
+      OutboxWork = [
+        new OutboxWork {
+          MessageId = Guid.NewGuid(),
+          Payload = JsonSerializer.SerializeToElement(new { test = true }),
+          MessageType = "TestType",
+          StreamId = Guid.NewGuid(),
+          Metadata = new Dictionary<string, JsonElement> {
+            ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(3),
+            ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(1)
+          },
+          EnvelopeMetadata = new EnvelopeMetadata {
+            MessageId = MessageId.New(),
+            Hops = []
+          }
+        }
+      ],
+      InboxWork = []
+    };
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(300);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker processed without crash (outbox metadata path exercised)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task Worker_MetadataOnInboxFirstRow_ExtractsAcknowledgementCountsAsync() {
+    // Arrange - Metadata on inbox first row (no perspective or outbox work)
+    var (worker, coordinator, _) = _createWorker();
+
+    coordinator.WorkBatchOverride = new WorkBatch {
+      PerspectiveWork = [],
+      OutboxWork = [],
+      InboxWork = [
+        new InboxWork {
+          MessageId = Guid.NewGuid(),
+          Payload = JsonSerializer.SerializeToElement(new { test = true }),
+          MessageType = "TestType",
+          SourceService = "TestSource",
+          Metadata = new Dictionary<string, JsonElement> {
+            ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(7),
+            ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(0)
+          },
+          EnvelopeMetadata = new EnvelopeMetadata {
+            MessageId = MessageId.New(),
+            Hops = []
+          }
+        }
+      ]
+    };
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(300);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker processed without crash (inbox metadata path exercised)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
   }
 
@@ -418,6 +580,661 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
+  #region Startup Diagnostics Tests
+
+  [Test]
+  public async Task Worker_StartupWithNoPerspectiveRegistry_LogsDiagnosticsAsync() {
+    // Arrange - No registry registered at startup covers LogPerspectiveRegistryNotAvailableAtStartup
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    // No IPerspectiveRunnerRegistry registered
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker started without crash (startup diagnostics exercised)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task Worker_StartupWithEmptyRegistry_LogsNoPerspectivesAsync() {
+    // Arrange - Empty registry covers LogNoPerspectivesRegistered
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new EmptyRunnerRegistry();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker started without crash (empty registry diagnostics exercised)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task Worker_StartupWithPopulatedRegistry_LogsRegisteredPerspectivesAsync() {
+    // Arrange - Registry with perspectives covers LogRegisteredPerspectivesHeader + LogRegisteredPerspective
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker started without crash (perspective listing exercised)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  #endregion
+
+  #region Sync Signaler and Sync Event Tracker Tests
+
+  [Test]
+  public async Task Worker_WithSyncSignaler_SignalsCheckpointUpdatedAsync() {
+    // Arrange - Perspective runner returns PerspectiveType so signaler is called
+    var syncSignaler = new FakePerspectiveSyncSignaler();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new TypeAwarePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.TypedPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      syncSignaler: syncSignaler
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(syncSignaler.SignalCount).IsGreaterThanOrEqualTo(1)
+      .Because("Sync signaler should be called when PerspectiveType is set on completion");
+    await Assert.That(syncSignaler.LastStreamId).IsEqualTo(streamId);
+  }
+
+  [Test]
+  public async Task Worker_WithSyncEventTracker_MarksProcessedEventsAsync() {
+    // Arrange - Set up event store, event type provider, and sync event tracker
+    var syncEventTracker = new FakeSyncEventTracker();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var eventStore = new FakeEventStore();
+    eventStore.AddEvent(streamId, eventId, new TestCoverageEvent("test-data"));
+    var eventTypeProvider = new FakeEventTypeProvider([typeof(TestCoverageEvent)]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider,
+      syncEventTracker: syncEventTracker
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(syncEventTracker.MarkProcessedByPerspectiveCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("Sync event tracker should mark events as processed");
+  }
+
+  #endregion
+
+  #region Message Tag Processor Tests
+
+  [Test]
+  public async Task Worker_WithMessageTagProcessor_ProcessesTagsAtPostPerspectiveInlineAsync() {
+    // Arrange
+    var tagProcessor = new FakeMessageTagProcessor();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var eventStore = new FakeEventStore();
+    eventStore.AddEvent(streamId, eventId, new TestCoverageEvent("tag-test"));
+    var eventTypeProvider = new FakeEventTypeProvider([typeof(TestCoverageEvent)]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddSingleton<IMessageTagProcessor>(tagProcessor);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    // Give a little extra time for PostPerspectiveInline to fire after completion
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(tagProcessor.ProcessTagsCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("Tag processor should be invoked at PostPerspectiveInline stage");
+  }
+
+  #endregion
+
+  #region Error During Perspective Run Tests
+
+  [Test]
+  public async Task Worker_PerspectiveRunThrows_ReportsFailureViaStrategyAsync() {
+    // Arrange - suppress unobserved task exceptions from intentional test throw
+    EventHandler<UnobservedTaskExceptionEventArgs> handler = (s, e) => {
+      if (e.Exception.InnerException is InvalidOperationException ioe &&
+          ioe.Message == "Perspective run failed") {
+        e.SetObserved();
+      }
+    };
+    TaskScheduler.UnobservedTaskException += handler;
+
+    try {
+      var coordinator = new FakeWorkCoordinator();
+      var instanceProvider = new FakeServiceInstanceProvider();
+      var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+      var registry = new ThrowingPerspectiveRunnerRegistry();
+
+      var streamId = Guid.NewGuid();
+      coordinator.PerspectiveWorkToReturn = [
+        new PerspectiveWork {
+          StreamId = streamId,
+          PerspectiveName = "Test.ThrowingPerspective",
+          LastProcessedEventId = null,
+          PartitionNumber = 1
+        }
+      ];
+
+      var services = new ServiceCollection();
+      services.AddSingleton<IWorkCoordinator>(coordinator);
+      services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+      services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+      services.AddLogging();
+
+      var serviceProvider = services.BuildServiceProvider();
+
+      var worker = new PerspectiveWorker(
+        instanceProvider,
+        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        tracingOptions: null,
+        new InstantCompletionStrategy(),
+        databaseReadiness
+      );
+
+      // Act
+      using var cts = new CancellationTokenSource();
+      var workerTask = worker.StartAsync(cts.Token);
+      await Task.Delay(300);
+      cts.Cancel();
+
+      try {
+        await workerTask;
+      } catch (OperationCanceledException) {
+        // Expected
+      } catch (InvalidOperationException) {
+        // Expected - the runner throws
+      }
+
+      // Assert - Failure should have been reported via the strategy
+      await Assert.That(coordinator.ReportFailureCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Failure should be reported via completion strategy when perspective run throws");
+    } finally {
+      TaskScheduler.UnobservedTaskException -= handler;
+    }
+  }
+
+  #endregion
+
+  #region Tracing Enabled Paths
+
+  [Test]
+  public async Task Worker_WithTracingEnabled_CreatesBatchAndPerspectiveSpansAsync() {
+    // Arrange - Enable tracing to cover batch span and perspective span code paths
+    var tracingOptions = new TracingOptions {
+      EnableWorkerBatchSpans = true,
+      EnabledComponents = TraceComponents.Perspectives | TraceComponents.Lifecycle
+    };
+    var tracingOptionsMonitor = new FakeOptionsMonitor<TracingOptions>(tracingOptions);
+
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: tracingOptionsMonitor,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker processed work with tracing enabled (no crash)
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  #endregion
+
+  #region DebugMode Flag Test
+
+  [Test]
+  public async Task Worker_WithDebugMode_SetsDebugFlagOnRequestAsync() {
+    // Arrange - Exercise the DebugMode path that sets WorkBatchFlags.DebugMode
+    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        DebugMode = true
+      }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Request should have DebugMode flag
+    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
+    await Assert.That(coordinator.CapturedRequests[0].Flags).IsEqualTo(WorkBatchFlags.DebugMode);
+  }
+
+  #endregion
+
+  #region Event Loading Paths
+
+  [Test]
+  public async Task Worker_WithEventStoreAndEventTypeProvider_LoadsEventsForTraceContextAsync() {
+    // Arrange - Exercises the upcomingEvents loading path (lines 383-407)
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var eventStore = new FakeEventStore();
+    eventStore.AddEvent(streamId, eventId, new TestCoverageEvent("trace-test"));
+    var eventTypeProvider = new FakeEventTypeProvider([typeof(TestCoverageEvent)]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(eventStore.GetEventsBetweenPolymorphicCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("Event store should be called to load events for trace context extraction");
+  }
+
+  [Test]
+  public async Task Worker_WithEventTypeProviderReturningEmpty_SkipsEventLoadingAsync() {
+    // Arrange - Empty event types means no events loaded
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var eventStore = new FakeEventStore();
+    var eventTypeProvider = new FakeEventTypeProvider([]); // Empty event types
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Event store should NOT be called because event types are empty
+    await Assert.That(eventStore.GetEventsBetweenPolymorphicCallCount).IsEqualTo(0)
+      .Because("Event store should not be called when event type provider returns empty list");
+  }
+
+  [Test]
+  public async Task Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync() {
+    // Arrange - No event type provider at all
+    var (worker, coordinator, _) = _createWorker();
+
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "TestPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert - Worker completed without event loading (no event type provider)
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  #endregion
+
+  #region InstanceMetadata Test
+
+  [Test]
+  public async Task Worker_WithInstanceMetadata_PassesMetadataToRequestAsync() {
+    // Arrange
+    var metadata = new Dictionary<string, JsonElement> {
+      ["version"] = JsonSerializer.SerializeToElement("2.0.0"),
+      ["env"] = JsonSerializer.SerializeToElement("test")
+    };
+
+    var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        InstanceMetadata = metadata
+      }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+    cts.Cancel();
+
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
+    await Assert.That(coordinator.CapturedRequests[0].Metadata).IsNotNull();
+  }
+
+  #endregion
+
   #region Helpers
 
   private static (PerspectiveWorker Worker, FakeWorkCoordinator Coordinator, FakeDatabaseReadinessCheck DbCheck) _createWorker(int idleThresholdPolls = 2) {
@@ -451,6 +1268,12 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
+  #region Test Types
+
+  private sealed record TestCoverageEvent(string Data) : IEvent;
+
+  #endregion
+
   #region Test Fakes
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
@@ -459,7 +1282,10 @@ public class PerspectiveWorkerCoverageTests {
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     public int ReportCompletionCallCount { get; private set; }
+    public int ReportFailureCallCount { get; private set; }
     public WorkBatch? WorkBatchOverride { get; set; }
+    public bool CaptureRequests { get; set; }
+    public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
 
     public async Task WaitForCompletionReportedAsync(TimeSpan timeout) {
       using var cts = new CancellationTokenSource(timeout);
@@ -474,6 +1300,10 @@ public class PerspectiveWorkerCoverageTests {
         ProcessWorkBatchRequest request,
         CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
+
+      if (CaptureRequests) {
+        CapturedRequests.Add(request);
+      }
 
       if (WorkBatchOverride is not null) {
         return Task.FromResult(WorkBatchOverride);
@@ -500,6 +1330,7 @@ public class PerspectiveWorkerCoverageTests {
     public Task ReportPerspectiveFailureAsync(
         PerspectiveCheckpointFailure failure,
         CancellationToken cancellationToken = default) {
+      ReportFailureCallCount++;
       return Task.CompletedTask;
     }
 
@@ -562,6 +1393,51 @@ public class PerspectiveWorkerCoverageTests {
     public IReadOnlyList<Type> GetEventTypes() => [];
   }
 
+  /// <summary>
+  /// Registry with empty registered perspectives (but still instantiated).
+  /// </summary>
+  private sealed class EmptyRunnerRegistry : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
+      return null;
+    }
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
+      return [];
+    }
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
+
+  /// <summary>
+  /// Registry that returns a runner which provides PerspectiveType on completion.
+  /// </summary>
+  private sealed class TypeAwarePerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
+      return new TypeAwarePerspectiveRunner();
+    }
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
+      return [new PerspectiveRegistrationInfo("Test.TypedPerspective", "global::Test.TypedPerspective", "global::Test.TypedModel", ["global::Test.TypedEvent"])];
+    }
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
+
+  /// <summary>
+  /// Registry that returns a runner which throws.
+  /// </summary>
+  private sealed class ThrowingPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) {
+      return new ThrowingPerspectiveRunner();
+    }
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() {
+      return [new PerspectiveRegistrationInfo("Test.ThrowingPerspective", "global::Test.ThrowingPerspective", "global::Test.ThrowingModel", ["global::Test.ThrowingEvent"])];
+    }
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
+
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public Task<PerspectiveCheckpointCompletion> RunAsync(
         Guid streamId,
@@ -575,6 +1451,165 @@ public class PerspectiveWorkerCoverageTests {
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+  }
+
+  private sealed class TypeAwarePerspectiveRunner : IPerspectiveRunner {
+    public Task<PerspectiveCheckpointCompletion> RunAsync(
+        Guid streamId,
+        string perspectiveName,
+        Guid? lastProcessedEventId,
+        CancellationToken cancellationToken) {
+      return Task.FromResult(new PerspectiveCheckpointCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.NewGuid(),
+        Status = PerspectiveProcessingStatus.Completed,
+        PerspectiveType = typeof(TypeAwarePerspectiveRunner) // Non-null triggers sync signaler
+      });
+    }
+  }
+
+  private sealed class ThrowingPerspectiveRunner : IPerspectiveRunner {
+    public Task<PerspectiveCheckpointCompletion> RunAsync(
+        Guid streamId,
+        string perspectiveName,
+        Guid? lastProcessedEventId,
+        CancellationToken cancellationToken) {
+      throw new InvalidOperationException("Perspective run failed");
+    }
+  }
+
+  private sealed class FakePerspectiveSyncSignaler : IPerspectiveSyncSignaler {
+    public int SignalCount { get; private set; }
+    public Guid LastStreamId { get; private set; }
+    public Guid LastEventId { get; private set; }
+
+    public void SignalCheckpointUpdated(Type perspectiveType, Guid streamId, Guid lastEventId) {
+      SignalCount++;
+      LastStreamId = streamId;
+      LastEventId = lastEventId;
+    }
+
+    public void Dispose() { }
+
+    public IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCheckpointSignal> onSignal) {
+      throw new NotImplementedException();
+    }
+  }
+
+  private sealed class FakeSyncEventTracker : ISyncEventTracker {
+    public int MarkProcessedByPerspectiveCallCount { get; private set; }
+
+    public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) { }
+
+    public IReadOnlyList<Guid> GetPendingEvents(Guid streamId, string perspectiveName) => [];
+
+    public void MarkProcessedByPerspective(IReadOnlyList<Guid> eventIds, string perspectiveName) {
+      MarkProcessedByPerspectiveCallCount++;
+    }
+
+    public Task<bool> WaitForPerspectiveEventsAsync(
+        Guid streamId,
+        string perspectiveName,
+        IReadOnlyList<Guid> eventIds,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default) {
+      return Task.FromResult(true);
+    }
+  }
+
+  private sealed class FakeEventStore : IEventStore {
+    private readonly Dictionary<Guid, List<MessageEnvelope<IEvent>>> _events = new();
+    public int GetEventsBetweenPolymorphicCallCount { get; private set; }
+
+    public void AddEvent(Guid streamId, Guid eventId, IEvent payload, string? userId = null) {
+      if (!_events.ContainsKey(streamId)) {
+        _events[streamId] = [];
+      }
+
+      _events[streamId].Add(new MessageEnvelope<IEvent> {
+        MessageId = new MessageId(eventId),
+        Payload = payload,
+        Hops = [
+          new MessageHop {
+            Type = HopType.Current,
+            Timestamp = DateTimeOffset.UtcNow,
+            CorrelationId = CorrelationId.New(),
+            CausationId = MessageId.New(),
+            ServiceInstance = new ServiceInstanceInfo {
+              InstanceId = Guid.NewGuid(),
+              ServiceName = "TestService",
+              HostName = "test-host",
+              ProcessId = 1234
+            },
+            Scope = userId != null
+              ? ScopeDelta.FromSecurityContext(new SecurityContext { UserId = userId, TenantId = "test-tenant" })
+              : null
+          }
+        ]
+      });
+    }
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+        Guid streamId,
+        Guid? afterEventId,
+        Guid upToEventId,
+        IReadOnlyList<Type> eventTypes,
+        CancellationToken cancellationToken = default) {
+      GetEventsBetweenPolymorphicCallCount++;
+      if (_events.TryGetValue(streamId, out var events)) {
+        return Task.FromResult(events);
+      }
+      return Task.FromResult(new List<MessageEnvelope<IEvent>>());
+    }
+
+    // IEventStore minimal implementation stubs
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) where TMessage : IMessage
+      => Task.CompletedTask;
+    public Task<List<MessageEnvelope<TEvent>>> GetEventsAsync<TEvent>(Guid streamId, CancellationToken cancellationToken = default) where TEvent : IEvent
+      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
+    public Task<List<MessageEnvelope<TEvent>>> GetEventsAfterAsync<TEvent>(Guid streamId, Guid afterEventId, CancellationToken cancellationToken = default) where TEvent : IEvent
+      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
+    public Task<List<MessageEnvelope<TEvent>>> GetEventsBetweenAsync<TEvent>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) where TEvent : IEvent
+      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default)
+      => Task.FromResult(-1L);
+  }
+
+  private sealed class FakeEventTypeProvider : IEventTypeProvider {
+    private readonly IReadOnlyList<Type> _eventTypes;
+
+    public FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) {
+      _eventTypes = eventTypes;
+    }
+
+    public IReadOnlyList<Type> GetEventTypes() => _eventTypes;
+  }
+
+  private sealed class FakeMessageTagProcessor : IMessageTagProcessor {
+    public int ProcessTagsCallCount { get; private set; }
+
+    public Task ProcessTagsAsync(
+        object message,
+        Type messageType,
+        LifecycleStage stage,
+        IScopeContext? scope,
+        CancellationToken ct = default) {
+      ProcessTagsCallCount++;
+      return Task.CompletedTask;
+    }
+  }
+
+  private sealed class FakeOptionsMonitor<T> : IOptionsMonitor<T> {
+    public FakeOptionsMonitor(T currentValue) {
+      CurrentValue = currentValue;
+    }
+
+    public T CurrentValue { get; }
+
+    public T Get(string? name) => CurrentValue;
+
+    public IDisposable? OnChange(Action<T, string?> listener) => null;
   }
 
   #endregion
