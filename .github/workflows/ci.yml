@@ -148,12 +148,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: nuget-publish
     permissions:
-      contents: read
+      contents: write  # Required for creating tags and GitHub releases
       id-token: write  # Required for NuGet trusted publishing (OIDC)
+    outputs:
+      version: ${{ needs.version.outputs.semver }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
@@ -213,6 +217,42 @@ jobs:
       - name: Publish to NuGet
         run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+      - name: Generate SHA256 Hashes
+        run: |
+          cd ./packages
+          for file in *.nupkg; do
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Create Tag and GitHub Pre-Release
+        env:
+          SEMVER: ${{ needs.version.outputs.semver }}
+        run: |
+          TAG="v$SEMVER"
+
+          # Check if tag already exists (idempotent)
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists, skipping tag creation"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Pre-release $TAG"
+            git push origin "$TAG"
+            echo "Created tag: $TAG"
+          fi
+
+      - name: Upload Assets and Create GitHub Pre-Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ needs.version.outputs.semver }}
+          name: Pre-release v${{ needs.version.outputs.semver }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            ./packages/*.nupkg
+            ./packages/*.sha256
+          fail_on_unmatched_files: false
+
       - name: Summary
         env:
           SEMVER: ${{ needs.version.outputs.semver }}
@@ -223,8 +263,53 @@ jobs:
           echo "- **Version**: \`$SEMVER\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Packages**: $PACKAGE_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "- **Source**: develop branch auto-publish" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release**: [v$SEMVER](https://github.com/${{ github.repository }}/releases/tag/v$SEMVER)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "View on NuGet: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$SEMVER" >> $GITHUB_STEP_SUMMARY
+
+  notify-prerelease-deployed:
+    name: Notify Prerelease Deployed
+    needs: [prerelease-publish]
+    if: success() && vars.PUSHOVER_ENABLED == 'true'
+    uses: ./.github/workflows/notify-build-status.yml
+    with:
+      status: success
+      title: "🚀 Prerelease v${{ needs.prerelease-publish.outputs.version }}"
+      message: "Whizbang v${{ needs.prerelease-publish.outputs.version }} published to NuGet (prerelease)"
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+
+  notify-prerelease-failed:
+    name: Notify Prerelease Failed
+    needs: [prerelease-publish]
+    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    uses: ./.github/workflows/notify-build-status.yml
+    with:
+      status: failure
+      title: "❌ Prerelease Failed"
+      message: "Failed to publish Whizbang prerelease to NuGet"
+    secrets:
+      PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+      PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+      PUSHOVER_USER_KEY_3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+      PUSHOVER_USER_KEY_4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+      PUSHOVER_USER_KEY_5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+      PUSHOVER_USER_KEY_6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+      PUSHOVER_USER_KEY_7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+      PUSHOVER_USER_KEY_8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+      PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+      PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
   # ============================================================================
   # Notifications - Send push notifications on build completion
