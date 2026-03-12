@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
@@ -30,6 +31,7 @@ public interface IMessageTagHookDispatcher {
   /// <param name="messageType">The type of the message.</param>
   /// <param name="payload">The serialized payload.</param>
   /// <param name="scope">Optional security scope context.</param>
+  /// <param name="stage">The lifecycle stage at which tags are being processed.</param>
   /// <returns>The typed context, or null if this dispatcher doesn't handle the attribute type.</returns>
   object? TryCreateContext(
       Type attributeType,
@@ -37,7 +39,8 @@ public interface IMessageTagHookDispatcher {
       object message,
       Type messageType,
       JsonElement payload,
-      IScopeContext? scope);
+      IScopeContext? scope,
+      LifecycleStage stage);
 
   /// <summary>
   /// Attempts to invoke a hook for the given attribute type.

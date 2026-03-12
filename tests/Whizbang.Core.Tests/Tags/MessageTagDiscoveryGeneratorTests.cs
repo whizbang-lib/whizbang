@@ -2,6 +2,7 @@ using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
@@ -19,11 +20,11 @@ public class MessageTagDiscoveryGeneratorTests {
 
   /// <summary>
   /// Verifies that the IMessageTagHookDispatcher.TryCreateContext method
-  /// accepts IScopeContext? (not IReadOnlyDictionary).
+  /// accepts IScopeContext? and LifecycleStage parameters.
   /// This is a lock-in test to ensure the generator produces correct signatures.
   /// </summary>
   [Test]
-  public async Task TryCreateContext_AcceptsIScopeContext_NotDictionaryAsync() {
+  public async Task TryCreateContext_AcceptsIScopeContextAndLifecycleStage_NotDictionaryAsync() {
     // Arrange - Get the interface method
     var interfaceMethod = typeof(IMessageTagHookDispatcher).GetMethod(
         "TryCreateContext",
@@ -33,15 +34,20 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(interfaceMethod).IsNotNull()
         .Because("IMessageTagHookDispatcher must have TryCreateContext method");
 
-    // Get the last parameter (scope)
     var parameters = interfaceMethod!.GetParameters();
-    var scopeParameter = parameters.LastOrDefault();
 
-    // Assert - Last parameter is IScopeContext?
+    // Assert - scope parameter exists and is IScopeContext
+    var scopeParameter = parameters.FirstOrDefault(p => p.Name == "scope");
     await Assert.That(scopeParameter).IsNotNull();
-    await Assert.That(scopeParameter!.Name).IsEqualTo("scope");
-    await Assert.That(scopeParameter.ParameterType).IsEqualTo(typeof(IScopeContext))
+    await Assert.That(scopeParameter!.ParameterType).IsEqualTo(typeof(IScopeContext))
         .Because("TryCreateContext scope parameter must be IScopeContext?, not IReadOnlyDictionary<string, object?>?");
+
+    // Assert - stage parameter exists and is LifecycleStage
+    var stageParameter = parameters.FirstOrDefault(p => p.Name == "stage");
+    await Assert.That(stageParameter).IsNotNull()
+        .Because("TryCreateContext must accept a LifecycleStage parameter");
+    await Assert.That(stageParameter!.ParameterType).IsEqualTo(typeof(LifecycleStage))
+        .Because("TryCreateContext stage parameter must be LifecycleStage");
   }
 
   /// <summary>
@@ -58,6 +64,23 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(scopeProperty).IsNotNull();
     await Assert.That(scopeProperty!.PropertyType).IsEqualTo(typeof(IScopeContext))
         .Because("TagContext.Scope must be IScopeContext?, not dictionary");
+  }
+
+  /// <summary>
+  /// Verifies that TagContext.Stage property exists and is LifecycleStage.
+  /// This ensures hooks can inspect the lifecycle stage they are firing at.
+  /// </summary>
+  [Test]
+  public async Task TagContext_Stage_IsLifecycleStageAsync() {
+    // Arrange - Get the Stage property from TagContext<T>
+    var tagContextType = typeof(TagContext<>);
+    var stageProperty = tagContextType.GetProperty("Stage");
+
+    // Assert
+    await Assert.That(stageProperty).IsNotNull()
+        .Because("TagContext must have a Stage property");
+    await Assert.That(stageProperty!.PropertyType).IsEqualTo(typeof(LifecycleStage))
+        .Because("TagContext.Stage must be LifecycleStage");
   }
 
   /// <summary>
@@ -92,10 +115,16 @@ public class MessageTagDiscoveryGeneratorTests {
           .Because($"{dispatcherType.Name} must implement TryCreateContext");
 
       var parameters = tryCreateMethod!.GetParameters();
-      var scopeParam = parameters.LastOrDefault();
 
+      // Verify scope parameter
+      var scopeParam = parameters.FirstOrDefault(p => p.Name == "scope");
       await Assert.That(scopeParam?.ParameterType).IsEqualTo(typeof(IScopeContext))
           .Because($"{dispatcherType.Name}.TryCreateContext scope parameter must be IScopeContext?");
+
+      // Verify stage parameter
+      var stageParam = parameters.FirstOrDefault(p => p.Name == "stage");
+      await Assert.That(stageParam?.ParameterType).IsEqualTo(typeof(LifecycleStage))
+          .Because($"{dispatcherType.Name}.TryCreateContext must accept LifecycleStage parameter");
     }
   }
 }
