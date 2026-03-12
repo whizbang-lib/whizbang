@@ -15,7 +15,6 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
     where TModel : class {
 
   private readonly DbContext _context;
-  private readonly string _tableName;
   private ScopeFilterInfo _filterInfo;
 
   /// <summary>
@@ -25,7 +24,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   /// <param name="tableName">The table name for this perspective (for diagnostics/logging)</param>
   public EFCoreFilterableLensQuery(DbContext context, string tableName) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
-    _tableName = tableName ?? throw new ArgumentNullException(nameof(tableName));
+    ArgumentNullException.ThrowIfNull(tableName);
   }
 
   /// <inheritdoc/>

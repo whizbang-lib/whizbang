@@ -115,10 +115,9 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       }
 
       // Recursively check nested class/struct types
-      if (typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) {
-        if (!_isSystemPrimitiveType(typeToCheck)) {
-          _checkForPolymorphicTypes(context, typeToCheck, visited);
-        }
+      if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
+          !_isSystemPrimitiveType(typeToCheck)) {
+        _checkForPolymorphicTypes(context, typeToCheck, visited);
       }
 
       // Check generic type arguments (e.g., List<NestedType> where NestedType has polymorphic property)

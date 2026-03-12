@@ -30,8 +30,10 @@ namespace Whizbang.Transports.Mutations;
 /// public class CreateOrderCommand : ICommand { }
 /// </example>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+#pragma warning disable S2326 // Type parameters carry type info for source generators — used at compile time, not runtime
 public sealed class CommandEndpointAttribute<TCommand, TResult> : Attribute
     where TCommand : ICommand {
+#pragma warning restore S2326
   /// <summary>
   /// The REST route for the FastEndpoints endpoint.
   /// If null, no REST endpoint is generated.

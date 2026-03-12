@@ -490,8 +490,10 @@ public class TransportConsumerWorker : BackgroundService {
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
       inboxActivity?.SetTag("exception.message", ex.Message);
+#pragma warning disable S2139 // Log + rethrow is intentional: transport needs the exception for retry/dead-letter, but we need the log for observability
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw; // Let the transport handle retry/dead-letter
+#pragma warning restore S2139
     } finally {
       inboxActivity?.Dispose();
     }
@@ -674,7 +676,9 @@ public class TransportConsumerWorker : BackgroundService {
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("Stopping TransportConsumerWorker");
 
-    _linkedCts?.Cancel();
+    if (_linkedCts is not null) {
+      await _linkedCts.CancelAsync();
+    }
     _linkedCts?.Dispose();
 
     // Dispose all subscriptions

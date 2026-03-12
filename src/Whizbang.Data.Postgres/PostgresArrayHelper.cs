@@ -9,6 +9,7 @@ namespace Whizbang.Data.Postgres;
 /// Provides type-safe conversion between C# arrays and PostgreSQL array types.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresArrayHelperTests.cs</tests>
+#pragma warning disable S3265 // NpgsqlDbType supports bitwise ops for array types (e.g. Array | Uuid) per Npgsql API design
 public static class PostgresArrayHelper {
   /// <summary>
   /// Converts a C# UUID array to a PostgreSQL UUID[] parameter.

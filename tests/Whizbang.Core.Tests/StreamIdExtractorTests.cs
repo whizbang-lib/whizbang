@@ -228,6 +228,69 @@ public class StreamIdExtractorTests {
   }
 
   // ========================================
+  // Direct StreamIdExtractor Tests (actual class, not wrapper)
+  // ========================================
+
+  [Test]
+  public async Task StreamIdExtractor_Constructor_CreatesInstanceAsync() {
+    // Act
+    var extractor = new StreamIdExtractor();
+
+    // Assert
+    await Assert.That(extractor).IsNotNull();
+    await Assert.That(extractor).IsTypeOf<StreamIdExtractor>();
+  }
+
+  [Test]
+  public async Task StreamIdExtractor_ExtractStreamId_NullMessage_ReturnsNullAsync() {
+    // Arrange
+    var extractor = new StreamIdExtractor();
+
+    // Act
+    var result = extractor.ExtractStreamId(null!, typeof(object));
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task StreamIdExtractor_GetGenerationPolicy_WithUnknownType_ReturnsDefaultAsync() {
+    // Arrange
+    var extractor = new StreamIdExtractor();
+    var unknownMessage = new object();
+
+    // Act
+    var (shouldGenerate, onlyIfEmpty) = extractor.GetGenerationPolicy(unknownMessage);
+
+    // Assert
+    await Assert.That(shouldGenerate).IsFalse();
+    await Assert.That(onlyIfEmpty).IsFalse();
+  }
+
+  [Test]
+  public async Task StreamIdExtractor_SetStreamId_WithUnknownType_ReturnsFalseAsync() {
+    // Arrange
+    var extractor = new StreamIdExtractor();
+    var unknownMessage = new object();
+
+    // Act
+    var result = extractor.SetStreamId(unknownMessage, Guid.NewGuid());
+
+    // Assert
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task StreamIdExtractor_ImplementsIStreamIdExtractorAsync() {
+    // Arrange & Act
+    var extractor = new StreamIdExtractor();
+
+    // Assert
+    var isImplementation = extractor is IStreamIdExtractor;
+    await Assert.That(isImplementation).IsTrue();
+  }
+
+  // ========================================
   // Test Support Classes
   // ========================================
 

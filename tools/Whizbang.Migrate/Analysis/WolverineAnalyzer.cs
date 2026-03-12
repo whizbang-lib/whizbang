@@ -368,8 +368,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     return classDecl.Members
         .OfType<MethodDeclarationSyntax>()
         .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
-        .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword))
-        .FirstOrDefault();
+        .FirstOrDefault(m => m.Modifiers.Any(SyntaxKind.PublicKeyword));
   }
 
   private static MigrationWarning? _checkForNestedClass(

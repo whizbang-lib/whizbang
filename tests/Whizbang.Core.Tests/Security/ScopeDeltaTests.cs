@@ -3,6 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 
 // Suppress CA1861 for test file - constant array arguments are acceptable in test code
@@ -914,6 +915,450 @@ public class ScopeDeltaTests {
     await Assert.That(dict).IsNotNull();
     await Assert.That(dict!.ContainsKey(ScopeProp.Scope)).IsTrue();
   }
+
+  #endregion
+
+  #region FromSecurityContext Tests
+
+  [Test]
+  public async Task FromSecurityContext_WithNullInput_ReturnsNullAsync() {
+    // Act
+    var result = ScopeDelta.FromSecurityContext(null);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task FromSecurityContext_WithEmptyTenantAndUser_ReturnsNullAsync() {
+    // Arrange
+    var context = new Whizbang.Core.Observability.SecurityContext { TenantId = null, UserId = null };
+
+    // Act
+    var result = ScopeDelta.FromSecurityContext(context);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task FromSecurityContext_WithEmptyStringTenantAndUser_ReturnsNullAsync() {
+    // Arrange
+    var context = new Whizbang.Core.Observability.SecurityContext { TenantId = "", UserId = "" };
+
+    // Act
+    var result = ScopeDelta.FromSecurityContext(context);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task FromSecurityContext_WithOnlyTenantId_ReturnsDeltaAsync() {
+    // Arrange
+    var context = new Whizbang.Core.Observability.SecurityContext { TenantId = "tenant-abc", UserId = null };
+
+    // Act
+    var result = ScopeDelta.FromSecurityContext(context);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.HasChanges).IsTrue();
+    await Assert.That(result.Values).IsNotNull();
+    await Assert.That(result.Values!.ContainsKey(ScopeProp.Scope)).IsTrue();
+  }
+
+  [Test]
+  public async Task FromSecurityContext_WithOnlyUserId_ReturnsDeltaAsync() {
+    // Arrange
+    var context = new Whizbang.Core.Observability.SecurityContext { TenantId = null, UserId = "user-xyz" };
+
+    // Act
+    var result = ScopeDelta.FromSecurityContext(context);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.HasChanges).IsTrue();
+  }
+
+  [Test]
+  public async Task FromSecurityContext_WithBothValues_AppliesCorrectlyAsync() {
+    // Arrange
+    var context = new Whizbang.Core.Observability.SecurityContext { TenantId = "tenant-1", UserId = "user-1" };
+
+    // Act
+    var delta = ScopeDelta.FromSecurityContext(context);
+    var scope = delta!.ApplyTo(null);
+
+    // Assert
+    await Assert.That(scope.Scope.TenantId).IsEqualTo("tenant-1");
+    await Assert.That(scope.Scope.UserId).IsEqualTo("user-1");
+  }
+
+  #endregion
+
+  #region CreateDelta and ApplyTo Coverage - CustomerId, OrganizationId, AllowedPrincipals
+
+  [Test]
+  public async Task CreateDelta_WithCustomerIdChange_CapturesScopeChangeAsync() {
+    // Arrange
+    var previousScope = new PerspectiveScope { TenantId = "t1", CustomerId = "cust-1" };
+    var currentScope = new PerspectiveScope { TenantId = "t1", CustomerId = "cust-2" };
+    var previous = _createTestScopeContextFromScope(previousScope);
+    var current = _createTestScopeContextFromScope(currentScope);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Values).IsNotNull();
+    await Assert.That(delta.Values!.ContainsKey(ScopeProp.Scope)).IsTrue();
+
+    // Verify round-trip through ApplyTo
+    var applied = delta.ApplyTo(previous);
+    await Assert.That(applied.Scope.CustomerId).IsEqualTo("cust-2");
+  }
+
+  [Test]
+  public async Task CreateDelta_WithOrganizationIdChange_CapturesScopeChangeAsync() {
+    // Arrange
+    var previousScope = new PerspectiveScope { TenantId = "t1", OrganizationId = "org-1" };
+    var currentScope = new PerspectiveScope { TenantId = "t1", OrganizationId = "org-2" };
+    var previous = _createTestScopeContextFromScope(previousScope);
+    var current = _createTestScopeContextFromScope(currentScope);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+
+    // Verify round-trip
+    var applied = delta!.ApplyTo(previous);
+    await Assert.That(applied.Scope.OrganizationId).IsEqualTo("org-2");
+  }
+
+  [Test]
+  public async Task CreateDelta_WithAllowedPrincipalsChange_CapturesScopeChangeAsync() {
+    // Arrange
+    var previousScope = new PerspectiveScope {
+      TenantId = "t1",
+      AllowedPrincipals = ["user:alice"]
+    };
+    var currentScope = new PerspectiveScope {
+      TenantId = "t1",
+      AllowedPrincipals = ["user:alice", "group:sales"]
+    };
+    var previous = _createTestScopeContextFromScope(previousScope);
+    var current = _createTestScopeContextFromScope(currentScope);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+
+    // Verify round-trip
+    var applied = delta!.ApplyTo(previous);
+    await Assert.That(applied.Scope.AllowedPrincipals.Count).IsEqualTo(2);
+    await Assert.That(applied.Scope.AllowedPrincipals).Contains("user:alice");
+    await Assert.That(applied.Scope.AllowedPrincipals).Contains("group:sales");
+  }
+
+  [Test]
+  public async Task ApplyTo_WithFullScope_DeserializesAllFieldsAsync() {
+    // Arrange - Create delta with all scope fields via CreateDelta
+    var currentScope = new PerspectiveScope {
+      TenantId = "t-1",
+      UserId = "u-1",
+      CustomerId = "c-1",
+      OrganizationId = "o-1",
+      AllowedPrincipals = ["user:bob", "group:dev"]
+    };
+    var current = _createTestScopeContextFromScope(currentScope);
+    var delta = ScopeDelta.CreateDelta(null, current);
+
+    // Act
+    var applied = delta!.ApplyTo(null);
+
+    // Assert
+    await Assert.That(applied.Scope.TenantId).IsEqualTo("t-1");
+    await Assert.That(applied.Scope.UserId).IsEqualTo("u-1");
+    await Assert.That(applied.Scope.CustomerId).IsEqualTo("c-1");
+    await Assert.That(applied.Scope.OrganizationId).IsEqualTo("o-1");
+    await Assert.That(applied.Scope.AllowedPrincipals.Count).IsEqualTo(2);
+    await Assert.That(applied.Scope.AllowedPrincipals).Contains("user:bob");
+    await Assert.That(applied.Scope.AllowedPrincipals).Contains("group:dev");
+  }
+
+  #endregion
+
+  #region Claims Delta Tests
+
+  [Test]
+  public async Task CreateDelta_WithClaimsRemoved_CapturesRemovalAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previousClaims = new Dictionary<string, string> {
+      ["sub"] = "user-1",
+      ["email"] = "user@example.com",
+      ["role"] = "admin"
+    };
+    var currentClaims = new Dictionary<string, string> {
+      ["sub"] = "user-1"
+    };
+    var previous = _createTestScopeContext(scope, [], [], [], claims: previousClaims);
+    var current = _createTestScopeContext(scope, [], [], [], claims: currentClaims);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Collections).IsNotNull();
+    await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Claims)).IsTrue();
+    var claimsChanges = delta.Collections[ScopeProp.Claims];
+    await Assert.That(claimsChanges.Remove).IsNotNull();
+  }
+
+  [Test]
+  public async Task CreateDelta_WithClaimsModified_CapturesModificationAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previousClaims = new Dictionary<string, string> { ["role"] = "user" };
+    var currentClaims = new Dictionary<string, string> { ["role"] = "admin" };
+    var previous = _createTestScopeContext(scope, [], [], [], claims: previousClaims);
+    var current = _createTestScopeContext(scope, [], [], [], claims: currentClaims);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Collections).IsNotNull();
+    await Assert.That(delta.Collections!.ContainsKey(ScopeProp.Claims)).IsTrue();
+    var claimsChanges = delta.Collections[ScopeProp.Claims];
+    await Assert.That(claimsChanges.Add).IsNotNull();
+  }
+
+  [Test]
+  public async Task ApplyTo_WithClaimsRemoveAndAdd_AppliesCorrectlyAsync() {
+    // Arrange - Create a full round trip: create delta then apply
+    var scope = _createTestScope("t1", "u1", []);
+    var previousClaims = new Dictionary<string, string> {
+      ["sub"] = "user-1",
+      ["old-claim"] = "remove-me"
+    };
+    var currentClaims = new Dictionary<string, string> {
+      ["sub"] = "user-1",
+      ["new-claim"] = "added"
+    };
+    var previous = _createTestScopeContext(scope, [], [], [], claims: previousClaims);
+    var current = _createTestScopeContext(scope, [], [], [], claims: currentClaims);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+    var applied = delta!.ApplyTo(previous);
+
+    // Assert
+    await Assert.That(applied.Claims["sub"]).IsEqualTo("user-1");
+    await Assert.That(applied.Claims.ContainsKey("new-claim")).IsTrue();
+    await Assert.That(applied.Claims["new-claim"]).IsEqualTo("added");
+    await Assert.That(applied.Claims.ContainsKey("old-claim")).IsFalse();
+  }
+
+  [Test]
+  public async Task CreateDelta_ClaimsUnchanged_ReturnsNoDeltaAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var claims = new Dictionary<string, string> { ["sub"] = "user-1" };
+    var previous = _createTestScopeContext(scope, [], [], [], claims: claims);
+    var current = _createTestScopeContext(scope, [], [], [], claims: new Dictionary<string, string>(claims));
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert
+    await Assert.That(delta).IsNull();
+  }
+
+  #endregion
+
+  #region ApplyTo - Permissions, Principals, EffectivePrincipal, ContextType
+
+  [Test]
+  public async Task ApplyTo_WithPermissionChanges_AppliesCorrectlyAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, [], [Permission.Read("orders")], []);
+    var current = _createTestScopeContext(scope, [],
+      [Permission.Read("orders"), Permission.Write("orders"), Permission.Delete("products")], []);
+
+    var delta = ScopeDelta.CreateDelta(previous, current);
+    var applied = delta!.ApplyTo(previous);
+
+    // Assert
+    await Assert.That(applied.Permissions).Contains(Permission.Read("orders"));
+    await Assert.That(applied.Permissions).Contains(Permission.Write("orders"));
+    await Assert.That(applied.Permissions).Contains(Permission.Delete("products"));
+  }
+
+  [Test]
+  public async Task ApplyTo_WithPrincipalChanges_AppliesCorrectlyAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, [], [], [SecurityPrincipalId.User("u1")]);
+    var current = _createTestScopeContext(scope, [], [],
+      [SecurityPrincipalId.User("u1"), SecurityPrincipalId.Group("dev-team")]);
+
+    var delta = ScopeDelta.CreateDelta(previous, current);
+    var applied = delta!.ApplyTo(previous);
+
+    // Assert
+    await Assert.That(applied.SecurityPrincipals).Contains(SecurityPrincipalId.User("u1"));
+    await Assert.That(applied.SecurityPrincipals).Contains(SecurityPrincipalId.Group("dev-team"));
+  }
+
+  [Test]
+  public async Task ApplyTo_WithEffectivePrincipalChange_UpdatesEffectiveAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, [], [], [], effectivePrincipal: "original@test.com");
+    var effectiveElement = JsonSerializer.SerializeToElement("impersonated@test.com");
+    var delta = new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Effective] = effectiveElement
+      }
+    };
+
+    // Act
+    var result = delta.ApplyTo(previous);
+
+    // Assert
+    await Assert.That(result.EffectivePrincipal).IsEqualTo("impersonated@test.com");
+  }
+
+  [Test]
+  public async Task ApplyTo_WithContextTypeChange_UpdatesContextTypeAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, [], [], [], contextType: SecurityContextType.User);
+    var typeElement = JsonSerializer.SerializeToElement((int)SecurityContextType.Impersonated);
+    var delta = new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Type] = typeElement
+      }
+    };
+
+    // Act
+    var result = delta.ApplyTo(previous);
+
+    // Assert
+    await Assert.That(result.ContextType).IsEqualTo(SecurityContextType.Impersonated);
+  }
+
+  [Test]
+  public async Task ApplyTo_WithNullActualPrincipal_DeserializesNullAsync() {
+    // Arrange - Test _deserializeString null path
+    using var doc = JsonDocument.Parse("null");
+    var nullElement = doc.RootElement.Clone();
+    var delta = new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Actual] = nullElement
+      }
+    };
+
+    // Act
+    var result = delta.ApplyTo(null);
+
+    // Assert
+    await Assert.That(result.ActualPrincipal).IsNull();
+  }
+
+  #endregion
+
+  #region CreateDelta - Collection Full Replacement Path
+
+  [Test]
+  public async Task CreateDelta_WhenAllRolesReplacedWithNewOnes_UsesSetOperationAsync() {
+    // Arrange - All previous roles removed, all new roles added = full replacement
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, ["Admin", "Manager"], [], []);
+    var current = _createTestScopeContext(scope, ["SuperAdmin", "Viewer"], [], []);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert - Should use Set operation for full replacement
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Collections).IsNotNull();
+    var rolesChanges = delta.Collections![ScopeProp.Roles];
+    await Assert.That(rolesChanges.Set).IsNotNull();
+  }
+
+  [Test]
+  public async Task CreateDelta_WhenPreviousEmpty_CurrentHasValues_UsesSetOperationAsync() {
+    // Arrange
+    var scope = _createTestScope("t1", "u1", []);
+    var previous = _createTestScopeContext(scope, [], [], []);
+    var current = _createTestScopeContext(scope, ["Admin"], [], []);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert - First-time collection should use Set
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Collections).IsNotNull();
+    var rolesChanges = delta.Collections![ScopeProp.Roles];
+    await Assert.That(rolesChanges.Set).IsNotNull();
+  }
+
+  #endregion
+
+  #region CreateDelta - _scopesEqual edge cases
+
+  [Test]
+  public async Task CreateDelta_BothScopesNull_NoDeltaForScopeAsync() {
+    // Arrange - Both have null scopes effectively (no tenant/user)
+    var scope1 = new PerspectiveScope();
+    var scope2 = new PerspectiveScope();
+    var previous = _createTestScopeContextFromScope(scope1);
+    var current = _createTestScopeContextFromScope(scope2);
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(previous, current);
+
+    // Assert - Nothing changed
+    await Assert.That(delta).IsNull();
+  }
+
+  [Test]
+  public async Task CreateDelta_PreviousNull_CurrentHasScope_HasDeltaAsync() {
+    // Arrange
+    var current = _createTestScopeContextFromScope(new PerspectiveScope { TenantId = "t1" });
+
+    // Act
+    var delta = ScopeDelta.CreateDelta(null, current);
+
+    // Assert
+    await Assert.That(delta).IsNotNull();
+    await Assert.That(delta!.Values).IsNotNull();
+    await Assert.That(delta.Values!.ContainsKey(ScopeProp.Scope)).IsTrue();
+  }
+
+  #endregion
+
+  #region Additional Helper
+
+  private static ScopeContext _createTestScopeContextFromScope(PerspectiveScope scope) =>
+    new() {
+      Scope = scope,
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
 
   #endregion
 }

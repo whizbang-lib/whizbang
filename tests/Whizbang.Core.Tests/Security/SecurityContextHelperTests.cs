@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -871,6 +872,274 @@ public class SecurityContextHelperTests {
     public IMessageContext? InitiatingContext {
       get => ScopeContextAccessor.CurrentInitiatingContext;
       set => ScopeContextAccessor.CurrentInitiatingContext = value;
+    }
+  }
+
+  // === EstablishFullContextAsync Callback Invocation Tests ===
+
+  [Test]
+  public async Task EstablishFullContextAsync_WhenExtractorReturnsNull_ButEnvelopeHasScope_InvokesCallbacksAsync() {
+    // Arrange: Extractor returns null but envelope has scope - should create ImmutableScopeContext and invoke callbacks
+    var callbackInvoked = false;
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-cb", "tenant-cb");
+
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)], // returns null
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = true }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    var capturingAccessor = new CapturingScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(capturingAccessor);
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    // Register callback via DI
+    services.AddSingleton<ISecurityContextCallback>(new InlineSecurityCallback((_) => {
+      callbackInvoked = true;
+      return ValueTask.CompletedTask;
+    }));
+    var sp = services.BuildServiceProvider();
+
+    // Act
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert
+    await Assert.That(callbackInvoked).IsTrue()
+      .Because("Callbacks should be invoked when extractor returns null but envelope has scope");
+    await Assert.That(capturingAccessor.CapturedContext).IsNotNull();
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_WhenExtractorReturnsNull_NoEnvelopeScope_DoesNotInvokeCallbacksAsync() {
+    // Arrange: Extractor returns null AND envelope has no scope - no callbacks
+    var callbackInvoked = false;
+    var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
+
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)],
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = true }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    services.AddSingleton<ISecurityContextCallback>(new InlineSecurityCallback((_) => {
+      callbackInvoked = true;
+      return ValueTask.CompletedTask;
+    }));
+    var sp = services.BuildServiceProvider();
+
+    // Act
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert
+    await Assert.That(callbackInvoked).IsFalse()
+      .Because("Callbacks should NOT be invoked when there is no scope at all");
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_WhenExtractorSucceeds_DoesNotInvokeCallbacksAgainAsync() {
+    // Arrange: Extractor returns extraction - should not wrap in ImmutableScopeContext and not invoke callbacks again
+    var callbackInvokeCount = 0;
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { TenantId = "t", UserId = "u" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
+
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, extraction)],
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = true }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    var capturingAccessor = new CapturingScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(capturingAccessor);
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    services.AddSingleton<ISecurityContextCallback>(new InlineSecurityCallback((_) => {
+      callbackInvokeCount++;
+      return ValueTask.CompletedTask;
+    }));
+    var sp = services.BuildServiceProvider();
+
+    // Act
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert: immutableScope is null when extractor succeeds, so callbacks should NOT be invoked
+    await Assert.That(callbackInvokeCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_NoMessageContextAccessor_DoesNotThrowAsync() {
+    // Arrange: No IMessageContextAccessor registered - should gracefully handle
+    var extraction = new SecurityExtraction {
+      Scope = new PerspectiveScope { TenantId = "t", UserId = "u" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>(),
+      Source = "Test"
+    };
+    var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, extraction)],
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = true }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    // intentionally no IMessageContextAccessor
+    var sp = services.BuildServiceProvider();
+
+    // Act - should not throw
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert - no exception
+    await Task.CompletedTask;
+  }
+
+  [Test]
+  public async Task EstablishFullContextAsync_NoScopeAccessorForImmutable_DoesNotThrowAsync() {
+    // Arrange: Extractor returns null, envelope has scope, but no IScopeContextAccessor registered
+    var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-1", "tenant-1");
+
+    var services = new ServiceCollection();
+    var provider = new DefaultMessageSecurityContextProvider(
+      extractors: [new TestExtractor(100, null)],
+      callbacks: [],
+      options: new MessageSecurityOptions { AllowAnonymous = true }
+    );
+    services.AddSingleton<IMessageSecurityContextProvider>(provider);
+    // intentionally no IScopeContextAccessor
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var sp = services.BuildServiceProvider();
+
+    // Act - should not throw
+    await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert - no exception
+    await Task.CompletedTask;
+  }
+
+  // === SetMessageContextFromEnvelope InitiatingContext Tests ===
+
+  [Test]
+  public async Task SetMessageContextFromEnvelope_WithScopeContextAccessor_SetsInitiatingContextAsync() {
+    // Arrange
+    var envelope = _createEnvelopeWithSecurityContext(new TestSecurityMessage("test"), "user-init");
+    var messageContextAccessor = new MessageContextAccessor();
+    var scopeContextAccessor = new ScopeContextAccessor();
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    services.AddSingleton<IScopeContextAccessor>(scopeContextAccessor);
+    var sp = services.BuildServiceProvider();
+
+    // Act
+    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, sp);
+
+    // Assert - InitiatingContext should be set
+    await Assert.That(scopeContextAccessor.InitiatingContext).IsNotNull();
+    await Assert.That(scopeContextAccessor.InitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
+  }
+
+  [Test]
+  public async Task SetMessageContextFromEnvelope_NoScopeContextAccessor_GracefulNoOpForInitiatingAsync() {
+    // Arrange
+    var envelope = _createEnvelopeWithSecurityContext(new TestSecurityMessage("test"), "user-init2");
+    var messageContextAccessor = new MessageContextAccessor();
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageContextAccessor>(messageContextAccessor);
+    // intentionally no IScopeContextAccessor
+    var sp = services.BuildServiceProvider();
+
+    // Act - should not throw
+    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, sp);
+
+    // Assert - message context is still set
+    await Assert.That(messageContextAccessor.Current).IsNotNull();
+  }
+
+  // === EstablishMessageContextForCascade with Logger Tests ===
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithServiceProvider_LogsAndSetsContextAsync() {
+    // Arrange: ServiceProvider with logger
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IScopeContextAccessor>(new ScopeContextAccessor());
+    var sp = services.BuildServiceProvider();
+
+    // Set up MessageContextAccessor with userId
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      Timestamp = DateTimeOffset.UtcNow,
+      UserId = "user-log",
+      TenantId = "tenant-log"
+    };
+
+    try {
+      // Act
+      SecurityContextHelper.EstablishMessageContextForCascade(sp);
+
+      // Assert
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo("user-log");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+      MessageContextAccessor.CurrentContext = null;
+    }
+  }
+
+  [Test]
+  public async Task EstablishMessageContextForCascade_WithNullServiceProvider_StillSetsContextAsync() {
+    // Arrange
+    MessageContextAccessor.CurrentContext = new MessageContext {
+      MessageId = MessageId.New(),
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New(),
+      Timestamp = DateTimeOffset.UtcNow,
+      UserId = "user-null-sp",
+      TenantId = null
+    };
+
+    try {
+      // Act
+      SecurityContextHelper.EstablishMessageContextForCascade(null);
+
+      // Assert
+      await Assert.That(MessageContextAccessor.CurrentContext).IsNotNull();
+      await Assert.That(MessageContextAccessor.CurrentContext!.UserId).IsEqualTo("user-null-sp");
+    } finally {
+      ScopeContextAccessor.CurrentContext = null;
+      MessageContextAccessor.CurrentContext = null;
+    }
+  }
+
+  /// <summary>
+  /// Inline callback for testing callback invocation.
+  /// </summary>
+  private sealed class InlineSecurityCallback : ISecurityContextCallback {
+    private readonly Func<IScopeContext, ValueTask> _callback;
+
+    public InlineSecurityCallback(Func<IScopeContext, ValueTask> callback) {
+      _callback = callback;
+    }
+
+    public ValueTask OnContextEstablishedAsync(
+      IScopeContext context,
+      IMessageEnvelope envelope,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken = default) {
+      return _callback(context);
     }
   }
 

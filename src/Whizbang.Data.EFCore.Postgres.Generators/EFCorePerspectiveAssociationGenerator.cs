@@ -21,10 +21,10 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_GeneratesJsonFormatForDatabaseAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_AbstractClass_IsIgnoredAsync</tests>
 [Generator]
+#pragma warning disable S1144 // Initialize is a public method implementing IIncrementalGenerator interface
 public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
+#pragma warning restore S1144
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },

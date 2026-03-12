@@ -27,17 +27,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 ///     .ToListAsync();
 /// </code>
 /// </example>
+#pragma warning disable S1144 // All private members are used; WhereDiscriminatorEquals is a public extension method
 public static class PolymorphicQueryExtensions {
-  // AOT-safe: Cache MemberInfo for common operations using compile-time expressions
-  private static readonly System.Reflection.MethodInfo _stringEqualsMethod =
-      _getStringEqualsMethod();
-
-  private static System.Reflection.MethodInfo _getStringEqualsMethod() {
-    Expression<Func<string, string, bool>> expr = (a, b) => a == b;
-    var binaryExpr = (BinaryExpression)expr.Body;
-    return binaryExpr.Method!;
-  }
-
+#pragma warning restore S1144
   /// <summary>
   /// Filters rows where the discriminator property equals the type name of TDerived.
   /// Uses the indexed physical discriminator column for efficient queries.

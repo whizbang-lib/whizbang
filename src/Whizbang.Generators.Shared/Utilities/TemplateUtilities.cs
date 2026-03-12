@@ -85,7 +85,9 @@ public static class TemplateUtilities {
     var replaceEnd = endIdx + regionEnd.Length;
 
     // Capture any trailing content after #endregion on the same line (e.g., semicolon)
+#pragma warning disable S125 // Descriptive comment with code-like example, not dead code
     // This handles inline patterns like: const string x = #region X ... #endregion;
+#pragma warning restore S125
     var trailingContent = new System.Text.StringBuilder();
     while (replaceEnd < template.Length && template[replaceEnd] != '\n' && template[replaceEnd] != '\r') {
       trailingContent.Append(template[replaceEnd]);

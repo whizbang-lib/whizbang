@@ -56,8 +56,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TYPE_NAME = "__TYPE_NAME__";
   private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
   private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
-  private const string PLACEHOLDER_SIMPLE_NAME = "__SIMPLE_NAME__";
+#pragma warning disable S1144 // Used extensively in template replacement (e.g., lines 562, 943, 1014, 2495)
   private const string PLACEHOLDER_UNIQUE_IDENTIFIER = "__UNIQUE_IDENTIFIER__";
+#pragma warning restore S1144
   private const string PLACEHOLDER_GLOBAL = "global::";
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
@@ -66,19 +67,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
-
-  /// <summary>
-  /// Converts a fully qualified type name to a safe C# identifier for use in method names.
-  /// This ensures unique method names even when multiple namespaces have types with the same simple name.
-  /// Example: "global::JDX.Contracts.Job.CreateCommand" → "JDX_Contracts_Job_CreateCommand"
-  /// Example: "string?" → "string_Nullable"
-  /// </summary>
-  private static string _toSafeMethodName(string fullyQualifiedName) {
-    return fullyQualifiedName
-        .Replace(PLACEHOLDER_GLOBAL, "")
-        .Replace(".", "_")
-        .Replace("?", "_Nullable");
-  }
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
@@ -1544,7 +1532,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           // Check if this abstract type has [JsonPolymorphic] attribute
           if (_hasJsonPolymorphicAttribute(typeSymbol)) {
             // Discover derived types from [JsonDerivedType] attributes
-            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol, compilation);
+            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol);
             var derivedTypeNames = new List<string>();
 
             foreach (var derivedType in derivedTypes) {
@@ -2643,8 +2631,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync</tests>
   private static List<INamedTypeSymbol> _discoverDerivedTypesFromAttributes(
-      INamedTypeSymbol polymorphicBaseType,
-      Compilation compilation) {
+      INamedTypeSymbol polymorphicBaseType) {
 
     var discoveredTypes = new List<INamedTypeSymbol>();
 
@@ -2921,10 +2908,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Include Whizbang.Core.ICommand and Whizbang.Core.IEvent for polymorphic collections
       // Skip other Whizbang.Core.* interfaces (IMessage, IHasId, etc.)
-      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal)) {
-        if (interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
-          continue;
-        }
+      if (interfaceName.StartsWith("global::Whizbang.Core.", StringComparison.Ordinal) &&
+          interfaceName != $"global::{I_COMMAND}" && interfaceName != $"global::{I_EVENT}") {
+        continue;
       }
 
       inheritanceList.Add(new InheritanceInfo(
@@ -3072,32 +3058,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Restore CS0169 warning
     sb.AppendLine();
     sb.AppendLine("#pragma warning restore CS0169");
-
-    return sb.ToString();
-  }
-
-  /// <summary>
-  /// Generates GetTypeInfo checks for polymorphic base types.
-  /// </summary>
-  private static string _generatePolymorphicTypeChecks(Assembly assembly, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
-    if (polymorphicTypes.IsEmpty) {
-      return "";
-    }
-
-    var sb = new System.Text.StringBuilder();
-    var typeCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_POLYMORPHIC");
-
-    sb.AppendLine("  // Polymorphic base types");
-    foreach (var polyType in polymorphicTypes) {
-      var check = typeCheckSnippet
-          .Replace("__BASE_TYPE__", polyType.BaseTypeName)
-          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, polyType.UniqueIdentifier);
-      sb.AppendLine(check);
-      sb.AppendLine();
-    }
 
     return sb.ToString();
   }

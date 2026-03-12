@@ -415,12 +415,12 @@ BEGIN
   WHERE som.was_newly_created = true;
 
   -- DIAGNOSTIC: Log how many new outbox messages were stored
-  RAISE NOTICE '[process_work_batch] Stored % new outbox messages (instance_id=%)',
+  RAISE DEBUG '[process_work_batch] Stored % new outbox messages (instance_id=%)',
     (SELECT COUNT(*) FROM temp_new_outbox), p_instance_id;
 
   -- Store new inbox messages and track
   -- DIAGNOSTIC: Log what's being passed to store_inbox_messages
-  RAISE NOTICE '[Phase 4] Calling store_inbox_messages with % inbox messages',
+  RAISE DEBUG '[Phase 4] Calling store_inbox_messages with % inbox messages',
     jsonb_array_length(p_new_inbox_messages);
 
   INSERT INTO temp_new_inbox (message_id, stream_id)
@@ -435,9 +435,9 @@ BEGIN
   WHERE sim.was_newly_created = true;
 
   -- DIAGNOSTIC: Log how many new inbox messages were tracked
-  RAISE NOTICE '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
+  RAISE DEBUG '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
     (SELECT COUNT(*) FROM temp_new_inbox), p_instance_id;
-  RAISE NOTICE '[Phase 4] Debug: SELECT COUNT(*) from store_inbox_messages result would be: %',
+  RAISE DEBUG '[Phase 4] Debug: SELECT COUNT(*) from store_inbox_messages result would be: %',
     (SELECT COUNT(*)
      FROM __SCHEMA__.store_inbox_messages(
        p_new_inbox_messages,
@@ -574,9 +574,9 @@ BEGIN
 
   -- Phase 4.5B: Store events from inbox messages with tracking
   -- DIAGNOSTIC: Log inbox event candidates
-  RAISE NOTICE '[Phase 4.5B] Checking inbox events from temp_new_inbox';
-  RAISE NOTICE '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
-  RAISE NOTICE '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
+  RAISE DEBUG '[Phase 4.5B] Checking inbox events from temp_new_inbox';
+  RAISE DEBUG '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
+  RAISE DEBUG '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
     (SELECT COUNT(*) FROM wh_inbox i
      WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
        AND i.is_event = true
@@ -669,8 +669,8 @@ BEGIN
   v_stored_inbox_events := COALESCE(v_stored_inbox_events, '{}');
 
   -- DIAGNOSTIC: Log storage results
-  RAISE NOTICE '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
-  RAISE NOTICE '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
+  RAISE DEBUG '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
+  RAISE DEBUG '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
 
   -- Log warnings for idempotent conflicts (if any)
   -- TODO: Implement log_event() function for tracking idempotent conflicts
@@ -901,11 +901,11 @@ BEGIN
   -- ========================================
 
   -- DIAGNOSTIC: Log counts before returning results
-  RAISE NOTICE '[process_work_batch] About to return results: temp_new_outbox=%', (SELECT COUNT(*) FROM temp_new_outbox);
-  RAISE NOTICE '[process_work_batch] Checking wh_outbox: total_in_temp_new=%, matching_instance_id=%',
+  RAISE DEBUG '[process_work_batch] About to return results: temp_new_outbox=%', (SELECT COUNT(*) FROM temp_new_outbox);
+  RAISE DEBUG '[process_work_batch] Checking wh_outbox: total_in_temp_new=%, matching_instance_id=%',
     (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id),
     (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id WHERE o.instance_id = p_instance_id);
-  RAISE NOTICE '[process_work_batch] Instance check: p_instance_id=%, first_outbox_instance_id=%',
+  RAISE DEBUG '[process_work_batch] Instance check: p_instance_id=%, first_outbox_instance_id=%',
     p_instance_id,
     (SELECT o.instance_id FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id LIMIT 1);
 

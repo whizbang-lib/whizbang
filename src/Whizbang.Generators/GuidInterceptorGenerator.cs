@@ -186,18 +186,15 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // Walk up the syntax tree to find containing method and type
     var current = invocation.Parent;
     while (current is not null) {
-      if (current is MethodDeclarationSyntax methodDecl) {
-        if (_hasSuppressAttribute(context, methodDecl.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on method";
-        }
-      } else if (current is LocalFunctionStatementSyntax localFunc) {
-        if (_hasSuppressAttribute(context, localFunc.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on local function";
-        }
-      } else if (current is TypeDeclarationSyntax typeDecl) {
-        if (_hasSuppressAttribute(context, typeDecl.AttributeLists, ct)) {
-          return "SuppressGuidInterceptionAttribute on type";
-        }
+      if (current is MethodDeclarationSyntax methodDecl &&
+          _hasSuppressAttribute(context, methodDecl.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on method";
+      } else if (current is LocalFunctionStatementSyntax localFunc &&
+                 _hasSuppressAttribute(context, localFunc.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on local function";
+      } else if (current is TypeDeclarationSyntax typeDecl &&
+                 _hasSuppressAttribute(context, typeDecl.AttributeLists, ct)) {
+        return "SuppressGuidInterceptionAttribute on type";
       }
       current = current.Parent;
     }
@@ -306,12 +303,14 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     return false;
   }
 
+#pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
-      Compilation compilation,
+      Compilation _,
       ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
+#pragma warning restore S1144
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {

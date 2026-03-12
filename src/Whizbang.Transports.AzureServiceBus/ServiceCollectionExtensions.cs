@@ -90,8 +90,12 @@ public static class ServiceCollectionExtensions {
         transport.InitializeAsync().GetAwaiter().GetResult();
         logger?.LogInformation("Transport initialized (using shared client)");
       } catch (Exception ex) {
+        // Intentional log-and-rethrow: DI factory exceptions are often swallowed or wrapped,
+        // so logging here ensures the root cause is captured for diagnostics.
+#pragma warning disable S2139
         logger?.LogError(ex, "Failed to initialize transport during registration");
         throw;
+#pragma warning restore S2139
       }
 
       return transport;

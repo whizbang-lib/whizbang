@@ -166,7 +166,6 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private sealed class ActiveStopwatch : IActiveStopwatch {
     private readonly DebuggerAwareClock _clock;
     private readonly Stopwatch _wallStopwatch;
-    private readonly DateTime _startTime;
     private TimeSpan _startCpuTime;
     private TimeSpan? _stoppedActiveElapsed;
     private TimeSpan? _stoppedWallElapsed;
@@ -175,7 +174,6 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     public ActiveStopwatch(DebuggerAwareClock clock) {
       _clock = clock;
       _wallStopwatch = Stopwatch.StartNew();
-      _startTime = DateTime.UtcNow;
 
       try {
         _startCpuTime = clock._process.TotalProcessorTime;
@@ -276,7 +274,9 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   /// </summary>
   private sealed class PauseStateSubscription : IDisposable {
     private readonly CancellationTokenSource _cts;
+#pragma warning disable S4487 // Field keeps background task rooted to prevent GC collection
     private readonly Task _readTask;
+#pragma warning restore S4487
 
     public PauseStateSubscription(ChannelReader<bool> reader, Action<bool> handler) {
       _cts = new CancellationTokenSource();

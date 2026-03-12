@@ -250,6 +250,112 @@ public partial class EnvelopeSerializerTests {
   }
 
   // ========================================
+  // Additional SerializeEnvelope Coverage Tests
+  // ========================================
+
+  [Test]
+  public async Task SerializeEnvelope_WithNullHops_CreatesEmptyHopsListAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = null!
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - Null hops should be converted to empty list
+    await Assert.That(result.JsonEnvelope.Hops).IsNotNull();
+    await Assert.That(result.JsonEnvelope.Hops.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_WithEmptyHops_PreservesEmptyListAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = []
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert
+    await Assert.That(result.JsonEnvelope.Hops).IsNotNull();
+    await Assert.That(result.JsonEnvelope.Hops.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_EnvelopeType_ContainsPayloadRuntimeTypeAsync() {
+    // Arrange - The envelope type name should contain the PAYLOAD runtime type,
+    // not the TMessage generic parameter, for proper type resolution on the receiving end
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()]
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - EnvelopeType should include assembly-qualified name of the payload runtime type
+    await Assert.That(result.EnvelopeType).Contains("EnvelopeTestMsg");
+    await Assert.That(result.EnvelopeType).Contains("Whizbang.Core");
+    await Assert.That(result.MessageType).IsNotNull();
+    // MessageType should be the assembly-qualified name of the payload
+    var messageTypeLength = result.MessageType.Length;
+    await Assert.That(messageTypeLength).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task SerializeEnvelope_PayloadSerializesToValidJsonElementAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = msgId,
+      Payload = new EnvelopeTestMsg("HelloWorld"),
+      Hops = [_createTestHop()]
+    };
+
+    // Act
+    var result = serializer.SerializeEnvelope(envelope);
+
+    // Assert - The payload should be a valid JsonElement containing the serialized message
+    var payloadJson = result.JsonEnvelope.Payload.ToString();
+    await Assert.That(payloadJson).Contains("HelloWorld");
+  }
+
+  [Test]
+  public async Task DeserializeMessage_WithWhitespaceOnlyTypeName_ThrowsArgumentExceptionAsync() {
+    // Arrange
+    var options = _createTestJsonOptions();
+    var serializer = new EnvelopeSerializer(options);
+    var msgId = MessageId.New();
+    var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      MessageId = msgId,
+      Payload = JsonDocument.Parse("{\"value\":\"test\"}").RootElement,
+      Hops = [_createTestHop()]
+    };
+
+    // Act & Assert
+    await Assert.That(() => serializer.DeserializeMessage(jsonEnvelope, "\t\n"))
+      .Throws<ArgumentException>();
+  }
+
+  // ========================================
   // SerializedEnvelope Record Tests
   // ========================================
 

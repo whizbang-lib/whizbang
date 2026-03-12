@@ -9,7 +9,7 @@ namespace Whizbang.Migrate.Analysis;
 /// Scans for common patterns like StreamId, AggregateId, Id, and domain-specific *Id properties.
 /// </summary>
 /// <docs>migration-guide/automated-migration#stream-id-detection</docs>
-public sealed class StreamIdDetector {
+public static class StreamIdDetector {
   private static readonly HashSet<string> _guidTypeNames = new(StringComparer.Ordinal) {
     "Guid",
     "System.Guid"

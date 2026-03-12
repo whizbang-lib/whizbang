@@ -33,10 +33,8 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-# Top-level permissions for the workflow
-permissions:
-  contents: write   # For committing version changes and pushing tags
-  id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
+# Minimal top-level permissions; write permissions are declared at job level
+permissions: read-all
 
 jobs:
   # Only run if this is a merged release PR or a manual dry run
@@ -361,6 +359,9 @@ jobs:
     name: Publish to NuGet
     needs: [check-release, release]
     if: needs.check-release.outputs.should_release == 'true'
+    permissions:
+      contents: read
+      id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
     uses: ./.github/workflows/nuget-publish.yml
     with:
       version: ${{ needs.check-release.outputs.version }}
