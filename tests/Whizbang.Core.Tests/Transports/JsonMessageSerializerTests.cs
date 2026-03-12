@@ -715,17 +715,9 @@ public class JsonMessageSerializerTests {
     options.Converters.Add(new JsonStringEnumConverter());
     return options;
   }
-}
 
-/// <summary>
-/// Direct tests for CorrelationIdConverter to ensure coverage when running JsonMessageSerializer* filter.
-/// These tests cover Read/Write paths not exercised through the MessageHopConverter.
-/// </summary>
-[Category("Core")]
-[Category("Transports")]
-public class JsonMessageSerializerConverterTests {
   // ===========================
-  // CorrelationIdConverter Tests
+  // CorrelationIdConverter Direct Tests
   // ===========================
 
   [Test]
@@ -802,7 +794,7 @@ public class JsonMessageSerializerConverterTests {
   }
 
   // ===========================
-  // MetadataConverter Tests
+  // MetadataConverter Direct Tests
   // ===========================
 
   [Test]
@@ -854,7 +846,7 @@ public class JsonMessageSerializerConverterTests {
 
   [Test]
   public async Task MetadataConverter_Read_WithInvalidStartToken_ShouldThrowJsonExceptionAsync() {
-    // Arrange - Array instead of object
+    // Arrange - Array instead of object triggers the StartObject validation error path
     var converter = new MetadataConverter();
     var json = "[1,2,3]"u8.ToArray();
     var reader = new Utf8JsonReader(json);
@@ -918,7 +910,7 @@ public class JsonMessageSerializerConverterTests {
     var original = new Dictionary<string, JsonElement> {
       ["str"] = JsonSerializer.SerializeToElement("hello"),
       ["num"] = JsonSerializer.SerializeToElement(123),
-      ["bool"] = JsonSerializer.SerializeToElement(true),
+      ["flag"] = JsonSerializer.SerializeToElement(true),
       ["arr"] = arrayValue
     };
 
@@ -937,7 +929,7 @@ public class JsonMessageSerializerConverterTests {
     await Assert.That(result).IsNotNull();
     await Assert.That(result!["str"].GetString()).IsEqualTo("hello");
     await Assert.That(result["num"].GetInt32()).IsEqualTo(123);
-    await Assert.That(result["bool"].GetBoolean()).IsTrue();
+    await Assert.That(result["flag"].GetBoolean()).IsTrue();
     await Assert.That(result["arr"].ValueKind).IsEqualTo(JsonValueKind.Array);
   }
 }
