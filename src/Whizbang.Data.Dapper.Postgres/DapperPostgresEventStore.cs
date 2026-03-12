@@ -22,6 +22,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Uses JsonbSizeValidator for C#-based size validation.
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+#pragma warning disable CS9113 // Primary constructor parameters are unread - retained for backward compatibility
 public class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
@@ -32,13 +33,10 @@ public class DapperPostgresEventStore(
   IPerspectiveInvoker? perspectiveInvoker,
   ILogger<DapperPostgresEventStore> logger
   ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+#pragma warning restore CS9113
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-
-  // Unused parameters retained for backward compatibility
-  private readonly IPerspectiveInvoker? _ = perspectiveInvoker;
-  private readonly ILogger<DapperPostgresEventStore> __ = logger;
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
