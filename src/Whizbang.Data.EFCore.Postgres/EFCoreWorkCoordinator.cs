@@ -230,7 +230,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_sync_inquiries
       )";
 
-    // Hook PostgreSQL RAISE NOTICE messages for debugging
+    // Hook PostgreSQL RAISE DEBUG messages for debugging
     // Access the underlying NpgsqlConnection from EF Core's DbContext
     var dbConnection = _dbContext.Database.GetDbConnection();
     if (dbConnection is NpgsqlConnection npgsqlConnection && npgsqlConnection.State != System.Data.ConnectionState.Open) {
@@ -930,7 +930,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
+  /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
