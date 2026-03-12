@@ -223,6 +223,104 @@ public class ScopedLensQueryTests {
     await Assert.That(maxConcurrentScopes).IsGreaterThanOrEqualTo(1);
   }
 
+  [Test]
+  public async Task Constructor_WithNullScopeFactory_ThrowsArgumentNullExceptionAsync() {
+    await Assert.That(() => new ScopedLensQuery<TestModel>(null!))
+        .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task QueryAsync_WithNullQueryBuilder_ThrowsArgumentNullExceptionAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopedLensQuery<TestModel>>(sp =>
+        new ScopedLensQuery<TestModel>(sp.GetRequiredService<IServiceScopeFactory>()));
+    var provider = services.BuildServiceProvider();
+    var scopedQuery = provider.GetRequiredService<IScopedLensQuery<TestModel>>();
+
+    await Assert.That(async () => {
+      await foreach (var _ in scopedQuery.QueryAsync((Func<ILensQuery<TestModel>, IQueryable<PerspectiveRow<TestModel>>>)null!)) {
+        // Should not reach here
+      }
+    }).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task QueryAsyncProjection_CreatesScope_AndStreamsResultsAsync() {
+    // Arrange
+    var expectedItems = new List<TestModel>
+    {
+      new() { Id = Guid.NewGuid(), Name = "Item1" },
+      new() { Id = Guid.NewGuid(), Name = "Item2" }
+    };
+
+    var scopesCreated = 0;
+    var scopesDisposed = 0;
+
+    var services = new ServiceCollection();
+
+    services.AddScoped<ScopeTracker>(_ => {
+      scopesCreated++;
+      return new ScopeTracker(() => scopesDisposed++);
+    });
+
+    services.AddScoped<ILensQuery<TestModel>>(sp => {
+      var tracker = sp.GetRequiredService<ScopeTracker>();
+      var mockQuery = new MockLensQuery<TestModel>();
+      mockQuery.SetModels(expectedItems);
+      return mockQuery;
+    });
+
+    services.AddSingleton<IScopedLensQuery<TestModel>>(sp => {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      return new ScopedLensQuery<TestModel>(scopeFactory);
+    });
+
+    var rootProvider = services.BuildServiceProvider();
+    var scopedQuery = rootProvider.GetRequiredService<IScopedLensQuery<TestModel>>();
+
+    // Act - Use the projection overload QueryAsync<TResult>
+    var names = new List<string>();
+    await foreach (var name in scopedQuery.QueryAsync<string>(query =>
+        query.Query.Select(r => r.Data.Name))) {
+      names.Add(name);
+    }
+
+    // Assert
+    await Assert.That(names).Count().IsEqualTo(2);
+    await Assert.That(names[0]).IsEqualTo("Item1");
+    await Assert.That(names[1]).IsEqualTo("Item2");
+    await Assert.That(scopesCreated).IsEqualTo(1);
+    await Assert.That(scopesDisposed).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task QueryAsyncProjection_WithNullQueryBuilder_ThrowsArgumentNullExceptionAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopedLensQuery<TestModel>>(sp =>
+        new ScopedLensQuery<TestModel>(sp.GetRequiredService<IServiceScopeFactory>()));
+    var provider = services.BuildServiceProvider();
+    var scopedQuery = provider.GetRequiredService<IScopedLensQuery<TestModel>>();
+
+    await Assert.That(async () => {
+      await foreach (var _ in scopedQuery.QueryAsync<string>((Func<ILensQuery<TestModel>, IQueryable<string>>)null!)) {
+        // Should not reach here
+      }
+    }).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ExecuteAsync_WithNullQueryExecutor_ThrowsArgumentNullExceptionAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopedLensQuery<TestModel>>(sp =>
+        new ScopedLensQuery<TestModel>(sp.GetRequiredService<IServiceScopeFactory>()));
+    var provider = services.BuildServiceProvider();
+    var scopedQuery = provider.GetRequiredService<IScopedLensQuery<TestModel>>();
+
+    await Assert.That(async () => {
+      await scopedQuery.ExecuteAsync<int>(null!);
+    }).Throws<ArgumentNullException>();
+  }
+
   // Helper classes for testing
 
   /// <summary>
