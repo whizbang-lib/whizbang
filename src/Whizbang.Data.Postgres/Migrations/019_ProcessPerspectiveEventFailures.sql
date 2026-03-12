@@ -25,8 +25,8 @@ BEGIN
         error = v_failure.error_message,
         failure_reason = COALESCE(v_failure.failure_reason, 0),  -- Default to Unknown (0)
         attempts = pe.attempts + 1,
-        -- Exponential backoff: 30s * 2^(attempts+1)
-        scheduled_for = p_now + (INTERVAL '30 seconds' * POWER(2, pe.attempts + 1)),
+        -- Exponential backoff: 30s * 2^(attempts+1), capped at 5 minutes
+        scheduled_for = p_now + (INTERVAL '30 seconds' * LEAST(POWER(2, LEAST(pe.attempts + 1, 10)), 10)),
         instance_id = NULL,
         lease_expiry = NULL
     WHERE pe.event_work_id = v_failure.work_id;
@@ -35,4 +35,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_failures IS
-'Processes perspective event failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff. Releases lease for reclaiming by other instances.';
+'Processes perspective event failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff (capped at 5 minutes). Releases lease for reclaiming by other instances.';

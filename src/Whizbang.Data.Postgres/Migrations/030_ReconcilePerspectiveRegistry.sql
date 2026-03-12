@@ -1,4 +1,4 @@
--- Migration: 031_ReconcilePerspectiveRegistry
+-- Migration: 030_ReconcilePerspectiveRegistry
 -- Description: Creates reconcile_perspective_registry() function for CLR type → table name tracking
 -- Date: 2026-02-20
 --
