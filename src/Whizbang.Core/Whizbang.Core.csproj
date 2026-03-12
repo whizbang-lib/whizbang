@@ -11,7 +11,7 @@
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
   <!-- Include message registry in NuGet package - added dynamically after build generates it -->
-  <Target Name="IncludeMessageRegistryInPack" BeforeTargets="GenerateNuspec" DependsOnTargets="ExtractMessageRegistry">
+  <Target Name="IncludeMessageRegistryInPack" BeforeTargets="GenerateNuspec" DependsOnTargets="WhizbangExtractMessageRegistry">
     <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/.whizbang/message-registry.json')">
       <None Include="$(MSBuildProjectDirectory)/.whizbang/message-registry.json" Pack="true" PackagePath="contentFiles/any/any/.whizbang/">
         <PackageCopyToOutput>true</PackageCopyToOutput>
