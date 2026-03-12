@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tags;
@@ -104,4 +105,10 @@ public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribu
   /// </code>
   /// </remarks>
   public IScopeContext? Scope { get; init; }
+
+  /// <summary>
+  /// Gets the lifecycle stage at which this hook is being invoked.
+  /// Hooks can inspect this to decide whether to act (e.g., only fire at PostPerspectiveInline).
+  /// </summary>
+  public LifecycleStage Stage { get; init; }
 }
