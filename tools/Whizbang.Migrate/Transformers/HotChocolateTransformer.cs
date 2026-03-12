@@ -213,26 +213,24 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
       }
 
       // Handle AddMartenSorting - remove (functionality in AddWhizbangLenses)
-      if (_methodsToRemove.Contains(methodName)) {
-        if (node.Expression is MemberAccessExpressionSyntax memberAccess) {
-          var description = _addedWhizbangLenses
-              ? $"Removed '{methodName}()' (included in AddWhizbangLenses)"
-              : $"Removed '{methodName}()' (add AddWhizbangLenses() manually for sorting support)";
+      if (_methodsToRemove.Contains(methodName) && node.Expression is MemberAccessExpressionSyntax memberAccess) {
+        var description = _addedWhizbangLenses
+            ? $"Removed '{methodName}()' (included in AddWhizbangLenses)"
+            : $"Removed '{methodName}()' (add AddWhizbangLenses() manually for sorting support)";
 
-          if (!_addedWhizbangLenses) {
-            _warnings.Add($"Removed {methodName}() but AddWhizbangLenses() was not added. You may need to add it manually for sorting support.");
-          }
-
-          _changes.Add(new CodeChange(
-              node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
-              ChangeType.MethodCallReplacement,
-              description,
-              $".{methodName}()",
-              ""));
-
-          // Return just the expression part, removing the method call
-          return Visit(memberAccess.Expression);
+        if (!_addedWhizbangLenses) {
+          _warnings.Add($"Removed {methodName}() but AddWhizbangLenses() was not added. You may need to add it manually for sorting support.");
         }
+
+        _changes.Add(new CodeChange(
+            node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.MethodCallReplacement,
+            description,
+            $".{methodName}()",
+            ""));
+
+        // Return just the expression part, removing the method call
+        return Visit(memberAccess.Expression);
       }
 
       return base.VisitInvocationExpression(node);

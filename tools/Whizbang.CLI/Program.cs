@@ -299,10 +299,8 @@ async Task<int> _migrateStatusAsync(string[] commandArgs) {
 
 string? _parseProjectPath(string[] commandArgs, int startIndex) {
   for (int i = startIndex; i < commandArgs.Length; i++) {
-    if (commandArgs[i] == "--project" || commandArgs[i] == "-p") {
-      if (i + 1 < commandArgs.Length) {
-        return commandArgs[i + 1];
-      }
+    if ((commandArgs[i] == "--project" || commandArgs[i] == "-p") && i + 1 < commandArgs.Length) {
+      return commandArgs[i + 1];
     }
   }
   return null;
@@ -333,14 +331,10 @@ async Task<int> _generateSchemaAsync(string[] commandArgs) {
   string? prefix = null;
 
   for (int i = 3; i < commandArgs.Length; i++) {
-    if (commandArgs[i] == "--output" || commandArgs[i] == "-o") {
-      if (i + 1 < commandArgs.Length) {
-        outputPath = commandArgs[++i];
-      }
-    } else if (commandArgs[i] == "--prefix") {
-      if (i + 1 < commandArgs.Length) {
-        prefix = commandArgs[++i];
-      }
+    if ((commandArgs[i] == "--output" || commandArgs[i] == "-o") && i + 1 < commandArgs.Length) {
+      outputPath = commandArgs[++i];
+    } else if (commandArgs[i] == "--prefix" && i + 1 < commandArgs.Length) {
+      prefix = commandArgs[++i];
     }
   }
 

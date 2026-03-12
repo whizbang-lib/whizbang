@@ -24,7 +24,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
-  private readonly Whizbang.Core.Perspectives.IPerspectiveInvoker? _perspectiveInvoker;
 
   // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
   private static readonly bool _diagnosticLogging =
@@ -36,7 +35,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     Whizbang.Core.Perspectives.IPerspectiveInvoker? perspectiveInvoker = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
-    _perspectiveInvoker = perspectiveInvoker;
   }
 
   /// <summary>

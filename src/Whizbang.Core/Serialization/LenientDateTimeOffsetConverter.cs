@@ -46,11 +46,9 @@ public sealed class LenientDateTimeOffsetConverter : JsonConverter<DateTimeOffse
                               char.IsDigit(value[^4]) &&
                               value[^3] == ':');
 
-    if (hasTimezoneOffset) {
-      // Parse with offset preserved (most common case for properly formatted data)
-      if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result)) {
-        return result;
-      }
+    // Parse with offset preserved (most common case for properly formatted data)
+    if (hasTimezoneOffset && DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result)) {
+      return result;
     }
 
     // No timezone offset or parsing failed - parse as DateTime and assume UTC

@@ -458,20 +458,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .ToList();
 
     // Only log when there's actual work to report
-    if (outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0 || syncInquiryResults.Count > 0) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-        var outboxCount = outboxWork.Count;
-        var inboxCount = inboxWork.Count;
-        var perspectiveCount = perspectiveWork.Count;
-        var syncResultsCount = syncInquiryResults.Count;
-        _logger.LogDebug(
-          "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
-          outboxCount,
-          inboxCount,
-          perspectiveCount,
-          syncResultsCount
-        );
-      }
+    if ((outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0 || syncInquiryResults.Count > 0) &&
+        _logger?.IsEnabled(LogLevel.Debug) == true) {
+      var outboxCount = outboxWork.Count;
+      var inboxCount = inboxWork.Count;
+      var perspectiveCount = perspectiveWork.Count;
+      var syncResultsCount = syncInquiryResults.Count;
+      _logger.LogDebug(
+        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
+        outboxCount,
+        inboxCount,
+        perspectiveCount,
+        syncResultsCount
+      );
     }
 
     return new WorkBatch {

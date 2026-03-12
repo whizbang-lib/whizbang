@@ -39,10 +39,9 @@ public static class AttributeUtilities {
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
         // Case-insensitive match: constructor param "tag" matches property "Tag"
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is string ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is string ctorValue) {
+          return ctorValue;
         }
       }
     }
@@ -72,10 +71,9 @@ public static class AttributeUtilities {
       var constructorParams = attribute.AttributeConstructor.Parameters;
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is bool ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is bool ctorValue) {
+          return ctorValue;
         }
       }
     }
@@ -105,10 +103,9 @@ public static class AttributeUtilities {
       var constructorParams = attribute.AttributeConstructor.Parameters;
       for (var i = 0; i < constructorParams.Length && i < attribute.ConstructorArguments.Length; i++) {
         var param = constructorParams[i];
-        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
-          if (attribute.ConstructorArguments[i].Value is int ctorValue) {
-            return ctorValue;
-          }
+        if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
+            attribute.ConstructorArguments[i].Value is int ctorValue) {
+          return ctorValue;
         }
       }
     }

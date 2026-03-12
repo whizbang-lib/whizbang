@@ -613,10 +613,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
       // Recursively check nested types
       if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-          !_isSystemPrimitiveType(typeToCheck)) {
-        if (_checkForPolymorphicTypes(typeToCheck, visited)) {
-          return true;
-        }
+          !_isSystemPrimitiveType(typeToCheck) &&
+          _checkForPolymorphicTypes(typeToCheck, visited)) {
+        return true;
       }
 
       // Check generic type arguments
