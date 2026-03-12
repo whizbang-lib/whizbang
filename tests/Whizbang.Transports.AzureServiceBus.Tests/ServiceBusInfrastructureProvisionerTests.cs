@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
@@ -142,6 +144,88 @@ public class ServiceBusInfrastructureProvisionerTests {
     await provisioner.ProvisionOwnedDomainsAsync(ownedDomains);
 
     // Assert - myapp.orders should still be created
+    await Assert.That(adminClient.CreatedTopics).Contains("myapp.orders");
+  }
+
+  // ========================================
+  // EnsureTopicExistsAsync Tests
+  // ========================================
+
+  /// <summary>
+  /// When topic does not exist, should create it.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient();
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics.Count).IsEqualTo(1);
+    await Assert.That(adminClient.CreatedTopics).Contains("myapp.orders");
+  }
+
+  /// <summary>
+  /// When topic already exists, should not attempt to create it.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient {
+      ExistingTopics = { "myapp.orders" }
+    };
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>
+  /// When a race condition occurs (409), should handle gracefully.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient {
+      SimulateRaceConditionForTopic = "myapp.orders"
+    };
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+
+    // Act - should not throw
+    await provisioner.EnsureTopicExistsAsync("myapp.orders");
+
+    // Assert - no topics created (race condition swallowed)
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>
+  /// Topic name should be lowercased for consistency.
+  /// </summary>
+  [Test]
+  public async Task EnsureTopicExistsAsync_LowercasesTopicNameAsync() {
+    // Arrange
+    var adminClient = new TrackingAdminClient();
+    var provisioner = new ServiceBusInfrastructureProvisioner(
+      adminClient,
+      NullLogger<ServiceBusInfrastructureProvisioner>.Instance);
+
+    // Act
+    await provisioner.EnsureTopicExistsAsync("MyApp.Orders");
+
+    // Assert
+    await Assert.That(adminClient.CreatedTopics.Count).IsEqualTo(1);
     await Assert.That(adminClient.CreatedTopics).Contains("myapp.orders");
   }
 

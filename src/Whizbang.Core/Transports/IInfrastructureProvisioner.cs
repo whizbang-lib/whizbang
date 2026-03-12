@@ -35,4 +35,26 @@ public interface IInfrastructureProvisioner {
   Task ProvisionOwnedDomainsAsync(
     IReadOnlySet<string> ownedDomains,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Ensures a single topic/exchange exists, creating it if necessary.
+  /// Used for on-demand provisioning during publish to avoid MessagingEntityNotFound errors.
+  /// </summary>
+  /// <param name="topicName">The topic name to ensure exists.</param>
+  /// <param name="cancellationToken">Cancellation token to cancel the operation.</param>
+  /// <returns>Task that completes when the topic is confirmed to exist.</returns>
+  /// <remarks>
+  /// This method should be idempotent - calling it multiple times with the same
+  /// topic name should be safe. Implementations should handle race conditions where
+  /// multiple service instances attempt to create the same topic.
+  /// The default implementation is a no-op for transports that don't need pre-creation (e.g., RabbitMQ).
+  /// </remarks>
+  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  Task EnsureTopicExistsAsync(
+    string topicName,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

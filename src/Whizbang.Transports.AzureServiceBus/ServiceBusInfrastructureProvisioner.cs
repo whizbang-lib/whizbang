@@ -58,46 +58,49 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
 
     foreach (var domain in ownedDomains) {
       cancellationToken.ThrowIfCancellationRequested();
+      await _ensureTopicAsync(domain.ToLowerInvariant(), cancellationToken);
+    }
+  }
 
-      var topicName = domain.ToLowerInvariant();
+  /// <inheritdoc />
+  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
+  /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
+  public async Task EnsureTopicExistsAsync(
+      string topicName,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(topicName);
+    await _ensureTopicAsync(topicName.ToLowerInvariant(), cancellationToken);
+  }
 
-      try {
-        // Check if topic already exists
-        if (await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var topic = topicName;
-            _logger.LogDebug(
-              "Topic '{Topic}' already exists, skipping",
-              topic);
-          }
-          continue;
-        }
-
+  /// <summary>
+  /// Shared logic for ensuring a single topic exists.
+  /// Handles check-exists-then-create with 409 race condition tolerance.
+  /// </summary>
+  private async Task _ensureTopicAsync(string topicName, CancellationToken cancellationToken) {
+    try {
+      if (await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
         if (_logger.IsEnabled(LogLevel.Debug)) {
-          var topic = topicName;
-          var dom = domain;
-          _logger.LogDebug(
-            "Creating topic '{Topic}' for owned domain '{Domain}'",
-            topic,
-            dom);
+          _logger.LogDebug("Topic '{Topic}' already exists, skipping", topicName);
         }
+        return;
+      }
 
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Creating topic '{Topic}'", topicName);
+      }
 
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          var topic = topicName;
-          _logger.LogInformation(
-            "Provisioned topic '{Topic}' for owned domain",
-            topic);
-        }
-      } catch (RequestFailedException ex) when (ex.Status == 409) {
-        // Race condition - topic created by another instance between exists check and create
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          var topic = topicName;
-          _logger.LogDebug(
-            "Topic '{Topic}' already exists (race condition), skipping",
-            topic);
-        }
+      await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Information)) {
+        _logger.LogInformation("Provisioned topic '{Topic}'", topicName);
+      }
+    } catch (RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition - topic created by another instance between exists check and create
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Topic '{Topic}' already exists (race condition), skipping", topicName);
       }
     }
   }
