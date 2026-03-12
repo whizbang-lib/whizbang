@@ -107,7 +107,14 @@ async Task<int> _migrateApplyAsync(string[] commandArgs) {
   Console.WriteLine("=======================");
   Console.WriteLine();
   Console.WriteLine($"Project: {projectPath}");
-  var modeDesc = dryRun ? "Dry run" : guided ? "Guided (interactive)" : "Apply all";
+  string modeDesc;
+  if (dryRun) {
+    modeDesc = "Dry run";
+  } else if (guided) {
+    modeDesc = "Guided (interactive)";
+  } else {
+    modeDesc = "Apply all";
+  }
   Console.WriteLine($"Mode: {modeDesc}");
   Console.WriteLine();
 
@@ -330,11 +337,16 @@ async Task<int> _generateSchemaAsync(string[] commandArgs) {
   string? outputPath = null;
   string? prefix = null;
 
-  for (int i = 3; i < commandArgs.Length; i++) {
-    if ((commandArgs[i] == "--output" || commandArgs[i] == "-o") && i + 1 < commandArgs.Length) {
-      outputPath = commandArgs[++i];
-    } else if (commandArgs[i] == "--prefix" && i + 1 < commandArgs.Length) {
-      prefix = commandArgs[++i];
+  var argIndex = 3;
+  while (argIndex < commandArgs.Length) {
+    if ((commandArgs[argIndex] == "--output" || commandArgs[argIndex] == "-o") && argIndex + 1 < commandArgs.Length) {
+      outputPath = commandArgs[argIndex + 1];
+      argIndex += 2;
+    } else if (commandArgs[argIndex] == "--prefix" && argIndex + 1 < commandArgs.Length) {
+      prefix = commandArgs[argIndex + 1];
+      argIndex += 2;
+    } else {
+      argIndex++;
     }
   }
 
