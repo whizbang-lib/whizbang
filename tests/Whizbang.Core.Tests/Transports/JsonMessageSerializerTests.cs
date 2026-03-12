@@ -443,6 +443,239 @@ public class JsonMessageSerializerTests {
   }
 
   // ===========================
+  // Context Constructor Missing-Type Tests
+  // ===========================
+
+  [Test]
+  public async Task SerializeAsync_WithContextConstructorAndMissingType_ShouldThrowInvalidOperationExceptionAsync() {
+    // Arrange - Use a context constructor where the context does NOT know the test type
+    // This covers the _context branch path in SerializeAsync (line 99 condition 2)
+    var serializer = new JsonMessageSerializer(InfrastructureJsonContext.Default);
+    var envelope = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = MessageId.New(),
+      Payload = new SerializerTestCommand { Name = "missing-context", Amount = 1 },
+      Hops = []
+    };
+
+    // Act & Assert
+    InvalidOperationException? caughtException = null;
+    try {
+      await serializer.SerializeAsync(envelope);
+    } catch (InvalidOperationException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("No JsonTypeInfo found");
+  }
+
+  [Test]
+  public async Task DeserializeAsync_WithContextConstructorAndMissingType_ShouldThrowInvalidOperationExceptionAsync() {
+    // Arrange - Serialize with known context, then deserialize with context that lacks the type
+    // This covers the _context branch path in DeserializeAsync (line 110 condition 2)
+    var validSerializer = new JsonMessageSerializer(SerializerTestJsonContext.Default);
+    var envelope = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = MessageId.New(),
+      Payload = new SerializerTestCommand { Name = "missing-context", Amount = 1 },
+      Hops = []
+    };
+    var bytes = await validSerializer.SerializeAsync(envelope);
+
+    // Use context constructor where context does NOT know SerializerTestCommand
+    var limitedSerializer = new JsonMessageSerializer(InfrastructureJsonContext.Default);
+
+    // Act & Assert
+    InvalidOperationException? caughtException = null;
+    try {
+      await limitedSerializer.DeserializeAsync<SerializerTestCommand>(bytes);
+    } catch (InvalidOperationException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("No JsonTypeInfo found");
+  }
+
+  [Test]
+  public async Task DeserializeAsync_WithNullJsonContent_ShouldThrowInvalidOperationExceptionAsync() {
+    // Arrange - Provide JSON that deserializes to null (covers the as IMessageEnvelope ?? throw on line 111)
+    var options = _createOptionsWithTestContext();
+    var serializer = new JsonMessageSerializer(options);
+    // "null" JSON literal causes JsonSerializer.Deserialize to return null
+    var nullJson = Encoding.UTF8.GetBytes("null");
+
+    // Act & Assert
+    InvalidOperationException? caughtException = null;
+    try {
+      await serializer.DeserializeAsync<SerializerTestCommand>(nullJson);
+    } catch (InvalidOperationException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("Failed to deserialize envelope");
+  }
+
+  // ===========================
+  // Converter Coverage via Reflection-Based Options
+  // ===========================
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Reflection-based serialization for testing only")]
+  [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Reflection-based serialization for testing only")]
+  public async Task SerializeAsync_WithReflectionOptions_ShouldExerciseConvertersAsync() {
+    // Arrange - Use DefaultJsonTypeInfoResolver (reflection) with custom converters
+    // This forces CorrelationIdConverter.Write and MetadataConverter.Write to be called
+    var options = _createReflectionOptionsWithConverters();
+    var serializer = new JsonMessageSerializer(options);
+    var correlationId = CorrelationId.New();
+    var metadata = new Dictionary<string, JsonElement> {
+      ["key"] = JsonSerializer.SerializeToElement("value")
+    };
+    var envelope = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = MessageId.New(),
+      Payload = new SerializerTestCommand { Name = "reflection-test", Amount = 10 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 1
+          },
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = correlationId,
+          Metadata = metadata
+        }
+      ]
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(envelope);
+
+    // Assert
+    await Assert.That(bytes).IsNotNull();
+    var json = Encoding.UTF8.GetString(bytes);
+    await Assert.That(json).Contains("reflection-test");
+    await Assert.That(json).Contains(correlationId.Value.ToString());
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Reflection-based serialization for testing only")]
+  [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Reflection-based serialization for testing only")]
+  public async Task RoundTrip_WithReflectionOptions_ShouldExerciseAllConvertersAsync() {
+    // Arrange - Use reflection-based resolver to force custom converter paths for
+    // CorrelationIdConverter.Read/Write and MetadataConverter.Read/Write
+    var options = _createReflectionOptionsWithConverters();
+    var serializer = new JsonMessageSerializer(options);
+    var correlationId = CorrelationId.New();
+    var messageId = MessageId.New();
+    var metadata = new Dictionary<string, JsonElement> {
+      ["strVal"] = JsonSerializer.SerializeToElement("hello"),
+      ["intVal"] = JsonSerializer.SerializeToElement(42),
+      ["boolVal"] = JsonSerializer.SerializeToElement(true)
+    };
+    var original = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = messageId,
+      Payload = new SerializerTestCommand { Name = "round-trip-reflection", Amount = 99 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "ReflectionTest",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 42
+          },
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = correlationId,
+          Metadata = metadata
+        }
+      ]
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(original);
+    var deserialized = await serializer.DeserializeAsync<SerializerTestCommand>(bytes);
+
+    // Assert
+    await Assert.That(deserialized.MessageId).IsEqualTo(messageId);
+    await Assert.That(deserialized.Hops).Count().IsEqualTo(1);
+    await Assert.That(deserialized.Hops[0].CorrelationId).IsEqualTo(correlationId);
+    var hopMetadata = deserialized.Hops[0].Metadata;
+    await Assert.That(hopMetadata).IsNotNull();
+    await Assert.That(hopMetadata!["strVal"].GetString()).IsEqualTo("hello");
+    await Assert.That(hopMetadata["intVal"].GetInt32()).IsEqualTo(42);
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Reflection-based serialization for testing only")]
+  [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Reflection-based serialization for testing only")]
+  public async Task RoundTrip_WithReflectionOptions_NullMetadata_ShouldPreserveNullAsync() {
+    // Arrange - Covers MetadataConverter.Write(null) and MetadataConverter.Read(null token)
+    var options = _createReflectionOptionsWithConverters();
+    var serializer = new JsonMessageSerializer(options);
+    var original = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = MessageId.New(),
+      Payload = new SerializerTestCommand { Name = "null-meta-reflection", Amount = 0 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 1
+          },
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = null
+        }
+      ]
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(original);
+    var deserialized = await serializer.DeserializeAsync<SerializerTestCommand>(bytes);
+
+    // Assert - null metadata should round-trip correctly via MetadataConverter null paths
+    await Assert.That(deserialized.Hops[0].Metadata).IsNull();
+  }
+
+  [Test]
+  [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Reflection-based serialization for testing only")]
+  [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Reflection-based serialization for testing only")]
+  public async Task RoundTrip_WithReflectionOptions_NullCorrelationId_ShouldPreserveNullAsync() {
+    // Arrange - Covers CorrelationIdConverter paths with null correlation id
+    var options = _createReflectionOptionsWithConverters();
+    var serializer = new JsonMessageSerializer(options);
+    var original = new MessageEnvelope<SerializerTestCommand> {
+      MessageId = MessageId.New(),
+      Payload = new SerializerTestCommand { Name = "null-correlation-reflection", Amount = 0 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 1
+          },
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = null
+        }
+      ]
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(original);
+    var deserialized = await serializer.DeserializeAsync<SerializerTestCommand>(bytes);
+
+    // Assert
+    await Assert.That(deserialized.Hops[0].CorrelationId).IsNull();
+  }
+
+  // ===========================
   // Helper Methods
   // ===========================
 
@@ -455,6 +688,25 @@ public class JsonMessageSerializerTests {
         SerializerTestJsonContext.Default,
         InfrastructureJsonContext.Default
       ),
+      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+    options.Converters.Add(new MessageIdConverter());
+    options.Converters.Add(new CorrelationIdConverter());
+    options.Converters.Add(new MetadataConverter());
+    options.Converters.Add(new JsonStringEnumConverter());
+    return options;
+  }
+
+  /// <summary>
+  /// Creates JsonSerializerOptions using DefaultJsonTypeInfoResolver (reflection-based).
+  /// This forces the custom converters (MessageIdConverter, CorrelationIdConverter, MetadataConverter)
+  /// to be called instead of source-generated type info, enabling coverage of converter code paths.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Reflection-based serialization for testing only")]
+  [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Reflection-based serialization for testing only")]
+  private static JsonSerializerOptions _createReflectionOptionsWithConverters() {
+    var options = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
     options.Converters.Add(new MessageIdConverter());

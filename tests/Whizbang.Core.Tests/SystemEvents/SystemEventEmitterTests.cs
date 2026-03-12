@@ -570,6 +570,22 @@ public class SystemEventEmitterTests {
     public required DateTimeOffset Timestamp { get; init; }
   }
 
+  /// <summary>
+  /// An event payload type that is NOT registered in any JsonSerializerContext.
+  /// Used to test the fallback paths in _serializeToJsonElement when GetTypeInfo returns null.
+  /// </summary>
+  private sealed class UnregisteredPayloadType {
+    public int Value { get; set; }
+  }
+
+  /// <summary>
+  /// A command type that is NOT registered in any JsonSerializerContext.
+  /// Used to test the fallback paths in _serializeToJsonElement for commands.
+  /// </summary>
+  private sealed class UnregisteredCommandType {
+    public required string Name { get; init; }
+  }
+
   #endregion
 
   #region Real Implementation Coverage Tests
@@ -1005,6 +1021,105 @@ public class SystemEventEmitterTests {
     await Assert.That(emittedEnvelope).IsNotNull();
     await Assert.That(emittedEnvelope!.Payload.Timestamp).IsGreaterThanOrEqualTo(before);
     await Assert.That(emittedEnvelope.Payload.Timestamp).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
+  }
+
+  #endregion
+
+  #region _serializeToJsonElement Coverage Tests
+
+  /// <summary>
+  /// Tests the fallback path in _serializeToJsonElement when GetTypeInfo(typeof(T)) returns null.
+  /// This occurs when the event payload type is not registered in any JsonSerializerContext.
+  /// The method falls back to GetTypeInfo(value.GetType()) and then to a last-resort empty object.
+  /// </summary>
+  [Test]
+  public async Task EmitEventAuditedAsync_WithUnregisteredPayloadType_FallsBackToEmptyJsonObjectAsync() {
+    // Arrange - Use an unregistered type as TEvent so _serializeToJsonElement hits the fallback paths.
+    // UnregisteredPayloadType is not decorated with [JsonSerializable] in any context.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var streamId = Guid.NewGuid();
+    var envelope = new MessageEnvelope<UnregisteredPayloadType> {
+      MessageId = MessageId.New(),
+      Payload = new UnregisteredPayloadType { Value = 42 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    // Act - This exercises _serializeToJsonElement with an unregistered type.
+    // GetTypeInfo(typeof(UnregisteredPayloadType)) returns null → falls back to GetTypeInfo(value.GetType())
+    // → also null → last resort returns JsonDocument.Parse("{}").RootElement.Clone()
+    await emitter.EmitEventAuditedAsync(streamId, 1, envelope);
+
+    // Assert - EventAudited is still emitted (serialization falls back gracefully)
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.OriginalEventType).IsEqualTo("UnregisteredPayloadType");
+    await Assert.That(emittedEnvelope.Payload.OriginalStreamId).IsEqualTo(streamId.ToString());
+    // OriginalBody falls back to {} when type is unregistered
+    await Assert.That(emittedEnvelope.Payload.OriginalBody.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithUnregisteredCommandType_FallsBackToEmptyJsonObjectAsync() {
+    // Arrange - Use an unregistered type as TCommand so _serializeToJsonElement hits the fallback paths.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var command = new UnregisteredCommandType { Name = "unregistered" };
+
+    // Act - This exercises _serializeToJsonElement with an unregistered command type.
+    // Both GetTypeInfo calls return null → last resort returns {}
+    await emitter.EmitCommandAuditedAsync(command, "response", "TestReceptor", null);
+
+    // Assert - CommandAudited is still emitted (serialization falls back gracefully)
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<CommandAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.CommandType).IsEqualTo("UnregisteredCommandType");
+    await Assert.That(emittedEnvelope.Payload.CommandBody.ValueKind).IsNotEqualTo(JsonValueKind.Undefined);
+  }
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithUnregisteredPayloadType_StillEmitsAuditEventAsync() {
+    // Arrange - Verify the emitter continues to function even with unregistered types.
+    // This covers the complete happy path through the fallback serialization.
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var streamId = Guid.NewGuid();
+    const long streamPosition = 99L;
+    var envelope = new MessageEnvelope<UnregisteredPayloadType> {
+      MessageId = MessageId.New(),
+      Payload = new UnregisteredPayloadType { Value = 123 },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    // Act
+    await emitter.EmitEventAuditedAsync(streamId, streamPosition, envelope);
+
+    // Assert - EventAudited fields are correct even with fallback serialization
+    var emittedEnvelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(emittedEnvelope).IsNotNull();
+    await Assert.That(emittedEnvelope!.Payload.OriginalStreamPosition).IsEqualTo(streamPosition);
+    await Assert.That(emittedEnvelope.Payload.OriginalStreamId).IsEqualTo(streamId.ToString());
+    await Assert.That(emittedEnvelope.Payload.Timestamp).IsGreaterThanOrEqualTo(DateTimeOffset.UtcNow.AddSeconds(-5));
   }
 
   #endregion

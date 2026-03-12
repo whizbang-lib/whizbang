@@ -1463,7 +1463,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var entryStart = snippet.IndexOf("new global::Whizbang.Core.Messaging.ReceptorInfo(", StringComparison.Ordinal);
     if (entryStart < 0) {
       // Fallback: generate manually if snippet structure is unexpected
-      return _generateReceptorInfoEntryManually(receptor, syncAttributesCode, handlerCount);
+      return _generateReceptorInfoEntryManually(receptor, syncAttributesCode);
     }
 
     // Find matching closing parenthesis for the ReceptorInfo constructor
@@ -1508,8 +1508,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateReceptorInfoEntryManually(
       ReceptorInfo receptor,
-      string syncAttributesCode,
-      int handlerCount) {
+      string syncAttributesCode) {
 
     var sb = new StringBuilder();
     sb.AppendLine($"new global::Whizbang.Core.Messaging.ReceptorInfo(");

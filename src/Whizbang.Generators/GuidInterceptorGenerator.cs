@@ -305,7 +305,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
   private static void _generateInterceptors(
       SourceProductionContext context,
-      Compilation compilation,
+      Compilation _,
       ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {

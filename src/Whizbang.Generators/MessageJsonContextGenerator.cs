@@ -1530,7 +1530,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           // Check if this abstract type has [JsonPolymorphic] attribute
           if (_hasJsonPolymorphicAttribute(typeSymbol)) {
             // Discover derived types from [JsonDerivedType] attributes
-            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol, compilation);
+            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol);
             var derivedTypeNames = new List<string>();
 
             foreach (var derivedType in derivedTypes) {
@@ -2629,8 +2629,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeAttributes_DiscoversDerivedTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonDerivedTypeInDifferentNamespace_DiscoversAsync</tests>
   private static List<INamedTypeSymbol> _discoverDerivedTypesFromAttributes(
-      INamedTypeSymbol polymorphicBaseType,
-      Compilation compilation) {
+      INamedTypeSymbol polymorphicBaseType) {
 
     var discoveredTypes = new List<INamedTypeSymbol>();
 
