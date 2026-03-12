@@ -1,24 +1,25 @@
 name: NuGet Publish
 
 on:
-  # Note: Removed direct tag trigger to avoid race condition with release.yml
-  # release.yml creates the GitHub release and then calls this workflow
-  # Having both triggers causes the release to become immutable before assets can be uploaded
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to publish (e.g., v0.3.0-alpha.26)'
+      version:
+        description: 'Version to publish (e.g., 0.3.0-alpha.26)'
         required: true
         type: string
-      source_branch:
-        description: 'Source branch to build from (e.g., develop). Creates release branch + tag. Leave empty to use existing tag.'
+      ref:
+        description: 'Git ref to checkout (branch, tag, or SHA). Defaults to current ref.'
         required: false
         type: string
   workflow_call:
     inputs:
-      tag:
-        description: 'Tag to publish'
+      version:
+        description: 'Version to publish'
         required: true
+        type: string
+      ref:
+        description: 'Git ref to checkout'
+        required: false
         type: string
     secrets:
       PUSHOVER_API_TOKEN:
@@ -55,70 +56,7 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
-        fetch-depth: 0  # Full history for GitVersion
-        ref: ${{ inputs.source_branch || inputs.tag || github.ref }}
-
-    - name: Create Release Branch and Tag
-      if: inputs.source_branch != ''
-      env:
-        INPUT_TAG: ${{ inputs.tag }}
-        SOURCE_BRANCH: ${{ inputs.source_branch }}
-      run: |
-        # Extract version from tag input
-        VERSION=$(echo "$INPUT_TAG" | sed 's|refs/tags/||; s|^v||')
-        TAG="$INPUT_TAG"
-        # Ensure tag has v prefix
-        [[ "$TAG" != v* ]] && TAG="v$VERSION"
-        RELEASE_BRANCH="release/$TAG"
-
-        echo "Creating release branch: $RELEASE_BRANCH from $SOURCE_BRANCH"
-        echo "Version: $VERSION, Tag: $TAG"
-
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-
-        # Create release branch from source
-        git checkout -b "$RELEASE_BRANCH"
-
-        # Update version in Directory.Build.props
-        sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|g" Directory.Build.props
-        echo "Updated Directory.Build.props to version $VERSION:"
-        grep "<Version>" Directory.Build.props
-
-        git add Directory.Build.props
-        git commit -m "chore(release): bump version to $VERSION"
-        git push origin "$RELEASE_BRANCH"
-
-        # Create and push tag
-        git tag -a "$TAG" -m "Release $TAG"
-        git push origin "$TAG"
-
-        echo "Created release branch: $RELEASE_BRANCH"
-        echo "Created tag: $TAG"
-
-    - name: Extract Version from Tag
-      id: version
-      env:
-        INPUT_TAG: ${{ inputs.tag || github.ref }}
-      run: |
-        VERSION_REF="$INPUT_TAG"
-        # Strip refs/tags/ prefix and v prefix to get bare semver
-        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||; s|^v||')
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-        echo "## Publishing Version" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| **Version** | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Ref** | \`$VERSION_REF\` |" >> $GITHUB_STEP_SUMMARY
-        echo "| **Commit** | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
-        if [ -n "${{ inputs.source_branch }}" ]; then
-          echo "| **Source Branch** | \`${{ inputs.source_branch }}\` |" >> $GITHUB_STEP_SUMMARY
-        fi
-        echo ""
-        echo "Publishing version: $VERSION"
-        echo "From ref: $VERSION_REF"
-        echo "Commit: $(git rev-parse HEAD)"
+        ref: ${{ inputs.ref || github.ref }}
 
     - name: Setup .NET
       uses: ./.github/actions/setup-dotnet-retry
@@ -129,15 +67,12 @@ jobs:
       run: dotnet restore
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+      run: dotnet build --configuration Release --no-restore -p:Version=${{ inputs.version }}
 
     - name: Pack NuGet packages
-      # Note: NU5017 false positive occurs for analyzer packages in .NET 10 SDK
-      # The packages are created correctly despite the error, so we verify and continue
-      # Version is derived from the git tag, not Directory.Build.props
       run: |
-        dotnet pack --configuration Release --output ./packages -p:Version=${{ steps.version.outputs.version }} || true
-        # Verify packages were created
+        # NU5017 false positive for analyzer packages in .NET 10 SDK
+        dotnet pack --configuration Release --output ./packages -p:Version=${{ inputs.version }} || true
         ls -la ./packages/*.nupkg
         if [ $(ls ./packages/*.nupkg 2>/dev/null | wc -l) -eq 0 ]; then
           echo "ERROR: No packages were created"
@@ -158,32 +93,39 @@ jobs:
         cd ./packages
         for file in *.nupkg; do
           sha256sum "$file" > "$file.sha256"
-          echo "Generated hash for $file:"
-          cat "$file.sha256"
         done
 
     - name: Determine Release Type
       id: release_type
       env:
-        INPUT_TAG: ${{ inputs.tag || github.ref_name }}
+        VERSION: ${{ inputs.version }}
       run: |
-        TAG="$INPUT_TAG"
-        # Check if version contains prerelease suffix (e.g., -alpha, -beta, -rc)
-        if [[ "$TAG" =~ -[a-zA-Z] ]]; then
+        if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
           echo "prerelease=true" >> $GITHUB_OUTPUT
-          echo "Release type: Pre-release"
         else
           echo "prerelease=false" >> $GITHUB_OUTPUT
-          echo "Release type: Stable"
         fi
 
-    # Note: GitHub Release may already exist as DRAFT (from release.yml),
-    # or this step creates a new one (for manual/source_branch publishes)
-    - name: Upload Assets and Publish GitHub Release
+    - name: Create Tag if Missing
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        TAG="v$VERSION"
+        if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+          echo "Tag $TAG already exists"
+        else
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "Created tag: $TAG"
+        fi
+
+    - name: Create GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
-        tag_name: ${{ inputs.tag || github.ref_name }}
-        name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release {0}', inputs.tag || github.ref_name) || format('Release {0}', inputs.tag || github.ref_name) }}
+        tag_name: v${{ inputs.version }}
+        name: ${{ steps.release_type.outputs.prerelease == 'true' && format('Pre-release v{0}', inputs.version) || format('Release v{0}', inputs.version) }}
         generate_release_notes: true
         prerelease: ${{ steps.release_type.outputs.prerelease == 'true' }}
         files: |
@@ -192,11 +134,22 @@ jobs:
         fail_on_unmatched_files: false
         draft: false
 
+    - name: Summary
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
+        echo "## Published v$VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Packages**: $PACKAGE_COUNT" >> $GITHUB_STEP_SUMMARY
+        echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> $GITHUB_STEP_SUMMARY
+
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ inputs.version }}
 
   # ============================================================================
-  # Notifications - Send push notifications on deployment completion
+  # Notifications
   # ============================================================================
 
   notify-deployed:
