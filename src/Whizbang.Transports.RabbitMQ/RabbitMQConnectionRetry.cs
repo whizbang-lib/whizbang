@@ -73,7 +73,6 @@ public sealed partial class RabbitMQConnectionRetry {
     ArgumentNullException.ThrowIfNull(factory);
 
     var currentDelay = _options.InitialRetryDelay;
-    Exception? lastException = null;
     var attempt = 0;
 
     while (true) {
@@ -93,8 +92,6 @@ public sealed partial class RabbitMQConnectionRetry {
 
         return connection;
       } catch (BrokerUnreachableException ex) {
-        lastException = ex;
-
         // During initial retry phase, log each failure as warning
         if (attempt <= _options.InitialRetryAttempts) {
           if (_logger is not null) {
