@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -345,16 +344,18 @@ public class PerspectiveWorkerCoverageTests {
       OutboxWork = [
         new OutboxWork {
           MessageId = Guid.NewGuid(),
-          Payload = JsonSerializer.SerializeToElement(new { test = true }),
+          Envelope = new MessageEnvelope<JsonElement> {
+            MessageId = MessageId.New(),
+            Payload = JsonSerializer.SerializeToElement(new { test = true }),
+            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }]
+          },
+          EnvelopeType = "TestType",
           MessageType = "TestType",
+          Attempts = 0,
           StreamId = Guid.NewGuid(),
           Metadata = new Dictionary<string, JsonElement> {
             ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(3),
             ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(1)
-          },
-          EnvelopeMetadata = new EnvelopeMetadata {
-            MessageId = MessageId.New(),
-            Hops = []
           }
         }
       ],
@@ -384,16 +385,15 @@ public class PerspectiveWorkerCoverageTests {
       InboxWork = [
         new InboxWork {
           MessageId = Guid.NewGuid(),
-          Payload = JsonSerializer.SerializeToElement(new { test = true }),
+          Envelope = new MessageEnvelope<JsonElement> {
+            MessageId = MessageId.New(),
+            Payload = JsonSerializer.SerializeToElement(new { test = true }),
+            Hops = [new MessageHop { Type = HopType.Current, Timestamp = DateTimeOffset.UtcNow, ServiceInstance = new ServiceInstanceInfo { InstanceId = Guid.NewGuid(), ServiceName = "Test", HostName = "test", ProcessId = 1 } }]
+          },
           MessageType = "TestType",
-          SourceService = "TestSource",
           Metadata = new Dictionary<string, JsonElement> {
             ["perspective_completions_processed"] = JsonSerializer.SerializeToElement(7),
             ["perspective_failures_processed"] = JsonSerializer.SerializeToElement(0)
-          },
-          EnvelopeMetadata = new EnvelopeMetadata {
-            MessageId = MessageId.New(),
-            Hops = []
           }
         }
       ]
@@ -948,7 +948,7 @@ public class PerspectiveWorkerCoverageTests {
     // Arrange - Enable tracing to cover batch span and perspective span code paths
     var tracingOptions = new TracingOptions {
       EnableWorkerBatchSpans = true,
-      EnabledComponents = TraceComponents.Perspectives | TraceComponents.Lifecycle
+      Components = TraceComponents.Perspectives | TraceComponents.Lifecycle
     };
     var tracingOptionsMonitor = new FakeOptionsMonitor<TracingOptions>(tracingOptions);
 
@@ -1502,20 +1502,32 @@ public class PerspectiveWorkerCoverageTests {
 
     public void TrackEvent(Type eventType, Guid eventId, Guid streamId, string perspectiveName) { }
 
-    public IReadOnlyList<Guid> GetPendingEvents(Guid streamId, string perspectiveName) => [];
+    public IReadOnlyList<TrackedSyncEvent> GetPendingEvents(Guid streamId, string perspectiveName, Type[]? eventTypes = null) => [];
 
-    public void MarkProcessedByPerspective(IReadOnlyList<Guid> eventIds, string perspectiveName) {
+    public void MarkProcessed(IEnumerable<Guid> eventIds) { }
+
+    public IReadOnlyList<Guid> GetAllTrackedEventIds() => [];
+
+    public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default)
+      => Task.FromResult(true);
+
+    public void MarkProcessedByPerspective(IEnumerable<Guid> eventIds, string perspectiveName) {
       MarkProcessedByPerspectiveCallCount++;
     }
 
     public Task<bool> WaitForPerspectiveEventsAsync(
-        Guid streamId,
-        string perspectiveName,
         IReadOnlyList<Guid> eventIds,
+        string perspectiveName,
         TimeSpan timeout,
+        Guid? awaiterId = null,
         CancellationToken cancellationToken = default) {
       return Task.FromResult(true);
     }
+
+    public Task<bool> WaitForAllPerspectivesAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, Guid? awaiterId = null, CancellationToken cancellationToken = default)
+      => Task.FromResult(true);
+
+    public void UnregisterAwaiter(Guid awaiterId) { }
   }
 
   private sealed class FakeEventStore : IEventStore {
@@ -1523,11 +1535,12 @@ public class PerspectiveWorkerCoverageTests {
     public int GetEventsBetweenPolymorphicCallCount { get; private set; }
 
     public void AddEvent(Guid streamId, Guid eventId, IEvent payload, string? userId = null) {
-      if (!_events.ContainsKey(streamId)) {
-        _events[streamId] = [];
+      if (!_events.TryGetValue(streamId, out var list)) {
+        list = [];
+        _events[streamId] = list;
       }
 
-      _events[streamId].Add(new MessageEnvelope<IEvent> {
+      list.Add(new MessageEnvelope<IEvent> {
         MessageId = new MessageId(eventId),
         Payload = payload,
         Hops = [
@@ -1564,14 +1577,24 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     // IEventStore minimal implementation stubs
-    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) where TMessage : IMessage
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
-    public Task<List<MessageEnvelope<TEvent>>> GetEventsAsync<TEvent>(Guid streamId, CancellationToken cancellationToken = default) where TEvent : IEvent
-      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
-    public Task<List<MessageEnvelope<TEvent>>> GetEventsAfterAsync<TEvent>(Guid streamId, Guid afterEventId, CancellationToken cancellationToken = default) where TEvent : IEvent
-      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
-    public Task<List<MessageEnvelope<TEvent>>> GetEventsBetweenAsync<TEvent>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) where TEvent : IEvent
-      => Task.FromResult(new List<MessageEnvelope<TEvent>>());
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull
+      => Task.CompletedTask;
+    public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await Task.CompletedTask;
+      yield break;
+    }
+    public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await Task.CompletedTask;
+      yield break;
+    }
+    public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await Task.CompletedTask;
+      yield break;
+    }
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default)
+      => Task.FromResult(new List<MessageEnvelope<TMessage>>());
     public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default)
       => Task.FromResult(-1L);
   }
@@ -1589,14 +1612,14 @@ public class PerspectiveWorkerCoverageTests {
   private sealed class FakeMessageTagProcessor : IMessageTagProcessor {
     public int ProcessTagsCallCount { get; private set; }
 
-    public Task ProcessTagsAsync(
+    public ValueTask ProcessTagsAsync(
         object message,
         Type messageType,
         LifecycleStage stage,
-        IScopeContext? scope,
+        IScopeContext? scope = null,
         CancellationToken ct = default) {
       ProcessTagsCallCount++;
-      return Task.CompletedTask;
+      return ValueTask.CompletedTask;
     }
   }
 
