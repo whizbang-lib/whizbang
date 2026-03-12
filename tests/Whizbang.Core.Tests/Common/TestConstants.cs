@@ -48,7 +48,7 @@ public static class TestConstants {
   ///     SyncOptionsCommandReceptor, EmptyStreamIdEventReceptor)
   /// - 2 receptors from DispatcherInvokeWithReceiptTests.cs (ReceiptTestCommandReceptor, ReceiptTestVoidCommandReceptor)
   ///
-  /// Total: 93 receptors (includes 4 from scope/cascade integration test types)
+  /// Total: 101 receptors (includes coverage test types that implement ICommand/IEvent)
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 93;
+  public const int EXPECTED_RECEPTOR_COUNT = 101;
 }
