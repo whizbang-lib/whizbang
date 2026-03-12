@@ -716,3 +716,227 @@ public class JsonMessageSerializerTests {
     return options;
   }
 }
+
+/// <summary>
+/// Direct tests for CorrelationIdConverter to ensure coverage when running JsonMessageSerializer* filter.
+/// These tests cover Read/Write paths not exercised through the MessageHopConverter.
+/// </summary>
+[Category("Core")]
+[Category("Transports")]
+public class JsonMessageSerializerConverterTests {
+  // ===========================
+  // CorrelationIdConverter Tests
+  // ===========================
+
+  [Test]
+  public async Task CorrelationIdConverter_Read_WithValidGuid_ShouldReturnCorrelationIdAsync() {
+    // Arrange
+    var converter = new CorrelationIdConverter();
+    var correlationId = CorrelationId.New();
+    var json = $"\"{correlationId.Value}\"";
+    var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
+    reader.Read();
+
+    // Act
+    var result = converter.Read(ref reader, typeof(CorrelationId), JsonSerializerOptions.Default);
+
+    // Assert
+    await Assert.That(result.Value).IsEqualTo(correlationId.Value);
+  }
+
+  [Test]
+  public async Task CorrelationIdConverter_Read_WithNullValue_ShouldThrowJsonExceptionAsync() {
+    // Arrange
+    var converter = new CorrelationIdConverter();
+    var json = "null";
+    var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
+    reader.Read();
+
+    // Act & Assert
+    JsonException? caughtException = null;
+    try {
+      converter.Read(ref reader, typeof(CorrelationId), JsonSerializerOptions.Default);
+    } catch (JsonException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("Invalid CorrelationId format");
+  }
+
+  [Test]
+  public async Task CorrelationIdConverter_Read_WithInvalidGuid_ShouldThrowJsonExceptionAsync() {
+    // Arrange
+    var converter = new CorrelationIdConverter();
+    var json = "\"not-a-guid\"";
+    var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
+    reader.Read();
+
+    // Act & Assert
+    JsonException? caughtException = null;
+    try {
+      converter.Read(ref reader, typeof(CorrelationId), JsonSerializerOptions.Default);
+    } catch (JsonException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("Invalid CorrelationId format");
+  }
+
+  [Test]
+  public async Task CorrelationIdConverter_Write_WithValidCorrelationId_ShouldWriteGuidStringAsync() {
+    // Arrange
+    var converter = new CorrelationIdConverter();
+    var correlationId = CorrelationId.New();
+    using var stream = new MemoryStream();
+    using var writer = new Utf8JsonWriter(stream);
+
+    // Act
+    converter.Write(writer, correlationId, JsonSerializerOptions.Default);
+    writer.Flush();
+
+    // Assert
+    var json = Encoding.UTF8.GetString(stream.ToArray());
+    await Assert.That(json).IsEqualTo($"\"{correlationId.Value}\"");
+  }
+
+  // ===========================
+  // MetadataConverter Tests
+  // ===========================
+
+  [Test]
+  public async Task MetadataConverter_Read_WithNullToken_ShouldReturnNullAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    var json = "null"u8.ToArray();
+    var reader = new Utf8JsonReader(json);
+    reader.Read();
+
+    // Act
+    var result = converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task MetadataConverter_Read_WithEmptyObject_ShouldReturnEmptyDictionaryAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    var json = "{}"u8.ToArray();
+    var reader = new Utf8JsonReader(json);
+    reader.Read();
+
+    // Act
+    var result = converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MetadataConverter_Read_WithStringValue_ShouldDeserializeAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    var json = Encoding.UTF8.GetBytes("""{"key":"value"}""");
+    var reader = new Utf8JsonReader(json);
+    reader.Read();
+
+    // Act
+    var result = converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!["key"].GetString()).IsEqualTo("value");
+  }
+
+  [Test]
+  public async Task MetadataConverter_Read_WithInvalidStartToken_ShouldThrowJsonExceptionAsync() {
+    // Arrange - Array instead of object
+    var converter = new MetadataConverter();
+    var json = "[1,2,3]"u8.ToArray();
+    var reader = new Utf8JsonReader(json);
+    reader.Read();
+
+    // Act & Assert
+    JsonException? caughtException = null;
+    try {
+      converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+    } catch (JsonException ex) {
+      caughtException = ex;
+    }
+
+    await Assert.That(caughtException).IsNotNull();
+    await Assert.That(caughtException!.Message).Contains("Expected StartObject token");
+  }
+
+  [Test]
+  public async Task MetadataConverter_Write_WithNullValue_ShouldWriteNullLiteralAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    using var stream = new MemoryStream();
+    using var writer = new Utf8JsonWriter(stream);
+
+    // Act
+    converter.Write(writer, null, JsonSerializerOptions.Default);
+    writer.Flush();
+
+    // Assert
+    var json = Encoding.UTF8.GetString(stream.ToArray());
+    await Assert.That(json).IsEqualTo("null");
+  }
+
+  [Test]
+  public async Task MetadataConverter_Write_WithDictionary_ShouldWriteObjectAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    using var stream = new MemoryStream();
+    using var writer = new Utf8JsonWriter(stream);
+    var dictionary = new Dictionary<string, JsonElement> {
+      ["name"] = JsonSerializer.SerializeToElement("test"),
+      ["count"] = JsonSerializer.SerializeToElement(42)
+    };
+
+    // Act
+    converter.Write(writer, dictionary, JsonSerializerOptions.Default);
+    writer.Flush();
+
+    // Assert
+    var json = Encoding.UTF8.GetString(stream.ToArray());
+    var doc = JsonDocument.Parse(json);
+    await Assert.That(doc.RootElement.GetProperty("name").GetString()).IsEqualTo("test");
+    await Assert.That(doc.RootElement.GetProperty("count").GetInt32()).IsEqualTo(42);
+  }
+
+  [Test]
+  public async Task MetadataConverter_RoundTrip_WithMultipleTypes_ShouldPreserveAllAsync() {
+    // Arrange
+    var converter = new MetadataConverter();
+    var original = new Dictionary<string, JsonElement> {
+      ["str"] = JsonSerializer.SerializeToElement("hello"),
+      ["num"] = JsonSerializer.SerializeToElement(123),
+      ["bool"] = JsonSerializer.SerializeToElement(true),
+      ["arr"] = JsonSerializer.SerializeToElement(new int[] { 1, 2, 3 })
+    };
+
+    // Act - Write
+    using var stream = new MemoryStream();
+    using var writer = new Utf8JsonWriter(stream);
+    converter.Write(writer, original, JsonSerializerOptions.Default);
+    writer.Flush();
+
+    // Act - Read
+    var reader = new Utf8JsonReader(stream.ToArray());
+    reader.Read();
+    var result = converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!["str"].GetString()).IsEqualTo("hello");
+    await Assert.That(result["num"].GetInt32()).IsEqualTo(123);
+    await Assert.That(result["bool"].GetBoolean()).IsTrue();
+    await Assert.That(result["arr"].ValueKind).IsEqualTo(JsonValueKind.Array);
+  }
+}
