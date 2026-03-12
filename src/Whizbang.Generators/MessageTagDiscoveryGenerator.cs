@@ -245,6 +245,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("using System.Text.Json;");
     sb.AppendLine("using System.Threading;");
     sb.AppendLine("using System.Threading.Tasks;");
+    sb.AppendLine("using Whizbang.Core.Messaging;");
     sb.AppendLine("using Whizbang.Core.Security;");
     sb.AppendLine("using Whizbang.Core.Tags;");
     sb.AppendLine("using Whizbang.Core.Attributes;");
@@ -276,7 +277,8 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      object message,");
     sb.AppendLine("      Type messageType,");
     sb.AppendLine("      JsonElement payload,");
-    sb.AppendLine("      IScopeContext? scope) {");
+    sb.AppendLine("      IScopeContext? scope,");
+    sb.AppendLine("      LifecycleStage stage) {");
     sb.AppendLine();
 
     foreach (var attrType in customAttributeTypes) {
@@ -287,6 +289,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine($"        MessageType = messageType,");
       sb.AppendLine($"        Payload = payload,");
       sb.AppendLine($"        Scope = scope,");
+      sb.AppendLine($"        Stage = stage,");
       sb.AppendLine($"      }};");
       sb.AppendLine($"    }}");
       sb.AppendLine();

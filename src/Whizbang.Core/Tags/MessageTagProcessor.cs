@@ -124,7 +124,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       // Get the attribute instance
       var attribute = registration.AttributeFactory();
 
-      // Create context and invoke hooks for this attribute type
+      // Create context and invoke hooks for this attribute type (pass stage so hooks can filter)
       await _processTagRegistrationAsync(message, messageType, attribute, payload, stage, scope, hookResolver, ct);
     }
   }
@@ -141,9 +141,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       IScopeContext? scope,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
-    // Get hooks that match this attribute type AND the specified lifecycle stage
+    // Get all hooks that match this attribute type (hooks filter by stage via context.Stage)
     var attributeType = attribute.GetType();
-    var hooks = _options.GetHooksFor(attributeType, stage).ToList();
+    var hooks = _options.GetHooksFor(attributeType).ToList();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (TagLogger.IsEnabled(LogLevel.Debug)) {
       TagLogger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, stage, hooks.Count);
@@ -166,8 +166,20 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         TagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", registration.HookType.Name);
       }
 
-      // Create context based on attribute type
-      var hookContext = _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope);
+      // Create context based on registration's attribute type (not the actual attribute type)
+      // For universal hooks (AttributeType == MessageTagAttribute), we need TagContext<MessageTagAttribute>
+      // For typed hooks, we use the actual attribute type for the context
+      var contextAttributeType = registration.AttributeType == typeof(MessageTagAttribute) ? typeof(MessageTagAttribute) : attribute.GetType();
+      var hookContext = contextAttributeType == typeof(MessageTagAttribute)
+        ? (object)new TagContext<MessageTagAttribute> {
+          Attribute = attribute,
+          Message = message,
+          MessageType = messageType,
+          Payload = currentPayload,
+          Scope = scope,
+          Stage = stage
+        }
+        : _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope, stage);
       if (TagLogger.IsEnabled(LogLevel.Debug)) {
         TagLogger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", hookContext.GetType().Name);
       }
@@ -194,7 +206,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       object message,
       Type messageType,
       JsonElement payload,
-      IScopeContext? scope) {
+      IScopeContext? scope,
+      LifecycleStage stage) {
     // Create the appropriate typed context based on attribute type
     if (attribute is SignalTagAttribute notificationAttr) {
       return new TagContext<SignalTagAttribute> {
@@ -202,7 +215,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         Message = message,
         MessageType = messageType,
         Payload = payload,
-        Scope = scope
+        Scope = scope,
+        Stage = stage
       };
     }
 
@@ -212,7 +226,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         Message = message,
         MessageType = messageType,
         Payload = payload,
-        Scope = scope
+        Scope = scope,
+        Stage = stage
       };
     }
 
@@ -222,13 +237,14 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         Message = message,
         MessageType = messageType,
         Payload = payload,
-        Scope = scope
+        Scope = scope,
+        Stage = stage
       };
     }
 
     // Try dispatcher registry for custom attribute types
     var customContext = MessageTagHookDispatcherRegistry.TryCreateContext(
-        attribute.GetType(), attribute, message, messageType, payload, scope);
+        attribute.GetType(), attribute, message, messageType, payload, scope, stage);
     if (customContext is not null) {
       return customContext;
     }
@@ -239,7 +255,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Message = message,
       MessageType = messageType,
       Payload = payload,
-      Scope = scope
+      Scope = scope,
+      Stage = stage
     };
   }
 
@@ -290,7 +307,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         Message = originalContext.Message,
         MessageType = originalContext.MessageType,
         Payload = currentPayload,
-        Scope = originalContext.Scope
+        Scope = originalContext.Scope,
+        Stage = originalContext.Stage
       };
     }
 
@@ -300,7 +318,8 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Message = originalContext.Message,
       MessageType = originalContext.MessageType,
       Payload = currentPayload,
-      Scope = originalContext.Scope
+      Scope = originalContext.Scope,
+      Stage = originalContext.Stage
     };
   }
 
