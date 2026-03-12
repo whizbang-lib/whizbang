@@ -41,7 +41,10 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
 
   /// <inheritdoc />
   public async Task CreateTopicAsync(string topicName, CancellationToken cancellationToken = default) {
-    await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+    var options = new CreateTopicOptions(topicName) {
+      SupportOrdering = true
+    };
+    await _adminClient.CreateTopicAsync(options, cancellationToken);
   }
 
   #endregion
