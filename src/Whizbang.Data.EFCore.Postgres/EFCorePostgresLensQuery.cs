@@ -27,7 +27,6 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
     where TModel : class {
 
   private readonly DbContext _context;
-  private readonly string _tableName;
 
   /// <summary>
   /// Initializes a new instance of <see cref="EFCorePostgresLensQuery{TModel}"/>.
@@ -38,7 +37,7 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync</tests>
   public EFCorePostgresLensQuery(DbContext context, string tableName) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
-    _tableName = tableName ?? throw new ArgumentNullException(nameof(tableName));
+    ArgumentNullException.ThrowIfNull(tableName);
   }
 
   /// <inheritdoc/>
@@ -80,7 +79,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
     where T2 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   /// <summary>
@@ -93,7 +91,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2> : ILensQuery<T1, T2>
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   /// <inheritdoc/>
@@ -147,7 +145,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
     where T3 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -156,7 +153,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3> : ILensQuery<T1, T2, T3>
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -206,7 +203,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
     where T4 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -215,7 +211,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4> : ILensQuery<T1, T2,
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -269,7 +265,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
     where T5 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -278,7 +273,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5> : ILensQuery<T1,
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -336,7 +331,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
     where T6 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -345,7 +339,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6> : ILensQuery
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -405,7 +399,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
     where T7 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -414,7 +407,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7> : ILensQ
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -478,7 +471,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
     where T8 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -487,7 +479,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8> : IL
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -555,7 +547,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
     where T9 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -564,7 +555,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9> 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
@@ -636,7 +627,6 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
     where T10 : class {
 
   private readonly DbContext _context;
-  private readonly IReadOnlyDictionary<Type, string> _tableNames;
   private bool _disposed;
 
   public EFCorePostgresLensQuery(
@@ -645,7 +635,7 @@ public sealed class EFCorePostgresLensQuery<T1, T2, T3, T4, T5, T6, T7, T8, T9, 
     ArgumentNullException.ThrowIfNull(dbContext);
     ArgumentNullException.ThrowIfNull(tableNames);
     _context = dbContext;
-    _tableNames = tableNames;
+
   }
 
   public IQueryable<PerspectiveRow<T>> Query<T>() where T : class {
