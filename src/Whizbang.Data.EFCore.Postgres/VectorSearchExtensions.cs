@@ -779,17 +779,7 @@ public static class VectorSearchExtensions {
     public Vector Value { get; set; } = null!;
   }
 
-  /// <summary>
-  /// Builds a MemberExpression accessing the Data property of PerspectiveRow&lt;TModel&gt;.
-  /// AOT-safe: Extracts PropertyInfo from a compile-time lambda expression.
-  /// </summary>
-  private static MemberExpression _buildDataPropertyAccess<TModel>(ParameterExpression param) where TModel : class {
-    // Build: r => r.Data - extract MemberInfo at compile time from lambda
-    Expression<Func<PerspectiveRow<TModel>, TModel>> dataSelector = r => r.Data;
-    var memberExpr = (MemberExpression)dataSelector.Body;
-    // Rebind to our parameter using the extracted MemberInfo
-    return Expression.MakeMemberAccess(param, memberExpr.Member);
-  }
+
 
   /// <summary>
   /// Gets the constructor for VectorSearchResult&lt;TModel&gt;.

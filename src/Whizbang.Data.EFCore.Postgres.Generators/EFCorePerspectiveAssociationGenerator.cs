@@ -22,8 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveAssociationGeneratorTests.cs:Generator_AbstractClass_IsIgnoredAsync</tests>
 [Generator]
 public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(

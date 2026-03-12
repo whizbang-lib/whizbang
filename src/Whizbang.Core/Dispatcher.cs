@@ -69,6 +69,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
+#pragma warning disable CS9113 // Primary constructor parameter is unread - retained for backward compatibility with generated code
 public abstract partial class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -88,6 +89,7 @@ public abstract partial class Dispatcher(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
+#pragma warning restore CS9113
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -133,14 +135,9 @@ public abstract partial class Dispatcher(
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
-  // Unused parameters retained for backward compatibility with generated code
-  private readonly JsonSerializerOptions? _ = jsonOptions;
-  private readonly IReceptorInvoker? __ = receptorInvoker;
-
   // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
   // Uses try-catch to handle ObjectDisposedException during shutdown gracefully
   private ILogger? _cascadeLogger;
-  private ILogger? _securityLogger;
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger CascadeLogger {
     get {
@@ -155,21 +152,6 @@ public abstract partial class Dispatcher(
         _cascadeLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
       }
       return _cascadeLogger;
-    }
-  }
-  private ILogger SecurityLogger {
-    get {
-      if (_securityLogger is not null) {
-        return _securityLogger;
-      }
-      try {
-        _securityLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher.Security")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-      } catch (ObjectDisposedException) {
-        // Service provider disposed during shutdown - use null logger
-        _securityLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-      }
-      return _securityLogger;
     }
   }
 #pragma warning restore IDE1006
@@ -1385,43 +1367,6 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
-  /// Slow path for void LocalInvoke when tracing is enabled.
-  /// Uses async/await to store envelope before invoking receptor.
-  /// </summary>
-  private async ValueTask _localInvokeVoidWithTracingAsync(
-    object message,
-    IMessageContext context,
-    VoidReceptorInvoker invoker,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
-  ) {
-    var messageType = message.GetType();
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
-
-    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
-    _envelopeRegistry?.Register(envelope);
-    try {
-      if (_traceStore != null) {
-        await _traceStore.StoreAsync(envelope);
-      }
-
-      // Start dispatch activity to serve as parent for handler traces
-      // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
-      using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
-
-      // Invoke using delegate - zero reflection, strongly typed
-      await invoker(message);
-    } finally {
-      // Unregister envelope after receptor completes (or throws)
-      _envelopeRegistry?.Unregister(envelope);
-    }
-  }
-
-  /// <summary>
   /// Async path for void LocalInvoke with sync check and optional tracing.
   /// Called when receptor has [AwaitPerspectiveSync] attributes or tracing is enabled.
   /// </summary>
@@ -2355,14 +2300,12 @@ public abstract partial class Dispatcher(
       // Event store only: Store to event store without transport (for Local, EventStoreOnly)
       // When EventStore is set but Outbox is NOT set, store with null destination
       // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-      if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
-        if (msg is IEvent) {
-          if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-            var msgTypeName = messageType.Name;
-            CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
-          }
-          await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
+      if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox) && msg is IEvent) {
+        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+          var msgTypeName = messageType.Name;
+          CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
         }
+        await CascadeToEventStoreOnlyAsync(msg, messageType, sourceEnvelope: sourceEnvelope, eventId: eventId);
       }
 
       // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
@@ -2383,10 +2326,8 @@ public abstract partial class Dispatcher(
           "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
           resultTypeName);
       }
-    } else {
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted {Count} messages total", extractedCount);
-      }
+    } else if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Extracted {Count} messages total", extractedCount);
     }
 #pragma warning restore CA1848
   }
@@ -2709,17 +2650,15 @@ public abstract partial class Dispatcher(
     // Uses destination=null to store event and create perspective events, but skip transport.
     // This path is NOT taken if Outbox flag is also set (Outbox handles event storage via transport).
     // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
-      // Only events are stored (commands are silently skipped, consistent with current behavior)
-      if (message is IEvent) {
+    // Only events are stored (commands are silently skipped, consistent with current behavior)
+    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox) && message is IEvent) {
 #pragma warning disable CA1848
-        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-          var msgTypeName = messageType.Name;
-          CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
-        }
-#pragma warning restore CA1848
-        await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+        var msgTypeName = messageType.Name;
+        CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
       }
+#pragma warning restore CA1848
+      await CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
     }
 
     // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
