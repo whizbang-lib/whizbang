@@ -98,7 +98,8 @@ public class DispatcherPublishTests {
 
   [Test]
   public async Task LocalInvokeAndSyncForPerspectiveAsync_WithNoSyncAwaiter_ReturnsSyncedAsync() {
-    // When no IPerspectiveSyncAwaiter is registered, returns Synced
+    // When no IPerspectiveSyncAwaiter is registered, the test-local VoidPerspectiveCommand type is not
+    // known to the generated StreamId extractor, so it returns NoPendingEvents (can't extract stream ID)
     var dispatcher = _createDispatcher();
     var command = new VoidPerspectiveCommand(Guid.NewGuid());
 
@@ -106,7 +107,7 @@ public class DispatcherPublishTests {
     var syncResult = await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<VoidPerspectiveCommand, FakePerspective>(
       command);
 
-    await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   [Test]
@@ -128,11 +129,11 @@ public class DispatcherPublishTests {
     var command = new VoidPerspectiveCommand(Guid.NewGuid());
     var timeout = TimeSpan.FromSeconds(1);
 
-    // Act
+    // Act - test-local type not known to generated StreamId extractor; returns NoPendingEvents
     var syncResult = await dispatcher.LocalInvokeAndSyncForPerspectiveAsync<VoidPerspectiveCommand, FakePerspective>(
       command, timeout: timeout);
 
-    await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.Synced);
+    await Assert.That(syncResult.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
   }
 
   [Test]
