@@ -25,13 +25,19 @@ namespace Whizbang.Core.Workers;
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
 /// </summary>
-public class TransportPublishStrategy : IMessagePublishStrategy {
-  private const string LogCategory = "Whizbang.Core.Transport";
+public partial class TransportPublishStrategy : IMessagePublishStrategy {
+  private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
   private readonly ITransport _transport;
   private readonly ITransportReadinessCheck _readinessCheck;
   private readonly string _inboxTopic;
   private readonly ILogger _logger;
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
+  private partial void LogSkippingEventStoreOnly(string messageType);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing message: MessageType={MessageType}, OutboxDestination={OutboxDestination}, ResolvedAddress={ResolvedAddress}, ResolvedRoutingKey={ResolvedRoutingKey}")]
+  private partial void LogPublishingMessage(string messageType, string outboxDestination, string resolvedAddress, string? resolvedRoutingKey);
 
   /// <summary>
   /// Creates a new TransportPublishStrategy with default inbox topic.
@@ -54,7 +60,7 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
     _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-    _logger = loggerFactory?.CreateLogger(LogCategory) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+    _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   }
 
   /// <summary>
@@ -88,7 +94,7 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // Skip transport publishing for event-store-only messages (destination is null)
       // These messages are stored in event store via process_work_batch but should not be transported
       if (string.IsNullOrEmpty(work.Destination)) {
-        _logger.LogDebug("Skipping transport for event-store-only message: {MessageType}", work.MessageType);
+        LogSkippingEventStoreOnly(work.MessageType);
         return new MessagePublishResult {
           MessageId = work.MessageId,
           Success = true,
@@ -102,9 +108,7 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
       var destination = _resolveDestination(work);
 
-      _logger.LogDebug(
-        "Publishing message: MessageType={MessageType}, OutboxDestination={OutboxDestination}, ResolvedAddress={ResolvedAddress}, ResolvedRoutingKey={ResolvedRoutingKey}",
-        work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
+      LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
 
       // Publish to transport - envelope is already deserialized
       // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
@@ -267,4 +271,3 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     return fullTypeName[(lastDotIndex + 1)..];
   }
 }
-
