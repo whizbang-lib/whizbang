@@ -18,13 +18,13 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// Stream ID is inferred from event's [AggregateId] property.
 /// Uses retry logic with UNIQUE constraint for thread-safe sequence number generation.
 /// </summary>
-#pragma warning disable CS9113 // Primary constructor parameter is unread - retained for backward compatibility
+#pragma warning disable CS9113, S1144 // Primary constructor parameter is unread - retained for backward compatibility
 public class DapperSqliteEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions,
   IPolicyEngine policyEngine) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
-#pragma warning restore CS9113
+#pragma warning restore CS9113, S1144
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).

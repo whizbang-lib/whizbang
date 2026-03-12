@@ -288,6 +288,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         );
       }
     } catch (Exception ex) {
+      // Intentional log-and-rethrow: transport errors cross async/DI boundaries where
+      // the original exception context may be lost. Logging here ensures diagnostics.
+#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Failed to publish message {MessageId} to {Destination}",
@@ -295,6 +298,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         destination.Address
       );
       throw;
+#pragma warning restore S2139
     }
   }
 
@@ -604,6 +608,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       return subscription;
     } catch (Exception ex) {
+      // Intentional log-and-rethrow: subscription failures cross async/worker boundaries
+      // where the original exception context may be lost. Logging here ensures diagnostics.
+#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Failed to create subscription to {TopicName}/{SubscriptionName}",
@@ -611,6 +618,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         destination.RoutingKey ?? _options.DefaultSubscriptionName
       );
       throw;
+#pragma warning restore S2139
     }
   }
 
@@ -715,6 +723,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
     } catch (Exception ex) {
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      // Intentional log-and-rethrow: infrastructure provisioning errors cross async/DI boundaries
+      // where the original exception context may be lost. Logging here ensures diagnostics.
+#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Error applying CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
@@ -723,6 +734,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         subscriptionName
       );
       throw;
+#pragma warning restore S2139
     }
   }
 

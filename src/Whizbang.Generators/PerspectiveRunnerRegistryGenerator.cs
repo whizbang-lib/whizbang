@@ -81,16 +81,11 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
 
     // Extract model type (first type argument in both IPerspectiveFor and IGlobalPerspectiveFor)
-    ITypeSymbol? modelType = null;
-    if (singleStreamInterfaces.Count > 0) {
-      modelType = singleStreamInterfaces[0].TypeArguments[0];
-    } else if (globalInterfaces.Count > 0) {
-      modelType = globalInterfaces[0].TypeArguments[0];
-    }
-
-    if (modelType is null) {
-      return null;
-    }
+    // At this point, at least one of singleStreamInterfaces or globalInterfaces has count > 0
+    // (we returned null above if both were empty), so modelType is always assigned.
+    var modelType = singleStreamInterfaces.Count > 0
+        ? singleStreamInterfaces[0].TypeArguments[0]
+        : globalInterfaces[0].TypeArguments[0];
 
     // Find property with [StreamId] attribute on the model
     var hasStreamIdAttribute = false;
@@ -123,7 +118,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
           eventTypes.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
         }
       }
-    } else if (globalInterfaces.Count > 0) {
+    } else {
+      // globalInterfaces.Count is guaranteed > 0 here (we returned null above if both were empty)
       // IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> - events start at index 2
       foreach (var iface in globalInterfaces) {
         for (var i = 2; i < iface.TypeArguments.Length; i++) {
