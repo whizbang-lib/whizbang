@@ -10,6 +10,11 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: write    # Required for nuget-publish to create tags and releases
+  id-token: write    # Required for NuGet OIDC trusted publishing
+  pull-requests: write  # Required for version comment on PRs
+
 concurrency:
   # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
