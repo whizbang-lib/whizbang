@@ -28,7 +28,9 @@ namespace Whizbang.Core.Tracing;
 /// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
 public sealed partial class Tracer : ITracer {
+#pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
   private readonly ILogger<Tracer> _logger;
+#pragma warning restore S4487
   private readonly IOptionsMonitor<TracingOptions> _options;
 
   // Thread-local storage for current activity (to match Begin/End calls)

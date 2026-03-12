@@ -45,7 +45,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_RESPONSE_TYPE = "__RESPONSE_TYPE__";
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
-  private const string PLACEHOLDER_LIFECYCLE_STAGE = "__LIFECYCLE_STAGE__";
+
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
   private const string PLACEHOLDER_MESSAGE_NAME = "__MESSAGE_NAME__";

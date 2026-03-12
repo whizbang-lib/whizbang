@@ -119,7 +119,9 @@ public abstract partial class Dispatcher(
   // Owned domains for routing decisions - resolved from RoutingOptions if available
   private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
+#pragma warning disable S4487 // Pre-resolved for use by subclasses and future features
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+#pragma warning restore S4487
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
@@ -127,7 +129,9 @@ public abstract partial class Dispatcher(
   // Auto-populate processor - populates message properties from envelope context
   private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
+#pragma warning disable S4487 // Pre-resolved for use by subclasses and future features
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
+#pragma warning restore S4487
   // Cascade context factory for unified context propagation
   private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? serviceProvider.GetService<CascadeContextFactory>() ?? new CascadeContextFactory(null);
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
