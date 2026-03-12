@@ -31,7 +31,9 @@ public partial class TransportPublishStrategy : IMessagePublishStrategy {
   private readonly ITransport _transport;
   private readonly ITransportReadinessCheck _readinessCheck;
   private readonly string _inboxTopic;
+#pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
   private readonly ILogger _logger;
+#pragma warning restore S4487
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
   private partial void LogSkippingEventStoreOnly(string messageType);

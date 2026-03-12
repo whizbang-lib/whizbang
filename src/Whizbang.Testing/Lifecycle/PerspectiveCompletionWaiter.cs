@@ -38,7 +38,6 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   private readonly TaskCompletionSource<bool> _bffCompletionSource;
   private readonly int _inventoryPerspectives;
   private readonly int _bffPerspectives;
-  private readonly ILogger<PerspectiveCompletionWaiter<TEvent>>? _logger;
 
   /// <summary>
   /// Creates a new perspective completion waiter for two hosts (inventory and BFF pattern).
@@ -60,7 +59,6 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
     _inventoryPerspectives = inventoryPerspectives;
     _bffPerspectives = bffPerspectives;
-    _logger = logger;
 
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");

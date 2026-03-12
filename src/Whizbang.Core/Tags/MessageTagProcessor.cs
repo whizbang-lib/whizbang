@@ -29,7 +29,9 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   private readonly IServiceScopeFactory? _scopeFactory;
 
   // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
+#pragma warning disable S4487 // Backing field for TagLogger lazy property
   private ILogger? _tagLogger;
+#pragma warning restore S4487
 #pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger TagLogger => _tagLogger ??= _scopeFactory?.CreateScope().ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Tags.MessageTagProcessor") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #pragma warning restore IDE1006
