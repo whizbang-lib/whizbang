@@ -92,7 +92,27 @@ jobs:
           echo "fullSemVer=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Display Version
+        env:
+          SEMVER: ${{ steps.gitversion.outputs.semVer || steps.fallback.outputs.semVer }}
+          FULLSEMVER: ${{ steps.gitversion.outputs.fullSemVer || steps.fallback.outputs.fullSemVer }}
+          PRERELEASE: ${{ steps.gitversion.outputs.preReleaseTag }}
         run: |
-          echo "Version: ${{ steps.gitversion.outputs.semVer }}"
-          echo "Full SemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
-          echo "Pre-release: ${{ steps.gitversion.outputs.preReleaseTag }}"
+          echo "Version: $SEMVER"
+          echo "Full SemVer: $FULLSEMVER"
+          echo "Pre-release: $PRERELEASE"
+
+          # Annotation visible on the workflow run summary
+          echo "::notice::Version: $SEMVER (Full: $FULLSEMVER)"
+
+          # Step summary table
+          echo "## Version" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **SemVer** | \`$SEMVER\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Full SemVer** | \`$FULLSEMVER\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$PRERELEASE" ]; then
+            echo "| **Pre-release** | \`$PRERELEASE\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Pre-release** | _(none - stable)_ |" >> $GITHUB_STEP_SUMMARY
+          fi
