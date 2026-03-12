@@ -6,7 +6,7 @@ namespace Whizbang.Migrate.Commands;
 /// Command that reverts migration changes using git reset.
 /// </summary>
 /// <docs>migrate-from-marten-wolverine/cli-wizard</docs>
-public sealed class RevertCommand {
+public static class RevertCommand {
   /// <summary>
   /// Executes the revert command on the specified directory.
   /// </summary>

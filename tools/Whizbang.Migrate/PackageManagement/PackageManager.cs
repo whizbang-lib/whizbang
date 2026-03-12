@@ -7,7 +7,7 @@ namespace Whizbang.Migrate.PackageManagement;
 /// Handles both Central Package Management (Directory.Packages.props) and traditional PackageReference.
 /// </summary>
 /// <docs>migration-guide/automated-migration</docs>
-public sealed class PackageManager {
+public static class PackageManager {
   /// <summary>
   /// Package mappings from old Marten/Wolverine packages to Whizbang equivalents.
   /// </summary>
