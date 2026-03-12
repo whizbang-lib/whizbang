@@ -914,11 +914,12 @@ public class JsonMessageSerializerConverterTests {
   public async Task MetadataConverter_RoundTrip_WithMultipleTypes_ShouldPreserveAllAsync() {
     // Arrange
     var converter = new MetadataConverter();
+    var arrayValue = JsonSerializer.SerializeToElement(new List<int> { 1, 2, 3 });
     var original = new Dictionary<string, JsonElement> {
       ["str"] = JsonSerializer.SerializeToElement("hello"),
       ["num"] = JsonSerializer.SerializeToElement(123),
       ["bool"] = JsonSerializer.SerializeToElement(true),
-      ["arr"] = JsonSerializer.SerializeToElement(new int[] { 1, 2, 3 })
+      ["arr"] = arrayValue
     };
 
     // Act - Write

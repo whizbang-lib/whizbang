@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Stores events with stream-based organization using sequence numbers.
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
+#pragma warning disable S2743 // Static diagnostic flag is intentionally per-generic-type (reads same env var)
 public sealed class EFCoreEventStore<TDbContext> : IEventStore
   where TDbContext : DbContext {
 
