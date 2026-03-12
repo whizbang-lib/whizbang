@@ -2,6 +2,7 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
@@ -24,10 +25,19 @@ namespace Whizbang.Core.Workers;
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
 /// </summary>
-public class TransportPublishStrategy : IMessagePublishStrategy {
+public partial class TransportPublishStrategy : IMessagePublishStrategy {
+  private const string LOG_CATEGORY = "Whizbang.Core.Transport";
+
   private readonly ITransport _transport;
   private readonly ITransportReadinessCheck _readinessCheck;
   private readonly string _inboxTopic;
+  private readonly ILogger _logger;
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
+  private partial void LogSkippingEventStoreOnly(string messageType);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing message: MessageType={MessageType}, OutboxDestination={OutboxDestination}, ResolvedAddress={ResolvedAddress}, ResolvedRoutingKey={ResolvedRoutingKey}")]
+  private partial void LogPublishingMessage(string messageType, string outboxDestination, string resolvedAddress, string? resolvedRoutingKey);
 
   /// <summary>
   /// Creates a new TransportPublishStrategy with default inbox topic.
@@ -35,8 +45,8 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck)
-    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic) {
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory? loggerFactory = null)
+    : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory) {
   }
 
   /// <summary>
@@ -46,10 +56,11 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
   /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic) {
+  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic, ILoggerFactory? loggerFactory = null) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
     _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+    _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   }
 
   /// <summary>
@@ -83,7 +94,7 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // Skip transport publishing for event-store-only messages (destination is null)
       // These messages are stored in event store via process_work_batch but should not be transported
       if (string.IsNullOrEmpty(work.Destination)) {
-        Console.WriteLine($"[TransportPublishStrategy.PublishAsync] Skipping transport for event-store-only message: {work.MessageType}");
+        LogSkippingEventStoreOnly(work.MessageType);
         return new MessagePublishResult {
           MessageId = work.MessageId,
           Success = true,
@@ -97,11 +108,7 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // FALLBACK: Applies routing transformation for messages stored before routing was properly configured
       var destination = _resolveDestination(work);
 
-      // DEBUG: Log routing decision for troubleshooting
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] MessageType={work.MessageType}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] OutboxDestination={work.Destination}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedAddress={destination.Address}");
-      Console.WriteLine($"[TransportPublishStrategy.PublishAsync] ResolvedRoutingKey={destination.RoutingKey}");
+      LogPublishingMessage(work.MessageType, work.Destination, destination.Address, destination.RoutingKey);
 
       // Publish to transport - envelope is already deserialized
       // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
@@ -264,4 +271,3 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
     return fullTypeName[(lastDotIndex + 1)..];
   }
 }
-

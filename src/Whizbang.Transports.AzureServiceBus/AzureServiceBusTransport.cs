@@ -813,19 +813,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     // Ensure topic exists
-    try {
-      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation("Creating topic {TopicName}", topicName);
-        }
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
-      }
-    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
-      // Race condition - topic created by another instance, safe to ignore
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Topic {TopicName} already exists (409 conflict)", topicName);
-      }
-    }
+    await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
 
     // Ensure subscription exists
     try {
@@ -934,6 +922,31 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     };
   }
 
+  /// <summary>
+  /// Ensures a topic exists via the admin client, handling race conditions gracefully.
+  /// Shared by both subscribe-path and publish-path auto-provisioning.
+  /// </summary>
+  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
+    if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
+      return;
+    }
+
+    try {
+      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
+        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
+        if (_logger.IsEnabled(LogLevel.Information)) {
+          _logger.LogInformation("Auto-created topic '{TopicName}'", topicName);
+        }
+      }
+    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
+      // Race condition — another instance created it, safe to ignore
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug("Topic '{TopicName}' already exists (race condition)", topicName);
+      }
+    }
+  }
+
   private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
       _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Using existing sender for {TopicName}", topicName);
@@ -949,6 +962,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Found existing sender after lock for {TopicName}", topicName);
         return existingSender;
       }
+
+      // Ensure topic exists before creating sender (on-demand provisioning)
+      // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
+      await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
 
       _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Creating sender for {TopicName}", topicName);
       var sender = _client.CreateSender(topicName);
