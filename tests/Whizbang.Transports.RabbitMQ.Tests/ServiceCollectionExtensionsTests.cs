@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
@@ -97,5 +98,30 @@ public class ServiceCollectionExtensionsTests {
     // Act & Assert
     await Assert.That(() => services.AddRabbitMQTransport(string.Empty))
       .Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task AddRabbitMQTransport_RegistersMessagePublishStrategy_AsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var connectionString = "amqp://guest:guest@localhost:5672/";
+
+    services.AddSingleton<IConnection>(sp => {
+      var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel()));
+      return fakeConnection;
+    });
+    services.AddLogging();
+
+    // Act
+    services.AddRabbitMQTransport(connectionString);
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var strategy1 = provider.GetService<IMessagePublishStrategy>();
+    var strategy2 = provider.GetService<IMessagePublishStrategy>();
+
+    await Assert.That(strategy1).IsNotNull();
+    await Assert.That(strategy2).IsNotNull();
+    await Assert.That(ReferenceEquals(strategy1, strategy2)).IsTrue();
   }
 }

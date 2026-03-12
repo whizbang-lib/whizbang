@@ -349,16 +349,4 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     }
   }
 
-  /// <summary>
-  /// Placeholder: Verifies transport auto-creates topic on publish when AutoProvisionInfrastructure is enabled.
-  /// Cannot test with emulator — management APIs are unavailable on the Service Bus emulator.
-  /// Verified manually against real Azure Service Bus namespace.
-  /// </summary>
-  [Test]
-  [Category("Integration")]
-  [Skip("Management API not available on Service Bus emulator")]
-  public Task PublishAsync_TopicDoesNotExist_AutoCreatesTopicAsync() {
-    return Task.CompletedTask;
-  }
-
 }
