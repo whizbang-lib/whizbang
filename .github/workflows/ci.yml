@@ -320,6 +320,7 @@ jobs:
     needs: [changes, quality]
     if: |
       always() &&
+      github.ref != 'refs/heads/develop' &&
       (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
       vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
@@ -341,7 +342,7 @@ jobs:
   notify-failure:
     name: Notify Failure
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
-    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    if: failure() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
@@ -361,7 +362,7 @@ jobs:
   notify-cancelled:
     name: Notify Cancelled
     needs: [build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, quality]
-    if: cancelled() && vars.PUSHOVER_ENABLED == 'true'
+    if: cancelled() && github.ref != 'refs/heads/develop' && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: cancelled
