@@ -56,7 +56,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_TYPE_NAME = "__TYPE_NAME__";
   private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
   private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
+#pragma warning disable S1144 // Used extensively in template replacement (e.g., lines 562, 943, 1014, 2495)
   private const string PLACEHOLDER_UNIQUE_IDENTIFIER = "__UNIQUE_IDENTIFIER__";
+#pragma warning restore S1144
   private const string PLACEHOLDER_GLOBAL = "global::";
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";

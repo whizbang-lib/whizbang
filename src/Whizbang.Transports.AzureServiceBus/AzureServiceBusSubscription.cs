@@ -14,7 +14,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Subscription lifecycle logging - infrequent pause/resume/dispose operations")]
-public class AzureServiceBusSubscription : ISubscription {
+public sealed class AzureServiceBusSubscription : ISubscription {
   private readonly ServiceBusProcessor _processor;
   private readonly ILogger _logger;
   private bool _isDisposed;

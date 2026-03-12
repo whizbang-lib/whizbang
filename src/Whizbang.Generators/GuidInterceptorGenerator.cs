@@ -303,12 +303,14 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     return false;
   }
 
+#pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
       Compilation _,
       ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
+#pragma warning restore S1144
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {

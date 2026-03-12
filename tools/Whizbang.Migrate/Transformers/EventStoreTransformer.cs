@@ -151,8 +151,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
           expr.Expression.ToString().Contains(".Events.Append")) {
         consecutiveAppends++;
         firstAppend ??= expr;
-      } else if (consecutiveAppends > 1 && firstAppend != null) {
-        var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+      } else if (consecutiveAppends > 1) {
+        // firstAppend is guaranteed non-null when consecutiveAppends > 1 (assigned via ??= on first match)
+        var lineNumber = firstAppend!.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
             "batch append with AppendBatchAsync for better performance, or use IDispatcher.PublishAsync " +
             "for each event to leverage the built-in outbox.");
@@ -164,8 +165,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
       }
     }
     // Check final batch
-    if (consecutiveAppends > 1 && firstAppend != null) {
-      var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+    // firstAppend is guaranteed non-null when consecutiveAppends > 1 (assigned via ??= on first match)
+    if (consecutiveAppends > 1) {
+      var lineNumber = firstAppend!.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
       warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
           "batch append with AppendBatchAsync for better performance.");
     }
@@ -263,7 +265,8 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     }
 
     // If no Marten using was found but we have patterns, add Whizbang.Core.Messaging
-    if (!removedMarten && !addedWhizbangMessaging) {
+    // addedWhizbangMessaging is only set true inside the removedMarten path, so it's always false here
+    if (!removedMarten) {
       var whizbangUsing = SyntaxFactory.UsingDirective(
           SyntaxFactory.ParseName("Whizbang.Core.Messaging")
               .WithLeadingTrivia(SyntaxFactory.Space))
@@ -454,8 +457,10 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     public override SyntaxNode? VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node) {
       var declarationText = node.Declaration.ToString();
 
+#pragma warning disable S125 // Documents Marten patterns this rewriter detects and removes, not dead code
       // Remove: await using var session = _store.LightweightSession();
       // Remove: await using var session = _store.QuerySession();
+#pragma warning restore S125
       if (declarationText.Contains("LightweightSession") ||
           declarationText.Contains("QuerySession") ||
           declarationText.Contains("OpenSession")) {
@@ -487,8 +492,10 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node) {
       var expressionText = node.Expression.ToString();
 
+#pragma warning disable S125 // Documents Marten patterns this rewriter detects and removes, not dead code
       // Remove: await session.SaveChangesAsync();
       // Remove: await session.SaveChangesAsync(ct);
+#pragma warning restore S125
       if (expressionText.Contains("SaveChangesAsync")) {
         _changes.Add(new CodeChange(
             node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,

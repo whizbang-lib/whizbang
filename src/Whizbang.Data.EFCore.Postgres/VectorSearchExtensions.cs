@@ -785,7 +785,9 @@ public static class VectorSearchExtensions {
   /// Gets the constructor for VectorSearchResult&lt;TModel&gt;.
   /// AOT-safe: Extracts ConstructorInfo from a compile-time new expression.
   /// </summary>
+#pragma warning disable S1144 // Called at line 588 in BuildVectorSearchQuery
   private static System.Reflection.ConstructorInfo _getVectorSearchResultConstructor<TModel>() where TModel : class {
+#pragma warning restore S1144
     // Extract constructor from compile-time new expression
     Expression<Func<VectorSearchResult<TModel>>> ctorExpr =
         () => new VectorSearchResult<TModel>(default!, default, default);

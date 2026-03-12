@@ -23,11 +23,16 @@ public class ScopedEventStoreQuery : IScopedEventStoreQuery {
   }
 
   /// <inheritdoc/>
-  public async IAsyncEnumerable<EventStoreRecord> QueryAsync(
+  public IAsyncEnumerable<EventStoreRecord> QueryAsync(
       Func<IEventStoreQuery, IQueryable<EventStoreRecord>> queryBuilder,
-      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(queryBuilder);
+    return _queryAsyncCore(queryBuilder, cancellationToken);
+  }
 
+  private async IAsyncEnumerable<EventStoreRecord> _queryAsyncCore(
+      Func<IEventStoreQuery, IQueryable<EventStoreRecord>> queryBuilder,
+      [EnumeratorCancellation] CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
     var eventStoreQuery = scope.ServiceProvider.GetRequiredService<IEventStoreQuery>();
 
