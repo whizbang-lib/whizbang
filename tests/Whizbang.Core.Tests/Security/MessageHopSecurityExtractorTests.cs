@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -428,6 +430,329 @@ public class MessageHopSecurityExtractorTests {
     await Assert.That(async () =>
       await extractor.ExtractAsync(envelope, options, cts.Token)
     ).ThrowsExactly<OperationCanceledException>();
+  }
+
+  // ========================================
+  // Argument Validation Tests
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    // Act & Assert
+    await Assert.That(async () =>
+      await extractor.ExtractAsync(null!, options, CancellationToken.None)
+    ).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var envelope = _createEnvelopeWithoutSecurityContext();
+
+    // Act & Assert
+    await Assert.That(async () =>
+      await extractor.ExtractAsync(envelope, null!, CancellationToken.None)
+    ).ThrowsExactly<ArgumentNullException>();
+  }
+
+  // ========================================
+  // Null/Empty Hops Tests
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithNullHops_ReturnsNullAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = null!
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithEmptyHops_ReturnsNullAsync() {
+    // Arrange
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = []
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  // ========================================
+  // Hop.Scope Edge Cases
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithHopScopeNull_ReturnsNullAsync() {
+    // Arrange - Current hop with Scope = null
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = null
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithHopScopeNoChanges_ReturnsNullAsync() {
+    // Arrange - Current hop with ScopeDelta that has no changes (HasChanges = false)
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta() // Empty ScopeDelta - HasChanges is false
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithMixedNullAndValidScopes_ExtractsFromValidAsync() {
+    // Arrange - Multiple hops: one with null scope, one with no changes, one with valid scope
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var nullScopeHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow.AddMinutes(-2),
+      Scope = null
+    };
+
+    var noChangesHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1),
+      Scope = new ScopeDelta()
+    };
+
+    var validHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "valid-tenant", UserId = "valid-user" })
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [nullScopeHop, noChangesHop, validHop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Scope.TenantId).IsEqualTo("valid-tenant");
+    await Assert.That(result.Scope.UserId).IsEqualTo("valid-user");
+  }
+
+  // ========================================
+  // Logger Tests
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_NoScopeFound_LogsAndReturnsNullAsync() {
+    // Arrange - With a logger to cover logging branches
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+    var envelope = _createEnvelopeWithoutSecurityContext();
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_NullHops_LogsAndReturnsNullAsync() {
+    // Arrange - With logger, null hops to cover HopsNullOrEmpty log
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = null!
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_EmptyHops_LogsAndReturnsNullAsync() {
+    // Arrange
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = []
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_ValidExtraction_LogsAndReturnsExtractionAsync() {
+    // Arrange
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+    var envelope = _createEnvelopeWithSecurityContext(new SecurityContext { TenantId = "t1", UserId = "u1" });
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Scope.TenantId).IsEqualTo("t1");
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_NullScopeHop_LogsHopScopeNullAsync() {
+    // Arrange - with logger to cover HopScopeNull logging branch
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = null
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task ExtractAsync_WithLogger_NoChangesHop_LogsHopScopeValuesNullAsync() {
+    // Arrange - with logger to cover HopScopeValuesNull logging branch
+    var logger = NullLogger<MessageHopSecurityExtractor>.Instance;
+    var extractor = new MessageHopSecurityExtractor(logger);
+    var options = new MessageSecurityOptions();
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = new ScopeDelta() // No changes
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  // ========================================
+  // Only Non-Current Hops Test
+  // ========================================
+
+  [Test]
+  public async Task ExtractAsync_WithOnlyNonCurrentHops_ReturnsNullAsync() {
+    // Arrange - All hops are Causation type
+    var extractor = new MessageHopSecurityExtractor();
+    var options = new MessageSecurityOptions();
+
+    var hop = new MessageHop {
+      Type = HopType.Causation,
+      ServiceInstance = _createServiceInstance(),
+      Timestamp = DateTimeOffset.UtcNow,
+      Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = "t", UserId = "u" })
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test"),
+      Hops = [hop]
+    };
+
+    // Act
+    var result = await extractor.ExtractAsync(envelope, options, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
   }
 
   // ========================================
