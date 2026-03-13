@@ -46,6 +46,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -63,6 +64,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -80,6 +82,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -97,6 +100,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -114,6 +118,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: null!,
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -131,6 +136,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: null!,
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance
       );
       await Task.CompletedTask;
@@ -148,6 +154,7 @@ public class TransportConsumerWorkerCoverageTests {
         jsonOptions: new JsonSerializerOptions(),
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
+        metrics: null,
         logger: null!
       );
       await Task.CompletedTask;
@@ -165,6 +172,7 @@ public class TransportConsumerWorkerCoverageTests {
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -187,6 +195,7 @@ public class TransportConsumerWorkerCoverageTests {
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -233,6 +242,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -317,6 +327,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -372,6 +383,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -422,6 +434,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -463,6 +476,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -508,6 +522,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -555,6 +570,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -606,6 +622,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -656,6 +673,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -779,6 +797,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -826,6 +845,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -956,6 +976,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -1016,6 +1037,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -1050,6 +1072,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
   }
@@ -1070,6 +1093,7 @@ public class TransportConsumerWorkerCoverageTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
   }
@@ -1303,7 +1327,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
 
       if (_returnEmptyInboxWork) {
@@ -1348,7 +1372,7 @@ public class TransportConsumerWorkerCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       throw new InvalidOperationException("Simulated flush failure");
     }
   }

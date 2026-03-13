@@ -77,6 +77,8 @@ public partial class WorkCoordinatorPublisherWorker(
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
+  TransportMetrics? transportMetrics = null,
+  WorkCoordinatorMetrics? workCoordinatorMetrics = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -86,6 +88,8 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
+  private readonly TransportMetrics? _transportMetrics = transportMetrics;
+  private readonly WorkCoordinatorMetrics? _workCoordinatorMetrics = workCoordinatorMetrics;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -261,14 +265,20 @@ public partial class WorkCoordinatorPublisherWorker(
       LogPublisherLoopReceivedWork(_logger, work.MessageId, work.Destination);
       try {
         // Check transport readiness before attempting publish
+        var readinessWaitSw = Stopwatch.StartNew();
         var isReady = await _publishStrategy.IsReadyAsync(stoppingToken);
+        readinessWaitSw.Stop();
         LogTransportReadinessCheck(_logger, isReady);
         if (!isReady) {
+          _transportMetrics?.OutboxReadinessWaitDuration.Record(readinessWaitSw.Elapsed.TotalMilliseconds);
+
           // Transport not ready - renew lease to buffer message
           _leaseRenewals.Add(work.MessageId);
           Interlocked.Increment(ref _consecutiveNotReadyChecks);
           Interlocked.Increment(ref _totalLeaseRenewals);
           Interlocked.Increment(ref _totalBufferedMessages);
+          _workCoordinatorMetrics?.PublisherLeaseRenewals.Add(1);
+          _workCoordinatorMetrics?.PublisherBufferedMessages.Add(1);
 
           // Log at Information level (important operational event)
           LogTransportNotReadyBuffering(_logger, work.MessageId, work.Destination);
@@ -357,6 +367,7 @@ public partial class WorkCoordinatorPublisherWorker(
         // Publish via strategy
         LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
         MessagePublishResult result;
+        var publishSw = Stopwatch.StartNew();
 
         using (var activity = WhizbangActivitySource.Tracing.StartActivity(
           "Outbox PublishAsync",
@@ -372,6 +383,7 @@ public partial class WorkCoordinatorPublisherWorker(
           activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
 
           result = await _publishStrategy.PublishAsync(work, stoppingToken);
+          publishSw.Stop();
 
           activity?.SetTag("whizbang.publish.success", result.Success.ToString());
           activity?.SetTag("whizbang.publish.status", result.CompletedStatus.ToString());
@@ -380,6 +392,7 @@ public partial class WorkCoordinatorPublisherWorker(
             activity?.SetTag("whizbang.publish.failure_reason", result.Reason.ToString());
           }
         }
+        _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
         LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
         // PostOutbox lifecycle stages (after publishing to transport)
@@ -426,6 +439,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // Collect results
         if (result.Success) {
+          _transportMetrics?.OutboxMessagesPublished.Add(1);
           _completions.Add(new MessageCompletion {
             MessageId = work.MessageId,
             Status = result.CompletedStatus
@@ -434,11 +448,14 @@ public partial class WorkCoordinatorPublisherWorker(
           // For retryable failures, renew lease instead of marking as failed
           // This allows the message to be re-claimed and retried
           if (result.Reason == MessageFailureReason.TransportException) {
+            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "transport_exception"));
+            _transportMetrics?.OutboxPublishRetries.Add(1);
             _leaseRenewals.Add(work.MessageId);
 
             LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error");
           } else {
             // Non-retryable failures (serialization, validation, etc.) - mark as failed
+            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", result.Reason.ToString()));
             _failures.Add(new MessageFailure {
               MessageId = work.MessageId,
               CompletedStatus = result.CompletedStatus,
@@ -451,6 +468,7 @@ public partial class WorkCoordinatorPublisherWorker(
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
+        _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "unexpected_exception"));
 
         _failures.Add(new MessageFailure {
           MessageId = work.MessageId,

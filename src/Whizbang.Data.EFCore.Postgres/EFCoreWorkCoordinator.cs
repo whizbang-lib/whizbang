@@ -40,7 +40,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
-  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null
+  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
+  WorkCoordinatorMetrics? metrics = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -238,39 +239,63 @@ public class EFCoreWorkCoordinator<TDbContext>(
       npgsqlConnection.Notice += _onNotice;
     }
 
-    var results = await _dbContext.Database
-      .SqlQueryRaw<WorkBatchRow>(
-        sql,
-        new Npgsql.NpgsqlParameter("p_instance_id", request.InstanceId),
-        new Npgsql.NpgsqlParameter("p_service_name", request.ServiceName),
-        new Npgsql.NpgsqlParameter("p_host_name", request.HostName),
-        new Npgsql.NpgsqlParameter("p_process_id", request.ProcessId),
-        metadataParam,
-        new Npgsql.NpgsqlParameter("p_now", now),
-        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", request.LeaseSeconds),
-        new Npgsql.NpgsqlParameter("p_partition_count", request.PartitionCount),
-        outboxCompletionsParam,
-        inboxCompletionsParam,
-        perspectiveEventCompletionsParam,
-        perspectiveCompletionsParam,
-        outboxFailuresParam,
-        inboxFailuresParam,
-        perspectiveEventFailuresParam,
-        perspectiveFailuresParam,
-        newOutboxParam,
-        newInboxParam,
-        newPerspectiveEventsParam,
-        renewOutboxParam,
-        renewInboxParam,
-        renewPerspectiveEventLeaseIdsParam,
-        new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
-        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
-        syncInquiriesParam
-      )
-      .ToListAsync(cancellationToken);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    List<WorkBatchRow> results;
+    try {
+      results = await _dbContext.Database
+        .SqlQueryRaw<WorkBatchRow>(
+          sql,
+          new Npgsql.NpgsqlParameter("p_instance_id", request.InstanceId),
+          new Npgsql.NpgsqlParameter("p_service_name", request.ServiceName),
+          new Npgsql.NpgsqlParameter("p_host_name", request.HostName),
+          new Npgsql.NpgsqlParameter("p_process_id", request.ProcessId),
+          metadataParam,
+          new Npgsql.NpgsqlParameter("p_now", now),
+          new Npgsql.NpgsqlParameter("p_lease_duration_seconds", request.LeaseSeconds),
+          new Npgsql.NpgsqlParameter("p_partition_count", request.PartitionCount),
+          outboxCompletionsParam,
+          inboxCompletionsParam,
+          perspectiveEventCompletionsParam,
+          perspectiveCompletionsParam,
+          outboxFailuresParam,
+          inboxFailuresParam,
+          perspectiveEventFailuresParam,
+          perspectiveFailuresParam,
+          newOutboxParam,
+          newInboxParam,
+          newPerspectiveEventsParam,
+          renewOutboxParam,
+          renewInboxParam,
+          renewPerspectiveEventLeaseIdsParam,
+          new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
+          new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds),
+          syncInquiriesParam
+        )
+        .ToListAsync(cancellationToken);
+    } catch (Exception ex) {
+      metrics?.ProcessBatchErrors.Add(1, new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+      throw;
+    } finally {
+      sw.Stop();
+      metrics?.ProcessBatchDuration.Record(sw.Elapsed.TotalMilliseconds);
+      metrics?.ProcessBatchCalls.Add(1);
+    }
+
+    // Record batch composition metrics
+    metrics?.BatchOutboxMessages.Record(request.NewOutboxMessages.Length);
+    metrics?.BatchInboxMessages.Record(request.NewInboxMessages.Length);
+    metrics?.BatchCompletions.Record(request.OutboxCompletions.Length + request.InboxCompletions.Length);
+    metrics?.BatchFailures.Record(request.OutboxFailures.Length + request.InboxFailures.Length);
 
     // Process results and return work batch
-    return _processResults(results);
+    var workBatch = _processResults(results);
+
+    // Record returned work metrics
+    metrics?.ReturnedOutboxWork.Record(workBatch.OutboxWork.Count);
+    metrics?.ReturnedInboxWork.Record(workBatch.InboxWork.Count);
+    metrics?.ReturnedPerspectiveWork.Record(workBatch.PerspectiveWork.Count);
+
+    return workBatch;
   }
 
   /// <summary>

@@ -34,7 +34,8 @@ public partial class PerspectiveWorker(
   IEventTypeProvider? eventTypeProvider = null,
   IPerspectiveSyncSignaler? syncSignaler = null,
   ISyncEventTracker? syncEventTracker = null,
-  ILogger<PerspectiveWorker>? logger = null
+  ILogger<PerspectiveWorker>? logger = null,
+  PerspectiveMetrics? metrics = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -44,6 +45,7 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
   private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
+  private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
     retryTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
@@ -170,6 +172,8 @@ public partial class PerspectiveWorker(
   }
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
+    var batchSw = System.Diagnostics.Stopwatch.StartNew();
+
     // Capture parent context BEFORE making span decisions
     // This ensures child spans can find a parent even when intermediate spans are skipped
     // On background threads, Activity.Current is typically null unless explicitly set
@@ -238,11 +242,14 @@ public partial class PerspectiveWorker(
         LeaseSeconds = _options.LeaseSeconds,
         StaleThresholdSeconds = _options.StaleThresholdSeconds
       };
+      var claimSw = System.Diagnostics.Stopwatch.StartNew();
       workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
+      _metrics?.ClaimDuration.Record(claimSw.Elapsed.TotalMilliseconds);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Database failure: Completions remain in 'Sent' status
       // ResetStale() will move them back to 'Pending' after timeout
       LogErrorProcessingWorkBatch(_logger, ex);
+      _metrics?.Errors.Add(1);
       throw; // Never swallow exceptions
     }
 
@@ -299,6 +306,10 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
+    // Record batch composition metrics
+    _metrics?.BatchWorkItems.Record(workBatch.PerspectiveWork.Count);
+    _metrics?.BatchStreamGroups.Record(groupedWork.Count);
+
     // Add batch metrics to parent span for tracing visibility
     batchActivity?.SetTag("whizbang.perspective.batch.work_items", workBatch.PerspectiveWork.Count);
     batchActivity?.SetTag("whizbang.perspective.batch.groups", groupedWork.Count);
@@ -332,11 +343,13 @@ public partial class PerspectiveWorker(
 
       // Look up the checkpoint to get the LastProcessedEventId
       // This tells the runner where to start reading events from
+      var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
       var checkpoint = await workCoordinator.GetPerspectiveCheckpointAsync(
         streamId,
         perspectiveName,
         cancellationToken
       );
+      _metrics?.CheckpointDuration.Record(checkpointSw.Elapsed.TotalMilliseconds);
 
       var lastProcessedEventId = checkpoint?.LastEventId;
 
@@ -383,6 +396,7 @@ public partial class PerspectiveWorker(
       if (eventStore is not null && _eventTypeProvider is not null) {
         var eventTypes = _eventTypeProvider.GetEventTypes();
         if (eventTypes.Count > 0) {
+          var eventLoadSw = System.Diagnostics.Stopwatch.StartNew();
           upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
             streamId,
             lastProcessedEventId,
@@ -390,6 +404,8 @@ public partial class PerspectiveWorker(
             eventTypes,
             cancellationToken
           );
+          _metrics?.EventLoadDuration.Record(eventLoadSw.Elapsed.TotalMilliseconds);
+          _metrics?.BatchEventCount.Record(upcomingEvents.Count);
 
           // Extract trace context from the first event's hops
           // This links the perspective span to the original request trace
@@ -503,12 +519,14 @@ public partial class PerspectiveWorker(
           activity?.SetTag("whizbang.stream.id", streamId.ToString());
           activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
 
+          var runnerSw = System.Diagnostics.Stopwatch.StartNew();
           result = await runner.RunAsync(
             streamId,
             perspectiveName,
             lastProcessedEventId,
             cancellationToken
           );
+          _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
 
           activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
           activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
@@ -630,8 +648,15 @@ public partial class PerspectiveWorker(
         }
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
+
+        // Record per-stream metrics
+        _metrics?.StreamsUpdated.Add(1);
+        if (processedEvents.Count > 0) {
+          _metrics?.EventsProcessed.Add(processedEvents.Count);
+        }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveName, streamId);
+        _metrics?.Errors.Add(1);
 
         var failure = new PerspectiveCheckpointFailure {
           StreamId = streamId,
@@ -655,6 +680,10 @@ public partial class PerspectiveWorker(
       LogNoWorkClaimed(_logger);
     }
 
+    // Record batch-level metrics
+    _metrics?.BatchesProcessed.Add(1);
+    _metrics?.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds);
+
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
     bool hasWork = workBatch.PerspectiveWork.Count > 0;
 
@@ -671,6 +700,7 @@ public partial class PerspectiveWorker(
     } else {
       // Increment empty poll counter
       Interlocked.Increment(ref _consecutiveEmptyPolls);
+      _metrics?.EmptyBatches.Add(1);
 
       // Check if should transition to idle
       if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {

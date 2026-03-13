@@ -173,7 +173,7 @@ public partial class ServiceBusConsumerWorker(
       LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
 
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: ct);
 
       // DIAGNOSTIC: Log after flush
       LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
@@ -287,7 +287,7 @@ public partial class ServiceBusConsumerWorker(
       }
 
       // 6. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, ct);
+      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, ct);
 
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
 

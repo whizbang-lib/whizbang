@@ -355,6 +355,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -523,6 +524,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );

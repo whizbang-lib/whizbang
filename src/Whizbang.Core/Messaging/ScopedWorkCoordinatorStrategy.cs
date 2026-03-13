@@ -42,6 +42,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
   private readonly ScopedWorkCoordinatorDependencies _dependencies;
+  private readonly WorkCoordinatorMetrics? _metrics;
+  private readonly LifecycleMetrics? _lifecycleMetrics;
 
   // Queues for batching operations within the scope
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -62,7 +64,9 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     IWorkChannelWriter? workChannelWriter,
     WorkCoordinatorOptions options,
     ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
-    ScopedWorkCoordinatorDependencies? dependencies = null
+    ScopedWorkCoordinatorDependencies? dependencies = null,
+    WorkCoordinatorMetrics? metrics = null,
+    LifecycleMetrics? lifecycleMetrics = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -70,6 +74,8 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
     _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
+    _metrics = metrics;
+    _lifecycleMetrics = lifecycleMetrics;
   }
 
   public void QueueOutboxMessage(OutboxMessage message) {
@@ -142,8 +148,14 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     }
   }
 
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
+    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "scoped"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+
+    // BestEffort on Scoped strategy: flush immediately anyway.
+    // The scope IS the batching boundary — deferring to DisposeAsync is unreliable
+    // because the DbContext may already be disposed by the DI container before
+    // our DisposeAsync runs (DI disposal order is not guaranteed).
 
     if (_queuedOutboxMessages.Count == 0 &&
         _queuedInboxMessages.Count == 0 &&
@@ -151,6 +163,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
         _queuedOutboxFailures.Count == 0 &&
         _queuedInboxCompletions.Count == 0 &&
         _queuedInboxFailures.Count == 0) {
+      _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "scoped"));
       return new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -177,6 +190,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 
@@ -189,6 +203,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 
@@ -216,7 +231,10 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LeaseSeconds = _options.LeaseSeconds,
       StaleThresholdSeconds = _options.StaleThresholdSeconds
     };
+    var flushSw = System.Diagnostics.Stopwatch.StartNew();
     var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
+    flushSw.Stop();
+    _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "scoped"));
 
     // DIAGNOSTIC: Log what was returned from ProcessWorkBatchAsync
     if (_logger != null) {
@@ -242,6 +260,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       _dependencies.LifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 

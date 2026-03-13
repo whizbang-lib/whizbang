@@ -145,6 +145,7 @@ public class TransportConsumerWorkerProvisioningTests {
         parallelizeStreams: false,
         logger: NullLoggerFactory.Instance.CreateLogger<OrderedStreamProcessor>()),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>()
     );
   }

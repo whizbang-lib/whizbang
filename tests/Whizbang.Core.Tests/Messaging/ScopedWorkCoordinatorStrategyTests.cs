@@ -340,6 +340,85 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // BestEffort FLUSH MODE — DbContext DISPOSAL SAFETY
+  // ========================================
+
+  /// <summary>
+  /// Regression test: BestEffort mode previously deferred flush to DisposeAsync,
+  /// but by that time the DbContext (IWorkCoordinator) may already be disposed
+  /// by the DI container — causing ObjectDisposedException on first HTTP request.
+  ///
+  /// Fix: Scoped strategy treats BestEffort the same as Required (flush immediately).
+  /// </summary>
+  [Test]
+  public async Task BestEffort_WithDisposedCoordinator_DoesNotThrow_BecauseFlushHappensImmediatelyAsync() {
+    // Arrange - Coordinator that throws on second call (simulating DbContext disposed)
+    var disposableCoordinator = new FakeDisposableWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      disposableCoordinator,
+      instanceProvider,
+      null,
+      options
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act — BestEffort should flush immediately (the fix)
+    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+
+    // Assert — message was flushed during the BestEffort call, not deferred
+    await Assert.That(disposableCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("Scoped strategy should flush BestEffort immediately to avoid disposal race");
+
+    // Now simulate DI container disposing the coordinator (DbContext)
+    disposableCoordinator.SimulateDisposal();
+
+    // DisposeAsync should have nothing to flush (no ObjectDisposedException)
+    await sut.DisposeAsync();
+
+    // Still only 1 call — the BestEffort flush, not DisposeAsync
+    await Assert.That(disposableCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("DisposeAsync should not attempt flush — already flushed");
+  }
+
+  [Test]
+  public async Task BestEffort_MultipleMessages_AllFlushedImmediately_NoneLeftForDisposalAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      coordinator,
+      instanceProvider,
+      null,
+      options
+    );
+
+    // Simulate a typical request: multiple publishes via BestEffort
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+
+    // Assert — each BestEffort call flushed immediately
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
+      .Because("each BestEffort call should flush immediately on Scoped strategy");
+
+    // DisposeAsync should be a no-op
+    await sut.DisposeAsync();
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
+      .Because("DisposeAsync should not flush — nothing left in queues");
+  }
+
+  // ========================================
   // CONSTRUCTOR VALIDATION TESTS
   // ========================================
 
@@ -634,6 +713,64 @@ public class ScopedWorkCoordinatorStrategyTests {
         ProcessId = ProcessId
       };
     }
+  }
+
+  private void _queueTestOutboxMessage(ScopedWorkCoordinatorStrategy strategy) {
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent1(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    strategy.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "TestEnvelope, TestAssembly",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = []
+      }
+    });
+  }
+
+  /// <summary>
+  /// Simulates a DbContext-backed coordinator that becomes disposed mid-scope
+  /// (as happens when DI container disposes services in arbitrary order).
+  /// </summary>
+  private sealed class FakeDisposableWorkCoordinator : IWorkCoordinator {
+    public int ProcessWorkBatchCallCount { get; private set; }
+    private bool _disposed;
+
+    public void SimulateDisposal() => _disposed = true;
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      if (_disposed) {
+        throw new ObjectDisposedException("DbContext", "Cannot access a disposed object.");
+      }
+      ProcessWorkBatchCallCount++;
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCheckpointInfo?>(null);
   }
 
   private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
