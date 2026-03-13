@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -64,11 +65,11 @@ public sealed class OutboxRecord {
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.
-  /// Contains tenant/user/partition information for query filtering.
-  /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
+  /// Contains tenant/user/customer/organization information for query filtering.
+  /// Schema: { "t": "...", "u": "...", "c": "...", "o": "...", "ap": [...], "ex": [...] }
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
-  public MessageScope? Scope { get; set; }
+  public PerspectiveScope? Scope { get; set; }
 
 
   /// <summary>

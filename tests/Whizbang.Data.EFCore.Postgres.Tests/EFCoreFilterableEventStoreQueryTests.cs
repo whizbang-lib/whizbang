@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Integration tests for EFCoreFilterableEventStoreQuery with scope filtering.
 /// Tests all supported filter combinations: tenant, user, and global access.
-/// Note: EventStoreRecord.Scope (MessageScope) only supports TenantId and UserId filtering.
+/// Note: EventStoreRecord.Scope (PerspectiveScope) supports TenantId, UserId, OrganizationId, and CustomerId filtering.
 /// </summary>
 [Category("Integration")]
 [Category("EventStoreQuery")]
@@ -44,7 +44,7 @@ public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
         MessageId = MessageId.From(eventId),
         Hops = []
       },
-      Scope = new MessageScope {
+      Scope = new PerspectiveScope {
         TenantId = tenantId,
         UserId = userId
       },

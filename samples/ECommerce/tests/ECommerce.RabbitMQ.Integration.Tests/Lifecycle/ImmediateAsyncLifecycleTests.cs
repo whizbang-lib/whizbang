@@ -207,21 +207,30 @@ public class ImmediateAsyncLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Register receptor and dispatch command
-    var receptorTask = fixture.InventoryHost.WaitForImmediateAsyncAsync<CreateProductCommand>(
-      timeoutMilliseconds: 5000);
+    // Register receptor BEFORE dispatching (same pattern as non-flaky tests)
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
-    await fixture.Dispatcher.SendAsync(command);
-    var receptor = await receptorTask;
+    var registry = fixture.InventoryHost.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
 
-    // Assert - Verify receptor captured the message
-    await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    try {
+      // Act - Dispatch command, then wait with timeout
+      // Use 15s timeout to account for RabbitMQ round-trip under CI load
+      await fixture.Dispatcher.SendAsync(command);
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-    // Note: ILifecycleContext injection is not yet implemented in the current codebase
-    // When implemented, we would also verify:
-    // await Assert.That(receptor.LastLifecycleContext).IsNotNull();
-    // await Assert.That(receptor.LastLifecycleContext!.CurrentStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+      // Assert - Verify receptor captured the message
+      await Assert.That(receptor.LastMessage).IsNotNull();
+      await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+
+      // Note: ILifecycleContext injection is not yet implemented in the current codebase
+      // When implemented, we would also verify:
+      // await Assert.That(receptor.LastLifecycleContext).IsNotNull();
+      // await Assert.That(receptor.LastLifecycleContext!.CurrentStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+    } finally {
+      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+    }
   }
 
   /// <summary>

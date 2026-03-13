@@ -3,8 +3,10 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -627,4 +629,167 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       ProcessId = 123
     }
   };
+
+  // === Scope Restoration Tests ===
+
+  [Test]
+  [Category("Integration")]
+  public async Task ReadPolymorphicAsync_WithScopeColumn_RestoresScopeToFirstHopAsync() {
+    // Arrange: Insert event with scope column populated but hops without scope
+    await using var context = CreateDbContext();
+    var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    Guid eventId = messageId;
+
+    var record = new EventStoreRecord {
+      Id = eventId,
+      StreamId = streamId,
+      AggregateId = streamId,
+      AggregateType = "TestAggregate",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
+      EventData = System.Text.Json.JsonDocument.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      Metadata = new EnvelopeMetadata {
+        MessageId = messageId,
+        Hops = [CreateTestHop()]
+      },
+      Scope = new PerspectiveScope {
+        TenantId = "tenant-abc",
+        UserId = "user-xyz",
+        CustomerId = "cust-123",
+        OrganizationId = "org-456"
+      },
+      CreatedAt = DateTime.UtcNow
+    };
+
+    context.Set<EventStoreRecord>().Add(record);
+    await context.SaveChangesAsync();
+    context.ChangeTracker.Clear();
+
+    // Act: Read back via ReadPolymorphicAsync
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+    await foreach (var env in eventStore.ReadPolymorphicAsync(
+        streamId, null, [typeof(OrderCreatedEvent)])) {
+      envelopes.Add(env);
+    }
+
+    // Assert: Scope should be restored on first hop
+    await Assert.That(envelopes).Count().IsEqualTo(1);
+
+    var envelope = envelopes[0];
+    await Assert.That(envelope.Hops).Count().IsEqualTo(1);
+    await Assert.That(envelope.Hops[0].Scope).IsNotNull();
+
+    // Verify scope values via ScopeDelta.ApplyTo
+    var scopeContext = envelope.Hops[0].Scope!.ApplyTo(null);
+    await Assert.That(scopeContext.Scope.TenantId).IsEqualTo("tenant-abc");
+    await Assert.That(scopeContext.Scope.UserId).IsEqualTo("user-xyz");
+    await Assert.That(scopeContext.Scope.CustomerId).IsEqualTo("cust-123");
+    await Assert.That(scopeContext.Scope.OrganizationId).IsEqualTo("org-456");
+  }
+
+  [Test]
+  [Category("Integration")]
+  public async Task ReadPolymorphicAsync_WithScopeAlreadyInHops_DoesNotOverwriteAsync() {
+    // Arrange: Insert event with scope in BOTH the scope column and hops
+    await using var context = CreateDbContext();
+    var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    Guid eventId = messageId;
+
+    var existingScope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope {
+      TenantId = "original-tenant"
+    });
+
+    var hop = CreateTestHop() with { Scope = existingScope };
+
+    var record = new EventStoreRecord {
+      Id = eventId,
+      StreamId = streamId,
+      AggregateId = streamId,
+      AggregateType = "TestAggregate",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
+      EventData = System.Text.Json.JsonDocument.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      Metadata = new EnvelopeMetadata {
+        MessageId = messageId,
+        Hops = [hop]
+      },
+      Scope = new PerspectiveScope {
+        TenantId = "column-tenant"
+      },
+      CreatedAt = DateTime.UtcNow
+    };
+
+    context.Set<EventStoreRecord>().Add(record);
+    await context.SaveChangesAsync();
+    context.ChangeTracker.Clear();
+
+    // Act
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+    await foreach (var env in eventStore.ReadPolymorphicAsync(
+        streamId, null, [typeof(OrderCreatedEvent)])) {
+      envelopes.Add(env);
+    }
+
+    // Assert: Original hop scope should be preserved (not overwritten by column scope)
+    await Assert.That(envelopes).Count().IsEqualTo(1);
+
+    var envelope = envelopes[0];
+    var scopeContext = envelope.Hops[0].Scope!.ApplyTo(null);
+    await Assert.That(scopeContext.Scope.TenantId).IsEqualTo("original-tenant");
+  }
+
+  [Test]
+  [Category("Integration")]
+  public async Task ReadPolymorphicAsync_WithNullScopeColumn_ReturnsEnvelopeWithoutScopeAsync() {
+    // Arrange: Insert event with null scope column (backward compat with old data)
+    await using var context = CreateDbContext();
+    var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
+    Guid eventId = messageId;
+
+    var record = new EventStoreRecord {
+      Id = eventId,
+      StreamId = streamId,
+      AggregateId = streamId,
+      AggregateType = "TestAggregate",
+      Version = 1,
+      EventType = TypeNameFormatter.Format(typeof(OrderCreatedEvent)),
+      EventData = System.Text.Json.JsonDocument.Parse(
+        $"{{\"OrderId\":\"{streamId}\",\"CustomerName\":\"Test\"}}").RootElement,
+      Metadata = new EnvelopeMetadata {
+        MessageId = messageId,
+        Hops = [CreateTestHop()]
+      },
+      Scope = null,
+      CreatedAt = DateTime.UtcNow
+    };
+
+    context.Set<EventStoreRecord>().Add(record);
+    await context.SaveChangesAsync();
+    context.ChangeTracker.Clear();
+
+    // Act
+    await using var readContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(readContext);
+
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+    await foreach (var env in eventStore.ReadPolymorphicAsync(
+        streamId, null, [typeof(OrderCreatedEvent)])) {
+      envelopes.Add(env);
+    }
+
+    // Assert: No scope injected, hop scope remains null
+    await Assert.That(envelopes).Count().IsEqualTo(1);
+    await Assert.That(envelopes[0].Hops[0].Scope).IsNull();
+  }
 }
