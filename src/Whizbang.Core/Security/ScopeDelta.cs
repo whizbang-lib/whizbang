@@ -123,6 +123,29 @@ public sealed class ScopeDelta {
   public bool HasChanges => (Values?.Count > 0) || (Collections?.Count > 0);
 
   /// <summary>
+  /// Creates a ScopeDelta from a PerspectiveScope.
+  /// Used when restoring scope from the database scope column into envelope hops.
+  /// </summary>
+  /// <param name="scope">The PerspectiveScope to create a delta from.</param>
+  /// <returns>A ScopeDelta containing the scope, or null if the scope is null or entirely empty.</returns>
+  public static ScopeDelta? FromPerspectiveScope(PerspectiveScope? scope) {
+    if (scope == null) {
+      return null;
+    }
+
+    if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
+        && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)) {
+      return null;
+    }
+
+    return new ScopeDelta {
+      Values = new Dictionary<ScopeProp, JsonElement> {
+        [ScopeProp.Scope] = _serializeScope(scope)
+      }
+    };
+  }
+
+  /// <summary>
   /// Creates a ScopeDelta from the old SecurityContext type.
   /// This is a backward compatibility helper for migrating from SecurityContext to ScopeDelta.
   /// </summary>

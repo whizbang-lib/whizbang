@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.AutoPopulate;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
@@ -600,6 +601,7 @@ public class TransportConsumerWorker : BackgroundService {
       EnvelopeType = envelopeTypeFromTransport,
       StreamId = streamId,
       IsEvent = isEvent,
+      Scope = envelope.GetCurrentScope()?.Scope,
       MessageType = messageTypeName
     };
   }

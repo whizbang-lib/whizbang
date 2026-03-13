@@ -12,6 +12,7 @@ using Microsoft.Extensions.Options;
 using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -3135,6 +3136,7 @@ public abstract partial class Dispatcher(
         EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
         StreamId = streamId,
         IsEvent = eventData is IEvent,
+        Scope = _extractScope(jsonEnvelope),
         MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
       };
 
@@ -3150,6 +3152,15 @@ public abstract partial class Dispatcher(
         scope.Dispose();
       }
     }
+  }
+
+  /// <summary>
+  /// Extracts PerspectiveScope from an envelope's current scope context.
+  /// Returns null if no scope is available.
+  /// </summary>
+  private static PerspectiveScope? _extractScope(IMessageEnvelope envelope) {
+    var scopeContext = envelope.GetCurrentScope();
+    return scopeContext?.Scope;
   }
 
   /// <summary>
@@ -4027,6 +4038,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
+      Scope = _extractScope(envelope),
       MessageType = serialized.MessageType
     };
 

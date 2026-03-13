@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Security;
@@ -57,19 +58,13 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
 
     // 3. Scope: Extract from envelope's current scope (walks hops and merges deltas)
+    // Serialized as PerspectiveScope with short keys: {"t":"...","u":"...","c":"...","o":"...","ap":[...],"ex":[...]}
     string? scopeJson = null;
     var currentScope = source.GetCurrentScope();
     if (currentScope?.Scope != null) {
-      var scopeDict = new Dictionary<string, JsonElement?> {
-        ["tenant_id"] = !string.IsNullOrEmpty(currentScope.Scope.TenantId)
-          ? JsonDocument.Parse(JsonSerializer.Serialize(currentScope.Scope.TenantId, stringTypeInfo)).RootElement.Clone()
-          : (JsonElement?)null,
-        ["user_id"] = !string.IsNullOrEmpty(currentScope.Scope.UserId)
-          ? JsonDocument.Parse(JsonSerializer.Serialize(currentScope.Scope.UserId, stringTypeInfo)).RootElement.Clone()
-          : (JsonElement?)null
-      };
-      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
-      scopeJson = JsonSerializer.Serialize(scopeDict, scopeDictTypeInfo);
+      var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveScope. Ensure the type is registered in WhizbangJsonContext.");
+      scopeJson = JsonSerializer.Serialize(currentScope.Scope, perspectiveScopeTypeInfo);
     }
 
     return new JsonbPersistenceModel {
@@ -116,27 +111,45 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       hops = [];
     }
 
-    // Restore ScopeDelta from Scope column if present (snake_case keys: tenant_id, user_id)
+    // Restore ScopeDelta from Scope column if present
+    // Supports both new PerspectiveScope short keys {"t":"...","u":"..."} and legacy snake_case {"tenant_id":"...","user_id":"..."}
     if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
-      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                              ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
-      var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
-      if (scopeDict != null) {
-        string? tenantId = null;
-        string? userId = null;
+      string? tenantId = null;
+      string? userId = null;
 
-        if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
-          tenantId = tenantElem.Value.GetString();
+      // Try new PerspectiveScope format first (short keys: t, u, c, o, ap, ex)
+      var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
+      if (perspectiveScopeTypeInfo != null) {
+        try {
+          var perspectiveScope = JsonSerializer.Deserialize(jsonb.ScopeJson, perspectiveScopeTypeInfo) as PerspectiveScope;
+          if (perspectiveScope != null) {
+            tenantId = perspectiveScope.TenantId;
+            userId = perspectiveScope.UserId;
+          }
+        } catch (JsonException) {
+          // Fall back to legacy format below
         }
-        if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
-          userId = userElem.Value.GetString();
-        }
+      }
 
-        if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-          // Update first hop with ScopeDelta
-          var firstHop = hops[0];
-          hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
+      // Fallback: legacy snake_case format {"tenant_id":"...","user_id":"..."}
+      if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)) {
+        var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                                ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>.");
+        var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
+        if (scopeDict != null) {
+          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+            tenantId = tenantElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+            userId = userElem.Value.GetString();
+          }
         }
+      }
+
+      if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
+        // Update first hop with ScopeDelta
+        var firstHop = hops[0];
+        hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
       }
     }
 

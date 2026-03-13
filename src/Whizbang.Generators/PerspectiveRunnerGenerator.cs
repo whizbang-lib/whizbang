@@ -348,14 +348,23 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     if (perspective.PhysicalFields == null || perspective.PhysicalFields.Length == 0) {
-      // No physical fields - use simple UpsertAsync
+      // No physical fields - use simple UpsertAsync with scope
       sb.AppendLine("    // Upsert model (insert or update)");
       sb.AppendLine("    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync");
-      sb.AppendLine("    await _perspectiveStore.UpsertAsync(");
-      sb.AppendLine("        streamId,");
-      sb.AppendLine("        model,");
-      sb.AppendLine("        cancellationToken");
-      sb.AppendLine("    );");
+      sb.AppendLine("    if (scope != null) {");
+      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("          streamId,");
+      sb.AppendLine("          model,");
+      sb.AppendLine("          scope,");
+      sb.AppendLine("          cancellationToken");
+      sb.AppendLine("      );");
+      sb.AppendLine("    } else {");
+      sb.AppendLine("      await _perspectiveStore.UpsertAsync(");
+      sb.AppendLine("          streamId,");
+      sb.AppendLine("          model,");
+      sb.AppendLine("          cancellationToken");
+      sb.AppendLine("      );");
+      sb.AppendLine("    }");
     } else {
       // Has physical fields - extract values and use UpsertWithPhysicalFieldsAsync
       sb.AppendLine("    // Extract physical field values from model (including vector fields)");

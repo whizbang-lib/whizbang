@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -93,6 +94,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__? updatedModel = currentModel;
     var pendingPurge = false;  // Track if model should be purged (hard deleted)
+    PerspectiveScope? lastScope = null;  // Track scope from last processed envelope
 
     // Build list of event types this perspective handles (for polymorphic deserialization)
     var eventTypes = new[] {
@@ -175,6 +177,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var @event = envelope.Payload;
         var eventTypeName = @event.GetType().Name;
 
+        // Track scope from envelope for perspective upsert
+        var envelopeScope = envelope.GetCurrentScope();
+        if (envelopeScope?.Scope != null) lastScope = envelopeScope.Scope;
+
         // Create per-event span if enabled
         using var eventActivity = enableEventSpans
           ? WhizbangActivitySource.Tracing.StartActivity(
@@ -254,7 +260,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               streamId,
               updatedModel,
               lastSuccessfulEventId!.Value,
-              cancellationToken
+              cancellationToken,
+              lastScope
           );
         }
 
@@ -344,7 +351,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
                 streamId,
                 updatedModel,
                 lastSuccessfulEventId.Value,
-                cancellationToken
+                cancellationToken,
+                lastScope
             );
           }
         } catch (Exception saveEx) {
@@ -430,16 +438,26 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       Guid streamId,
       __MODEL_TYPE_NAME__ model,
       Guid checkpointEventId,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      PerspectiveScope? scope = null) {
 
     #region UPSERT_CALL
     // Upsert model (insert or update)
     // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
-    await _perspectiveStore.UpsertAsync(
-        streamId,
-        model,
-        cancellationToken
-    );
+    if (scope != null) {
+      await _perspectiveStore.UpsertAsync(
+          streamId,
+          model,
+          scope,
+          cancellationToken
+      );
+    } else {
+      await _perspectiveStore.UpsertAsync(
+          streamId,
+          model,
+          cancellationToken
+      );
+    }
     #endregion
   }
 }
