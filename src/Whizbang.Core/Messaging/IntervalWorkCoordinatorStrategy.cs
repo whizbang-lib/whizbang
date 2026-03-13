@@ -29,6 +29,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly WorkCoordinatorMetrics? _metrics;
+  private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
 
   // Queues for batching operations within the interval
@@ -57,7 +59,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
     IServiceScopeFactory? scopeFactory = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null
+    IOptionsMonitor<TracingOptions>? tracingOptions = null,
+    WorkCoordinatorMetrics? metrics = null,
+    LifecycleMetrics? lifecycleMetrics = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -66,6 +70,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
+    _metrics = metrics;
+    _lifecycleMetrics = lifecycleMetrics;
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
@@ -195,8 +201,23 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
+    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+
+    // BestEffort: defer flush to timer cycle - items already in queues will be picked up
+    if (mode == FlushMode.BestEffort) {
+      return new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      };
+    }
+
+    // Required flush with optional coalescing window
+    if (_options.CoalesceWindowMilliseconds > 0) {
+      await Task.Delay(_options.CoalesceWindowMilliseconds, ct);
+    }
 
     // Prevent concurrent flushes
     lock (_lock) {
@@ -229,6 +250,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
             _queuedOutboxFailures.Count == 0 &&
             _queuedInboxCompletions.Count == 0 &&
             _queuedInboxFailures.Count == 0) {
+          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
           if (_logger != null) {
             LogNoQueuedOperations(_logger);
           }
@@ -272,6 +294,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,
+        metrics: _lifecycleMetrics,
         ct: ct
       );
 
@@ -284,6 +307,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,
+        metrics: _lifecycleMetrics,
         ct: ct
       );
 
@@ -311,7 +335,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LeaseSeconds = _options.LeaseSeconds,
         StaleThresholdSeconds = _options.StaleThresholdSeconds
       };
+      var flushSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
+      flushSw.Stop();
+      _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "interval"));
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
@@ -327,6 +354,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleMessageDeserializer,
         _logger,
         enableLifecycleTracing: enableLifecycleTracing,
+        metrics: _lifecycleMetrics,
         ct: ct
       );
 

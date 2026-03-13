@@ -45,6 +45,7 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly OrderedStreamProcessor _orderedProcessor;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
+  private readonly TransportMetrics? _metrics;
   private readonly ILogger<TransportConsumerWorker> _logger;
 
   private readonly Dictionary<TransportDestination, SubscriptionState> _states = [];
@@ -60,6 +61,7 @@ public class TransportConsumerWorker : BackgroundService {
   /// <param name="jsonOptions">JSON serialization options</param>
   /// <param name="orderedProcessor">Ordered stream processor for message ordering</param>
   /// <param name="lifecycleMessageDeserializer">Optional lifecycle message deserializer for deserializing messages</param>
+  /// <param name="metrics">Optional transport metrics for instrumentation</param>
   /// <param name="logger">Logger instance</param>
   /// <remarks>
   /// <para>
@@ -76,6 +78,7 @@ public class TransportConsumerWorker : BackgroundService {
     JsonSerializerOptions jsonOptions,
     OrderedStreamProcessor orderedProcessor,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
+    TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger
   ) {
     ArgumentNullException.ThrowIfNull(transport);
@@ -93,6 +96,7 @@ public class TransportConsumerWorker : BackgroundService {
     _jsonOptions = jsonOptions;
     _orderedProcessor = orderedProcessor;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+    _metrics = metrics;
     _logger = logger;
 
     // Initialize state for each destination
@@ -307,6 +311,12 @@ public class TransportConsumerWorker : BackgroundService {
     string? envelopeType,
     CancellationToken cancellationToken
   ) {
+    var receiveSw = Stopwatch.StartNew();
+    var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+    var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
+
+    _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
+
     // Restore distributed trace context from the incoming message's TraceParent
     // This enables cross-service tracing by linking spans from sender to receiver
     Activity? inboxActivity = null;
@@ -317,7 +327,6 @@ public class TransportConsumerWorker : BackgroundService {
 
     if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
       // Start a new activity as child of the sender's span
-      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
       inboxActivity = WhizbangActivitySource.Transport.StartActivity(
         $"Inbox {messageType}",
         ActivityKind.Consumer,
@@ -334,7 +343,10 @@ public class TransportConsumerWorker : BackgroundService {
 
       // Establish FULL security context FIRST (before any business logic)
       // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
+      var securitySw = Stopwatch.StartNew();
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+      securitySw.Stop();
+      _metrics?.InboxSecurityContextDuration.Record(securitySw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
@@ -359,12 +371,16 @@ public class TransportConsumerWorker : BackgroundService {
       strategy.QueueInboxMessage(newInboxMessage);
 
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+      var dedupSw = Stopwatch.StartNew();
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
+      dedupSw.Stop();
+      _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
       if (myWork.Count == 0) {
+        _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         if (_logger.IsEnabled(LogLevel.Information)) {
           var messageId = envelope.MessageId;
           _logger.LogInformation(
@@ -418,6 +434,7 @@ public class TransportConsumerWorker : BackgroundService {
 
       // 6. Process using OrderedStreamProcessor (maintains stream ordering)
       // Perspectives are created automatically by process_work_batch and processed by PerspectiveWorker
+      var processingSw = Stopwatch.StartNew();
       await _orderedProcessor.ProcessInboxWorkAsync(
         myWork,
         processor: async (work) => {
@@ -444,6 +461,8 @@ public class TransportConsumerWorker : BackgroundService {
         },
         cancellationToken
       );
+      processingSw.Stop();
+      _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       // 7. Invoke PostInbox lifecycle stages (ALL receptors registered at PostInbox stages)
       // This is where DEFAULT receptors (without [FireAt]) fire for the distributed receive path
@@ -478,15 +497,20 @@ public class TransportConsumerWorker : BackgroundService {
       }
 
       // 8. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+      var completionSw = Stopwatch.StartNew();
+      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, cancellationToken);
+      completionSw.Stop();
+      _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var messageId = envelope.MessageId;
         _logger.LogDebug("Successfully processed message {MessageId}", messageId);
       }
 
+      _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
+      _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
       inboxActivity?.SetTag("exception.message", ex.Message);
@@ -495,6 +519,8 @@ public class TransportConsumerWorker : BackgroundService {
       throw; // Let the transport handle retry/dead-letter
 #pragma warning restore S2139
     } finally {
+      receiveSw.Stop();
+      _metrics?.InboxReceiveDuration.Record(receiveSw.Elapsed.TotalMilliseconds, messageTypeTag);
       inboxActivity?.Dispose();
     }
   }

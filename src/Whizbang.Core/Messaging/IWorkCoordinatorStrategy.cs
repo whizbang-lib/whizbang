@@ -73,7 +73,19 @@ public interface IWorkCoordinatorStrategy {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-  Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default);
+  Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Controls whether a flush must execute immediately or can be deferred to the strategy's natural cycle.
+/// </summary>
+/// <docs>data/work-coordinator-strategies</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/FlushModeTests.cs</tests>
+public enum FlushMode {
+  /// <summary>Must flush now and return results (for dedup checks, cascade work).</summary>
+  Required = 0,
+  /// <summary>Strategy decides when to flush. Immediate=now, Scoped=on disposal, Interval=on timer.</summary>
+  BestEffort = 1
 }
 
 /// <summary>
@@ -142,4 +154,11 @@ public class WorkCoordinatorOptions {
   /// Stale instance threshold in seconds (default 600 = 10 minutes).
   /// </summary>
   public int StaleThresholdSeconds { get; set; } = 600;
+
+  /// <summary>
+  /// Coalescing window in milliseconds for Required flushes on Interval strategy.
+  /// When > 0, a Required flush waits this long to pick up other queued items before executing.
+  /// Default: 0 (no coalescing). Recommended: 50ms for Interval strategy.
+  /// </summary>
+  public int CoalesceWindowMilliseconds { get; set; }
 }

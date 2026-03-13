@@ -30,6 +30,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IDeferredOutboxChannel? _deferredChannel;
+  private readonly WorkCoordinatorMetrics? _metrics;
+  private readonly LifecycleMetrics? _lifecycleMetrics;
 
   // Immediate strategy queues for single flush cycle
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -47,7 +49,9 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IServiceScopeFactory? scopeFactory = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
-    IDeferredOutboxChannel? deferredChannel = null
+    IDeferredOutboxChannel? deferredChannel = null,
+    WorkCoordinatorMetrics? metrics = null,
+    LifecycleMetrics? lifecycleMetrics = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -57,6 +61,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _deferredChannel = deferredChannel;
+    _metrics = metrics;
+    _lifecycleMetrics = lifecycleMetrics;
   }
 
   /// <summary>
@@ -142,7 +148,9 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "immediate"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+    // Immediate strategy always flushes regardless of FlushMode
     // Drain deferred channel first - these get written in THIS transaction
     // Events that were published outside transaction context (e.g., PostPerspective handlers)
     // are picked up here and included in the current work batch.
@@ -179,6 +187,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 
@@ -191,6 +200,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 
@@ -217,7 +227,10 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       LeaseSeconds = _options.LeaseSeconds,
       StaleThresholdSeconds = _options.StaleThresholdSeconds
     };
+    var flushSw = System.Diagnostics.Stopwatch.StartNew();
     var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
+    flushSw.Stop();
+    _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "immediate"));
 
     // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
@@ -229,6 +242,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       _lifecycleMessageDeserializer,
       _logger,
       enableLifecycleTracing: enableLifecycleTracing,
+      metrics: _lifecycleMetrics,
       ct: ct
     );
 

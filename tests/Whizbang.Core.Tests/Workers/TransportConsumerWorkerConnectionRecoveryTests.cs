@@ -51,6 +51,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -86,6 +87,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -135,6 +137,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -164,6 +167,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -211,6 +215,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -245,6 +250,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -284,6 +290,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -311,6 +318,7 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 

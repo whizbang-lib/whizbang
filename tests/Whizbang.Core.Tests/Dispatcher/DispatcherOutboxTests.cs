@@ -47,7 +47,7 @@ public class DispatcherOutboxTests {
     public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) =>
       QueuedFailures.Add((messageId, completedStatus, errorMessage));
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

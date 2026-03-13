@@ -78,6 +78,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       logger?.LogInformation("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
       await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
 
+      // Step 7: Run database maintenance (purge completed messages, etc.)
+      // Gracefully handles failures so it never prevents service startup
+      logger?.LogInformation("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
+      await PerformMaintenanceAsync(dbContext, logger, cancellationToken);
+
       logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
 
       // Clear all Npgsql connection pools after migrations complete.
@@ -495,6 +500,54 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Failed to reconcile perspective registry (function may not exist yet)");
       // Don't throw - registry reconciliation is informational, not critical
+    }
+  }
+
+  /// <summary>
+  /// Calls the perform_maintenance() PostgreSQL function on startup.
+  /// Logs results for each maintenance task. Runs VACUUM ANALYZE afterward.
+  /// Gracefully catches all errors — never prevents service startup.
+  /// </summary>
+  private static async Task PerformMaintenanceAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+    try {
+      // Call the maintenance function and log results
+      using var command = dbContext.Database.GetDbConnection().CreateCommand();
+      command.CommandText = @"SELECT * FROM __QUOTED_SCHEMA__.perform_maintenance()";
+      command.CommandTimeout = 120;
+
+      await dbContext.Database.OpenConnectionAsync(cancellationToken);
+
+      using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        var taskName = reader.GetString(0);
+        var rowsAffected = reader.GetInt64(1);
+        var durationMs = reader.GetDouble(2);
+        var status = reader.GetString(3);
+        logger?.LogInformation(
+          "Maintenance task {Task}: {Rows} rows affected in {Duration:F1}ms ({Status})",
+          taskName, rowsAffected, durationMs, status);
+      }
+
+      // VACUUM ANALYZE must run outside a transaction block
+      var connectionString = dbContext.Database.GetConnectionString();
+      if (!string.IsNullOrEmpty(connectionString)) {
+        await using var conn = new Npgsql.NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 120;
+        cmd.CommandText = @"
+          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_outbox;
+          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_inbox;
+          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_perspective_events;
+        ";
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        logger?.LogInformation("VACUUM ANALYZE completed for work coordination tables");
+      }
+    } catch (Exception ex) {
+      logger?.LogWarning(ex, "Database maintenance failed (non-fatal, will retry on next startup)");
     }
   }
 
