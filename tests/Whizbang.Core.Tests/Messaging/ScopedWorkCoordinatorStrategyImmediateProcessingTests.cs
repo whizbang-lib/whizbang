@@ -72,7 +72,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    var result = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
 
     // Assert - Work should be written to channel immediately
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
@@ -107,7 +107,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
 
     // Assert - Nothing written to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
@@ -144,7 +144,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         Hops = []
       }
     });
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
 
     // Act - Second flush with 3 messages
     var msg3 = System.Guid.CreateVersion7();
@@ -171,7 +171,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         Hops = []
       }
     });
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
 
     // Assert - All 5 messages written to channel
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(5);
@@ -215,7 +215,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     });
 
     // Act
-    await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
+    await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
 
     // Assert - Work written in same order
     await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);

@@ -66,6 +66,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -129,6 +130,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -179,6 +181,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -241,6 +244,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -281,6 +285,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -323,6 +328,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -369,6 +375,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -413,6 +420,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -470,6 +478,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -513,6 +522,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -560,6 +570,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -612,6 +623,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -661,6 +673,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -713,6 +726,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, // No deserializer
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -762,6 +776,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -819,6 +834,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -860,6 +876,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -906,6 +923,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       logger
     );
 
@@ -950,6 +968,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -995,6 +1014,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -1047,6 +1067,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -1264,7 +1285,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       FlushCount++;
 
       if (_returnEmptyInboxWork) {
@@ -1311,7 +1332,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
     public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       return Task.FromResult(new WorkBatch {
         InboxWork = [],
         OutboxWork = [],

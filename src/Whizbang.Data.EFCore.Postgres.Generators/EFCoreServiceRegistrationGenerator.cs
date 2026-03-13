@@ -1365,11 +1365,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
         sb.AppendLine("        // Auto-configured: pgvector support for EF Core");
         sb.AppendLine("        npgsqlOptions.UseVector();");
+        sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
         sb.AppendLine("      });");
         sb.AppendLine("    });");
       } else {
-        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options =>");
-        sb.AppendLine("      options.UseNpgsql(dataSource));");
+        sb.AppendLine($"    services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
+        sb.AppendLine("      options.UseNpgsql(dataSource, npgsqlOptions => {");
+        sb.AppendLine("        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
+        sb.AppendLine("      });");
+        sb.AppendLine("    });");
       }
       sb.AppendLine();
       sb.AppendLine($"    // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");
@@ -1486,11 +1490,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
       sb.AppendLine("          // Auto-configured: pgvector support for EF Core");
       sb.AppendLine("          npgsqlOptions.UseVector();");
+      sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
       sb.AppendLine("        });");
       sb.AppendLine("      });");
     } else {
-      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options =>");
-      sb.AppendLine("        options.UseNpgsql(dataSource));");
+      sb.AppendLine($"      services.AddDbContext<{dbContext.FullyQualifiedName}>(options => {{");
+      sb.AppendLine("        options.UseNpgsql(dataSource, npgsqlOptions => {");
+      sb.AppendLine("          npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
+      sb.AppendLine("        });");
+      sb.AppendLine("      });");
     }
     sb.AppendLine();
     sb.AppendLine($"      // Register IDbContextFactory<T> as singleton for HotChocolate parallel resolver support");

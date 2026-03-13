@@ -46,6 +46,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -85,6 +86,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -130,6 +132,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -176,6 +179,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -223,6 +227,7 @@ public class TransportConsumerWorkerTests {
       jsonOptions,
       orderedProcessor,
       lifecycleMessageDeserializer: null,
+      metrics: null,
       NullLogger<TransportConsumerWorker>.Instance
     );
 
@@ -528,7 +533,7 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchFlags flags, CancellationToken ct = default) {
+  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchFlags flags, Whizbang.Core.Messaging.FlushMode mode = Whizbang.Core.Messaging.FlushMode.Required, CancellationToken ct = default) {
     // Return an empty WorkBatch - unit tests don't need actual work processing
     var workBatch = new Whizbang.Core.Messaging.WorkBatch {
       InboxWork = [],
