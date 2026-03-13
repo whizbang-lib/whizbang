@@ -1,3 +1,5 @@
+using Whizbang.Core.Lenses;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -37,6 +39,17 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
   Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Insert or update a read model with scope information.
+  /// Same as UpsertAsync but populates the scope column for query filtering.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) to store model for</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope to store</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default)
+    => UpsertAsync(streamId, model, cancellationToken);
 
   /// <summary>
   /// Insert or update a read model with physical field values.
@@ -81,6 +94,18 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
     where TPartitionKey : notnull;
+
+  /// <summary>
+  /// Insert or update a read model by partition key with scope information.
+  /// Same as UpsertByPartitionKeyAsync but populates the scope column for query filtering.
+  /// </summary>
+  /// <param name="partitionKey">Partition key to store model for</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="scope">Multi-tenancy and security scope to store</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default)
+    where TPartitionKey : notnull
+    => UpsertByPartitionKeyAsync(partitionKey, model, cancellationToken);
 
   /// <summary>
   /// Ensures all pending changes are committed to the database.

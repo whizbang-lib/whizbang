@@ -72,6 +72,11 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
         _context, _tableName, streamId, model, _defaultMetadata, new PerspectiveScope(), cancellationToken);
 
   /// <inheritdoc/>
+  public Task UpsertAsync(Guid streamId, TModel model, PerspectiveScope scope, CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, streamId, model, _defaultMetadata, scope, cancellationToken);
+
+  /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync</tests>
@@ -104,6 +109,17 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     _upsertStrategy.UpsertPerspectiveRowAsync(
         _context, _tableName, _convertPartitionKeyToGuid(partitionKey), model,
         _defaultMetadata, new PerspectiveScope(), cancellationToken);
+
+  /// <inheritdoc/>
+  public Task UpsertByPartitionKeyAsync<TPartitionKey>(
+      TPartitionKey partitionKey,
+      TModel model,
+      PerspectiveScope scope,
+      CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, _convertPartitionKeyToGuid(partitionKey), model,
+        _defaultMetadata, scope, cancellationToken);
 
   /// <summary>
   /// Converts a partition key of any type to a Guid for storage.
