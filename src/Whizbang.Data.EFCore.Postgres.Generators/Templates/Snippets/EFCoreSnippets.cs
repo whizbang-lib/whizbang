@@ -51,7 +51,10 @@ public class EFCoreSnippets {
       //
       entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
-      entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
+      entity.ComplexProperty(e => e.Scope, s => {
+        s.ToJson("scope");
+        s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+      });
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
