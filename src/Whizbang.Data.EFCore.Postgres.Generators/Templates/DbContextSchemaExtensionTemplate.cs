@@ -371,7 +371,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       "process_work_batch",
       "process_inbox_batch",
       "process_outbox_batch",
-      "process_perspectives_batch"
+      "process_perspectives_batch",
+      "perform_maintenance"
     };
 
     // Replace function names in CREATE/DROP/CALL statements
@@ -516,7 +517,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       // Call the maintenance function and log results
       using var command = dbContext.Database.GetDbConnection().CreateCommand();
       command.CommandText = @"SELECT * FROM __QUOTED_SCHEMA__.perform_maintenance()";
-      command.CommandTimeout = 120;
+      command.CommandTimeout = 10;
 
       await dbContext.Database.OpenConnectionAsync(cancellationToken);
 

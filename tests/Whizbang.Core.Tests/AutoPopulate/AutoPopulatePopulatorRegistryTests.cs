@@ -42,15 +42,15 @@ public class AutoPopulatePopulatorRegistryTests {
     }
   }
 
-  // Thread-safe one-time registration
-  private static int _registered;
-  private static readonly TestPopulator _testPopulator = new();
+  // Thread-safe one-time registration using Lazy to block concurrent callers
+  // until registration completes (unlike Interlocked.CompareExchange which is non-blocking)
+  private static readonly Lazy<TestPopulator> _registeredPopulator = new(() => {
+    var populator = new TestPopulator();
+    AutoPopulatePopulatorRegistry.Register(populator, priority: 50);
+    return populator;
+  });
 
-  private static void _ensureRegistered() {
-    if (Interlocked.CompareExchange(ref _registered, 1, 0) == 0) {
-      AutoPopulatePopulatorRegistry.Register(_testPopulator, priority: 50);
-    }
-  }
+  private static void _ensureRegistered() => _ = _registeredPopulator.Value;
 
   [Test]
   public async Task PopulateSent_WithMatchingType_ReturnsPopulatedRecordAsync() {
