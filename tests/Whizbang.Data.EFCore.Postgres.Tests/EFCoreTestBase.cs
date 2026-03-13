@@ -75,7 +75,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
       // CRITICAL CONFIGURATION FOR POCO JSON MAPPING:
       // All entities (infrastructure + perspectives) now use custom POCO types with .HasColumnType("jsonb")
-      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, MessageScope, ServiceInstanceMetadata
+      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, PerspectiveScope, ServiceInstanceMetadata
       // - Perspectives: PerspectiveRow<T>.Data, Metadata, Scope
       // - Test types: Order, SampleOrderCreatedEvent (registered via TestJsonContext)
       //

@@ -975,9 +975,10 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
     await InsertServiceInstanceAsync(instance3Id, "TestService", "host3", 33333);
 
-    // Create 15 messages (divisible by 3 for even distribution testing)
+    // Create 30 messages to ensure reliable distribution across 3 modulo buckets
+    // With 15 messages, random partition hashes can occasionally skip a bucket entirely
     var messages = new List<(Guid messageId, int partition)>();
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 30; i++) {
       var messageId = _idProvider.NewGuid();
       var streamId = _idProvider.NewGuid();
 
@@ -1068,10 +1069,10 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(claimedByInstance2.Intersect(claimedByInstance3)).Count().IsEqualTo(0);
 
     // Total claimed should equal total messages
-    await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count + claimedByInstance3.Count).IsEqualTo(15);
+    await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count + claimedByInstance3.Count).IsEqualTo(30);
 
-    // Each instance should claim at least 1 message (ideally ~5 each with perfect distribution)
-    // Random stream IDs don't guarantee even partition distribution across modulo 3 values
+    // Each instance should claim at least 1 message (ideally ~10 each with perfect distribution)
+    // With 30 random partitions across 3 buckets, probability of any bucket being empty is negligible
     await Assert.That(claimedByInstance1.Count).IsGreaterThanOrEqualTo(1)
       .Because("Each instance should claim at least some messages based on modulo distribution");
     await Assert.That(claimedByInstance2.Count).IsGreaterThanOrEqualTo(1);
