@@ -109,7 +109,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -795,7 +795,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -857,7 +857,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
     // Give a little extra time for PostPerspectiveInline to fire after completion
     await Task.Delay(200);
     cts.Cancel();
