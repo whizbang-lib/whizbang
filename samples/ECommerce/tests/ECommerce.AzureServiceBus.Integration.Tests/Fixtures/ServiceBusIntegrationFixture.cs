@@ -534,6 +534,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
@@ -725,6 +726,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         jsonOptions,
         sp.GetRequiredService<OrderedStreamProcessor>(),
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );

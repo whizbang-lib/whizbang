@@ -129,7 +129,10 @@ public sealed class PostgresSchemaInitializer {
       "027_ClaimOrphanedPerspectiveEvents.sql",
       "028_EventStorageErrorTracking.sql",
       "029_ProcessWorkBatch.sql",
-      "030_ReconcilePerspectiveRegistry.sql"
+      "030_DecompositionComplete.sql",
+      "030_ReconcilePerspectiveRegistry.sql",
+      "031_ClaimingIndexes.sql",
+      "032_PerformMaintenance.sql"
     };
 
     foreach (var functionFile in functionFiles) {
@@ -186,7 +189,10 @@ public sealed class PostgresSchemaInitializer {
       "027_ClaimOrphanedPerspectiveEvents.sql",
       "028_EventStorageErrorTracking.sql",
       "029_ProcessWorkBatch.sql",
-      "030_ReconcilePerspectiveRegistry.sql"
+      "030_DecompositionComplete.sql",
+      "030_ReconcilePerspectiveRegistry.sql",
+      "031_ClaimingIndexes.sql",
+      "032_PerformMaintenance.sql"
     };
 
     foreach (var functionFile in functionFiles) {

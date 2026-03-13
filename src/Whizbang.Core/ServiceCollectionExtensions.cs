@@ -208,6 +208,14 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddWhizbangMessageSecurity();
+
+    // Register observability metrics (near-zero cost when no OTEL exporter is attached)
+    services.TryAddSingleton<WhizbangMetrics>();
+    services.TryAddSingleton<WorkCoordinatorMetrics>();
+    services.TryAddSingleton<DispatcherMetrics>();
+    services.TryAddSingleton<TransportMetrics>();
+    services.TryAddSingleton<PerspectiveMetrics>();
+    services.TryAddSingleton<LifecycleMetrics>();
   }
 
   /// <summary>

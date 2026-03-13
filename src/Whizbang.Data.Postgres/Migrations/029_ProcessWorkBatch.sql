@@ -242,6 +242,14 @@ BEGIN
       );
   END IF;
 
+  -- Debug mode cleanup: Purge completed messages older than 1 hour to prevent table bloat
+  -- This gives developers time to inspect recent completions while keeping tables bounded
+  IF (p_flags & 4) != 0 THEN
+    DELETE FROM wh_outbox WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
+    DELETE FROM wh_inbox WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
+    DELETE FROM wh_perspective_events WHERE processed_at IS NOT NULL AND processed_at < p_now - INTERVAL '1 hour';
+  END IF;
+
   -- Process perspective checkpoint completions (direct completion reports from perspective runners)
   IF jsonb_array_length(p_perspective_completions) > 0 THEN
     FOR v_completion IN

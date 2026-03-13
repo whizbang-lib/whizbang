@@ -148,7 +148,7 @@ internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     return Task.FromResult(_flushFunc());
   }
 }
