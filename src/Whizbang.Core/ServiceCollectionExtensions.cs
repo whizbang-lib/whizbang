@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 using Whizbang.Core.Security;
@@ -208,6 +209,11 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddWhizbangMessageSecurity();
+
+    // Register lens infrastructure
+    services.TryAddSingleton<LensOptions>();
+    services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();
+    services.TryAddScoped<IScopedLensFactory, ScopedLensFactory>();
 
     // Register observability metrics (near-zero cost when no OTEL exporter is attached)
     services.TryAddSingleton<WhizbangMetrics>();

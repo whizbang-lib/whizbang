@@ -1,6 +1,23 @@
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
+/// Controls which events are audited when event audit is enabled.
+/// </summary>
+/// <docs>core-concepts/system-events#audit-mode</docs>
+public enum AuditMode {
+  /// <summary>
+  /// All events are audited unless marked with <c>[AuditEvent(Exclude = true)]</c>.
+  /// This is the default mode.
+  /// </summary>
+  OptOut,
+
+  /// <summary>
+  /// Only events explicitly marked with <c>[AuditEvent]</c> (and not excluded) are audited.
+  /// </summary>
+  OptIn
+}
+
+/// <summary>
 /// Configuration options for system events.
 /// Controls which system events are enabled and their transport behavior.
 /// </summary>
@@ -52,6 +69,12 @@ public sealed class SystemEventOptions {
   /// </para>
   /// </remarks>
   public bool LocalOnly { get; set; } = true;
+
+  /// <summary>
+  /// Controls which events are audited: <see cref="AuditMode.OptOut"/> (default) audits all
+  /// events unless excluded, <see cref="AuditMode.OptIn"/> audits only explicitly marked events.
+  /// </summary>
+  public AuditMode AuditMode { get; set; } = AuditMode.OptOut;
 
   /// <summary>
   /// Enables <see cref="EventAudited"/> system events.

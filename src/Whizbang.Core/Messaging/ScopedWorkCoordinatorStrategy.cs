@@ -24,6 +24,8 @@ public record ScopedWorkCoordinatorDependencies {
   public ILifecycleMessageDeserializer? LifecycleMessageDeserializer { get; init; }
   /// <summary>Tracing options monitor for controlling span emission.</summary>
   public IOptionsMonitor<TracingOptions>? TracingOptions { get; init; }
+  /// <summary>System event options for audit event generation.</summary>
+  public SystemEvents.SystemEventOptions? SystemEventOptions { get; init; }
 }
 
 /// <summary>
@@ -47,6 +49,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
   // Queues for batching operations within the scope
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
+  private readonly List<OutboxMessage> _pendingAuditMessages = [];
   private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
   private readonly List<MessageCompletion> _queuedInboxCompletions = [];
@@ -85,6 +88,17 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     _queuedOutboxMessages.Add(message);
     if (_logger != null) {
       LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
+    }
+
+    // Generate audit outbox message for event messages when audit is enabled
+    // Audit messages are collected separately and merged AFTER lifecycle stages
+    // to avoid SecurityContextRequiredException during lifecycle processing
+    if (message.IsEvent && _dependencies.SystemEventOptions?.EventAuditEnabled == true) {
+      var auditMessage = SystemEvents.AuditOutboxMessageBuilder.TryBuildAuditMessage(
+          message, _dependencies.SystemEventOptions);
+      if (auditMessage != null) {
+        _pendingAuditMessages.Add(auditMessage);
+      }
     }
   }
 
@@ -206,6 +220,13 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       metrics: _lifecycleMetrics,
       ct: ct
     );
+
+    // Merge pending audit messages into outbox queue AFTER lifecycle stages
+    // (audit messages skip lifecycle processing to avoid security context issues)
+    if (_pendingAuditMessages.Count > 0) {
+      _queuedOutboxMessages.AddRange(_pendingAuditMessages);
+      _pendingAuditMessages.Clear();
+    }
 
     // Call process_work_batch with all queued operations
     var request = new ProcessWorkBatchRequest {
