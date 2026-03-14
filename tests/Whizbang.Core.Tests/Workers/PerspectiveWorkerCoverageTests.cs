@@ -108,11 +108,9 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
     await Assert.That(workProcessingStartedFired).IsTrue()
@@ -735,11 +733,11 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // StopAsync cancels the worker AND waits for ExecuteAsync to complete
+    // (unlike cts.Cancel() + await workerTask, which is a no-op since StartAsync returns Task.CompletedTask)
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
     await Assert.That(syncSignaler.SignalCount).IsGreaterThanOrEqualTo(1)
@@ -777,6 +775,7 @@ public class PerspectiveWorkerCoverageTests {
     services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
+    services.AddScoped<IReceptorInvoker, NoOpReceptorInvoker>();
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -794,11 +793,9 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
     await Assert.That(syncEventTracker.MarkProcessedByPerspectiveCallCount).IsGreaterThanOrEqualTo(1)
@@ -840,6 +837,7 @@ public class PerspectiveWorkerCoverageTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddSingleton<IEventStore>(eventStore);
     services.AddSingleton<IMessageTagProcessor>(tagProcessor);
+    services.AddScoped<IReceptorInvoker, NoOpReceptorInvoker>();
     services.AddLogging();
 
     var serviceProvider = services.BuildServiceProvider();
@@ -856,13 +854,9 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
-    // Give a little extra time for PostPerspectiveInline to fire after completion
-    await Task.Delay(200);
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert
     await Assert.That(tagProcessor.ProcessTagsCallCount).IsGreaterThanOrEqualTo(1)
@@ -1633,6 +1627,16 @@ public class PerspectiveWorkerCoverageTests {
     public T Get(string? name) => CurrentValue;
 
     public IDisposable? OnChange(Action<T, string?> listener) => null;
+  }
+
+  private sealed class NoOpReceptorInvoker : IReceptorInvoker {
+    public ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      return ValueTask.CompletedTask;
+    }
   }
 
   #endregion
