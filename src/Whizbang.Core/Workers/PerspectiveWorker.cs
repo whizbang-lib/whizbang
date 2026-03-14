@@ -474,6 +474,14 @@ public partial class PerspectiveWorker(
                   context,
                   cancellationToken
                 );
+
+                // ImmediateAsync lifecycle receptors fire at the end of each stage
+                await receptorInvoker.InvokeAsync(
+                  envelope,
+                  LifecycleStage.ImmediateAsync,
+                  context with { CurrentStage = LifecycleStage.ImmediateAsync },
+                  cancellationToken
+                );
               }
             } catch (Exception ex) {
               LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
@@ -500,6 +508,14 @@ public partial class PerspectiveWorker(
                   envelope,
                   LifecycleStage.PrePerspectiveInline,
                   context,
+                  cancellationToken
+                );
+
+                // ImmediateAsync lifecycle receptors fire at the end of each stage
+                await receptorInvoker.InvokeAsync(
+                  envelope,
+                  LifecycleStage.ImmediateAsync,
+                  context with { CurrentStage = LifecycleStage.ImmediateAsync },
                   cancellationToken
                 );
               }
@@ -603,6 +619,18 @@ public partial class PerspectiveWorker(
               result.PerspectiveType,
               result.LastEventId,
               LifecycleStage.PostPerspectiveInline,
+              scope.ServiceProvider,
+              cancellationToken
+            );
+
+            // ImmediateAsync lifecycle receptors fire at the end of each stage
+            await _invokeLifecycleReceptorsForEventsAsync(
+              processedEvents,
+              streamId,
+              perspectiveName,
+              result.PerspectiveType,
+              result.LastEventId,
+              LifecycleStage.ImmediateAsync,
               scope.ServiceProvider,
               cancellationToken
             );
