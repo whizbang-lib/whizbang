@@ -51,6 +51,11 @@ public sealed record EventAudited : ISystemEvent {
   public required Guid Id { get; init; }
 
   /// <summary>
+  /// The unique ID of the original domain event (matches event store event_id / outbox message_id).
+  /// </summary>
+  public Guid OriginalEventId { get; init; }
+
+  /// <summary>
   /// The type name of the original domain event (e.g., "OrderCreated").
   /// </summary>
   public required string OriginalEventType { get; init; }

@@ -31,8 +31,8 @@ public static class AuditOutboxMessageBuilder {
       return null;
     }
 
-    // Extract event type name from the message type string
-    var eventTypeName = _extractTypeName(eventMessage.MessageType);
+    // Extract full type name (namespace + type, without assembly qualifier)
+    var eventTypeName = _extractFullTypeName(eventMessage.MessageType);
 
     // Build scope dictionary from the event's scope
     Dictionary<string, string?>? scope = null;
@@ -60,6 +60,7 @@ public static class AuditOutboxMessageBuilder {
     // Build the EventAudited payload
     var auditEvent = new EventAudited {
       Id = TrackedGuid.NewMedo(),
+      OriginalEventId = eventMessage.MessageId,
       OriginalEventType = eventTypeName,
       OriginalStreamId = eventMessage.StreamId?.ToString() ?? string.Empty,
       OriginalStreamPosition = 0, // Position not available from outbox message
@@ -134,13 +135,11 @@ public static class AuditOutboxMessageBuilder {
     }
   }
 
-  private static string _extractTypeName(string messageType) {
+  private static string _extractFullTypeName(string messageType) {
     // MessageType is assembly-qualified: "Namespace.TypeName, AssemblyName, ..."
-    // Extract just the type name (after last dot, before comma)
+    // Extract the full type name including namespace (before the first comma)
     var commaIndex = messageType.IndexOf(',');
-    var typePart = commaIndex > 0 ? messageType[..commaIndex] : messageType;
-    var dotIndex = typePart.LastIndexOf('.');
-    return dotIndex > 0 ? typePart[(dotIndex + 1)..] : typePart;
+    return commaIndex > 0 ? messageType[..commaIndex] : messageType;
   }
 
   private static JsonElement _serializeToJsonElement(EventAudited auditEvent) {
