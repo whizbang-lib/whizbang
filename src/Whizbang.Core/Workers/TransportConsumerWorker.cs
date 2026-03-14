@@ -426,10 +426,18 @@ public class TransportConsumerWorker : BackgroundService {
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
 
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
           // PreInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
         }
       }
 
@@ -490,10 +498,18 @@ public class TransportConsumerWorker : BackgroundService {
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
 
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
           // PostInboxInline stage
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
         }
       }
 
