@@ -154,7 +154,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
       );
     }
 
@@ -174,7 +175,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
       );
     }
 
@@ -197,7 +199,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
       );
     }
 
@@ -217,7 +220,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           DefaultRouting: defaultRouting,
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
-          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol)
+          IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
       );
     }
 
@@ -233,6 +237,70 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <returns>True if the type implements IEvent, false otherwise.</returns>
   private static bool _implementsIEvent(ITypeSymbol typeSymbol) {
     return TypeNameHelper.ImplementsInterface(typeSymbol, StandardInterfaceNames.I_EVENT);
+  }
+
+  /// <summary>
+  /// Returns true if the type is polymorphic — an interface or a non-sealed class —
+  /// meaning concrete derived/implementing types should be expanded at compile time.
+  /// </summary>
+  private static bool _isPolymorphicType(ITypeSymbol type) =>
+      type.TypeKind == TypeKind.Interface ||
+      (type.TypeKind == TypeKind.Class && !type.IsSealed);
+
+  /// <summary>
+  /// Finds all concrete (non-abstract) types in the compilation that derive from or implement
+  /// the given type. Used for polymorphic receptor expansion.
+  /// </summary>
+  private static System.Collections.Generic.List<string> _findConcreteSubtypes(
+      Compilation compilation, string baseTypeFQN) {
+    var baseSymbol = compilation.GetTypeByMetadataName(
+        baseTypeFQN.Replace("global::", ""));
+    if (baseSymbol is null) {
+      return new System.Collections.Generic.List<string>();
+    }
+
+    var result = new System.Collections.Generic.List<string>();
+    _walkNamespaceForSubtypes(compilation.GlobalNamespace, baseSymbol, result);
+    return result;
+  }
+
+  private static void _walkNamespaceForSubtypes(
+      INamespaceSymbol ns, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
+    foreach (var type in ns.GetTypeMembers()) {
+      _checkTypeAndNestedTypes(type, target, result);
+    }
+    foreach (var childNs in ns.GetNamespaceMembers()) {
+      _walkNamespaceForSubtypes(childNs, target, result);
+    }
+  }
+
+  private static void _checkTypeAndNestedTypes(
+      INamedTypeSymbol type, INamedTypeSymbol target, System.Collections.Generic.List<string> result) {
+    if (!type.IsAbstract && type.TypeKind == TypeKind.Class && _isSubtypeOf(type, target)) {
+      result.Add(TypeNameHelper.GetFullyQualifiedName(type));
+    }
+    // Recurse into nested types (e.g., events nested inside static contract classes)
+    foreach (var nested in type.GetTypeMembers()) {
+      _checkTypeAndNestedTypes(nested, target, result);
+    }
+  }
+
+  /// <summary>
+  /// Checks if <paramref name="type"/> implements or inherits from <paramref name="target"/>.
+  /// </summary>
+  private static bool _isSubtypeOf(INamedTypeSymbol type, INamedTypeSymbol target) {
+    if (target.TypeKind == TypeKind.Interface) {
+      return type.AllInterfaces.Contains(target, SymbolEqualityComparer.Default);
+    }
+
+    var current = type.BaseType;
+    while (current is not null) {
+      if (SymbolEqualityComparer.Default.Equals(current, target)) {
+        return true;
+      }
+      current = current.BaseType;
+    }
+    return false;
   }
 
   /// <summary>
@@ -1358,34 +1426,39 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline"
     };
 
-    // Build list of (receptor, stage) pairs from ALL receptors
-    var routingPairs = new System.Collections.Generic.List<(ReceptorInfo Receptor, string Stage)>();
+    // Build list of routing entries from ALL receptors.
+    // RoutingMessageType is the type used in the if-condition (concrete type for expanded entries),
+    // while Receptor.MessageType is the interface/base type used for DI resolution and casting.
+    var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();
     foreach (var receptor in receptors) {
-      if (receptor.HasDefaultStage) {
-        // No [FireAt] attributes - register at default stages
-        foreach (var stage in defaultStages) {
-          routingPairs.Add((receptor, stage));
-        }
-      } else {
-        // Has [FireAt] attributes - register at specified stages only
-        // Note: LifecycleStages already contains fully qualified names from _extractLifecycleStages()
-        foreach (var stage in receptor.LifecycleStages) {
-          routingPairs.Add((receptor, stage));
+      var stages = receptor.HasDefaultStage ? defaultStages : receptor.LifecycleStages;
+      foreach (var stage in stages) {
+        routingEntries.Add((receptor.MessageType, receptor, stage));
+      }
+    }
+
+    // Expand polymorphic receptors: for each concrete subtype, add a routing entry
+    // so the receptor fires when a concrete event is dispatched
+    foreach (var entry in routingEntries.ToList()) {
+      if (entry.Receptor.IsPolymorphicMessageType) {
+        var concreteTypes = _findConcreteSubtypes(compilation, entry.Receptor.MessageType);
+        foreach (var concreteType in concreteTypes) {
+          routingEntries.Add((concreteType, entry.Receptor, entry.Stage));
         }
       }
     }
 
-    // Group routing pairs by (messageType, stage) to generate combined if-blocks
-    // This ensures all receptors for the same (messageType, stage) are in a single array
-    var groupedRoutingPairs = routingPairs
-        .GroupBy(p => (p.Receptor.MessageType, p.Stage))
+    // Group routing entries by (routingMessageType, stage) to generate combined if-blocks
+    // This ensures all receptors for the same (routingMessageType, stage) are in a single array
+    var groupedRoutingPairs = routingEntries
+        .GroupBy(e => (e.RoutingMessageType, e.Stage))
         .ToList();
 
-    // Calculate handler count per (message type, stage) for tracing
+    // Calculate handler count per (routing message type, stage) for tracing
     var handlerCountByKey = groupedRoutingPairs
         .ToDictionary(g => g.Key, g => g.Count());
 
-    // Generate routing code for each (messageType, stage) group
+    // Generate routing code for each (routingMessageType, stage) group
     var routingCode = new StringBuilder();
     foreach (var group in groupedRoutingPairs) {
       var (messageType, stage) = group.Key;
