@@ -77,6 +77,43 @@ public sealed class SystemEventOptions {
   public AuditMode AuditMode { get; set; } = AuditMode.OptOut;
 
   /// <summary>
+  /// Custom function to humanize event type names for the audit trail.
+  /// Receives the fully-qualified event type name (e.g., "JobCreatedEvent")
+  /// and returns a human-readable label (e.g., "Job Created").
+  /// When null or returns null, the built-in <see cref="Audit.AuditEventProjection.HumanizeEventType"/> is used.
+  /// </summary>
+  /// <example>
+  /// <code>
+  /// services.AddSystemEvents(options => {
+  ///   options.EnableEventAudit();
+  ///   options.EventNameHumanizer = eventType => eventType switch {
+  ///     "JobCreatedEvent" => "New Job",
+  ///     _ => null // fall back to default
+  ///   };
+  /// });
+  /// </code>
+  /// </example>
+  public Func<string, string?>? EventNameHumanizer { get; set; }
+
+  /// <summary>
+  /// Custom function to generate event descriptions for the audit trail.
+  /// Receives the fully-qualified event type name and returns a description string.
+  /// When null or returns null, the built-in namespace extraction is used.
+  /// </summary>
+  /// <example>
+  /// <code>
+  /// services.AddSystemEvents(options => {
+  ///   options.EnableEventAudit();
+  ///   options.EventDescriptionHumanizer = eventType => eventType switch {
+  ///     var t when t.Contains("Job") => "Job Management",
+  ///     _ => null // fall back to default
+  ///   };
+  /// });
+  /// </code>
+  /// </example>
+  public Func<string, string?>? EventDescriptionHumanizer { get; set; }
+
+  /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
   /// When enabled, an EventAudited is emitted for each domain event appended.
   /// </summary>

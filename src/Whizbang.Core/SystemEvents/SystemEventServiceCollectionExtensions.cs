@@ -53,6 +53,14 @@ public static class SystemEventServiceCollectionExtensions {
     configure?.Invoke(options);
     services.TryAddSingleton(Options.Create(options));
 
+    // Wire up custom humanizers if provided
+    if (options.EventNameHumanizer != null) {
+      Audit.AuditEventProjection.CustomHumanizer = options.EventNameHumanizer;
+    }
+    if (options.EventDescriptionHumanizer != null) {
+      Audit.AuditEventProjection.CustomDescriptionHumanizer = options.EventDescriptionHumanizer;
+    }
+
     // Register core services
     services.TryAddSingleton<ITransportPublishFilter, SystemEventTransportFilter>();
 
