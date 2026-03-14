@@ -110,6 +110,40 @@ public class SystemEventServiceCollectionExtensionsTests {
     await Assert.That(filter).IsNotNull();
   }
 
+  [Test]
+  public async Task AddSystemEvents_WithEventAuditEnabled_DecoratesEventStoreAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStore>(new MockEventStore());
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
+
+    // Act
+    services.AddSystemEvents(opts => opts.EnableEventAudit());
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var eventStore = provider.GetService<IEventStore>();
+    await Assert.That(eventStore).IsNotNull();
+    await Assert.That(eventStore).IsTypeOf<AuditingEventStoreDecorator>();
+  }
+
+  [Test]
+  public async Task AddSystemEvents_WithAuditDisabled_DoesNotDecorateEventStoreAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStore>(new MockEventStore());
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
+
+    // Act
+    services.AddSystemEvents(); // No audit enabled
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var eventStore = provider.GetService<IEventStore>();
+    await Assert.That(eventStore).IsNotNull();
+    await Assert.That(eventStore).IsTypeOf<MockEventStore>();
+  }
+
   #endregion
 
   #region AddSystemEventAuditing Tests
@@ -212,7 +246,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     var services = new ServiceCollection();
     var mockEventStore = new MockEventStore();
     services.AddSingleton<IEventStore>(mockEventStore);
-    services.AddSingleton<ISystemEventEmitter, MockSystemEventEmitter>();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
     services.AddSystemEvents();
 
     // Act
@@ -230,7 +264,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IEventStore>(_ => new MockEventStore());
-    services.AddSingleton<ISystemEventEmitter, MockSystemEventEmitter>();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
     services.AddSystemEvents();
 
     // Act
@@ -248,7 +282,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IEventStore, MockEventStore>();
-    services.AddSingleton<ISystemEventEmitter, MockSystemEventEmitter>();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
     services.AddSystemEvents();
 
     // Act
@@ -266,7 +300,7 @@ public class SystemEventServiceCollectionExtensionsTests {
     // Arrange
     var services = new ServiceCollection();
     services.AddSingleton<IEventStore, MockEventStore>();
-    services.AddSingleton<ISystemEventEmitter, MockSystemEventEmitter>();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
     services.AddSystemEvents();
 
     // Act
@@ -307,19 +341,13 @@ public class SystemEventServiceCollectionExtensionsTests {
         Task.FromResult(0L);
   }
 
-  private sealed class MockSystemEventEmitter : ISystemEventEmitter {
-    public Task EmitEventAuditedAsync<TEvent>(Guid streamId, long streamPosition, MessageEnvelope<TEvent> envelope, CancellationToken cancellationToken = default) =>
-        Task.CompletedTask;
+  private sealed class MockDeferredOutboxChannel : IDeferredOutboxChannel {
+    public ValueTask QueueAsync(OutboxMessage message, CancellationToken ct = default) =>
+        ValueTask.CompletedTask;
 
-    public Task EmitCommandAuditedAsync<TCommand, TResponse>(TCommand command, TResponse response, string receptorName, IMessageContext? context, CancellationToken cancellationToken = default)
-        where TCommand : notnull =>
-        Task.CompletedTask;
+    public IReadOnlyList<OutboxMessage> DrainAll() => [];
 
-    public Task EmitAsync<TSystemEvent>(TSystemEvent systemEvent, CancellationToken cancellationToken = default)
-        where TSystemEvent : ISystemEvent =>
-        Task.CompletedTask;
-
-    public bool ShouldExcludeFromAudit(Type type) => false;
+    public bool HasPending => false;
   }
 
   #endregion

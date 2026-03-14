@@ -78,6 +78,13 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
       scope["CorrelationId"] = correlationId.ToString();
     }
 
+    // Add all claims to scope dictionary (includes name, email, etc.)
+    if (scopeContext?.Claims is not null) {
+      foreach (var claim in scopeContext.Claims) {
+        scope[claim.Key] = claim.Value;
+      }
+    }
+
     // Serialize payload to JsonElement in AOT-compatible way
     var payloadJson = _serializeToJsonElement(envelope.Payload);
 

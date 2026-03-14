@@ -86,11 +86,6 @@ public sealed record EventAudited : ISystemEvent {
   public string? UserId { get; init; }
 
   /// <summary>
-  /// User display name from event scope (copied for display).
-  /// </summary>
-  public string? UserName { get; init; }
-
-  /// <summary>
   /// Correlation identifier for distributed tracing.
   /// </summary>
   public string? CorrelationId { get; init; }

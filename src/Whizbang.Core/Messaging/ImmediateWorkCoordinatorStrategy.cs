@@ -7,9 +7,12 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
@@ -32,9 +35,11 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly IDeferredOutboxChannel? _deferredChannel;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
+  private readonly SystemEventOptions? _systemEventOptions;
 
   // Immediate strategy queues for single flush cycle
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
+  private readonly List<OutboxMessage> _pendingAuditMessages = [];
   private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
   private readonly List<MessageCompletion> _queuedInboxCompletions = [];
@@ -51,7 +56,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     IDeferredOutboxChannel? deferredChannel = null,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null
+    LifecycleMetrics? lifecycleMetrics = null,
+    IOptions<SystemEventOptions>? systemEventOptions = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -63,6 +69,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _deferredChannel = deferredChannel;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    _systemEventOptions = systemEventOptions?.Value;
   }
 
   /// <summary>
@@ -74,6 +81,16 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _queuedOutboxMessages.Add(message);
     if (_logger != null) {
       LogOutboxMessageQueued(_logger);
+    }
+
+    // Generate audit outbox message for event messages when audit is enabled
+    // Audit messages are collected separately and merged before DB write
+    // to avoid lifecycle processing (which requires security context)
+    if (message.IsEvent && _systemEventOptions?.EventAuditEnabled == true) {
+      var auditMessage = AuditOutboxMessageBuilder.TryBuildAuditMessage(message, _systemEventOptions);
+      if (auditMessage != null) {
+        _pendingAuditMessages.Add(auditMessage);
+      }
     }
   }
 
@@ -203,6 +220,12 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       metrics: _lifecycleMetrics,
       ct: ct
     );
+
+    // Merge pending audit messages after lifecycle stages
+    if (_pendingAuditMessages.Count > 0) {
+      _queuedOutboxMessages.AddRange(_pendingAuditMessages);
+      _pendingAuditMessages.Clear();
+    }
 
     var request = new ProcessWorkBatchRequest {
       InstanceId = _instanceProvider.InstanceId,

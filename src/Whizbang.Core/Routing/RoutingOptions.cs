@@ -112,6 +112,28 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
+  /// Subscribes to the audit topic and enables the built-in audit perspective.
+  /// The perspective materializes <see cref="SystemEvents.EventAudited"/> into
+  /// <see cref="SystemEvents.Audit.AuditEventModel"/> automatically.
+  /// </summary>
+  /// <param name="autoGeneratePerspective">
+  /// When <c>true</c> (default), Whizbang's built-in <see cref="SystemEvents.Audit.AuditEventProjection"/>
+  /// is used. Set to <c>false</c> to provide a custom perspective for EventAudited.
+  /// </param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>core-concepts/system-events#subscribe-to-audit</docs>
+  public RoutingOptions SubscribeToAudit(bool autoGeneratePerspective = true) {
+    _subscribedNamespaces.Add(SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+    AuditPerspectiveEnabled = autoGeneratePerspective;
+    return this;
+  }
+
+  /// <summary>
+  /// Gets whether the built-in audit perspective is enabled via <see cref="SubscribeToAudit"/>.
+  /// </summary>
+  public bool AuditPerspectiveEnabled { get; private set; }
+
+  /// <summary>
   /// Subscribes to event namespaces for receiving events from other services.
   /// These are combined with auto-discovered subscriptions from perspectives/receptors.
   /// </summary>

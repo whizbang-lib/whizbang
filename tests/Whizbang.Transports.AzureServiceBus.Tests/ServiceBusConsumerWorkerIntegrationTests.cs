@@ -14,9 +14,9 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
-using EnvelopeSerializer = Whizbang.Core.Messaging.EnvelopeSerializer;
 using Whizbang.Testing.Transport;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using EnvelopeSerializer = Whizbang.Core.Messaging.EnvelopeSerializer;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 

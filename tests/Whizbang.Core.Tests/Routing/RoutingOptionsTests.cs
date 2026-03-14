@@ -774,4 +774,87 @@ public class RoutingOptionsTests {
   }
 
   #endregion
+
+  #region SubscribeToAudit
+
+  [Test]
+  public async Task SubscribeToAudit_AddsAuditNamespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToAudit();
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces)
+        .Contains(Whizbang.Core.SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+  }
+
+  [Test]
+  public async Task SubscribeToAudit_EnablesAuditPerspectiveByDefaultAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToAudit();
+
+    // Assert
+    await Assert.That(options.AuditPerspectiveEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SubscribeToAudit_WithFalse_DisablesAuditPerspectiveAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToAudit(autoGeneratePerspective: false);
+
+    // Assert
+    await Assert.That(options.AuditPerspectiveEnabled).IsFalse();
+    // But still subscribes to the namespace
+    await Assert.That(options.SubscribedNamespaces)
+        .Contains(Whizbang.Core.SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+  }
+
+  [Test]
+  public async Task SubscribeToAudit_ReturnsSelfForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.SubscribeToAudit();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task SubscribeToAudit_CanChainWithOwnDomainsAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act - typical BFF usage pattern
+    options.OwnDomains("jdx.contracts.bff")
+           .SubscribeToAudit()
+           .SubscribeTo("jdx.contracts.job");
+
+    // Assert
+    await Assert.That(options.OwnedDomains).Contains("jdx.contracts.bff");
+    await Assert.That(options.SubscribedNamespaces)
+        .Contains(Whizbang.Core.SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
+    await Assert.That(options.SubscribedNamespaces).Contains("jdx.contracts.job");
+    await Assert.That(options.AuditPerspectiveEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task AuditPerspectiveEnabled_DefaultsFalse_WhenNotSubscribedAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Assert - Not enabled until SubscribeToAudit is called
+    await Assert.That(options.AuditPerspectiveEnabled).IsFalse();
+  }
+
+  #endregion
 }
