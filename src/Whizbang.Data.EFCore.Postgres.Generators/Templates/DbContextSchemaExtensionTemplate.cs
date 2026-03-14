@@ -532,19 +532,18 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
           taskName, rowsAffected, durationMs, status);
       }
 
-      // VACUUM ANALYZE must run outside a transaction block
+      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined
       var connectionString = dbContext.Database.GetConnectionString();
       if (!string.IsNullOrEmpty(connectionString)) {
         await using var conn = new Npgsql.NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 120;
-        cmd.CommandText = @"
-          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_outbox;
-          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_inbox;
-          VACUUM ANALYZE __QUOTED_SCHEMA__.wh_perspective_events;
-        ";
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events" };
+        foreach (var table in tables) {
+          await using var cmd = conn.CreateCommand();
+          cmd.CommandTimeout = 120;
+          cmd.CommandText = @"VACUUM ANALYZE __QUOTED_SCHEMA__." + table;
+          await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
         logger?.LogInformation("VACUUM ANALYZE completed for work coordination tables");
       }
     } catch (Exception ex) {
