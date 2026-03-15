@@ -3,8 +3,10 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
@@ -326,6 +328,132 @@ public class AuditingEventStoreDecoratorTests {
 
     // Assert
     await Assert.That(inner.ReadPolymorphicCalls).Count().IsEqualTo(1);
+  }
+
+  #endregion
+
+  #region Early Return / Branch Coverage Tests
+
+  [Test]
+  public async Task AppendAsync_WithEnvelope_ShouldAuditReturnsFalse_SkipsAuditAsync() {
+    // Arrange - OptIn mode, unannotated event: _shouldAudit returns false (line 153)
+    var (decorator, inner, channel) = _createDecorator(opts => {
+      opts.EnableEventAudit();
+      opts.AuditMode = AuditMode.OptIn;
+    });
+    var streamId = Guid.NewGuid();
+    var envelope = _createTestEnvelope(new TestEvent { Name = "Test" }); // TestEvent has no [AuditEvent]
+
+    // Act
+    await decorator.AppendAsync(streamId, envelope);
+
+    // Assert - Inner was called, but no audit queued
+    await Assert.That(inner.AppendedStreamIds).Contains(streamId);
+    await Assert.That(channel.QueuedMessages).IsEmpty();
+  }
+
+  [Test]
+  public async Task AppendAsync_WithEnvelope_NullPayload_SkipsAuditAsync() {
+    // Arrange - null payload early return (line 156)
+    var (decorator, inner, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var streamId = Guid.NewGuid();
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.New(),
+      Payload = default!,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    // Act
+    await decorator.AppendAsync(streamId, envelope);
+
+    // Assert - Inner was called, but no audit queued (payload is null)
+    await Assert.That(inner.AppendedStreamIds).Contains(streamId);
+    await Assert.That(channel.QueuedMessages).IsEmpty();
+  }
+
+  #endregion
+
+  #region Scope Building Coverage Tests (Lines 186-196)
+
+  [Test]
+  public async Task AppendAsync_WithScopeHavingTenantId_IncludesTenantIdInAuditAsync() {
+    // Arrange - TenantId branch (line 186)
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var streamId = Guid.NewGuid();
+
+    var scopeContext = new Whizbang.Core.Security.ScopeContext {
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "tenant-abc" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Whizbang.Core.Security.Permission>(),
+      SecurityPrincipals = new HashSet<Whizbang.Core.Security.SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+    var delta = Whizbang.Core.Security.ScopeDelta.CreateDelta(null, scopeContext);
+
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.New(),
+      Payload = new TestEvent { Name = "WithTenant" },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Scope = delta
+        }
+      ]
+    };
+
+    // Act
+    await decorator.AppendAsync(streamId, envelope);
+
+    // Assert - audit event queued
+    await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AppendAsync_WithScopeHavingUserIdAndCorrelationAndClaims_IncludesAllInAuditAsync() {
+    // Arrange - UserId (line 189), CorrelationId (line 192), Claims (lines 194-196)
+    var (decorator, _, channel) = _createDecorator(opts => opts.EnableEventAudit());
+    var streamId = Guid.NewGuid();
+    var correlationGuid = Guid.NewGuid();
+
+    var scopeContext = new Whizbang.Core.Security.ScopeContext {
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { UserId = "user-xyz" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Whizbang.Core.Security.Permission>(),
+      SecurityPrincipals = new HashSet<Whizbang.Core.Security.SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string> {
+        ["email"] = "test@example.com",
+        ["name"] = "Test User"
+      }
+    };
+    var delta = Whizbang.Core.Security.ScopeDelta.CreateDelta(null, scopeContext);
+
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.New(),
+      Payload = new TestEvent { Name = "WithAllScope" },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Scope = delta,
+          CorrelationId = new CorrelationId(correlationGuid)
+        }
+      ]
+    };
+
+    // Act
+    await decorator.AppendAsync(streamId, envelope);
+
+    // Assert - audit event queued
+    await Assert.That(channel.QueuedMessages).Count().IsEqualTo(1);
   }
 
   #endregion

@@ -312,6 +312,84 @@ public class SystemEventServiceCollectionExtensionsTests {
 
   #endregion
 
+  #region Humanizer Coverage Tests (Lines 58, 61)
+
+  [Test]
+  public async Task AddSystemEvents_WithEventNameHumanizer_SetsCustomHumanizerAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    Func<string, string?> humanizer = eventType => eventType == "TestEvent" ? "Test" : null;
+
+    // Act - Exercise line 58: sets CustomHumanizer
+    services.AddSystemEvents(opts => {
+      opts.EventNameHumanizer = humanizer;
+    });
+
+    // Assert - CustomHumanizer was set
+    await Assert.That(Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomHumanizer).IsNotNull();
+
+    // Cleanup
+    Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomHumanizer = null;
+  }
+
+  [Test]
+  public async Task AddSystemEvents_WithEventDescriptionHumanizer_SetsCustomDescriptionHumanizerAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    Func<string, string?> descHumanizer = eventType => "Description";
+
+    // Act - Exercise line 61: sets CustomDescriptionHumanizer
+    services.AddSystemEvents(opts => {
+      opts.EventDescriptionHumanizer = descHumanizer;
+    });
+
+    // Assert - CustomDescriptionHumanizer was set
+    await Assert.That(Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomDescriptionHumanizer).IsNotNull();
+
+    // Cleanup
+    Whizbang.Core.SystemEvents.Audit.AuditEventProjection.CustomDescriptionHumanizer = null;
+  }
+
+  #endregion
+
+  #region EventStore Resolution Path Coverage (Lines 82, 84)
+
+  [Test]
+  public async Task AddSystemEvents_WithEventAuditEnabled_FactoryRegistration_DecoratesEventStoreAsync() {
+    // Arrange - Register IEventStore via factory (exercises line 82: ImplementationFactory path)
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
+    services.AddSingleton<IEventStore>(sp => new MockEventStore());
+
+    // Act
+    services.AddSystemEvents(opts => opts.EnableEventAudit());
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Factory was used to resolve inner, then wrapped
+    var eventStore = provider.GetService<IEventStore>();
+    await Assert.That(eventStore).IsNotNull();
+    await Assert.That(eventStore).IsTypeOf<AuditingEventStoreDecorator>();
+  }
+
+  [Test]
+  public async Task AddSystemEvents_WithEventAuditEnabled_TypeRegistration_DecoratesEventStoreAsync() {
+    // Arrange - Register IEventStore via type (exercises line 84: ImplementationType path)
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
+    services.AddSingleton<IEventStore, MockEventStore>();
+
+    // Act
+    services.AddSystemEvents(opts => opts.EnableEventAudit());
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Type was used to resolve inner, then wrapped
+    var eventStore = provider.GetService<IEventStore>();
+    await Assert.That(eventStore).IsNotNull();
+    await Assert.That(eventStore).IsTypeOf<AuditingEventStoreDecorator>();
+  }
+
+  #endregion
+
   #region Mock Implementations
 
   private sealed class MockEventStore : IEventStore {
