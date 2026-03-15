@@ -71,6 +71,16 @@ public static class DbContextRegistrationRegistry {
         return false;
       }
 
+      // Skip if the DbContext is already registered (manual setup)
+      // This avoids BuildServiceProvider() during registration which can cause
+      // deadlocks or silent crashes in orchestrated environments (e.g., Aspire)
+      if (services.Any(sd => sd.ServiceType == dbContextType)) {
+        Console.WriteLine(
+            $"[Whizbang] DbContext '{dbContextType.Name}' already registered — skipping turnkey registration. " +
+            "Consider removing manual DbContext setup and using the turnkey .WithEFCore<T>().WithDriver.Postgres pattern.");
+        return false;
+      }
+
       // Find matching registration (latest one wins)
       for (var i = _registrations.Count - 1; i >= 0; i--) {
         if (_registrations[i].DbContextType == dbContextType) {
