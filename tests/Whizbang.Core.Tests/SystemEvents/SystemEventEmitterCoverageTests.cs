@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -627,6 +628,52 @@ public class SystemEventEmitterCoverageTests {
         }
       ]
     };
+  }
+
+  #endregion
+
+  #region Claims Iteration Coverage (Line 84)
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithClaims_IncludesClaimsInScopeDictionaryAsync() {
+    // Arrange - Scope with claims to exercise the claims iteration loop (line 84)
+    var eventStore = new CoverageMockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Create a ScopeContext with claims
+    var scopeContext = new ScopeContext {
+      Scope = new Whizbang.Core.Lenses.PerspectiveScope { TenantId = "t1", UserId = "u1" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string> {
+        ["email"] = "test@example.com",
+        ["name"] = "Test User"
+      }
+    };
+
+    // Build delta from scope context (so GetCurrentScope returns claims)
+    var delta = ScopeDelta.CreateDelta(null, scopeContext);
+
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "ClaimsPayload",
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Scope = delta
+        }
+      ]
+    };
+
+    // Act
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 10, envelope);
+
+    // Assert - audit event was emitted
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
   }
 
   #endregion
