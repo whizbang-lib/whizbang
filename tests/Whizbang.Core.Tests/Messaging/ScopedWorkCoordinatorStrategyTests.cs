@@ -1,10 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -650,6 +653,149 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Cleanup
     await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // Logger Coverage Tests (Lines 97-100, 123, 161, 227-228, 270)
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_WithAuditEnabled_BuildsAuditMessageAsync() {
+    // Arrange - EventAuditEnabled + IsEvent exercises lines 97-100
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var systemEventOptions = new Whizbang.Core.SystemEvents.SystemEventOptions();
+    systemEventOptions.EnableEventAudit();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options,
+      dependencies: new ScopedWorkCoordinatorDependencies {
+        SystemEventOptions = systemEventOptions
+      }
+    );
+
+    // Queue an event message with IsEvent=true
+    _queueTestOutboxMessage(sut);
+
+    // Flush to merge audit messages (lines 227-228)
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - Should have original + audit message in the batch
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(1);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueOutboxCompletion_WithLogger_LogsCompletionQueuedAsync() {
+    // Arrange - logger != null exercises line 123
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    sut.QueueOutboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published);
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_WithLogger_LogsFailureQueuedAsync() {
+    // Arrange - logger != null exercises line 161
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Act
+    sut.QueueInboxFailure(Guid.NewGuid(), MessageProcessingStatus.Failed, "Test error");
+
+    // Assert
+    await Assert.That(logger.LogCount).IsGreaterThan(0);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task FlushAsync_WithLogger_QueuedMessagesButNoWorkReturned_LogsNoWorkReturnedAsync() {
+    // Arrange - logger != null and queued messages but 0 outbox work returned exercises line 270
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 1000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+    var logger = new FakeScopedLogger();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options, logger: logger
+    );
+
+    // Queue a message so there is work queued
+    _queueTestOutboxMessage(sut);
+
+    // Act - Flush (FakeWorkCoordinator returns empty OutboxWork, triggers line 270)
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - Logger received multiple log calls
+    await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(2);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // Test Fakes
+  // ========================================
+
+  private sealed class FakeScopedLogger : Microsoft.Extensions.Logging.ILogger<ScopedWorkCoordinatorStrategy> {
+    public int LogCount { get; private set; }
+
+    public void Log<TState>(
+      Microsoft.Extensions.Logging.LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      LogCount++;
+    }
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
   }
 
   // ========================================

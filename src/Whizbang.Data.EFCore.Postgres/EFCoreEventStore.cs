@@ -6,8 +6,10 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Serialization;
 
@@ -148,6 +150,17 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -155,7 +168,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -196,6 +209,17 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -203,7 +227,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -289,12 +313,25 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from the dedicated scope column if hops don't already have scope data.
+      // This enables perspectives and receptors to get scope without re-parsing metadata hops.
+      // Falls back gracefully: if scope column is null or hops already have scope, no-op.
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -346,10 +383,22 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
       }
 
+      var hops = record.Metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
+
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
         Payload = (TMessage)eventData,
-        Hops = record.Metadata.Hops
+        Hops = hops
       };
 
       envelopes.Add(envelope);
@@ -444,10 +493,22 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       }
 
       // Cast to IEvent (safe because all event types implement IEvent)
+      var hops = record.Metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
+
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = record.Metadata.Hops
+        Hops = hops
       };
 
       envelopes.Add(envelope);

@@ -10,9 +10,9 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>Supported Filters:</strong> MessageScope only contains TenantId and UserId,
-/// so only <see cref="ScopeFilter.Tenant"/> and <see cref="ScopeFilter.User"/> are applied.
-/// Organization, Customer, and Principal filters are ignored for event queries.
+/// <strong>Supported Filters:</strong> EventStoreRecord.Scope uses <see cref="PerspectiveScope"/>
+/// which supports Tenant, User, Organization, and Customer filters.
+/// Principal filters are not applied for event queries.
 /// </para>
 /// <para>
 /// Use <see cref="ScopeFilter.None"/> for global/admin access to all events.
@@ -42,11 +42,11 @@ public class EFCoreFilterableEventStoreQuery : IFilterableEventStoreQuery {
   /// Returns a queryable that applies scope filters based on <see cref="ScopeFilterInfo"/>.
   /// Filter composition:
   /// <list type="bullet">
-  ///   <item>Tenant: WHERE scope->>'TenantId' = ?</item>
-  ///   <item>User: AND scope->>'UserId' = ?</item>
+  ///   <item>Tenant: WHERE scope->>'t' = ?</item>
+  ///   <item>User: AND scope->>'u' = ?</item>
+  ///   <item>Organization: AND scope->>'o' = ?</item>
+  ///   <item>Customer: AND scope->>'c' = ?</item>
   /// </list>
-  /// Note: Organization, Customer, and Principal filters are not supported for events
-  /// because <see cref="MessageScope"/> does not contain these fields.
   /// </remarks>
   public IQueryable<EventStoreRecord> Query {
     get {
@@ -66,8 +66,15 @@ public class EFCoreFilterableEventStoreQuery : IFilterableEventStoreQuery {
         query = query.Where(r => r.Scope != null && r.Scope.UserId == _filterInfo.UserId);
       }
 
-      // Note: Organization, Customer, and Principal filters are not applied
-      // because MessageScope doesn't have these fields
+      // Apply organization filter
+      if (_filterInfo.Filters.HasFlag(ScopeFilter.Organization) && _filterInfo.OrganizationId is not null) {
+        query = query.Where(r => r.Scope != null && r.Scope.OrganizationId == _filterInfo.OrganizationId);
+      }
+
+      // Apply customer filter
+      if (_filterInfo.Filters.HasFlag(ScopeFilter.Customer) && _filterInfo.CustomerId is not null) {
+        query = query.Where(r => r.Scope != null && r.Scope.CustomerId == _filterInfo.CustomerId);
+      }
 
       return query;
     }

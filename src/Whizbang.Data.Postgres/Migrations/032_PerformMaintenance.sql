@@ -24,7 +24,7 @@ BEGIN
   RETURN QUERY SELECT
     'purge_completed_outbox'::TEXT,
     v_rows,
-    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start),
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
 
   -- ========================================
@@ -36,7 +36,7 @@ BEGIN
   RETURN QUERY SELECT
     'purge_completed_inbox'::TEXT,
     v_rows,
-    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start),
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
 
   -- ========================================
@@ -48,7 +48,7 @@ BEGIN
   RETURN QUERY SELECT
     'purge_completed_perspective_events'::TEXT,
     v_rows,
-    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start),
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
 
   -- ========================================

@@ -51,6 +51,11 @@ public sealed record EventAudited : ISystemEvent {
   public required Guid Id { get; init; }
 
   /// <summary>
+  /// The unique ID of the original domain event (matches event store event_id / outbox message_id).
+  /// </summary>
+  public Guid OriginalEventId { get; init; }
+
+  /// <summary>
   /// The type name of the original domain event (e.g., "OrderCreated").
   /// </summary>
   public required string OriginalEventType { get; init; }
@@ -84,11 +89,6 @@ public sealed record EventAudited : ISystemEvent {
   /// User identifier from event scope (copied for filtering).
   /// </summary>
   public string? UserId { get; init; }
-
-  /// <summary>
-  /// User display name from event scope (copied for display).
-  /// </summary>
-  public string? UserName { get; init; }
 
   /// <summary>
   /// Correlation identifier for distributed tracing.
