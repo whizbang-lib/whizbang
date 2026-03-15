@@ -73,7 +73,7 @@ public static class AuditOutboxMessageBuilder {
     };
 
     // Serialize EventAudited to JsonElement
-    var auditJson = _serializeToJsonElement(auditEvent);
+    var auditJson = AuditJsonSerializer.SerializeToJsonElement(auditEvent);
 
     // Build envelope — copy hops from the original event so security context (TenantId, UserId, claims)
     // propagates to the consuming service (BFF). The hops carry scope metadata that the
@@ -142,38 +142,4 @@ public static class AuditOutboxMessageBuilder {
     return commaIndex > 0 ? messageType[..commaIndex] : messageType;
   }
 
-  private static JsonElement _serializeToJsonElement(EventAudited auditEvent) {
-    try {
-      var options = Serialization.JsonContextRegistry.CreateCombinedOptions();
-      var typeInfo = options.GetTypeInfo(typeof(EventAudited));
-      if (typeInfo != null) {
-        var json = JsonSerializer.Serialize(auditEvent, typeInfo);
-        return JsonDocument.Parse(json).RootElement.Clone();
-      }
-    } catch (NotSupportedException) {
-      // Fallback below
-    }
-
-    // Manual JSON construction fallback (AOT-safe, no anonymous types)
-    using var stream = new System.IO.MemoryStream();
-    using var writer = new Utf8JsonWriter(stream);
-    writer.WriteStartObject();
-    writer.WriteString("Id", auditEvent.Id);
-    writer.WriteString("OriginalEventType", auditEvent.OriginalEventType);
-    writer.WriteString("OriginalStreamId", auditEvent.OriginalStreamId);
-    writer.WriteNumber("OriginalStreamPosition", auditEvent.OriginalStreamPosition);
-    writer.WritePropertyName("OriginalBody");
-    auditEvent.OriginalBody.WriteTo(writer);
-    writer.WriteString("Timestamp", auditEvent.Timestamp);
-    if (auditEvent.TenantId != null) { writer.WriteString("TenantId", auditEvent.TenantId); }
-    if (auditEvent.UserId != null) { writer.WriteString("UserId", auditEvent.UserId); }
-    if (auditEvent.CorrelationId != null) { writer.WriteString("CorrelationId", auditEvent.CorrelationId); }
-    if (auditEvent.CausationId != null) { writer.WriteString("CausationId", auditEvent.CausationId); }
-    if (auditEvent.AuditReason != null) { writer.WriteString("AuditReason", auditEvent.AuditReason); }
-    writer.WriteString("AuditLevel", auditEvent.AuditLevel.ToString());
-    writer.WriteEndObject();
-    writer.Flush();
-    var fallbackJson = System.Text.Encoding.UTF8.GetString(stream.ToArray());
-    return JsonDocument.Parse(fallbackJson).RootElement.Clone();
-  }
 }
