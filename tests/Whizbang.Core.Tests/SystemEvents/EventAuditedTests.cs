@@ -88,15 +88,20 @@ public class EventAuditedTests {
       Timestamp = DateTimeOffset.UtcNow,
       TenantId = "tenant-acme",
       UserId = "user-john",
-      UserName = "John Doe",
       CorrelationId = "corr-abc",
-      CausationId = "cause-xyz"
+      CausationId = "cause-xyz",
+      Scope = new Dictionary<string, string?> {
+        ["TenantId"] = "tenant-acme",
+        ["UserId"] = "user-john",
+        ["name"] = "John Doe",
+        ["email"] = "john@example.com"
+      }
     };
 
     // Assert
     await Assert.That(audited.TenantId).IsEqualTo("tenant-acme");
     await Assert.That(audited.UserId).IsEqualTo("user-john");
-    await Assert.That(audited.UserName).IsEqualTo("John Doe");
+    await Assert.That(audited.Scope!["name"]).IsEqualTo("John Doe");
     await Assert.That(audited.CorrelationId).IsEqualTo("corr-abc");
     await Assert.That(audited.CausationId).IsEqualTo("cause-xyz");
   }

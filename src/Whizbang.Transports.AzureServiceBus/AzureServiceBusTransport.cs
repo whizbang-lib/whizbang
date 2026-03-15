@@ -409,10 +409,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       // Configure message handler
       processor.ProcessMessageAsync += async args => {
-        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessMessageAsync invoked! MessageId={args.Message.MessageId}, IsActive={subscription.IsActive}");
-
         if (!subscription.IsActive) {
-          Console.WriteLine("[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
           _logger.LogWarning(
             "ABANDON reason: Subscription paused - requeueing message {MessageId} from {TopicName}/{SubscriptionName}",
             args.Message.MessageId,
@@ -428,7 +425,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           // Get envelope type from message metadata
           if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
               envelopeTypeObj is not string envelopeTypeName) {
-            Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Missing EnvelopeType metadata! MessageId={args.Message.MessageId}");
             _logger.LogWarning(
               "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
               args.Message.MessageId,
@@ -443,8 +439,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             );
             return;
           }
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] EnvelopeType={envelopeTypeName}");
-
           // Deserialize envelope using AOT-compatible JsonContextRegistry
           // Use JsonContextRegistry.GetTypeInfoByName() instead of Type.GetType() to support
           // cross-assembly generic types like MessageEnvelope<TEvent> where TEvent is from a different assembly
@@ -508,13 +502,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
 
           // Invoke handler with envelope type metadata
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Invoking handler for MessageId={envelope.MessageId.Value}");
           await handler(envelope, envelopeTypeName, args.CancellationToken);
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Handler completed, completing message MessageId={envelope.MessageId.Value}");
 
           // Complete the message
           await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Message completed MessageId={envelope.MessageId.Value}");
 
           if (_logger.IsEnabled(LogLevel.Debug)) {
             var messageId = args.Message.MessageId;
@@ -574,7 +565,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
       // Configure error handler
       processor.ProcessErrorAsync += async args => {
-        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessErrorAsync invoked! ErrorSource={args.ErrorSource}, Exception={args.Exception.Message}");
         _logger.LogError(
           args.Exception,
           "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",

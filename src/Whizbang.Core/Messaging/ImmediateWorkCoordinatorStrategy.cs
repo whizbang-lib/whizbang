@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.Tracing;
 using Whizbang.Core.Validation;
 
@@ -32,14 +33,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly IDeferredOutboxChannel? _deferredChannel;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
-
-  // Immediate strategy queues for single flush cycle
-  private readonly List<OutboxMessage> _queuedOutboxMessages = [];
-  private readonly List<InboxMessage> _queuedInboxMessages = [];
-  private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
-  private readonly List<MessageCompletion> _queuedInboxCompletions = [];
-  private readonly List<MessageFailure> _queuedOutboxFailures = [];
-  private readonly List<MessageFailure> _queuedInboxFailures = [];
+  private readonly SystemEventOptions? _systemEventOptions;
+  private readonly WorkCoordinatorQueues _queues = new();
 
   public ImmediateWorkCoordinatorStrategy(
     IWorkCoordinator coordinator,
@@ -51,7 +46,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     IDeferredOutboxChannel? deferredChannel = null,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null
+    LifecycleMetrics? lifecycleMetrics = null,
+    IOptions<SystemEventOptions>? systemEventOptions = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -63,6 +59,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _deferredChannel = deferredChannel;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
+    _systemEventOptions = systemEventOptions?.Value;
   }
 
   /// <summary>
@@ -71,7 +68,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueOutbox", message.MessageType);
-    _queuedOutboxMessages.Add(message);
+    _queues.AddOutboxMessage(message, _systemEventOptions);
     if (_logger != null) {
       LogOutboxMessageQueued(_logger);
     }
@@ -83,7 +80,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
     StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "ImmediateStrategy.QueueInbox", message.MessageType);
-    _queuedInboxMessages.Add(message);
+    _queues.AddInboxMessage(message);
     if (_logger != null) {
       LogInboxMessageQueued(_logger);
     }
@@ -93,10 +90,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// Queues an outbox message completion for immediate flush.
   /// </summary>
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
-    _queuedOutboxCompletions.Add(new MessageCompletion {
-      MessageId = messageId,
-      Status = completedStatus
-    });
+    _queues.AddOutboxCompletion(messageId, completedStatus);
     if (_logger != null) {
       LogOutboxCompletionQueued(_logger);
     }
@@ -106,10 +100,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// Queues an inbox message completion for immediate flush.
   /// </summary>
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
-    _queuedInboxCompletions.Add(new MessageCompletion {
-      MessageId = messageId,
-      Status = completedStatus
-    });
+    _queues.AddInboxCompletion(messageId, completedStatus);
     if (_logger != null) {
       LogInboxCompletionQueued(_logger);
     }
@@ -119,11 +110,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// Queues an outbox message failure for immediate flush.
   /// </summary>
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
-    _queuedOutboxFailures.Add(new MessageFailure {
-      MessageId = messageId,
-      CompletedStatus = completedStatus,
-      Error = errorMessage
-    });
+    _queues.AddOutboxFailure(messageId, completedStatus, errorMessage);
     if (_logger != null) {
       LogOutboxFailureQueued(_logger);
     }
@@ -133,11 +120,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   /// Queues an inbox message failure for immediate flush.
   /// </summary>
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
-    _queuedInboxFailures.Add(new MessageFailure {
-      MessageId = messageId,
-      CompletedStatus = completedStatus,
-      Error = errorMessage
-    });
+    _queues.AddInboxFailure(messageId, completedStatus, errorMessage);
     if (_logger != null) {
       LogInboxFailureQueued(_logger);
     }
@@ -157,7 +140,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     if (_deferredChannel?.HasPending == true) {
       var deferredMessages = _deferredChannel.DrainAll();
       // Prepend deferred messages to the queue
-      _queuedOutboxMessages.InsertRange(0, deferredMessages);
+      _queues.OutboxMessages.InsertRange(0, deferredMessages);
       if (_logger != null) {
         LogDeferredChannelDrained(_logger, deferredMessages.Count);
       }
@@ -167,10 +150,10 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     if (_logger != null) {
       LogFlushStarting(
         _logger,
-        _queuedOutboxMessages.Count,
-        _queuedInboxMessages.Count,
-        _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-        _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+        _queues.OutboxMessages.Count,
+        _queues.InboxMessages.Count,
+        _queues.OutboxCompletions.Count + _queues.InboxCompletions.Count,
+        _queues.OutboxFailures.Count + _queues.InboxFailures.Count
       );
     }
 
@@ -181,8 +164,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PreDistributeAsync,
       LifecycleStage.PreDistributeInline,
-      _queuedOutboxMessages,
-      _queuedInboxMessages,
+      _queues.OutboxMessages,
+      _queues.InboxMessages,
       _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
@@ -194,8 +177,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
     LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
       LifecycleStage.DistributeAsync,
-      _queuedOutboxMessages,
-      _queuedInboxMessages,
+      _queues.OutboxMessages,
+      _queues.InboxMessages,
       _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
@@ -204,29 +187,10 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       ct: ct
     );
 
-    var request = new ProcessWorkBatchRequest {
-      InstanceId = _instanceProvider.InstanceId,
-      ServiceName = _instanceProvider.ServiceName,
-      HostName = _instanceProvider.HostName,
-      ProcessId = _instanceProvider.ProcessId,
-      Metadata = null,
-      OutboxCompletions = [.. _queuedOutboxCompletions],
-      OutboxFailures = [.. _queuedOutboxFailures],
-      InboxCompletions = [.. _queuedInboxCompletions],
-      InboxFailures = [.. _queuedInboxFailures],
-      ReceptorCompletions = [],  // FUTURE: Add receptor processing support
-      ReceptorFailures = [],
-      PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
-      PerspectiveFailures = [],
-      NewOutboxMessages = [.. _queuedOutboxMessages],
-      NewInboxMessages = [.. _queuedInboxMessages],
-      RenewOutboxLeaseIds = [],
-      RenewInboxLeaseIds = [],
-      Flags = flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-      PartitionCount = _options.PartitionCount,
-      LeaseSeconds = _options.LeaseSeconds,
-      StaleThresholdSeconds = _options.StaleThresholdSeconds
-    };
+    // Merge pending audit messages after lifecycle stages
+    _queues.MergeAuditMessages();
+
+    var request = _queues.BuildRequest(_instanceProvider, _options, flags);
     var flushSw = System.Diagnostics.Stopwatch.StartNew();
     var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
     flushSw.Stop();
@@ -236,8 +200,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
       LifecycleStage.PostDistributeAsync,
       LifecycleStage.PostDistributeInline,
-      _queuedOutboxMessages,
-      _queuedInboxMessages,
+      _queues.OutboxMessages,
+      _queues.InboxMessages,
       _scopeFactory,
       _lifecycleMessageDeserializer,
       _logger,
@@ -247,12 +211,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     );
 
     // Clear queues after flush
-    _queuedOutboxMessages.Clear();
-    _queuedInboxMessages.Clear();
-    _queuedOutboxCompletions.Clear();
-    _queuedOutboxFailures.Clear();
-    _queuedInboxCompletions.Clear();
-    _queuedInboxFailures.Clear();
+    _queues.Clear();
 
     return workBatch;
   }

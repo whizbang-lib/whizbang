@@ -97,18 +97,18 @@ public class SecurityPrincipalIdJsonConverterTests {
     // Act
     var json = JsonSerializer.Serialize(scope, options);
 
-    // Assert - AllowedPrincipals should be a string array, not object array
-    await Assert.That(json).Contains("\"AllowedPrincipals\":[\"user:user-456\",\"group:team-A\"]");
+    // Assert - AllowedPrincipals should be a string array with short key "ap"
+    await Assert.That(json).Contains("\"ap\":[\"user:user-456\",\"group:team-A\"]");
   }
 
   [Test]
   public async Task Deserialize_PerspectiveScopeWithAllowedPrincipals_ReadsCorrectlyAsync() {
-    // Arrange
+    // Arrange — use short JSON property names matching [JsonPropertyName] attributes
     var json = """
       {
-        "TenantId": "tenant-123",
-        "UserId": "user-456",
-        "AllowedPrincipals": ["user:user-456", "group:team-A"]
+        "t": "tenant-123",
+        "u": "user-456",
+        "ap": ["user:user-456", "group:team-A"]
       }
       """;
 

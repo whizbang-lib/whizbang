@@ -56,7 +56,6 @@ public static class AssemblyRegistry<T> where T : class {
   public static void Register(T contribution, int priority = 1000) {
     ArgumentNullException.ThrowIfNull(contribution);
     _contributions.Add((priority, contribution));
-    Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] Registered {contribution.GetType().FullName} with priority {priority}. Count now: {_contributions.Count}");
 
     lock (_lock) {
       _orderedContributions = null; // Invalidate cache
@@ -69,23 +68,19 @@ public static class AssemblyRegistry<T> where T : class {
   /// <returns>Read-only list of contributions ordered by priority</returns>
   public static IReadOnlyList<T> GetOrderedContributions() {
     if (_orderedContributions is not null) {
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions returning CACHED list with {_orderedContributions.Count} items");
       return _orderedContributions;
     }
 
     lock (_lock) {
       if (_orderedContributions is not null) {
-        Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions returning CACHED (inside lock) list with {_orderedContributions.Count} items");
         return _orderedContributions;
       }
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions BUILDING list from {_contributions.Count} contributions");
       // Take a snapshot before iterating to avoid race condition with concurrent Register() calls
       _orderedContributions = _contributions
           .ToArray()
           .OrderBy(c => c.Priority)
           .Select(c => c.Contribution)
           .ToList();
-      Console.WriteLine($"[AssemblyRegistry<{typeof(T).Name}>] GetOrderedContributions BUILT list with {_orderedContributions.Count} items");
       return _orderedContributions;
     }
   }

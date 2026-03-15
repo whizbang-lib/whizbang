@@ -59,6 +59,7 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await _context.Set<PerspectiveRow<TModel>>()
         .AsNoTracking()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     return row?.Data;

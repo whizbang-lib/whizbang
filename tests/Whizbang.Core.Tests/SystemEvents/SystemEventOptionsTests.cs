@@ -127,6 +127,42 @@ public class SystemEventOptionsTests {
     await Assert.That(options.ErrorEventsEnabled).IsTrue();
     await Assert.That(options.AuditEnabled).IsFalse(); // Others not affected
   }
+  #region AuditMode Tests
+
+  [Test]
+  public async Task AuditMode_DefaultsToOptOut_Async() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Assert
+    await Assert.That(options.AuditMode).IsEqualTo(AuditMode.OptOut);
+  }
+
+  [Test]
+  public async Task AuditMode_CanBeSetToOptIn_Async() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Act
+    options.AuditMode = AuditMode.OptIn;
+
+    // Assert
+    await Assert.That(options.AuditMode).IsEqualTo(AuditMode.OptIn);
+  }
+
+  [Test]
+  public async Task AuditMode_FluentConfigurationPattern_WorksAsync() {
+    // Arrange & Act - typical usage pattern
+    var options = new SystemEventOptions();
+    options.EnableEventAudit();
+    options.AuditMode = AuditMode.OptIn;
+
+    // Assert
+    await Assert.That(options.EventAuditEnabled).IsTrue();
+    await Assert.That(options.AuditMode).IsEqualTo(AuditMode.OptIn);
+  }
+
+  #endregion
 }
 
 // Test helper - not a system event

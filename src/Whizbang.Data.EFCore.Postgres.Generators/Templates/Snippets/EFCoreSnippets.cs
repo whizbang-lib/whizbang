@@ -51,7 +51,10 @@ public class EFCoreSnippets {
       //
       entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
-      entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
+      entity.ComplexProperty(e => e.Scope, s => {
+        s.ToJson("scope");
+        s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+      });
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -184,7 +187,8 @@ __PHYSICAL_FIELD_CONFIGS__
       var dependencies = new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
         ScopeFactory = sp.GetService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
         LifecycleMessageDeserializer = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
+        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        SystemEventOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value
       };
       return new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
         coordinator,

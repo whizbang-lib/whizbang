@@ -6,8 +6,10 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Serialization;
 
@@ -26,9 +28,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
 
-  // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
-  private static readonly bool _diagnosticLogging =
-    Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
 
   public EFCoreEventStore(
     TDbContext context,
@@ -148,6 +147,17 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -155,7 +165,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -196,6 +206,17 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -203,7 +224,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = MessageId.From(record.Id),
         Payload = eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -219,11 +240,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       Guid? fromEventId,
       IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Query: streamId={streamId}, fromEventId={fromEventId}");
-      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event types ({eventTypes.Count}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-    }
 
     // Build type lookup dictionary with multiple keys for flexible matching
     // Supports: TypeNameFormatter format (medium form), AssemblyQualifiedName (long form), FullName, and Name (short form)
@@ -265,16 +281,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         var typeAndAssembly = string.Join(", ", record.EventType.Split(',').Take(2).Select(s => s.Trim()));
         if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
           // Found via simplified name
-          if (_diagnosticLogging) {
-            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event {record.Id} matched via simplified name: {record.EventType} -> {typeAndAssembly}");
-          }
         } else {
           // Event type not in the requested list - skip it
           // This allows perspectives to materialize subsets of events from shared streams
           // (e.g., ProductCatalogPerspective skips InventoryRestockedEvent in product streams)
-          if (_diagnosticLogging) {
-            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] ⚠️ SKIPPING event {record.Id} - type '{record.EventType}' not in requested types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-          }
           continue;
         }
       }
@@ -289,12 +299,25 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
+      var hops = metadata.Hops;
+
+      // Restore scope from the dedicated scope column if hops don't already have scope data.
+      // This enables perspectives and receptors to get scope without re-parsing metadata hops.
+      // Falls back gracefully: if scope column is null or hops already have scope, no-op.
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = metadata.Hops
+        Hops = hops
       };
 
       yield return envelope;
@@ -346,10 +369,22 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
       }
 
+      var hops = record.Metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
+
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
         Payload = (TMessage)eventData,
-        Hops = record.Metadata.Hops
+        Hops = hops
       };
 
       envelopes.Add(envelope);
@@ -377,11 +412,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     ArgumentNullException.ThrowIfNull(eventTypes);
 
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query params: streamId={streamId}, afterEventId={afterEventId}, upToEventId={upToEventId}");
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Event types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-    }
-
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
@@ -400,16 +430,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var records = await query
       .OrderBy(e => e.Id)
       .ToListAsync(cancellationToken);
-
-    if (_diagnosticLogging) {
-      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query returned {records.Count} records");
-      foreach (var r in records.Take(5)) {
-        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   - ID={r.Id}, Type={r.EventType}");
-      }
-      if (records.Count > 5) {
-        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   ... and {records.Count - 5} more");
-      }
-    }
 
     // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
     var typeLookup = new Dictionary<string, Type>(eventTypes.Count);
@@ -444,10 +464,22 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       }
 
       // Cast to IEvent (safe because all event types implement IEvent)
+      var hops = record.Metadata.Hops;
+
+      // Restore scope from dedicated scope column if hops don't already have scope data
+      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
+        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+        if (scopeDelta != null) {
+          var mutableHops = hops.ToList();
+          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
+          hops = mutableHops;
+        }
+      }
+
       var envelope = new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
-        Hops = record.Metadata.Hops
+        Hops = hops
       };
 
       envelopes.Add(envelope);

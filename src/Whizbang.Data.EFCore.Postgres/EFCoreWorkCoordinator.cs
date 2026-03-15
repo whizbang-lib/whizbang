@@ -833,6 +833,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var checkpointState = await _dbContext.Database
       .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, completion.StreamId, completion.PerspectiveName)
+      .OrderBy(c => c.StreamId)
       .FirstOrDefaultAsync(cancellationToken);
 
     if (checkpointState != null) {
@@ -914,6 +915,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var result = await _dbContext.Database
       .SqlQueryRaw<CheckpointQueryResult>(sql, streamId, perspectiveName)
+      .OrderBy(c => c.StreamId)
       .FirstOrDefaultAsync(cancellationToken);
 
     if (result == null) {

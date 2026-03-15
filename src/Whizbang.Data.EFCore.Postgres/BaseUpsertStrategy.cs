@@ -64,6 +64,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // Query database WITHOUT tracking to get a clean entity with no internal tracking state.
     var existingRow = await context.Set<PerspectiveRow<TModel>>()
         .AsNoTracking()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;

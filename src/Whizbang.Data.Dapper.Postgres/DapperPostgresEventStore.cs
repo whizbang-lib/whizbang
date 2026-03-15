@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -321,26 +322,50 @@ public class DapperPostgresEventStore(
         hops = [];
       }
 
-      // Restore SecurityContext from Scope column if present (snake_case keys: tenant_id, user_id)
-      if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0) {
+      // Restore scope from Scope column if present and first hop has no ScopeDelta
+      // Supports both new PerspectiveScope short keys ("t","u","c","o") and legacy snake_case ("tenant_id","user_id")
+      if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0 && hops[0].Scope == null) {
         var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
                                 ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
         var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
         if (scopeDict != null) {
           string? tenantId = null;
           string? userId = null;
+          string? customerId = null;
+          string? organizationId = null;
 
-          if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
+          // Try PerspectiveScope short keys first (new format)
+          if (scopeDict.TryGetValue("t", out var tElem) && tElem.HasValue && tElem.Value.ValueKind != JsonValueKind.Null) {
+            tenantId = tElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("u", out var uElem) && uElem.HasValue && uElem.Value.ValueKind != JsonValueKind.Null) {
+            userId = uElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("c", out var cElem) && cElem.HasValue && cElem.Value.ValueKind != JsonValueKind.Null) {
+            customerId = cElem.Value.GetString();
+          }
+          if (scopeDict.TryGetValue("o", out var oElem) && oElem.HasValue && oElem.Value.ValueKind != JsonValueKind.Null) {
+            organizationId = oElem.Value.GetString();
+          }
+
+          // Fall back to legacy snake_case keys
+          if (tenantId == null && scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
             tenantId = tenantElem.Value.GetString();
           }
-          if (scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
+          if (userId == null && scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
             userId = userElem.Value.GetString();
           }
 
-          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
-            // Update first hop with ScopeDelta
+          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
+            var scope = new PerspectiveScope {
+              TenantId = tenantId,
+              UserId = userId,
+              CustomerId = customerId,
+              OrganizationId = organizationId
+            };
+            // Update first hop with ScopeDelta from the scope column
             var firstHop = hops[0];
-            hops[0] = firstHop with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
+            hops[0] = firstHop with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
           }
         }
       }
