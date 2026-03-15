@@ -423,8 +423,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Create subscription wrapper with consumer tag (so Dispose can cancel consumer explicitly)
       subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
 
-      if (_logger?.IsEnabled(LogLevel.Information) == true) {
-        _logger.LogInformation(
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        _logger.LogDebug(
           "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
           exchangeName,
           queueName,

@@ -35,10 +35,8 @@ internal static class SyncEventTypeAutoRegistration {
   /// </summary>
   [ModuleInitializer]
   internal static void Initialize() {
-    System.Console.WriteLine("[SyncEventTypeAutoRegistration] ModuleInitializer running for assembly: " + typeof(SyncEventTypeAutoRegistration).Assembly.GetName().Name);
     #region EVENT_TYPE_REGISTRATIONS
     // This region gets replaced with generated registration calls
     #endregion
-    System.Console.WriteLine("[SyncEventTypeAutoRegistration] ModuleInitializer complete");
   }
 }

@@ -256,15 +256,8 @@ public static partial class SecurityContextHelper {
   public static void EstablishMessageContextForCascade(IServiceProvider? serviceProvider = null) {
     var logger = serviceProvider?.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Security.SecurityContextHelper");
 
-    // CRITICAL: Always log at Information level to verify method is being called
     if (logger is not null) {
-#pragma warning disable CA1848 // Temporary diagnostic logging
-      logger.LogInformation("🔧 CASCADE CONTEXT ESTABLISHMENT - Method called (this should always appear)");
-#pragma warning restore CA1848
       Log.CascadeContextEstablishmentStarted(logger);
-    } else {
-      // If no logger, we have a problem - but at least we know the method was called
-      Console.WriteLine("🔧 CASCADE: EstablishMessageContextForCascade called but logger is NULL");
     }
 
     // Check if an explicit security context is already set (e.g., by AsSystem/RunAs).

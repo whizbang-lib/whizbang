@@ -316,21 +316,16 @@ public partial class PerspectiveWorker(
     batchActivity?.SetTag("whizbang.perspective.batch.completions_sent", completionsToSend.Length);
     batchActivity?.SetTag("whizbang.perspective.batch.failures_sent", failuresToSend.Length);
 
-#pragma warning disable CA1848 // Temporary diagnostic logging
-    // Diagnostic logging for perspective work batch
-    var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
-    if (_diagnosticLogging) {
-      Console.WriteLine("[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
-      Console.WriteLine($"[PerspectiveWorker DIAG]   PerspectiveWork count: {workBatch.PerspectiveWork.Count}");
-      Console.WriteLine($"[PerspectiveWorker DIAG]   Grouped into {groupedWork.Count} unique (StreamId, PerspectiveName) pairs");
-      foreach (var g in groupedWork) {
-        Console.WriteLine($"[PerspectiveWorker DIAG]     - {g.Key.PerspectiveName}/{g.Key.StreamId}: {g.Count()} work items");
-      }
-      if (workBatch.PerspectiveWork.Count == 0) {
-        Console.WriteLine("[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
-      }
+#pragma warning disable CA1848, CA1873 // Diagnostic logging for perspective work batch
+    _logger.LogDebug("ProcessWorkBatchAsync returned: PerspectiveWork count: {WorkCount}, Grouped into {GroupCount} unique (StreamId, PerspectiveName) pairs",
+      workBatch.PerspectiveWork.Count, groupedWork.Count);
+    foreach (var g in groupedWork) {
+      _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
     }
-#pragma warning restore CA1848
+    if (workBatch.PerspectiveWork.Count == 0) {
+      _logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
+    }
+#pragma warning restore CA1848, CA1873
 
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
     foreach (var group in groupedWork) {
