@@ -203,7 +203,7 @@ public sealed class AuditingEventStoreDecorator : IEventStore {
         .FirstOrDefault() as AuditEventAttribute;
 
     // Serialize payload to JsonElement (AOT-compatible)
-    var payloadJson = _serializeToJsonElement(envelope.Payload);
+    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions);
 
     return new EventAudited {
       Id = TrackedGuid.NewMedo(),
@@ -237,7 +237,7 @@ public sealed class AuditingEventStoreDecorator : IEventStore {
     };
 
     // Serialize the envelope to JsonElement form for the outbox
-    var serializedPayload = _serializeToJsonElement(auditEvent);
+    var serializedPayload = AuditJsonSerializer.SerializeToJsonElement(auditEvent, _jsonOptions);
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
       MessageId = envelope.MessageId,
       Payload = serializedPayload,
@@ -260,32 +260,4 @@ public sealed class AuditingEventStoreDecorator : IEventStore {
     };
   }
 
-  private JsonElement _serializeToJsonElement<T>(T value) {
-    if (value is null) {
-      return default;
-    }
-
-    try {
-      var typeInfo = _jsonOptions.GetTypeInfo(typeof(T));
-      if (typeInfo is not null) {
-        var json = JsonSerializer.Serialize(value, typeInfo);
-        return JsonDocument.Parse(json).RootElement.Clone();
-      }
-    } catch (NotSupportedException) {
-      // Type not registered with JsonContextRegistry — fall through to fallback
-    }
-
-    try {
-      // Fallback: try the runtime type (may differ from compile-time type)
-      var typeInfo = _jsonOptions.GetTypeInfo(value.GetType());
-      if (typeInfo is not null) {
-        var json = JsonSerializer.Serialize(value, typeInfo);
-        return JsonDocument.Parse(json).RootElement.Clone();
-      }
-    } catch (NotSupportedException) {
-      // Type not registered — return empty object
-    }
-
-    return JsonDocument.Parse("{}").RootElement.Clone();
-  }
 }

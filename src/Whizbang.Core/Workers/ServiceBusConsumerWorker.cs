@@ -234,15 +234,12 @@ public partial class ServiceBusConsumerWorker(
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
 
           // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
 
-          // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
         }
       }
 
@@ -291,15 +288,12 @@ public partial class ServiceBusConsumerWorker(
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
 
           // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
 
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
 
-          // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
         }
       }
 
@@ -319,6 +313,11 @@ public partial class ServiceBusConsumerWorker(
     } finally {
       inboxActivity?.Dispose();
     }
+  }
+
+  private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
+    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
   }
 
   /// <summary>

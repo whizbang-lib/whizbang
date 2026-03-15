@@ -86,7 +86,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     }
 
     // Serialize payload to JsonElement in AOT-compatible way
-    var payloadJson = _serializeToJsonElement(envelope.Payload);
+    var payloadJson = AuditJsonSerializer.SerializeToJsonElement(envelope.Payload, _jsonOptions);
 
     // Create the audit event with generic scope
     var auditEvent = new EventAudited {
@@ -138,7 +138,7 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     }
 
     // Serialize command to JsonElement in AOT-compatible way
-    var commandJson = _serializeToJsonElement(command);
+    var commandJson = AuditJsonSerializer.SerializeToJsonElement(command, _jsonOptions);
 
     // Create the audit event with generic scope
     var auditEvent = new CommandAudited {
@@ -200,29 +200,4 @@ public sealed class SystemEventEmitter : ISystemEventEmitter {
     return attribute?.Exclude == true;
   }
 
-  /// <summary>
-  /// Serializes an object to JsonElement in an AOT-compatible way.
-  /// Uses the registered JsonTypeInfo from JsonContextRegistry.
-  /// </summary>
-  private JsonElement _serializeToJsonElement<T>(T value) {
-    if (value is null) {
-      return default;
-    }
-
-    // Get TypeInfo from combined options
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(T));
-    if (typeInfo is null) {
-      // Fallback: serialize as object (less efficient but works)
-      typeInfo = _jsonOptions.GetTypeInfo(value.GetType());
-    }
-
-    if (typeInfo is null) {
-      // Last resort: return empty object
-      return JsonDocument.Parse("{}").RootElement.Clone();
-    }
-
-    // Serialize to string then parse to JsonElement
-    var json = JsonSerializer.Serialize(value, typeInfo);
-    return JsonDocument.Parse(json).RootElement.Clone();
-  }
 }
