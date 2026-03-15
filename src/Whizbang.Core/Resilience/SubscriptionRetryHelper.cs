@@ -131,14 +131,14 @@ public static partial class SubscriptionRetryHelper {
 
   [LoggerMessage(
     EventId = 1,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "✓ Subscribed to {Destination} (routing key: {RoutingKey})"
   )]
   private static partial void LogSubscriptionSuccess(ILogger logger, string destination, string routingKey);
 
   [LoggerMessage(
     EventId = 2,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "✓ Subscribed to {Destination} (routing key: {RoutingKey}) after {Attempt} attempts"
   )]
   private static partial void LogSubscriptionEstablished(ILogger logger, string destination, string routingKey, int attempt);

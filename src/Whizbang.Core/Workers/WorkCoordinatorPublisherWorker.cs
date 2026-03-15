@@ -833,7 +833,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 20,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Message batch: Outbox published={Published}, failed={OutboxFailed}, buffered={Buffered}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}"
   )]
   static partial void LogMessageBatchSummary(

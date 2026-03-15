@@ -128,10 +128,10 @@ public class TransportConsumerWorker : BackgroundService {
 
     // Log all destinations we're going to subscribe to
     foreach (var destination in _options.Destinations) {
-      if (_logger.IsEnabled(LogLevel.Information)) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
         var address = destination.Address;
         var routingKey = destination.RoutingKey ?? "#";
-        _logger.LogInformation(
+        _logger.LogDebug(
           "  → Destination: {Address} (routing key: {RoutingKey})",
           address,
           routingKey
@@ -145,29 +145,29 @@ public class TransportConsumerWorker : BackgroundService {
     using (var scope = _scopeFactory.CreateScope()) {
       var readinessCheck = scope.ServiceProvider.GetService<ITransportReadinessCheck>();
       if (readinessCheck != null) {
-        _logger.LogInformation("Waiting for transport readiness");
+        _logger.LogDebug("Waiting for transport readiness");
         var isReady = await readinessCheck.IsReadyAsync(stoppingToken);
         if (!isReady) {
           _logger.LogWarning("Transport readiness check returned false");
           return;
         }
-        _logger.LogInformation("Transport is ready");
+        _logger.LogDebug("Transport is ready");
       }
 
       // Provision infrastructure for owned domains before creating subscriptions
       var provisioner = scope.ServiceProvider.GetService<IInfrastructureProvisioner>();
       var routingOptions = scope.ServiceProvider.GetService<IOptions<RoutingOptions>>()?.Value;
       if (provisioner != null && routingOptions?.OwnedDomains.Count > 0) {
-        if (_logger.IsEnabled(LogLevel.Information)) {
+        if (_logger.IsEnabled(LogLevel.Debug)) {
           var ownedDomainsCount = routingOptions.OwnedDomains.Count;
-          _logger.LogInformation(
+          _logger.LogDebug(
             "Provisioning infrastructure for {Count} owned domains",
             ownedDomainsCount);
         }
 
         await provisioner.ProvisionOwnedDomainsAsync(routingOptions.OwnedDomains, stoppingToken);
 
-        _logger.LogInformation("Infrastructure provisioning completed");
+        _logger.LogDebug("Infrastructure provisioning completed");
       }
     }
 
@@ -225,10 +225,10 @@ public class TransportConsumerWorker : BackgroundService {
   /// Subscribes to a single destination with retry logic.
   /// </summary>
   private async Task _subscribeWithRetryAsync(SubscriptionState state, CancellationToken cancellationToken) {
-    if (_logger.IsEnabled(LogLevel.Information)) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
       var address = state.Destination.Address;
       var routingKey = state.Destination.RoutingKey;
-      _logger.LogInformation(
+      _logger.LogDebug(
         "Creating subscription for destination: {Address}, routing key: {RoutingKey}",
         address,
         routingKey

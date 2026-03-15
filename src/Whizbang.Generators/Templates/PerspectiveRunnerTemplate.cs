@@ -76,7 +76,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Create new model if none exists (null from DB)
     if (currentModel == null) {
-      _logger.LogInformation(
+      _logger.LogDebug(
           "No existing model found for stream {StreamId} in {PerspectiveName}, creating new model",
           streamId,
           perspectiveName
@@ -103,18 +103,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
-    // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
-    var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
-
     try {
       // Materialize events into list for PrePerspective peek and main processing
       // This allows PrePerspective receptors to receive the first event for type-based routing
       var events = new System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageEnvelope<global::Whizbang.Core.IEvent>>();
-
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName} starting ReadPolymorphicAsync for stream {streamId}, lastProcessedEventId={lastProcessedEventId}");
-        Console.WriteLine($"[PerspectiveRunner DIAG] Event types ({eventTypes.Length}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
-      }
 
       await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
           streamId,
@@ -123,13 +115,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken)) {
 
         events.Add(envelope);
-      }
-
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: ReadPolymorphicAsync returned {events.Count} events");
-        if (events.Count == 0) {
-          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ NO EVENTS FOUND - perspective will return None status");
-        }
       }
 
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
@@ -250,7 +235,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         if (pendingPurge) {
           // Hard delete: Remove model from database entirely
           await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
-          _logger.LogInformation(
+          _logger.LogDebug(
               "Model purged for {PerspectiveName} stream {StreamId}",
               perspectiveName,
               streamId
@@ -271,7 +256,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // PostPerspectiveInline guarantees data is persisted and immediately queryable.
         await _perspectiveStore.FlushAsync(cancellationToken);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Successfully processed {EventCount} events for {PerspectiveName} stream {StreamId}, checkpoint: {CheckpointEventId}",
             eventsProcessed,
             perspectiveName,
@@ -316,13 +301,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
-
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: Returning status={resultStatus}, eventsProcessed={eventsProcessed}, lastEventId={lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty}");
-        if (resultStatus == PerspectiveProcessingStatus.None) {
-          Console.WriteLine("[PerspectiveRunner DIAG] ⚠️ Status is NONE - PostPerspectiveInline will NOT fire from PerspectiveWorker");
-        }
-      }
 
       return new PerspectiveCheckpointCompletion {
         StreamId = streamId,

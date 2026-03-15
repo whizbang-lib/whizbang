@@ -51,9 +51,6 @@ public static class WhizbangDiagnostics {
 
     if (filteredEntries.Count == 0) {
       var emptyMessage = "No diagnostic information available for the specified categories.";
-      if (printToConsole) {
-        Console.WriteLine(emptyMessage);
-      }
       return emptyMessage;
     }
 

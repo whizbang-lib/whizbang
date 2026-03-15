@@ -48,9 +48,9 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
 
     cancellationToken.ThrowIfCancellationRequested();
 
-    if (_logger.IsEnabled(LogLevel.Information)) {
+    if (_logger.IsEnabled(LogLevel.Debug)) {
       var count = ownedDomains.Count;
-      _logger.LogInformation(
+      _logger.LogDebug(
         "Provisioning {Count} RabbitMQ exchanges for owned domains",
         count);
     }
@@ -83,8 +83,8 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         noWait: false,
         cancellationToken: cancellationToken);
 
-      if (_logger.IsEnabled(LogLevel.Information)) {
-        _logger.LogInformation(
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
           "Provisioned exchange '{Exchange}' for owned domain",
           exchangeName);
       }

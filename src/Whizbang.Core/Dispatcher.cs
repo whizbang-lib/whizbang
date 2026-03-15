@@ -163,6 +163,25 @@ public abstract partial class Dispatcher(
   }
 #pragma warning restore IDE1006
 
+  // Lazy-resolved logger for dispatcher diagnostic tracing
+  private ILogger? _dispatcherLogger;
+#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
+  private ILogger DispatcherLogger {
+    get {
+      if (_dispatcherLogger is not null) {
+        return _dispatcherLogger;
+      }
+      try {
+        _dispatcherLogger = _internalServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Dispatcher")
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      } catch (ObjectDisposedException) {
+        _dispatcherLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+      }
+      return _dispatcherLogger;
+    }
+  }
+#pragma warning restore IDE1006
+
   /// <summary>
   /// Resolves owned domains from RoutingOptions in DI container.
   /// </summary>
@@ -2519,31 +2538,33 @@ public abstract partial class Dispatcher(
   /// full security context propagation, and event cascading.
   /// </summary>
   private async ValueTask _processTagsIfEnabledAsync(object message, Type messageType, CancellationToken ct = default) {
-    Console.WriteLine($"[DISPATCHER] _processTagsIfEnabledAsync called for {messageType.Name}");
+#pragma warning disable CA1848, CA1873 // Diagnostic logging using lazy-resolved logger
+    DispatcherLogger.LogDebug("_processTagsIfEnabledAsync called for {MessageType}", messageType.Name);
 
     // Skip if tag processing is disabled
     if (!_coreOptions.EnableTagProcessing) {
-      Console.WriteLine("[DISPATCHER] Tag processing is DISABLED - returning early");
+      DispatcherLogger.LogDebug("Tag processing is DISABLED - returning early");
       return;
     }
 
     // Skip immediate processing if using lifecycle stage mode
     if (_coreOptions.TagProcessingMode != TagProcessingMode.AfterReceptorCompletion) {
-      Console.WriteLine($"[DISPATCHER] TagProcessingMode is {_coreOptions.TagProcessingMode}, not AfterReceptorCompletion - returning early");
+      DispatcherLogger.LogDebug("TagProcessingMode is {TagProcessingMode}, not AfterReceptorCompletion - returning early", _coreOptions.TagProcessingMode);
       return;
     }
 
     // Skip if no processor is registered
     if (_messageTagProcessor is null) {
-      Console.WriteLine("[DISPATCHER] No IMessageTagProcessor registered - returning early");
+      DispatcherLogger.LogDebug("No IMessageTagProcessor registered - returning early");
       return;
     }
 
-    Console.WriteLine("[DISPATCHER] Calling ProcessTagsAsync at AfterReceptorCompletion...");
+    DispatcherLogger.LogDebug("Calling ProcessTagsAsync at AfterReceptorCompletion...");
     // Use static AsyncLocal accessor - designed for singleton services like Dispatcher
     var scope = ScopeContextAccessor.CurrentContext;
     await _messageTagProcessor.ProcessTagsAsync(message, messageType, LifecycleStage.AfterReceptorCompletion, scope, ct);
-    Console.WriteLine("[DISPATCHER] ProcessTagsAsync completed");
+    DispatcherLogger.LogDebug("ProcessTagsAsync completed");
+#pragma warning restore CA1848, CA1873
   }
 
   /// <summary>
