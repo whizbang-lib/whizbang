@@ -145,8 +145,8 @@ public static class AuditEventProjection {
         seg = seg[..^9];
       }
       // Insert spaces in PascalCase, keeping acronyms together
-      seg = Regex.Replace(seg, "([A-Z]+)([A-Z][a-z])", "$1 $2");
-      seg = Regex.Replace(seg, "([a-z])([A-Z])", "$1 $2");
+      seg = Regex.Replace(seg, "([A-Z]+)([A-Z][a-z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
+      seg = Regex.Replace(seg, "([a-z])([A-Z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
       if (!string.IsNullOrWhiteSpace(seg)) {
         humanized.Add(seg.Trim());
       }
@@ -198,8 +198,8 @@ public static class AuditEventProjection {
     foreach (var seg in segments) {
       var name = seg;
       // Humanize PascalCase, keeping acronyms together
-      name = Regex.Replace(name, "([A-Z]+)([A-Z][a-z])", "$1 $2");
-      name = Regex.Replace(name, "([a-z])([A-Z])", "$1 $2");
+      name = Regex.Replace(name, "([A-Z]+)([A-Z][a-z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
+      name = Regex.Replace(name, "([a-z])([A-Z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
       if (!string.IsNullOrWhiteSpace(name)) {
         meaningful.Add(name.Trim());
       }
