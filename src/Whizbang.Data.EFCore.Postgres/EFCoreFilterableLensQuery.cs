@@ -94,7 +94,7 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   /// <inheritdoc/>
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     // Apply filters and then look for specific ID
-    var row = await Query.FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+    var row = await Query.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     return row?.Data;
   }
 }

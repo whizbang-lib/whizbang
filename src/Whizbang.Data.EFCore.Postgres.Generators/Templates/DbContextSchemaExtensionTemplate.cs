@@ -5,6 +5,7 @@
 #nullable enable
 
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -42,67 +43,95 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
     var sw = System.Diagnostics.Stopwatch.StartNew();
     var migrationsApplied = 0;
+    var phases = new System.Collections.Generic.List<(string Name, long Ms, string Status)>();
+    var phaseSw = new System.Diagnostics.Stopwatch();
 
-    // Acquire advisory lock to prevent race conditions when multiple services start simultaneously
-    // Lock ID is based on schema name hash to allow parallel initialization of different schemas
-    // Uses pg_advisory_lock (blocking) - waits until lock is available
-    var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
-    logger?.LogDebug("Acquiring advisory lock {LockId} for schema '__SCHEMA__'...", lockId);
-
-    await dbContext.Database.ExecuteSqlRawAsync(
-      $"SELECT pg_advisory_lock({lockId})",
-      cancellationToken);
+    // Open connection explicitly BEFORE acquiring advisory lock.
+    // EF Core's ExecuteSqlRawAsync opens/closes connections per call by default,
+    // which would release the session-level advisory lock between operations.
+    // Keeping the connection open ensures the lock is held across all phases.
+    await dbContext.Database.OpenConnectionAsync(cancellationToken);
 
     try {
-      logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__)...", "__DBCONTEXT_CLASS__");
+      // Acquire advisory lock to prevent race conditions when multiple services start simultaneously
+      // Lock ID is based on schema name hash to allow parallel initialization of different schemas
+      // Uses pg_advisory_lock (blocking) - waits until lock is available
+      var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
+      logger?.LogDebug("Acquiring advisory lock {LockId} for schema '__SCHEMA__'...", lockId);
 
-      // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
-      logger?.LogDebug("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-      await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
-
-      // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
-      logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
-      await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
-
-      // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
-      logger?.LogDebug("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
-      await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
-
-      // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
-      logger?.LogDebug("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
-      migrationsApplied = await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
-
-      // Step 5: Register perspective associations (populates wh_message_associations for event routing)
-      logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
-      #region REGISTER_ASSOCIATIONS
-      #endregion
-
-      // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
-      logger?.LogDebug("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
-      await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
-
-      // Step 7: Run database maintenance (purge completed messages, etc.)
-      // Gracefully handles failures so it never prevents service startup
-      logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
-      await PerformMaintenanceAsync(dbContext, logger, cancellationToken);
-
-      sw.Stop();
-      logger?.LogInformation(
-        "Database initialization complete for {DbContext} — {MigrationsApplied} migration(s) applied in {ElapsedMs}ms",
-        "__DBCONTEXT_CLASS__", migrationsApplied, sw.ElapsedMilliseconds);
-
-      // Clear all Npgsql connection pools after migrations complete.
-      // CREATE OR REPLACE FUNCTION assigns new OIDs to functions, but connections
-      // already in the pool still cache the old OIDs. Clearing pools forces new
-      // connections with correct OID mappings. This only runs once at startup.
-      Npgsql.NpgsqlConnection.ClearAllPools();
-      logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
-    } finally {
-      // Release advisory lock - allows other services waiting on initialization to proceed
       await dbContext.Database.ExecuteSqlRawAsync(
-        $"SELECT pg_advisory_unlock({lockId})",
+        $"SELECT pg_advisory_lock({lockId})",
         cancellationToken);
-      logger?.LogDebug("Released advisory lock {LockId} for schema '__SCHEMA__'", lockId);
+
+      try {
+        logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__)...", "__DBCONTEXT_CLASS__");
+
+        // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+        logger?.LogDebug("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
+        phases.Add(("CoreInfrastructure", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
+        logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
+        phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
+        logger?.LogDebug("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
+        phases.Add(("Constraints", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
+        logger?.LogDebug("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        migrationsApplied = await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+        phases.Add(("Migrations", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 5: Register perspective associations (populates wh_message_associations for event routing)
+        logger?.LogDebug("Registering perspective associations for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        #region REGISTER_ASSOCIATIONS
+        #endregion
+        phases.Add(("Associations", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 6: Reconcile perspective registry (tracks CLR type → table name mappings for schema drift detection)
+        logger?.LogDebug("Reconciling perspective registry for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        await ReconcilePerspectiveRegistryAsync(dbContext, logger, cancellationToken);
+        phases.Add(("Registry", phaseSw.ElapsedMilliseconds, "completed"));
+
+        // Step 7: Run database maintenance (purge completed messages, etc.)
+        // Gracefully handles failures so it never prevents service startup
+        logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
+        phaseSw.Restart();
+        await PerformMaintenanceAsync(dbContext, logger, cancellationToken);
+        phases.Add(("Maintenance", phaseSw.ElapsedMilliseconds, "completed"));
+
+        sw.Stop();
+        var phaseSummary = string.Join(", ", phases.Select(p => $"{p.Name}={p.Ms}ms({p.Status})"));
+        logger?.LogInformation(
+          "Database initialization complete for {DbContext} — {MigrationsApplied} migration(s) in {ElapsedMs}ms [{Phases}]",
+          "__DBCONTEXT_CLASS__", migrationsApplied, sw.ElapsedMilliseconds, phaseSummary);
+
+        // Clear all Npgsql connection pools after migrations complete.
+        // CREATE OR REPLACE FUNCTION assigns new OIDs to functions, but connections
+        // already in the pool still cache the old OIDs. Clearing pools forces new
+        // connections with correct OID mappings. This only runs once at startup.
+        Npgsql.NpgsqlConnection.ClearAllPools();
+        logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
+      } finally {
+        // Release advisory lock - allows other services waiting on initialization to proceed
+        await dbContext.Database.ExecuteSqlRawAsync(
+          $"SELECT pg_advisory_unlock({lockId})",
+          cancellationToken);
+        logger?.LogDebug("Released advisory lock {LockId} for schema '__SCHEMA__'", lockId);
+      }
+    } finally {
+      // Close the explicitly-opened connection (returns to pool, which also releases advisory lock)
+      await dbContext.Database.CloseConnectionAsync();
     }
   }
 
@@ -252,9 +281,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         // Replace all unqualified table names (e.g., "wh_inbox", "wh_outbox") with schema-qualified names (e.g., "inventory.wh_inbox")
         var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
 
+        var migSw = System.Diagnostics.Stopwatch.StartNew();
         await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
+        migSw.Stop();
         applied++;
-        logger?.LogDebug("Migration {Migration} completed successfully", name);
+        logger?.LogDebug("Migration {Migration}: {ElapsedMs}ms", name, migSw.ElapsedMilliseconds);
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
         // 42723 = duplicate_function - function already exists, safe to ignore
         logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);

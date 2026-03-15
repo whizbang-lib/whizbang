@@ -70,6 +70,10 @@ public static class PostgresDriverExtensions {
         // before they reach the database (cross-scope sync support)
         selector.Services.DecorateEventStoreWithSyncTracking();
 
+        // TURNKEY: Auto-initialize database schema before workers start
+        // Registered before PerspectiveWorker to ensure StartAsync ordering
+        selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
+
         // TURNKEY: Invoke perspective runner registration callbacks
         // This is registered by source-generated module initializer in consumer assembly
         // Automatically registers IPerspectiveRunnerRegistry, all runners, and PerspectiveWorker

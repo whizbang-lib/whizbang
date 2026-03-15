@@ -56,6 +56,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   public async Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
     // Query the perspective table by Id
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
 
     // Return the model data, or null if not found
@@ -91,6 +92,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
 
     // Query the perspective table by Id (which stores the partition key)
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
 
     // Return the model data, or null if not found
@@ -183,6 +185,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   public async Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default) {
     // Find the row to delete
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
 
     // If row exists, remove it
@@ -207,6 +210,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
 
     // Find the row to delete
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
 
     // If row exists, remove it
