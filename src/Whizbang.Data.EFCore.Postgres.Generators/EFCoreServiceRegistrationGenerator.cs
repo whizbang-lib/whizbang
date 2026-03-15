@@ -1516,7 +1516,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"    // This enables turnkey initialization via app.EnsureWhizbangInitializedAsync()");
     sb.AppendLine($"    DbContextInitializationRegistry.Register<{dbContext.FullyQualifiedName}>(async (sp, logger, ct) => {{");
     sb.AppendLine($"      using var scope = sp.CreateScope();");
-    sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetRequiredService<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
+    sb.AppendLine($"      if (dbContext == null) {{");
+    sb.AppendLine($"        logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
+    sb.AppendLine($"        return;");
+    sb.AppendLine($"      }}");
     sb.AppendLine($"      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);");
     sb.AppendLine($"    }});");
     sb.AppendLine();

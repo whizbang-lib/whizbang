@@ -487,6 +487,72 @@ public class EFCorePostgresPerspectiveStoreTests {
   }
 
   #endregion
+
+  // === Scope-Aware Upsert Tests ===
+
+  [Test]
+  public async Task UpsertAsync_WithScope_PassesScopeToStrategyAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "Scoped", Value = 42 };
+    var testId = _idProvider.NewGuid();
+    var scope = new PerspectiveScope { TenantId = "tenant-scope", UserId = "user-scope" };
+
+    // Act
+    await store.UpsertAsync(testId, model, scope);
+
+    // Assert - verify record was created with scope
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == testId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Data.Name).IsEqualTo("Scoped");
+    await Assert.That(row.Scope.TenantId).IsEqualTo("tenant-scope");
+    await Assert.That(row.Scope.UserId).IsEqualTo("user-scope");
+  }
+
+  [Test]
+  public async Task UpsertByPartitionKeyAsync_WithScope_StoresModelSuccessfullyAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "PartitionScoped", Value = 99 };
+    var partitionKey = _idProvider.NewGuid();
+    var scope = new PerspectiveScope { TenantId = "pk-tenant", OrganizationId = "pk-org" };
+
+    // Act - scope-aware overload should succeed and store the model
+    await store.UpsertByPartitionKeyAsync(partitionKey, model, scope);
+
+    // Assert - verify model was stored correctly
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("PartitionScoped");
+    await Assert.That(result.Value).IsEqualTo(99);
+  }
+
+  [Test]
+  public async Task UpsertAsync_WithoutScope_UsesEmptyPerspectiveScopeAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var model = new StoreTestModel { Name = "NoScope", Value = 0 };
+    var testId = _idProvider.NewGuid();
+
+    // Act - use the no-scope overload
+    await store.UpsertAsync(testId, model);
+
+    // Assert - scope should exist but be empty
+    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
+        .FirstOrDefaultAsync(r => r.Id == testId);
+
+    await Assert.That(row).IsNotNull();
+    await Assert.That(row!.Scope.TenantId).IsNull();
+    await Assert.That(row.Scope.UserId).IsNull();
+  }
 }
 
 /// <summary>

@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -178,20 +179,6 @@ public partial class ServiceBusConsumerWorker(
       // DIAGNOSTIC: Log after flush
       LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
 
-      // Extended diagnostic logging for perspective work
-      var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
-      if (_diagnosticLogging) {
-        Console.WriteLine($"[ServiceBusConsumerWorker DIAG] Message {envelope.MessageId} flush result:");
-        Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   InboxWork: {workBatch.InboxWork.Count}, PerspectiveWork: {workBatch.PerspectiveWork.Count}");
-        if (workBatch.PerspectiveWork.Count > 0) {
-          foreach (var pw in workBatch.PerspectiveWork) {
-            Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   - Perspective: {pw.PerspectiveName}, StreamId: {pw.StreamId}, LastProcessedEventId: {pw.LastProcessedEventId}");
-          }
-        } else {
-          Console.WriteLine("[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
-        }
-      }
-
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
@@ -232,8 +219,13 @@ public partial class ServiceBusConsumerWorker(
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
 
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
         }
       }
 
@@ -281,8 +273,13 @@ public partial class ServiceBusConsumerWorker(
 
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
 
+          // ImmediateAsync lifecycle receptors fire at the end of each stage
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
           lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+
+          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
         }
       }
 
@@ -302,6 +299,11 @@ public partial class ServiceBusConsumerWorker(
     } finally {
       inboxActivity?.Dispose();
     }
+  }
+
+  private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
+    await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
   }
 
   /// <summary>
@@ -402,6 +404,7 @@ public partial class ServiceBusConsumerWorker(
       EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
       StreamId = streamId,
       IsEvent = isEvent,
+      Scope = envelope.GetCurrentScope()?.Scope,
       MessageType = messageTypeName
     };
 

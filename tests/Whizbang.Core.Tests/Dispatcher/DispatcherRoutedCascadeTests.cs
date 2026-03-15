@@ -52,6 +52,41 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// </summary>
   public record RoutedTestResult(bool Success);
 
+  // --- Per-item routing scenario messages ---
+
+  /// <summary>
+  /// Command handled by a receptor that routes each cascaded event differently.
+  /// </summary>
+  public record PlaceOrderCommand(Guid OrderId, string ProductId);
+
+  /// <summary>
+  /// Confirmation DTO returned to the caller (not an IEvent, not cascaded).
+  /// </summary>
+  public record OrderConfirmation(Guid OrderId);
+
+  /// <summary>
+  /// Event that stays in-process for local projections (Route.Local).
+  /// </summary>
+  public record OrderCreatedEvent([property: StreamId] Guid OrderId) : IEvent;
+
+  /// <summary>
+  /// Event sent to outbox for cross-service delivery (Route.Outbox).
+  /// </summary>
+  public record InventoryReservedEvent([property: StreamId] Guid OrderId, string ProductId) : IEvent;
+
+  /// <summary>
+  /// Event sent both locally and to outbox (Route.Both).
+  /// </summary>
+  public record AuditLogEvent([property: StreamId] Guid OrderId, string Action) : IEvent;
+
+  // --- Collection with individual overrides scenario messages ---
+
+  /// <summary>
+  /// Command handled by a receptor that wraps a collection with a blanket route
+  /// but overrides individual items.
+  /// </summary>
+  public record BatchProcessCommand(Guid OrderId, string ProductId);
+
   #endregion
 
   #region Tracking Infrastructure
@@ -863,6 +898,199 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     await Assert.That(invoked).Count().IsEqualTo(1);
     await Assert.That(invoked[0]).IsTypeOf<RoutedSendTestEvent>()
       .Because("The inner event should be unwrapped before invoking receptor in void tracing path");
+  }
+
+  #endregion
+
+  #region Realistic Receptor Integration Tests - Per-Item and Collection Routing
+
+  /// <summary>
+  /// Receptor that returns a tuple with per-item routing.
+  /// Each cascaded event gets a different dispatch route:
+  /// - OrderCreated → Local (stays in-process, event store + local receptors)
+  /// - InventoryReserved → Outbox (cross-service delivery)
+  /// - AuditLog → Both (local receptors AND outbox)
+  /// </summary>
+  /// <remarks>
+  /// In a real application, this would implement:
+  /// <code>
+  /// IReceptor&lt;PlaceOrderCommand, (OrderConfirmation, Routed&lt;OrderCreatedEvent&gt;, Routed&lt;InventoryReservedEvent&gt;, Routed&lt;AuditLogEvent&gt;)&gt;
+  /// </code>
+  /// Defined as a plain class here to prevent the source generator from discovering it
+  /// (these tests use a manually-wired custom dispatcher).
+  /// </remarks>
+  private sealed class PlaceOrderReceptor {
+    public ValueTask<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>
+        HandleAsync(PlaceOrderCommand message, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult((
+        new OrderConfirmation(message.OrderId),
+        Route.Local(new OrderCreatedEvent(message.OrderId)),
+        Route.Outbox(new InventoryReservedEvent(message.OrderId, message.ProductId)),
+        Route.Both(new AuditLogEvent(message.OrderId, "OrderPlaced"))
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Receptor that returns a collection with a blanket route and individual overrides.
+  /// Most events default to Local from the collection wrapper, but InventoryReserved
+  /// overrides to Outbox individually.
+  /// </summary>
+  /// <remarks>
+  /// In a real application, this would implement:
+  /// <code>
+  /// IReceptor&lt;BatchProcessCommand, Routed&lt;object[]&gt;&gt;
+  /// </code>
+  /// Defined as a plain class here to prevent the source generator from discovering it
+  /// (these tests use a manually-wired custom dispatcher).
+  /// Uses object[] because the array mixes plain IEvent instances with Routed&lt;T&gt; wrappers.
+  /// </remarks>
+  private sealed class BatchProcessReceptor {
+    public ValueTask<Routed<object[]>> HandleAsync(
+        BatchProcessCommand message, CancellationToken cancellationToken = default) {
+      return Route.Local(new object[] {
+        new OrderCreatedEvent(message.OrderId),                                     // Local (from collection wrapper)
+        Route.Outbox(new InventoryReservedEvent(message.OrderId, message.ProductId)), // Outbox (individual override)
+        new AuditLogEvent(message.OrderId, "BatchProcessed")                        // Local (from collection wrapper)
+      }).AsValueTask();
+    }
+  }
+
+  /// <summary>
+  /// Test dispatcher that wires PlaceOrderReceptor and BatchProcessReceptor for integration testing.
+  /// Tracks which events were cascaded locally vs to outbox.
+  /// </summary>
+  private sealed class RealisticRoutingTestDispatcher : Core.Dispatcher {
+    public RealisticRoutingTestDispatcher(IServiceProvider serviceProvider)
+        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
+    }
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
+      // Wire PlaceOrderCommand → PlaceOrderReceptor
+      if (messageType == typeof(PlaceOrderCommand)) {
+        var receptor = new PlaceOrderReceptor();
+        return async msg => {
+          var result = await receptor.HandleAsync((PlaceOrderCommand)msg);
+          return (TResult)(object)result;
+        };
+      }
+
+      // Wire BatchProcessCommand → BatchProcessReceptor
+      if (messageType == typeof(BatchProcessCommand)) {
+        var receptor = new BatchProcessReceptor();
+        return async msg => {
+          var result = await receptor.HandleAsync((BatchProcessCommand)msg);
+          return (TResult)(object)result;
+        };
+      }
+
+      return null;
+    }
+
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType) {
+      return evt => {
+        RoutedCascadeTracker.TrackLocal(evt!);
+        return Task.CompletedTask;
+      };
+    }
+
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
+      return (evt, envelope, ct) => {
+        RoutedCascadeTracker.TrackLocal(evt);
+        return Task.CompletedTask;
+      };
+    }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
+
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) {
+      return null;
+    }
+
+    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Verifies that a receptor returning per-item routing via a tuple cascades each event with its correct mode.
+  /// Receptor: PlaceOrderReceptor returns (OrderConfirmation, Route.Local(OrderCreated), Route.Outbox(InventoryReserved), Route.Both(AuditLog))
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task CascadeFromReceptor_TupleWithPerItemRouting_EachEventGetsCorrectModeAsync() {
+    // Arrange
+    RoutedCascadeTracker.Reset();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RealisticRoutingTestDispatcher(provider);
+    var command = new PlaceOrderCommand(Guid.NewGuid(), "product-456");
+
+    // Act - Invoke the receptor and let cascade happen
+    var (confirmation, routedOrderCreated, routedInventoryReserved, routedAuditLog) =
+      await dispatcher.LocalInvokeAsync<(OrderConfirmation, Routed<OrderCreatedEvent>, Routed<InventoryReservedEvent>, Routed<AuditLogEvent>)>(command);
+
+    // Assert - Result DTO should be returned
+    await Assert.That(confirmation.OrderId).IsEqualTo(command.OrderId);
+
+    // Assert - Routed wrappers preserve their routing modes
+    await Assert.That(routedOrderCreated.Mode).IsEqualTo(DispatchMode.Local)
+      .Because("OrderCreated stays in-process for local projections");
+    await Assert.That(routedInventoryReserved.Mode).IsEqualTo(DispatchMode.Outbox)
+      .Because("InventoryReserved goes to outbox for cross-service delivery");
+    await Assert.That(routedAuditLog.Mode).IsEqualTo(DispatchMode.Both)
+      .Because("AuditLog goes to both local receptors and outbox");
+
+    // Assert - Local cascade should have fired for Local and Both events
+    var localInvocations = RoutedCascadeTracker.GetLocalInvocations();
+    await Assert.That(localInvocations.Any(e => e is OrderCreatedEvent)).IsTrue()
+      .Because("Route.Local events should cascade to local receptors");
+    await Assert.That(localInvocations.Any(e => e is AuditLogEvent)).IsTrue()
+      .Because("Route.Both events should cascade to local receptors");
+  }
+
+  /// <summary>
+  /// Verifies that a receptor returning a collection with a blanket route and individual overrides
+  /// cascades each event with the correct resolved mode.
+  /// Receptor: BatchProcessReceptor returns Route.Local([ OrderCreated, Route.Outbox(InventoryReserved), AuditLog ])
+  /// </summary>
+  [Test]
+  [NotInParallel]
+  public async Task CascadeFromReceptor_CollectionWithIndividualOverrides_OverridesWinAsync() {
+    // Arrange
+    RoutedCascadeTracker.Reset();
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceScopeFactory>(new TestServiceScopeFactory(services.BuildServiceProvider()));
+    var provider = services.BuildServiceProvider();
+    var dispatcher = new RealisticRoutingTestDispatcher(provider);
+    var command = new BatchProcessCommand(Guid.NewGuid(), "product-012");
+
+    // Act - Invoke the receptor and let cascade happen
+    var result = await dispatcher.LocalInvokeAsync<Routed<object[]>>(command);
+
+    // Assert - The collection should contain 3 events
+    await Assert.That(result.Value).IsNotNull();
+    await Assert.That(result.Value!.Length).IsEqualTo(3);
+
+    // Assert - Verify the routing was resolved correctly via cascade tracking
+    // OrderCreated and AuditLog should cascade locally (inheriting Local from collection wrapper)
+    // InventoryReserved should NOT cascade locally (individual Outbox override)
+    var localInvocations = RoutedCascadeTracker.GetLocalInvocations();
+    await Assert.That(localInvocations.Any(e => e is OrderCreatedEvent)).IsTrue()
+      .Because("OrderCreated inherits Local from the collection wrapper");
+    await Assert.That(localInvocations.Any(e => e is AuditLogEvent)).IsTrue()
+      .Because("AuditLog inherits Local from the collection wrapper");
   }
 
   #endregion

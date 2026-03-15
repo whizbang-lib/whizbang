@@ -100,4 +100,35 @@ public class ReceptorInfoTests {
     // Assert - Hash codes match for equal instances
     await Assert.That(hash1).IsEqualTo(hash2);
   }
+
+  [Test]
+  public async Task ReceptorInfo_IsPolymorphicMessageType_DefaultsFalseAsync() {
+    // Arrange & Act - Default value should be false
+    var info = new ReceptorInfo("MyClass", "MyMessage", "MyResponse", Array.Empty<string>());
+
+    // Assert
+    await Assert.That(info.IsPolymorphicMessageType).IsFalse();
+  }
+
+  [Test]
+  public async Task ReceptorInfo_IsPolymorphicMessageType_TrueWhenSetAsync() {
+    // Arrange & Act
+    var info = new ReceptorInfo(
+      "MyClass", "MyMessage", "MyResponse", Array.Empty<string>(),
+      IsPolymorphicMessageType: true
+    );
+
+    // Assert
+    await Assert.That(info.IsPolymorphicMessageType).IsTrue();
+  }
+
+  [Test]
+  public async Task ReceptorInfo_Equality_IncludesIsPolymorphicMessageTypeAsync() {
+    // Arrange
+    var info1 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse", Array.Empty<string>(), IsPolymorphicMessageType: false);
+    var info2 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse", Array.Empty<string>(), IsPolymorphicMessageType: true);
+
+    // Assert - Different IsPolymorphicMessageType means not equal
+    await Assert.That(info1).IsNotEqualTo(info2);
+  }
 }

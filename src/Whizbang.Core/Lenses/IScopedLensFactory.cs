@@ -151,8 +151,8 @@ public interface IScopedLensFactory {
   /// <param name="filters">Composable scope filter flags.</param>
   /// <returns>An event store query with the scope filters applied.</returns>
   /// <remarks>
-  /// Note: EventStoreRecord.Scope (MessageScope) only supports TenantId and UserId filtering.
-  /// Organization, Customer, and Principal filters are ignored for event queries.
+  /// Note: EventStoreRecord.Scope (PerspectiveScope) supports TenantId, UserId, OrganizationId, and CustomerId filtering.
+  /// Principal filters are not applied for event queries.
   /// </remarks>
   /// <docs>core-concepts/event-store-query</docs>
   Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters);

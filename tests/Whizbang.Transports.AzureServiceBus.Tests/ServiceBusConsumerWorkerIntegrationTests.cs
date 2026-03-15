@@ -16,6 +16,7 @@ using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Testing.Transport;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
+using EnvelopeSerializer = Whizbang.Core.Messaging.EnvelopeSerializer;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
@@ -41,8 +42,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
     var orderedProcessor = new OrderedStreamProcessor();
@@ -81,7 +83,8 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
       var inbox = capturedInboxMessages.First();
       await Assert.That(inbox.MessageId).IsEqualTo(envelope.MessageId.Value);
-      await Assert.That(inbox.IsEvent).IsTrue();
+      // TestMessage does not implement IEvent, so isEvent is false
+      await Assert.That(inbox.IsEvent).IsFalse();
     } finally {
       await worker.StopAsync(CancellationToken.None);
     }
@@ -104,8 +107,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       });
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
     var orderedProcessor = new OrderedStreamProcessor();
@@ -156,22 +160,23 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new DuplicateDetectingStrategy(processedMessageIds, () => flushCount++);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
     var orderedProcessor = new OrderedStreamProcessor();
     var logger = new TestConsumerLogger();
 
     var options = new ServiceBusConsumerOptions {
-      Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")]
+      Subscriptions = [new TopicSubscription("topic-01", "sub-01-a")]
     };
 
     var worker = new ServiceBusConsumerWorker(
       transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       jsonOptions, logger, orderedProcessor, options);
 
-    await _drainMessagesAsync("topic-00", "sub-00-a");
+    await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
 
     try {
@@ -179,7 +184,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
       // Publish a message
       var envelope = _createTestEnvelopeWithAggregateId(Guid.NewGuid());
-      var destination = new TransportDestination("topic-00");
+      var destination = new TransportDestination("topic-01");
       await transport.PublishAsync(envelope, destination);
 
       // Wait for first processing
@@ -203,7 +208,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -241,7 +246,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -279,7 +284,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -317,8 +322,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
     var orderedProcessor = new OrderedStreamProcessor();
@@ -367,8 +373,9 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
     var serviceProvider = services.BuildServiceProvider();
     var orderedProcessor = new OrderedStreamProcessor();

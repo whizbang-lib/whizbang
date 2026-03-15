@@ -1322,6 +1322,52 @@ public class ScopeDeltaCoverageTests {
 
   #endregion
 
+  #region FromPerspectiveScope Null Return Coverage
+
+  [Test]
+  public async Task FromPerspectiveScope_NullScope_ReturnsNullAsync() {
+    // Arrange & Act - null scope returns null (line 133)
+    var result = ScopeDelta.FromPerspectiveScope(null);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task FromPerspectiveScope_AllEmptyFields_ReturnsNullAsync() {
+    // Arrange - Scope with all null/empty fields returns null (line 138)
+    var scope = new PerspectiveScope {
+      TenantId = null,
+      UserId = null,
+      CustomerId = null,
+      OrganizationId = null
+    };
+
+    // Act
+    var result = ScopeDelta.FromPerspectiveScope(scope);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task FromPerspectiveScope_WithPopulatedFields_ReturnsDeltaAsync() {
+    // Arrange - Scope with populated fields returns a delta
+    var scope = new PerspectiveScope {
+      TenantId = "tenant-1",
+      UserId = "user-1"
+    };
+
+    // Act
+    var result = ScopeDelta.FromPerspectiveScope(scope);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.HasChanges).IsTrue();
+  }
+
+  #endregion
+
   #region Test Helpers
 
   private static ScopeContext _createScopeContextFromScope(PerspectiveScope scope) =>

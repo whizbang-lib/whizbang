@@ -29,7 +29,6 @@ internal static class StreamIdExtractorInitializer {
   [ModuleInitializer]
 #pragma warning restore CA2255
   internal static void Initialize() {
-    global::System.Console.WriteLine($"[StreamIdExtractorInitializer] ModuleInitializer running for assembly: {typeof(StreamIdExtractorInitializer).Assembly.GetName().Name}");
     #region MODULE_INITIALIZER_REGISTRATION
     // Conditional registration - only if this assembly has extractors
     // Generated code: StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);

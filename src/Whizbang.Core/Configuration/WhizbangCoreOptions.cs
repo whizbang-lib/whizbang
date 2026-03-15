@@ -96,6 +96,19 @@ public sealed class WhizbangCoreOptions {
   /// </para>
   /// </remarks>
   public TagProcessingMode TagProcessingMode { get; set; } = TagProcessingMode.AfterReceptorCompletion;
+
+  /// <summary>
+  /// Warning threshold for ImmediateAsync chain depth. Logs a warning when exceeded.
+  /// No hard limit — chains run until the queue is empty.
+  /// Default: 10.
+  /// </summary>
+  /// <remarks>
+  /// ImmediateAsync receptors may dispatch further events that themselves have ImmediateAsync
+  /// receptors, creating chains. This threshold triggers a warning log when chain depth
+  /// reaches a multiple of this value, helping identify potentially unbounded chains.
+  /// </remarks>
+  /// <docs>core-concepts/lifecycle-stages#immediate-async</docs>
+  public int ImmediateAsyncChainWarningThreshold { get; set; } = 10;
 }
 
 /// <summary>

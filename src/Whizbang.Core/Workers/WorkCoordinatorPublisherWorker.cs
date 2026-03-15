@@ -342,6 +342,10 @@ public partial class WorkCoordinatorPublisherWorker(
               AttemptNumber = work.Attempts
             };
             await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+
+            // ImmediateAsync lifecycle receptors fire at the end of each stage
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
         }
 
@@ -358,6 +362,10 @@ public partial class WorkCoordinatorPublisherWorker(
               AttemptNumber = work.Attempts
             };
             await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+
+            // ImmediateAsync lifecycle receptors fire at the end of each stage
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
         }
 
@@ -415,6 +423,10 @@ public partial class WorkCoordinatorPublisherWorker(
             };
 
             await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+
+            // ImmediateAsync lifecycle receptors fire at the end of each stage
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
         }
 
@@ -434,6 +446,10 @@ public partial class WorkCoordinatorPublisherWorker(
             };
 
             await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+
+            // ImmediateAsync lifecycle receptors fire at the end of each stage
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
         }
 
@@ -817,7 +833,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
   [LoggerMessage(
     EventId = 20,
-    Level = LogLevel.Information,
+    Level = LogLevel.Debug,
     Message = "Message batch: Outbox published={Published}, failed={OutboxFailed}, buffered={Buffered}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}"
   )]
   static partial void LogMessageBatchSummary(

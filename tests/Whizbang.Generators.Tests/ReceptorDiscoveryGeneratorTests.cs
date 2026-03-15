@@ -2662,4 +2662,287 @@ public class CommentReceptor : IReceptor<CommentCommand, CommentEvent> {
   }
 
   #endregion
+
+  // ==================== Polymorphic Receptor Expansion Tests ====================
+
+  #region Polymorphic Receptor Expansion Tests
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_ExpandsToConcreteTypes_InRegistryAsync() {
+    // Arrange - Interface with two concrete implementations, receptor for the interface
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public record ConcreteEventA : IEvent, IMyMarker;
+public record ConcreteEventB : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - ReceptorRegistry should have entries for both concrete types
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.ConcreteEventA)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.ConcreteEventB)");
+    await Assert.That(registry).Contains("LifecycleStage.PrePerspectiveInline");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_PreservesOriginalInterfaceEntry_InRegistryAsync() {
+    // Arrange - Same as above; verify the original interface entry is also generated
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public record ConcreteEventA : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Original interface entry should also exist for direct dispatch
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.IMyMarker)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithBaseClassReceptor_ExpandsToConcreteTypes_InRegistryAsync() {
+    // Arrange - Base class with two concrete derived classes, receptor for the base
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public record MyBaseEvent : IEvent;
+public record DerivedEventA : MyBaseEvent;
+public record DerivedEventB : MyBaseEvent;
+
+[FireAt(LifecycleStage.PostPerspectiveAsync)]
+public class BaseReceptor : IReceptor<MyBaseEvent> {
+  public ValueTask HandleAsync(MyBaseEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - ReceptorRegistry should have entries for both derived types
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.DerivedEventA)");
+    await Assert.That(registry).Contains("typeof(global::MyApp.Events.DerivedEventB)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSealedClassReceptor_DoesNotExpandAsync() {
+    // Arrange - Sealed class cannot have subtypes, no expansion
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public sealed record MySealedEvent : IEvent;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class SealedReceptor : IReceptor<MySealedEvent> {
+  public ValueTask HandleAsync(MySealedEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the sealed type entry exists
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.MySealedEvent)");
+
+    // Count if-condition occurrences - should appear only once (no expansion added extra entries)
+    // The pattern "messageType == typeof(...)" appears in the if-condition only
+    var ifConditionMatches = registry.Split("messageType == typeof(global::MyApp.Events.MySealedEvent)").Length - 1;
+    await Assert.That(ifConditionMatches).IsEqualTo(1);
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_SkipsAbstractDerivedTypesAsync() {
+    // Arrange - Interface → abstract class → concrete class; only concrete gets expanded
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public abstract record AbstractMiddle : IEvent, IMyMarker;
+public record ConcreteLeaf : AbstractMiddle;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the concrete class gets an expanded entry, not the abstract one
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.ConcreteLeaf)");
+    await Assert.That(registry).DoesNotContain("typeof(global::MyApp.Events.AbstractMiddle)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_MergesWithExistingEntriesAsync() {
+    // Arrange - ConcreteEvent implements IMyMarker. One receptor for ConcreteEvent AND one for IMyMarker
+    // at the same stage. Both should appear in a SINGLE array for typeof(ConcreteEvent).
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+public record ConcreteEvent : IEvent, IMyMarker;
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class DirectReceptor : IReceptor<ConcreteEvent> {
+  public ValueTask HandleAsync(ConcreteEvent message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Both receptors should be in the same array for typeof(ConcreteEvent)
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+
+    // The ConcreteEvent entry should contain both receptor IDs
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.ConcreteEvent)");
+    await Assert.That(registry).Contains("DirectReceptor");
+    await Assert.That(registry).Contains("MarkerReceptor");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPolymorphicReceptor_NoImplementors_GeneratesOnlyInterfaceEntryAsync() {
+    // Arrange - Interface with NO implementing concrete types
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IEmptyMarker { }
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class EmptyReceptor : IReceptor<IEmptyMarker> {
+  public ValueTask HandleAsync(IEmptyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Only the interface entry exists (no expansion because no implementors)
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("typeof(global::MyApp.Events.IEmptyMarker)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithInterfaceReceptor_ExpandsNestedConcreteTypes_InRegistryAsync() {
+    // Arrange - Concrete types nested inside a static contracts class (real-world pattern)
+    var source = """
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Events;
+
+public interface IMyMarker { }
+
+public static class MyContracts {
+  public record NestedEventA : IEvent, IMyMarker;
+  public record NestedEventB : IEvent, IMyMarker;
+}
+
+[FireAt(LifecycleStage.PrePerspectiveInline)]
+public class MarkerReceptor : IReceptor<IMyMarker> {
+  public ValueTask HandleAsync(IMyMarker message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Nested concrete types should be expanded
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorRegistry.g.cs");
+    await Assert.That(registry).IsNotNull();
+    await Assert.That(registry!).Contains("MyApp.Events.MyContracts.NestedEventA");
+    await Assert.That(registry).Contains("MyApp.Events.MyContracts.NestedEventB");
+  }
+
+  #endregion
 }

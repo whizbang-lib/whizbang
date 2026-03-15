@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
 
@@ -416,6 +417,12 @@ public record OutboxMessage {
   public bool IsEvent { get; init; }
 
   /// <summary>
+  /// Multi-tenancy and security scope extracted from the envelope.
+  /// Stored in the dedicated scope JSONB column for query filtering.
+  /// </summary>
+  public PerspectiveScope? Scope { get; init; }
+
+  /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Commands.CreateProductCommand, MyApp").
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
@@ -461,6 +468,12 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// Multi-tenancy and security scope extracted from the envelope.
+  /// Stored in the dedicated scope JSONB column for query filtering.
+  /// </summary>
+  public PerspectiveScope? Scope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the message payload type (e.g., "MyApp.Events.ProductCreatedEvent, MyApp").

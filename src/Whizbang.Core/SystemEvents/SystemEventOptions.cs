@@ -1,6 +1,23 @@
 namespace Whizbang.Core.SystemEvents;
 
 /// <summary>
+/// Controls which events are audited when event audit is enabled.
+/// </summary>
+/// <docs>core-concepts/system-events#audit-mode</docs>
+public enum AuditMode {
+  /// <summary>
+  /// All events are audited unless marked with <c>[AuditEvent(Exclude = true)]</c>.
+  /// This is the default mode.
+  /// </summary>
+  OptOut,
+
+  /// <summary>
+  /// Only events explicitly marked with <c>[AuditEvent]</c> (and not excluded) are audited.
+  /// </summary>
+  OptIn
+}
+
+/// <summary>
 /// Configuration options for system events.
 /// Controls which system events are enabled and their transport behavior.
 /// </summary>
@@ -52,6 +69,49 @@ public sealed class SystemEventOptions {
   /// </para>
   /// </remarks>
   public bool LocalOnly { get; set; } = true;
+
+  /// <summary>
+  /// Controls which events are audited: <see cref="AuditMode.OptOut"/> (default) audits all
+  /// events unless excluded, <see cref="AuditMode.OptIn"/> audits only explicitly marked events.
+  /// </summary>
+  public AuditMode AuditMode { get; set; } = AuditMode.OptOut;
+
+  /// <summary>
+  /// Custom function to humanize event type names for the audit trail.
+  /// Receives the fully-qualified event type name (e.g., "JobCreatedEvent")
+  /// and returns a human-readable label (e.g., "Job Created").
+  /// When null or returns null, the built-in <see cref="Audit.AuditEventProjection.HumanizeEventType"/> is used.
+  /// </summary>
+  /// <example>
+  /// <code>
+  /// services.AddSystemEvents(options => {
+  ///   options.EnableEventAudit();
+  ///   options.EventNameHumanizer = eventType => eventType switch {
+  ///     "JobCreatedEvent" => "New Job",
+  ///     _ => null // fall back to default
+  ///   };
+  /// });
+  /// </code>
+  /// </example>
+  public Func<string, string?>? EventNameHumanizer { get; set; }
+
+  /// <summary>
+  /// Custom function to generate event descriptions for the audit trail.
+  /// Receives the fully-qualified event type name and returns a description string.
+  /// When null or returns null, the built-in namespace extraction is used.
+  /// </summary>
+  /// <example>
+  /// <code>
+  /// services.AddSystemEvents(options => {
+  ///   options.EnableEventAudit();
+  ///   options.EventDescriptionHumanizer = eventType => eventType switch {
+  ///     var t when t.Contains("Job") => "Job Management",
+  ///     _ => null // fall back to default
+  ///   };
+  /// });
+  /// </code>
+  /// </example>
+  public Func<string, string?>? EventDescriptionHumanizer { get; set; }
 
   /// <summary>
   /// Enables <see cref="EventAudited"/> system events.
