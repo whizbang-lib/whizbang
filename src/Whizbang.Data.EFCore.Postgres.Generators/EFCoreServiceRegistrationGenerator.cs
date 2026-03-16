@@ -1626,8 +1626,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_REGISTRY_JSON__", perspectiveRegistryJson);
       // __SERVICE_NAME__ is the assembly name for service identification
       template = template.Replace("__SERVICE_NAME__", assemblyName);
-      // __LIBRARY_VERSION__ is the assembly name used as version identifier for migration tracking
-      template = template.Replace("__LIBRARY_VERSION__", assemblyName);
+      // __LIBRARY_VERSION__ is the Whizbang library version from the generator assembly
+      var libraryVersion = typeof(EFCoreServiceRegistrationGenerator).Assembly
+          .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+          ?? typeof(EFCoreServiceRegistrationGenerator).Assembly.GetName().Version?.ToString()
+          ?? "unknown";
+      // Strip build metadata suffix (e.g., "0.9.4-local.62+abc123" → "0.9.4-local.62")
+      var plusIdx = libraryVersion.IndexOf('+');
+      if (plusIdx > 0) {
+        libraryVersion = libraryVersion.Substring(0, plusIdx);
+      }
+      template = template.Replace("__LIBRARY_VERSION__", libraryVersion);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 
