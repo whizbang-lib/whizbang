@@ -56,6 +56,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   public async Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
     // Query the perspective table by Id
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .AsNoTracking()
         .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
 
@@ -92,6 +93,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
 
     // Query the perspective table by Id (which stores the partition key)
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .AsNoTracking()
         .OrderBy(r => r.Id)
         .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
 
