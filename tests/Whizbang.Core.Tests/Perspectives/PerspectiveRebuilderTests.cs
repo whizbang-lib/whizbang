@@ -152,7 +152,88 @@ public class PerspectiveRebuilderTests {
     await Assert.That(result.Duration.TotalMilliseconds).IsGreaterThanOrEqualTo(0);
   }
 
+  [Test]
+  public async Task RebuildInPlaceAsync_WithUnknownPerspective_ErrorIncludesRegisteredNamesAsync() {
+    // Arrange — covers line 60: detailed error message with registered perspectives
+    var registry = new FakePerspectiveRunnerRegistryWithInfo(runner: null, [
+      new PerspectiveRegistrationInfo("MyApp.OrderPerspective", "global::MyApp.OrderPerspective", "global::MyApp.OrderModel", []),
+      new PerspectiveRegistrationInfo("MyApp.InventoryPerspective", "global::MyApp.InventoryPerspective", "global::MyApp.InventoryModel", [])
+    ]);
+    var eventStoreQuery = new FakeEventStoreQuery([]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("NonexistentPerspective");
+
+    // Assert — error should include the registered perspective names
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).Contains("No runner found");
+    await Assert.That(result.Error).Contains("MyApp.OrderPerspective");
+    await Assert.That(result.Error).Contains("MyApp.InventoryPerspective");
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WhenScopeCreationThrows_ReturnsFailureAsync() {
+    // Arrange — covers lines 103-106 (outer catch block)
+    var services = new ServiceCollection();
+    // Don't register IPerspectiveRunnerRegistry — GetRequiredService will throw
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsFalse();
+    await Assert.That(result.Error).IsNotNull();
+    await Assert.That(result.PerspectiveName).IsEqualTo("TestPerspective");
+  }
+
+  [Test]
+  public async Task RebuildInPlaceAsync_WithSyncQueryable_UsesNonAsyncFallbackAsync() {
+    // Arrange — covers lines 136-138 (sync IQueryable fallback in ToListAsync)
+    // The default FakeEventStoreQuery returns a regular IQueryable (not IAsyncEnumerable),
+    // so it exercises the else branch in ToListAsync
+    var runner = new FakePerspectiveRunner();
+    var registry = new FakePerspectiveRunnerRegistry(runner);
+    var streamIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var eventStoreQuery = new FakeEventStoreQuery(streamIds);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IEventStoreQuery>(eventStoreQuery);
+    var sp = services.BuildServiceProvider();
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+
+    var rebuilder = new PerspectiveRebuilder(scopeFactory, NullLogger<PerspectiveRebuilder>.Instance);
+
+    // Act — FakeEventStoreQuery.Query returns a plain IQueryable (not IAsyncEnumerable),
+    // triggering the sync fallback path in QueryableExtensions.ToListAsync
+    var result = await rebuilder.RebuildInPlaceAsync("TestPerspective");
+
+    // Assert
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(result.StreamsProcessed).IsEqualTo(2);
+  }
+
   // --- Test Doubles ---
+
+  private sealed class FakePerspectiveRunnerRegistryWithInfo(
+      IPerspectiveRunner? runner,
+      IReadOnlyList<PerspectiveRegistrationInfo> registrations) : IPerspectiveRunnerRegistry {
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) => runner;
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => registrations;
+    public IReadOnlyList<Type> GetEventTypes() => [];
+  }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
     public int RunCount { get; private set; }
