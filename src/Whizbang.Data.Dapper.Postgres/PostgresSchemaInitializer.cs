@@ -10,6 +10,7 @@ using Whizbang.Data.Schema;
 namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
+/// <docs>infrastructure/migrations</docs>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTests.cs:Constructor_WithConnectionStringOnly_InitializesSuccessfullyAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTests.cs:Constructor_WithPerspectiveSql_InitializesSuccessfullyAsync</tests>
 /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchemaAsync_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync</tests>

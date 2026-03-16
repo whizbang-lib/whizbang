@@ -10,7 +10,7 @@ namespace Whizbang.Core.Workers;
 /// and calls IPerspectiveRebuilder.RebuildBlueGreenAsync for each.
 /// Updates migration status to 2 (Updated) on completion.
 /// </summary>
-/// <docs>infrastructure/migrations#background-rebuild</docs>
+/// <docs>perspectives/rebuild</docs>
 public sealed partial class PerspectiveMigrationWorker(
     IPerspectiveRebuilder rebuilder,
     ILogger<PerspectiveMigrationWorker> logger) : BackgroundService {
