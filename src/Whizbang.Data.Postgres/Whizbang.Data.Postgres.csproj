@@ -26,4 +26,19 @@
     <EmbeddedResource Include="Migrations\*.sql" />
   </ItemGroup>
 
+  <!-- Generate BuildInfo.g.cs with version const at compile time (AOT-safe, no reflection) -->
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <_BuildInfoLines Include="namespace Whizbang.Data.Postgres%3B" />
+      <_BuildInfoLines Include="internal static partial class BuildInfo {" />
+      <_BuildInfoLines Include="  internal const string Version = &quot;$(Version)&quot;%3B" />
+      <_BuildInfoLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
+                     Lines="@(_BuildInfoLines)" Overwrite="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
+    </ItemGroup>
+  </Target>
+
 </Project>

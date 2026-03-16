@@ -19,6 +19,8 @@ DECLARE
   v_stream_id UUID;
   v_perspective_name VARCHAR(200);
 BEGIN
+  IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
+
   FOR v_completion IN
     SELECT
       (elem->>'EventWorkId')::UUID as work_id,

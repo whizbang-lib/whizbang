@@ -102,6 +102,10 @@ DECLARE
 
   -- Acknowledgement counts for completion tracking
   v_ack_counts JSONB;
+
+  -- Boolean flags to avoid re-querying for ack count placement
+  v_has_outbox_work BOOLEAN := false;
+  v_has_inbox_work BOOLEAN := false;
 BEGIN
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
@@ -182,18 +186,26 @@ BEGIN
   SELECT cir.instance_rank, cir.active_instance_count INTO v_rank, v_count
   FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff) AS cir;
 
-  -- Cleanup completed streams
-  PERFORM __SCHEMA__.cleanup_completed_streams(p_now);
+  -- Cleanup completed streams (only when completions were processed)
+  IF jsonb_array_length(p_outbox_completions) > 0
+    OR jsonb_array_length(p_inbox_completions) > 0
+    OR jsonb_array_length(p_perspective_event_completions) > 0 THEN
+    PERFORM __SCHEMA__.cleanup_completed_streams(p_now);
+  END IF;
 
   -- ========================================
   -- Phase 2: Completions
   -- ========================================
 
   -- Process outbox completions
-  PERFORM __SCHEMA__.process_outbox_completions(p_outbox_completions, p_now, (p_flags & 4) != 0);
+  IF jsonb_array_length(p_outbox_completions) > 0 THEN
+    PERFORM __SCHEMA__.process_outbox_completions(p_outbox_completions, p_now, (p_flags & 4) != 0);
+  END IF;
 
   -- Process inbox completions
-  PERFORM __SCHEMA__.process_inbox_completions(p_inbox_completions, p_now, (p_flags & 4) != 0);
+  IF jsonb_array_length(p_inbox_completions) > 0 THEN
+    PERFORM __SCHEMA__.process_inbox_completions(p_inbox_completions, p_now, (p_flags & 4) != 0);
+  END IF;
 
   -- Process perspective event completions: CRITICAL ORDER
   -- 1. Mark events as processed (set processed_at and status)
@@ -279,13 +291,19 @@ BEGIN
   -- ========================================
 
   -- Process outbox failures
-  PERFORM __SCHEMA__.process_outbox_failures(p_outbox_failures, p_now);
+  IF jsonb_array_length(p_outbox_failures) > 0 THEN
+    PERFORM __SCHEMA__.process_outbox_failures(p_outbox_failures, p_now);
+  END IF;
 
   -- Process inbox failures
-  PERFORM __SCHEMA__.process_inbox_failures(p_inbox_failures, p_now);
+  IF jsonb_array_length(p_inbox_failures) > 0 THEN
+    PERFORM __SCHEMA__.process_inbox_failures(p_inbox_failures, p_now);
+  END IF;
 
   -- Process perspective event failures
-  PERFORM __SCHEMA__.process_perspective_event_failures(p_perspective_event_failures, p_now);
+  IF jsonb_array_length(p_perspective_event_failures) > 0 THEN
+    PERFORM __SCHEMA__.process_perspective_event_failures(p_perspective_event_failures, p_now);
+  END IF;
 
   -- Process perspective checkpoint failures (direct failure reports from perspective runners)
   IF jsonb_array_length(p_perspective_failures) > 0 THEN
@@ -411,60 +429,57 @@ BEGIN
   -- ========================================
 
   -- Store new outbox messages and track
-  INSERT INTO temp_new_outbox (message_id, stream_id)
-  SELECT som.message_id, som.stream_id
-  FROM __SCHEMA__.store_outbox_messages(
-    p_new_outbox_messages,
-    p_instance_id,
-    v_lease_expiry,
-    p_now,
-    p_partition_count
-  ) AS som
-  WHERE som.was_newly_created = true;
+  IF jsonb_array_length(p_new_outbox_messages) > 0 THEN
+    INSERT INTO temp_new_outbox (message_id, stream_id)
+    SELECT som.message_id, som.stream_id
+    FROM __SCHEMA__.store_outbox_messages(
+      p_new_outbox_messages,
+      p_instance_id,
+      v_lease_expiry,
+      p_now,
+      p_partition_count
+    ) AS som
+    WHERE som.was_newly_created = true;
 
-  -- DIAGNOSTIC: Log how many new outbox messages were stored
-  RAISE DEBUG '[process_work_batch] Stored % new outbox messages (instance_id=%)',
-    (SELECT COUNT(*) FROM temp_new_outbox), p_instance_id;
+    -- DIAGNOSTIC: Log how many new outbox messages were stored
+    IF (p_flags & 4) != 0 THEN
+      RAISE DEBUG '[process_work_batch] Stored % new outbox messages (instance_id=%)',
+        (SELECT COUNT(*) FROM temp_new_outbox), p_instance_id;
+    END IF;
+  END IF;
 
   -- Store new inbox messages and track
-  -- DIAGNOSTIC: Log what's being passed to store_inbox_messages
-  RAISE DEBUG '[Phase 4] Calling store_inbox_messages with % inbox messages',
-    jsonb_array_length(p_new_inbox_messages);
+  IF jsonb_array_length(p_new_inbox_messages) > 0 THEN
+    INSERT INTO temp_new_inbox (message_id, stream_id)
+    SELECT sim.message_id, sim.stream_id
+    FROM __SCHEMA__.store_inbox_messages(
+      p_new_inbox_messages,
+      p_instance_id,
+      v_lease_expiry,
+      p_now,
+      p_partition_count
+    ) AS sim
+    WHERE sim.was_newly_created = true;
 
-  INSERT INTO temp_new_inbox (message_id, stream_id)
-  SELECT sim.message_id, sim.stream_id
-  FROM __SCHEMA__.store_inbox_messages(
-    p_new_inbox_messages,
-    p_instance_id,
-    v_lease_expiry,
-    p_now,
-    p_partition_count
-  ) AS sim
-  WHERE sim.was_newly_created = true;
-
-  -- DIAGNOSTIC: Log how many new inbox messages were tracked
-  RAISE DEBUG '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
-    (SELECT COUNT(*) FROM temp_new_inbox), p_instance_id;
-  RAISE DEBUG '[Phase 4] Debug: SELECT COUNT(*) from store_inbox_messages result would be: %',
-    (SELECT COUNT(*)
-     FROM __SCHEMA__.store_inbox_messages(
-       p_new_inbox_messages,
-       p_instance_id,
-       v_lease_expiry,
-       p_now,
-       p_partition_count
-     ));
+    -- DIAGNOSTIC: Log how many new inbox messages were tracked
+    IF (p_flags & 4) != 0 THEN
+      RAISE DEBUG '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
+        (SELECT COUNT(*) FROM temp_new_inbox), p_instance_id;
+    END IF;
+  END IF;
 
   -- Store new perspective events and track
-  INSERT INTO temp_new_perspective_events (event_work_id, stream_id, perspective_name)
-  SELECT spe.event_work_id, spe.stream_id, spe.perspective_name
-  FROM __SCHEMA__.store_perspective_events(
-    p_new_perspective_events,
-    p_instance_id,
-    v_lease_expiry,
-    p_now
-  ) AS spe
-  WHERE spe.was_newly_created = true;
+  IF jsonb_array_length(p_new_perspective_events) > 0 THEN
+    INSERT INTO temp_new_perspective_events (event_work_id, stream_id, perspective_name)
+    SELECT spe.event_work_id, spe.stream_id, spe.perspective_name
+    FROM __SCHEMA__.store_perspective_events(
+      p_new_perspective_events,
+      p_instance_id,
+      v_lease_expiry,
+      p_now
+    ) AS spe
+    WHERE spe.was_newly_created = true;
+  END IF;
 
   -- ========================================
   -- Phase 4.5: Event Storage
@@ -581,14 +596,15 @@ BEGIN
   -- END IF;
 
   -- Phase 4.5B: Store events from inbox messages with tracking
-  -- DIAGNOSTIC: Log inbox event candidates
-  RAISE DEBUG '[Phase 4.5B] Checking inbox events from temp_new_inbox';
-  RAISE DEBUG '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
-  RAISE DEBUG '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
-    (SELECT COUNT(*) FROM wh_inbox i
-     WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
-       AND i.is_event = true
-       AND i.stream_id IS NOT NULL);
+  IF (p_flags & 4) != 0 THEN
+    RAISE DEBUG '[Phase 4.5B] Checking inbox events from temp_new_inbox';
+    RAISE DEBUG '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
+    RAISE DEBUG '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
+      (SELECT COUNT(*) FROM wh_inbox i
+       WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
+         AND i.is_event = true
+         AND i.stream_id IS NOT NULL);
+  END IF;
 
   WITH inbox_events AS (
     SELECT
@@ -677,8 +693,10 @@ BEGIN
   v_stored_inbox_events := COALESCE(v_stored_inbox_events, '{}');
 
   -- DIAGNOSTIC: Log storage results
-  RAISE DEBUG '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
-  RAISE DEBUG '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
+  IF (p_flags & 4) != 0 THEN
+    RAISE DEBUG '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
+    RAISE DEBUG '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
+  END IF;
 
   -- Log warnings for idempotent conflicts (if any)
   -- TODO: Implement log_event() function for tracking idempotent conflicts
@@ -730,31 +748,8 @@ BEGIN
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
     ON (
-      -- Strategy 1: Exact match (fastest, try first)
-      es.event_type = ma.message_type
-      OR
-      -- Strategy 2: Fuzzy match on "TypeName, AssemblyName" portion
-      (
-        CASE
-          WHEN POSITION(', Version=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Version=' IN es.event_type) - 1)
-          WHEN POSITION(', Culture=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Culture=' IN es.event_type) - 1)
-          WHEN POSITION(', PublicKeyToken=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', PublicKeyToken=' IN es.event_type) - 1)
-          ELSE es.event_type
-        END
-        =
-        CASE
-          WHEN POSITION(', Version=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Version=' IN ma.message_type) - 1)
-          WHEN POSITION(', Culture=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Culture=' IN ma.message_type) - 1)
-          WHEN POSITION(', PublicKeyToken=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', PublicKeyToken=' IN ma.message_type) - 1)
-          ELSE ma.message_type
-        END
-      )
+      -- Normalized match using IMMUTABLE helper (exact after stripping Version/Culture/PublicKeyToken)
+      __SCHEMA__.normalize_event_type(es.event_type) = __SCHEMA__.normalize_event_type(ma.message_type)
     )
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
@@ -771,7 +766,7 @@ BEGIN
   -- ========================================
   -- When events are stored, automatically create checkpoint rows for any streams
   -- that have events matching perspective associations but don't have checkpoints yet.
-  -- Uses fuzzy type matching to handle different .NET type name formats.
+  -- Uses normalize_event_type for consistent type matching.
   -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
   INSERT INTO __SCHEMA__.wh_perspective_checkpoints (
     stream_id,
@@ -787,34 +782,8 @@ BEGIN
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
     ON (
-      -- Strategy 1: Exact match (fastest, try first)
-      es.event_type = ma.message_type
-      OR
-      -- Strategy 2: Fuzzy match on "TypeName, AssemblyName" portion
-      -- Ignores Version, Culture, PublicKeyToken differences
-      (
-        -- Extract core identifier from event_type (up to first ", Version=" if present)
-        CASE
-          WHEN POSITION(', Version=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Version=' IN es.event_type) - 1)
-          WHEN POSITION(', Culture=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Culture=' IN es.event_type) - 1)
-          WHEN POSITION(', PublicKeyToken=' IN es.event_type) > 0
-            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', PublicKeyToken=' IN es.event_type) - 1)
-          ELSE es.event_type
-        END
-        =
-        -- Extract core identifier from message_type
-        CASE
-          WHEN POSITION(', Version=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Version=' IN ma.message_type) - 1)
-          WHEN POSITION(', Culture=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Culture=' IN ma.message_type) - 1)
-          WHEN POSITION(', PublicKeyToken=' IN ma.message_type) > 0
-            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', PublicKeyToken=' IN ma.message_type) - 1)
-          ELSE ma.message_type
-        END
-      )
+      -- Normalized match using IMMUTABLE helper (exact after stripping Version/Culture/PublicKeyToken)
+      __SCHEMA__.normalize_event_type(es.event_type) = __SCHEMA__.normalize_event_type(ma.message_type)
     )
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
@@ -908,14 +877,37 @@ BEGIN
   -- Phase 7: Return Results
   -- ========================================
 
+  -- Pre-compute work existence flags to avoid redundant subqueries in RETURN QUERY
+  SELECT EXISTS(
+    SELECT 1 FROM wh_outbox o
+    INNER JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+    WHERE o.instance_id = p_instance_id AND o.lease_expiry > p_now AND o.processed_at IS NULL
+    UNION ALL
+    SELECT 1 FROM wh_outbox o
+    INNER JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+    WHERE o.instance_id = p_instance_id AND o.lease_expiry > p_now AND o.processed_at IS NULL
+  ) INTO v_has_outbox_work;
+
+  SELECT EXISTS(
+    SELECT 1 FROM wh_inbox i
+    INNER JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
+    WHERE i.instance_id = p_instance_id AND i.lease_expiry > p_now AND i.processed_at IS NULL
+    UNION ALL
+    SELECT 1 FROM wh_inbox i
+    INNER JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
+    WHERE i.instance_id = p_instance_id AND i.lease_expiry > p_now AND i.processed_at IS NULL
+  ) INTO v_has_inbox_work;
+
   -- DIAGNOSTIC: Log counts before returning results
-  RAISE DEBUG '[process_work_batch] About to return results: temp_new_outbox=%', (SELECT COUNT(*) FROM temp_new_outbox);
-  RAISE DEBUG '[process_work_batch] Checking wh_outbox: total_in_temp_new=%, matching_instance_id=%',
-    (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id),
-    (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id WHERE o.instance_id = p_instance_id);
-  RAISE DEBUG '[process_work_batch] Instance check: p_instance_id=%, first_outbox_instance_id=%',
-    p_instance_id,
-    (SELECT o.instance_id FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id LIMIT 1);
+  IF (p_flags & 4) != 0 THEN
+    RAISE DEBUG '[process_work_batch] About to return results: temp_new_outbox=%', (SELECT COUNT(*) FROM temp_new_outbox);
+    RAISE DEBUG '[process_work_batch] Checking wh_outbox: total_in_temp_new=%, matching_instance_id=%',
+      (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id),
+      (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id WHERE o.instance_id = p_instance_id);
+    RAISE DEBUG '[process_work_batch] Instance check: p_instance_id=%, first_outbox_instance_id=%',
+      p_instance_id,
+      (SELECT o.instance_id FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id LIMIT 1);
+  END IF;
 
   -- Return outbox work (first row includes acknowledgement counts)
   RETURN QUERY
@@ -957,16 +949,7 @@ BEGIN
 
   -- Return inbox work (first row includes acknowledgement counts if no outbox work)
   RETURN QUERY
-  WITH has_outbox AS (
-    SELECT EXISTS(SELECT 1 FROM wh_outbox o
-      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
-      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
-      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-        AND o.instance_id = p_instance_id
-        AND o.lease_expiry > p_now
-        AND o.processed_at IS NULL) as exists
-  ),
-  ordered_inbox AS (
+  WITH ordered_inbox AS (
     SELECT
       i.*,
       temp_new.message_id as new_message_id,
@@ -992,7 +975,7 @@ BEGIN
     NULL::VARCHAR(500) as envelope_type,
     i.event_data::TEXT as message_data,
     -- CRITICAL: First row includes ack counts if no outbox work
-    CASE WHEN i.row_num = 1 AND NOT (SELECT exists FROM has_outbox)
+    CASE WHEN i.row_num = 1 AND NOT v_has_outbox_work
       THEN COALESCE(i.metadata, '{}'::JSONB) || v_ack_counts
       ELSE i.metadata END as metadata,
     i.status,
@@ -1033,26 +1016,7 @@ BEGIN
 
   -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
   RETURN QUERY
-  WITH has_outbox_or_inbox AS (
-    SELECT EXISTS(
-      SELECT 1 FROM wh_outbox o
-      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
-      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
-      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-        AND o.instance_id = p_instance_id
-        AND o.lease_expiry > p_now
-        AND o.processed_at IS NULL
-      UNION ALL
-      SELECT 1 FROM wh_inbox i
-      LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
-      LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
-      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-        AND i.instance_id = p_instance_id
-        AND i.lease_expiry > p_now
-        AND i.processed_at IS NULL
-    ) as exists
-  ),
-  ordered_perspective AS (
+  WITH ordered_perspective AS (
     SELECT
       pe.*,
       temp_new.event_work_id as new_event_work_id,
@@ -1085,7 +1049,7 @@ BEGIN
     NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
     -- CRITICAL: First row includes ack counts if no outbox/inbox work
-    CASE WHEN pe.row_num = 1 AND NOT (SELECT exists FROM has_outbox_or_inbox)
+    CASE WHEN pe.row_num = 1 AND NOT v_has_outbox_work AND NOT v_has_inbox_work
       THEN v_ack_counts
       ELSE NULL::JSONB END as metadata,
     pe.status,
