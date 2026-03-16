@@ -1,5 +1,4 @@
 mode: ContinuousDeployment
-next-version: 0.9.7
 branches:
   develop:
     label: alpha
