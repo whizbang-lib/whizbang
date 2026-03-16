@@ -132,6 +132,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     // Query events from the specified sequence onwards
     var query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId && e.Version >= fromSequence)
       .OrderBy(e => e.Version)
       .AsAsyncEnumerable();
@@ -187,10 +188,12 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // UUIDv7 is time-ordered, so we can order by Id directly
     var query = fromEventId == null
       ? _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable();
@@ -265,10 +268,12 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Query events from the specified event ID onwards
     var query = fromEventId == null
       ? _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable()
       : _context.Set<EventStoreRecord>()
+          .AsNoTracking()
           .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
           .OrderBy(e => e.Id)
           .AsAsyncEnumerable();
@@ -341,6 +346,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId);
 
     // Apply upper bound only if upToEventId is not Guid.Empty
@@ -415,6 +421,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId);
 
     // Apply upper bound only if upToEventId is not Guid.Empty
@@ -499,6 +506,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     var lastSequence = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
       .Where(e => e.StreamId == streamId)
       .MaxAsync(e => (long?)e.Version, cancellationToken);
 

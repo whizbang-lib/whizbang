@@ -20,6 +20,8 @@ DECLARE
   v_partition INTEGER;
   v_was_new BOOLEAN;
 BEGIN
+  IF jsonb_array_length(p_messages) = 0 THEN RETURN; END IF;
+
   FOR v_msg IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,
