@@ -168,119 +168,112 @@ public class DapperWorkCoordinator(
     var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
     var resultList = results.ToList();
 
-    // Map results to WorkBatch - deserialize envelopes from database
-    var outboxWork = resultList
-      .Where(r => r.source == "outbox")
-      .Select(r => {
-        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-          throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
-        }
+    // Single-pass categorization of results by source type
+    var outboxWork = new List<OutboxWork>();
+    var inboxWork = new List<InboxWork>();
+    var perspectiveWork = new List<PerspectiveWork>();
+    var syncInquiryResults = new List<SyncInquiryResult>();
 
-        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+    foreach (var r in resultList) {
+      switch (r.source) {
+        case "outbox": {
+            if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+              throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
+            }
 
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
+            var envelope = _deserializeEnvelope(r.message_type, r.message_data);
+            var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+              ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
 
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
+            var flags = WorkBatchFlags.None;
+            if (r.is_newly_stored) {
+              flags |= WorkBatchFlags.NewlyStored;
+            }
 
-        // Extract message type - prefer direct column, fall back to parsing EnvelopeType if null (backward compat)
-        var messageType = !string.IsNullOrWhiteSpace(r.message_type)
-          ? r.message_type
-          : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
+            if (r.is_orphaned) {
+              flags |= WorkBatchFlags.Orphaned;
+            }
 
-        return new OutboxWork {
-          MessageId = r.work_id,
-          Destination = r.destination!,
-          Envelope = jsonEnvelope,
-          EnvelopeType = r.envelope_type!,
-          MessageType = messageType,
-          StreamId = r.work_stream_id,
-          PartitionNumber = r.partition_number,
-          Attempts = r.attempts,
-          Status = (MessageProcessingStatus)r.status,
-          Flags = flags
-        };
-      })
-      .ToList();
+            var messageType = !string.IsNullOrWhiteSpace(r.message_type)
+              ? r.message_type
+              : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
 
-    var inboxWork = resultList
-      .Where(r => r.source == "inbox")
-      .Select(r => {
-        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
-          throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
-        }
+            outboxWork.Add(new OutboxWork {
+              MessageId = r.work_id,
+              Destination = r.destination!,
+              Envelope = jsonEnvelope,
+              EnvelopeType = r.envelope_type!,
+              MessageType = messageType,
+              StreamId = r.work_stream_id,
+              PartitionNumber = r.partition_number,
+              Attempts = r.attempts,
+              Status = (MessageProcessingStatus)r.status,
+              Flags = flags
+            });
+            break;
+          }
+        case "inbox": {
+            if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+              throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
+            }
 
-        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+            var envelope = _deserializeEnvelope(r.message_type, r.message_data);
+            var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+              ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
 
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
+            var flags = WorkBatchFlags.None;
+            if (r.is_newly_stored) {
+              flags |= WorkBatchFlags.NewlyStored;
+            }
 
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
+            if (r.is_orphaned) {
+              flags |= WorkBatchFlags.Orphaned;
+            }
 
-        return new InboxWork {
-          MessageId = r.work_id,
-          Envelope = jsonEnvelope,
-          MessageType = r.message_type,
-          StreamId = r.work_stream_id,
-          PartitionNumber = r.partition_number,
-          Status = (MessageProcessingStatus)r.status,
-          Flags = flags
-        };
-      })
-      .ToList();
+            inboxWork.Add(new InboxWork {
+              MessageId = r.work_id,
+              Envelope = jsonEnvelope,
+              MessageType = r.message_type,
+              StreamId = r.work_stream_id,
+              PartitionNumber = r.partition_number,
+              Status = (MessageProcessingStatus)r.status,
+              Flags = flags
+            });
+            break;
+          }
+        case "perspective": {
+            var flags = WorkBatchFlags.None;
+            if (r.is_newly_stored) {
+              flags |= WorkBatchFlags.NewlyStored;
+            }
 
-    var perspectiveWork = resultList
-      .Where(r => r.source == "perspective")
-      .Select(r => {
-        var flags = WorkBatchFlags.None;
-        if (r.is_newly_stored) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
+            if (r.is_orphaned) {
+              flags |= WorkBatchFlags.Orphaned;
+            }
 
-        if (r.is_orphaned) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        return new PerspectiveWork {
-          StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-          PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
-          LastProcessedEventId = null,
-          Status = (PerspectiveProcessingStatus)r.status,
-          PartitionNumber = r.partition_number,
-          Flags = flags
-        };
-      })
-      .ToList();
-
-    // Parse sync inquiry results
-    // SQL returns: source='sync_result', work_id=inquiry_id, work_stream_id=stream_id,
-    //              partition_number=pending_count, status=processed_count,
-    //              message_data=pending_event_ids JSON, metadata={"processed_event_ids":[...]}
-    var syncInquiryResults = resultList
-      .Where(r => r.source == "sync_result")
-      .Select(r => new SyncInquiryResult {
-        InquiryId = r.work_id,
-        StreamId = r.work_stream_id ?? Guid.Empty,
-        PendingCount = r.partition_number ?? 0,
-        ProcessedCount = r.status,
-        PendingEventIds = _parsePendingEventIds(r.message_data),
-        ProcessedEventIds = _parseProcessedEventIds(r.metadata)
-      })
-      .ToList();
+            perspectiveWork.Add(new PerspectiveWork {
+              StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
+              PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+              LastProcessedEventId = null,
+              Status = (PerspectiveProcessingStatus)r.status,
+              PartitionNumber = r.partition_number,
+              Flags = flags
+            });
+            break;
+          }
+        case "sync_result": {
+            syncInquiryResults.Add(new SyncInquiryResult {
+              InquiryId = r.work_id,
+              StreamId = r.work_stream_id ?? Guid.Empty,
+              PendingCount = r.partition_number ?? 0,
+              ProcessedCount = r.status,
+              PendingEventIds = _parsePendingEventIds(r.message_data),
+              ProcessedEventIds = _parseProcessedEventIds(r.metadata)
+            });
+            break;
+          }
+      }
+    }
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       var outboxWorkCount = outboxWork.Count;
