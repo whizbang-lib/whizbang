@@ -526,4 +526,158 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     await Assert.That(() => new PostgresSchemaInitializer(_connectionString!, perspectiveEntries: null!))
       .Throws<ArgumentNullException>();
   }
+
+  // --- Preview / Dry-Run Tests ---
+
+  /// <summary>
+  /// Test 17: Preview returns plan showing all migrations as Apply on fresh DB
+  /// </summary>
+  [Test]
+  public async Task PreviewAsync_FreshDatabase_ShowsAllAsApplyAsync() {
+    // Arrange
+    var entries = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+
+    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+
+    // Act
+    var plan = await initializer.PreviewAsync();
+
+    // Assert - Should have infrastructure migrations + 1 perspective
+    await Assert.That(plan.Steps.Count).IsGreaterThan(0);
+
+    // All infrastructure migrations should be Apply (fresh DB)
+    var infraSteps = plan.Steps.Where(s => !s.Name.StartsWith("perspective:", StringComparison.Ordinal)).ToList();
+    await Assert.That(infraSteps).Count().IsGreaterThan(0);
+    foreach (var step in infraSteps) {
+      await Assert.That(step.Action).IsEqualTo(Whizbang.Core.Data.MigrationAction.Apply);
+    }
+
+    // Perspective should also be Apply
+    var perspStep = plan.Steps.FirstOrDefault(s => s.Name == "perspective:OrderPerspective");
+    await Assert.That(perspStep).IsNotNull();
+    await Assert.That(perspStep!.Action).IsEqualTo(Whizbang.Core.Data.MigrationAction.Apply);
+  }
+
+  /// <summary>
+  /// Test 18: Preview shows Skip for unchanged migrations after initialization
+  /// </summary>
+  [Test]
+  public async Task PreviewAsync_AfterInitialize_ShowsAllAsSkipAsync() {
+    // Arrange
+    var entries = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+
+    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    await initializer.InitializeSchemaAsync();
+
+    // Act
+    var plan = await initializer.PreviewAsync();
+
+    // Assert - All should be Skip (nothing changed)
+    foreach (var step in plan.Steps) {
+      await Assert.That(step.Action).IsEqualTo(Whizbang.Core.Data.MigrationAction.Skip)
+        .Because($"Step '{step.Name}' should be Skip after initialization");
+    }
+  }
+
+  /// <summary>
+  /// Test 19: Preview detects changed perspective and shows column diff
+  /// </summary>
+  [Test]
+  public async Task PreviewAsync_WithChangedPerspective_ShowsUpdateWithColumnDiffAsync() {
+    // Arrange - First run
+    var entries1 = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+    var initializer1 = new PostgresSchemaInitializer(_connectionString!, entries1);
+    await initializer1.InitializeSchemaAsync();
+
+    // Act - Preview with added column
+    var entries2 = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL, metadata JSONB);")
+    };
+    var initializer2 = new PostgresSchemaInitializer(_connectionString!, entries2);
+    var plan = await initializer2.PreviewAsync();
+
+    // Assert
+    var perspStep = plan.Steps.FirstOrDefault(s => s.Name == "perspective:OrderPerspective");
+    await Assert.That(perspStep).IsNotNull();
+    // Should detect an update/blue-green strategy (not Skip)
+    await Assert.That(perspStep!.Action).IsNotEqualTo(Whizbang.Core.Data.MigrationAction.Skip);
+  }
+
+  // --- Backup Cleanup Tests ---
+
+  /// <summary>
+  /// Test 20: CleanupBackups returns empty list when no backups exist
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_NoBackups_ReturnsEmptyAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync();
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 21: CleanupBackups removes old backup tables
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithOldBackup_DropsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    // Create a fake old backup table (pretend it was created 60 days ago)
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_test_bak_{oldDate} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(1);
+    await Assert.That(dropped[0]).Contains("wh_per_test_bak_");
+  }
+
+  /// <summary>
+  /// Test 22: CleanupBackups keeps recent backup tables
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithRecentBackup_KeepsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    // Create a recent backup table
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+    var recentDate = DateTime.UtcNow.AddDays(-5).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_test_bak_{recentDate} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert - Recent backup should be kept
+    await Assert.That(dropped).Count().IsEqualTo(0);
+
+    // Verify table still exists
+    var exists = await conn.ExecuteScalarAsync<bool>(
+      $"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_per_test_bak_{recentDate}')");
+    await Assert.That(exists).IsTrue();
+  }
 }

@@ -25,3 +25,35 @@ public interface IMigrationProvider {
 /// Represents a single SQL migration script.
 /// </summary>
 public sealed record MigrationScript(string Name, string Sql);
+
+/// <summary>
+/// A planned migration step from a dry-run/preview operation.
+/// </summary>
+public sealed record MigrationStep(
+    string Name,
+    MigrationAction Action,
+    string? OldHash,
+    string NewHash,
+    string[]? AddedColumns,
+    string[]? RemovedColumns);
+
+/// <summary>
+/// The action that would be taken for a migration step.
+/// </summary>
+public enum MigrationAction {
+  /// <summary>Migration unchanged, will be skipped.</summary>
+  Skip,
+  /// <summary>New migration, will be applied.</summary>
+  Apply,
+  /// <summary>Migration changed, will be re-executed (functions, etc.).</summary>
+  Update,
+  /// <summary>Table migration via column-copy blue-green swap.</summary>
+  BlueGreenColumnCopy,
+  /// <summary>Table migration requiring full event replay.</summary>
+  BlueGreenEventReplay
+}
+
+/// <summary>
+/// Result of a migration preview/dry-run operation.
+/// </summary>
+public sealed record MigrationPlan(IReadOnlyList<MigrationStep> Steps);

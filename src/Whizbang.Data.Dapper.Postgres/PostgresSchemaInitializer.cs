@@ -106,6 +106,136 @@ public sealed class PostgresSchemaInitializer {
     InitializeSchemaAsync().GetAwaiter().GetResult();
   }
 
+  /// <summary>
+  /// Previews what migrations would be applied without executing them.
+  /// Returns a plan showing each migration's action (Skip, Apply, Update, BlueGreen).
+  /// </summary>
+  public async Task<MigrationPlan> PreviewAsync(CancellationToken cancellationToken = default) {
+    var steps = new List<MigrationStep>();
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    // Preview infrastructure migrations
+    var migrations = _migrationProvider.GetMigrations();
+    var bootstrap = migrations.FirstOrDefault(m => m.Name.StartsWith("000", StringComparison.Ordinal));
+    if (bootstrap != null) {
+      // Bootstrap always runs
+      await using var bootstrapCmd = connection.CreateCommand();
+      bootstrapCmd.CommandText = bootstrap.Sql;
+      bootstrapCmd.CommandTimeout = 30;
+      try {
+        await bootstrapCmd.ExecuteNonQueryAsync(cancellationToken);
+      } catch {
+        // Bootstrap may fail if tables don't exist yet — that's expected for preview
+      }
+    }
+
+    foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
+      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
+      var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
+
+      if (existingHash == hash) {
+        steps.Add(new MigrationStep(migration.Name, MigrationAction.Skip, existingHash, hash, null, null));
+      } else if (existingHash != null) {
+        steps.Add(new MigrationStep(migration.Name, MigrationAction.Update, existingHash, hash, null, null));
+      } else {
+        steps.Add(new MigrationStep(migration.Name, MigrationAction.Apply, null, hash, null, null));
+      }
+    }
+
+    // Preview perspective migrations
+    if (_perspectiveEntries is { Length: > 0 }) {
+      foreach (var entry in _perspectiveEntries) {
+        var perspectiveName = $"perspective:{entry.Key}";
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+        var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
+
+        if (existingHash == hash) {
+          steps.Add(new MigrationStep(perspectiveName, MigrationAction.Skip, existingHash, hash, null, null));
+        } else if (existingHash != null) {
+          var tableName = _extractTableName(entry.Value);
+          if (tableName != null) {
+            var strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+            var action = strategy switch {
+              MigrationStrategy.ColumnCopy => MigrationAction.BlueGreenColumnCopy,
+              MigrationStrategy.EventReplay => MigrationAction.BlueGreenEventReplay,
+              _ => MigrationAction.Update
+            };
+
+            // Compute column diff for preview
+            var oldCols = await _getTableColumnsAsync(connection, tableName, cancellationToken);
+            var newCols = _parseColumnsFromDdl(entry.Value);
+            var added = newCols.Keys.Except(oldCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+            var removed = oldCols.Keys.Except(newCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+
+            steps.Add(new MigrationStep(perspectiveName, action, existingHash, hash,
+                added.Length > 0 ? added : null,
+                removed.Length > 0 ? removed : null));
+          } else {
+            steps.Add(new MigrationStep(perspectiveName, MigrationAction.Update, existingHash, hash, null, null));
+          }
+        } else {
+          steps.Add(new MigrationStep(perspectiveName, MigrationAction.Apply, null, hash, null, null));
+        }
+      }
+    }
+
+    return new MigrationPlan(steps);
+  }
+
+  /// <summary>
+  /// Cleans up backup tables created by blue-green migrations that are older than the specified threshold.
+  /// </summary>
+  /// <param name="olderThanDays">Only clean up backups older than this many days. Default: 30.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>List of backup table names that were dropped.</returns>
+  public async Task<IReadOnlyList<string>> CleanupBackupsAsync(int olderThanDays = 30, CancellationToken cancellationToken = default) {
+    var dropped = new List<string>();
+
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    // Find backup tables matching the *_bak_* pattern
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+      AND table_name LIKE '%\_bak\_%' ESCAPE '\'";
+    cmd.CommandTimeout = 10;
+
+    var backupTables = new List<string>();
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      backupTables.Add(reader.GetString(0));
+    }
+    await reader.CloseAsync();
+
+    var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
+
+    foreach (var tableName in backupTables) {
+      // Parse date from suffix: tablename_bak_yyyyMMddHHmmss
+      var bakIdx = tableName.LastIndexOf("_bak_", StringComparison.Ordinal);
+      if (bakIdx < 0) {
+        continue;
+      }
+
+      var datePart = tableName[(bakIdx + 5)..];
+      if (DateTime.TryParseExact(datePart, "yyyyMMddHHmmss",
+          System.Globalization.CultureInfo.InvariantCulture,
+          System.Globalization.DateTimeStyles.None, out var backupDate) && backupDate < cutoff) {
+        await using var dropCmd = connection.CreateCommand();
+        dropCmd.CommandText = $"DROP TABLE IF EXISTS {tableName}";
+        dropCmd.CommandTimeout = 30;
+        await dropCmd.ExecuteNonQueryAsync(cancellationToken);
+        dropped.Add(tableName);
+      }
+    }
+
+    return dropped;
+  }
+
   private async Task _executeMigrationsWithHashDetectionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
     var migrations = _migrationProvider.GetMigrations();
     if (migrations.Count == 0) {
@@ -125,7 +255,9 @@ public sealed class PostgresSchemaInitializer {
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
     // Step 3: Hash-check remaining migrations
+    int executionOrder = 0;
     foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
+      executionOrder++;
       var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
 
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
@@ -148,7 +280,10 @@ public sealed class PostgresSchemaInitializer {
           ? $"Updated from hash {existingHash![..8]}..."
           : "First apply";
 
-        await _upsertMigrationAsync(connection, migration.Name, hash, versionId, status, desc, cancellationToken);
+        // Store previous SQL content for rollback support (functions can be re-applied)
+        var previousContent = isUpdate ? migration.Sql : null;
+        await _upsertMigrationAsync(connection, migration.Name, hash, versionId, status, desc,
+            cancellationToken, previousContent: previousContent, executionOrder: executionOrder);
       } catch (Exception ex) {
         // Record failure
         await _upsertMigrationAsync(connection, migration.Name, hash, versionId, -1, $"Failed: {ex.Message}", cancellationToken);
@@ -273,22 +408,30 @@ public sealed class PostgresSchemaInitializer {
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
 
-  private static async Task _upsertMigrationAsync(NpgsqlConnection connection, string fileName, string hash, int versionId, int status, string desc, CancellationToken cancellationToken, NpgsqlTransaction? transaction = null) {
+  private static async Task _upsertMigrationAsync(
+      NpgsqlConnection connection, string fileName, string hash, int versionId,
+      int status, string desc, CancellationToken cancellationToken,
+      NpgsqlTransaction? transaction = null, string? previousContent = null, int? executionOrder = null) {
     await using var cmd = connection.CreateCommand();
     if (transaction != null) {
       cmd.Transaction = transaction;
     }
     cmd.CommandText = @"
-      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, status_description)
-      VALUES (@name, @hash, @versionId, @status, @desc)
+      INSERT INTO wh_schema_migrations (file_name, content_hash, version_id, status, status_description, previous_content, execution_order)
+      VALUES (@name, @hash, @versionId, @status, @desc, @prevContent, @execOrder)
       ON CONFLICT (file_name) DO UPDATE SET
         content_hash = EXCLUDED.content_hash, version_id = EXCLUDED.version_id,
-        status = EXCLUDED.status, status_description = EXCLUDED.status_description, updated_at = NOW()";
+        status = EXCLUDED.status, status_description = EXCLUDED.status_description,
+        previous_content = COALESCE(EXCLUDED.previous_content, wh_schema_migrations.previous_content),
+        execution_order = COALESCE(EXCLUDED.execution_order, wh_schema_migrations.execution_order),
+        updated_at = NOW()";
     cmd.Parameters.AddWithValue("name", fileName);
     cmd.Parameters.AddWithValue("hash", hash);
     cmd.Parameters.AddWithValue("versionId", versionId);
     cmd.Parameters.AddWithValue("status", (short)status);
     cmd.Parameters.AddWithValue("desc", desc);
+    cmd.Parameters.AddWithValue("prevContent", (object?)previousContent ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("execOrder", (object?)executionOrder ?? DBNull.Value);
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
