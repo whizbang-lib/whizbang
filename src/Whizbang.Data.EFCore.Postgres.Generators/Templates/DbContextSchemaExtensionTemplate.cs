@@ -261,8 +261,10 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
   }
 
   /// <summary>
-  /// Executes PostgreSQL migration scripts to create functions.
+  /// Executes PostgreSQL migration scripts with hash-based change detection.
   /// Migrations are embedded as string constants for AOT compatibility.
+  /// Uses wh_schema_migrations table to track content hashes and skip unchanged migrations.
+  /// Status: 1=Applied, 2=Updated, 3=Skipped, -1=Failed.
   /// </summary>
   private static async Task<int> ExecuteMigrationsAsync(
     __DBCONTEXT_FQN__ dbContext,
@@ -272,30 +274,160 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
     // Migration scripts are embedded below by the source generator
     var migrations = GetMigrationScripts();
     var applied = 0;
+    var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
 
+    // Try to set up hash-based migration tracking. If tracking tables can't be created,
+    // fall back to executing all migrations without tracking (backwards compatible).
+    int? versionId = null;
+    try {
+      // Create migration tracking tables (idempotent)
+      await using var createCmd = connection.CreateCommand();
+      createCmd.CommandText = @"
+        CREATE TABLE IF NOT EXISTS __QUOTED_SCHEMA__.wh_schema_versions (
+          id SERIAL PRIMARY KEY,
+          library_version VARCHAR(50) NOT NULL UNIQUE,
+          notes TEXT,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS __QUOTED_SCHEMA__.wh_schema_migrations (
+          file_name VARCHAR(200) PRIMARY KEY,
+          content_hash VARCHAR(64) NOT NULL,
+          version_id INTEGER NOT NULL REFERENCES __QUOTED_SCHEMA__.wh_schema_versions(id),
+          status SMALLINT NOT NULL DEFAULT 0,
+          status_description TEXT,
+          previous_content TEXT,
+          execution_order INTEGER,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );";
+      createCmd.CommandTimeout = 30;
+      await createCmd.ExecuteNonQueryAsync(cancellationToken);
+
+      versionId = await _upsertVersionAsync(connection, cancellationToken);
+    } catch (Exception ex) {
+      logger?.LogDebug(ex, "Migration tracking tables could not be initialized, running without tracking");
+      versionId = null;
+    }
+
+    // Execute migrations with optional hash-based change detection
+    int executionOrder = 0;
     foreach (var (name, sql) in migrations) {
-      try {
-        logger?.LogDebug("Executing migration: {Migration}", name);
+      executionOrder++;
+      var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
 
-        // Transform migration SQL to include schema qualification
-        // Replace all unqualified table names (e.g., "wh_inbox", "wh_outbox") with schema-qualified names (e.g., "inventory.wh_inbox")
-        var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+      // If tracking is available, check hash before executing
+      if (versionId.HasValue) {
+        var hash = Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(transformedSql)));
 
-        var migSw = System.Diagnostics.Stopwatch.StartNew();
-        await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
-        migSw.Stop();
-        applied++;
-        logger?.LogDebug("Migration {Migration}: {ElapsedMs}ms", name, migSw.ElapsedMilliseconds);
-      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
-        // 42723 = duplicate_function - function already exists, safe to ignore
-        logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
-      } catch (Exception ex) {
-        logger?.LogError(ex, "Failed to execute migration {Migration}", name);
-        throw;
+        var existingHash = await _getExistingHashAsync(connection, name, cancellationToken);
+
+        if (existingHash == hash) {
+          await _updateMigrationStatusAsync(connection, name, versionId.Value, 3, "Skipped (hash unchanged)", cancellationToken);
+          logger?.LogDebug("Migration {Migration}: skipped (hash unchanged)", name);
+          continue;
+        }
+
+        var isUpdate = existingHash != null;
+
+        try {
+          logger?.LogDebug("Executing migration: {Migration}{UpdateFlag}", name, isUpdate ? " (updated)" : "");
+
+          var migSw = System.Diagnostics.Stopwatch.StartNew();
+          await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
+          migSw.Stop();
+          applied++;
+
+          var status = isUpdate ? 2 : 1;
+          var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";
+
+          await _upsertMigrationAsync(connection, name, hash, versionId.Value, status, desc, executionOrder, cancellationToken);
+          logger?.LogDebug("Migration {Migration}: {Status} in {ElapsedMs}ms", name, desc, migSw.ElapsedMilliseconds);
+        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
+          await _upsertMigrationAsync(connection, name, hash, versionId.Value, 3, "Skipped (function already exists)", executionOrder, cancellationToken);
+          logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
+        } catch (Exception ex) {
+          try { await _upsertMigrationAsync(connection, name, hash, versionId.Value, -1, $"Failed: {ex.Message}", executionOrder, cancellationToken); } catch { /* best effort */ }
+          logger?.LogError(ex, "Failed to execute migration {Migration}", name);
+          throw;
+        }
+      } else {
+        // No tracking — execute directly (original behavior)
+        try {
+          logger?.LogDebug("Executing migration: {Migration}", name);
+          var migSw = System.Diagnostics.Stopwatch.StartNew();
+          await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
+          migSw.Stop();
+          applied++;
+          logger?.LogDebug("Migration {Migration}: {ElapsedMs}ms", name, migSw.ElapsedMilliseconds);
+        } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
+          logger?.LogDebug("Function already exists (expected): {Message}", ex.MessageText);
+        } catch (Exception ex) {
+          logger?.LogError(ex, "Failed to execute migration {Migration}", name);
+          throw;
+        }
       }
     }
 
     return applied;
+  }
+
+  private static async Task<int> _upsertVersionAsync(Npgsql.NpgsqlConnection connection, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO __QUOTED_SCHEMA__.wh_schema_versions (library_version, notes)
+      VALUES (@version, @notes)
+      ON CONFLICT (library_version) DO UPDATE SET notes = EXCLUDED.notes
+      RETURNING id";
+    cmd.Parameters.AddWithValue("version", "__LIBRARY_VERSION__");
+    cmd.Parameters.AddWithValue("notes", DBNull.Value);
+    cmd.CommandTimeout = 10;
+    var result = await cmd.ExecuteScalarAsync(ct);
+    return (int)result!;
+  }
+
+  private static async Task<string?> _getExistingHashAsync(Npgsql.NpgsqlConnection connection, string fileName, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"SELECT content_hash FROM __QUOTED_SCHEMA__.wh_schema_migrations WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.CommandTimeout = 10;
+    var result = await cmd.ExecuteScalarAsync(ct);
+    return result as string;
+  }
+
+  private static async Task _updateMigrationStatusAsync(Npgsql.NpgsqlConnection connection, string fileName, int versionId, int status, string desc, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      UPDATE __QUOTED_SCHEMA__.wh_schema_migrations
+      SET status = @status, status_description = @desc, version_id = @versionId, updated_at = NOW()
+      WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("status", (short)status);
+    cmd.Parameters.AddWithValue("desc", desc);
+    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.CommandTimeout = 10;
+    await cmd.ExecuteNonQueryAsync(ct);
+  }
+
+  private static async Task _upsertMigrationAsync(
+      Npgsql.NpgsqlConnection connection, string fileName, string hash, int versionId,
+      int status, string desc, int executionOrder, CancellationToken ct) {
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO __QUOTED_SCHEMA__.wh_schema_migrations (file_name, content_hash, version_id, status, status_description, execution_order)
+      VALUES (@name, @hash, @versionId, @status, @desc, @execOrder)
+      ON CONFLICT (file_name) DO UPDATE SET
+        content_hash = EXCLUDED.content_hash, version_id = EXCLUDED.version_id,
+        status = EXCLUDED.status, status_description = EXCLUDED.status_description,
+        execution_order = EXCLUDED.execution_order, updated_at = NOW()";
+    cmd.Parameters.AddWithValue("name", fileName);
+    cmd.Parameters.AddWithValue("hash", hash);
+    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.Parameters.AddWithValue("status", (short)status);
+    cmd.Parameters.AddWithValue("desc", desc);
+    cmd.Parameters.AddWithValue("execOrder", executionOrder);
+    cmd.CommandTimeout = 10;
+    await cmd.ExecuteNonQueryAsync(ct);
   }
 
   /// <summary>

@@ -158,6 +158,69 @@ public class SchemaInitializationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_RecordsMigrationTrackingDataAsync() {
+    // Arrange
+    await DropAllWhizbangTablesAsync();
+
+    // Act
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - Migration tracking tables should have data
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    // wh_schema_versions should have at least one version entry
+    await using var versionCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_versions", connection);
+    var versionCount = (long)(await versionCmd.ExecuteScalarAsync())!;
+    await Assert.That(versionCount).IsGreaterThanOrEqualTo(1);
+
+    // wh_schema_migrations should have entries for each migration
+    await using var migrationCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status IN (1, 3)", connection);
+    var migrationCount = (long)(await migrationCmd.ExecuteScalarAsync())!;
+    await Assert.That(migrationCount).IsGreaterThanOrEqualTo(1)
+      .Because("At least one migration should be recorded as Applied (1) or Skipped (3)");
+
+    // Each migration should have a content hash
+    await using var hashCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE content_hash IS NOT NULL AND LENGTH(content_hash) = 64", connection);
+    var hashCount = (long)(await hashCmd.ExecuteScalarAsync())!;
+    await Assert.That(hashCount).IsEqualTo(migrationCount)
+      .Because("Every recorded migration should have a 64-char SHA256 hash");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_SkipsUnchangedMigrationsOnSecondRunAsync() {
+    // Arrange - First initialization
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Act - Second initialization (same migrations)
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - All migrations should be Skipped (status 3) on second run
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 3", connection);
+    var skippedCount = (long)(await cmd.ExecuteScalarAsync())!;
+    await Assert.That(skippedCount).IsGreaterThanOrEqualTo(1)
+      .Because("On second run, unchanged migrations should be skipped (status 3)");
+
+    // No migrations should be Applied (1) on second run
+    await using var appliedCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 1", connection);
+    var appliedCount = (long)(await appliedCmd.ExecuteScalarAsync())!;
+    await Assert.That(appliedCount).IsEqualTo(0)
+      .Because("No migrations should be newly applied on second identical run");
+  }
+
+  [Test]
   public async Task EnsureWhizbangDatabaseInitialized_HandlesPartialInitializationAsync() {
     // Arrange - Create only core tables, no migrations
     await DropAllWhizbangTablesAsync();
@@ -318,6 +381,8 @@ public class SchemaInitializationTests : EFCoreTestBase {
 
     // Drop all Whizbang tables in correct order (respecting foreign keys)
     var dropSql = @"
+      DROP TABLE IF EXISTS wh_schema_migrations CASCADE;
+      DROP TABLE IF EXISTS wh_schema_versions CASCADE;
       DROP TABLE IF EXISTS wh_receptor_processing CASCADE;
       DROP TABLE IF EXISTS wh_perspective_checkpoints CASCADE;
       DROP TABLE IF EXISTS wh_per_order CASCADE;

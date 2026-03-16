@@ -1626,6 +1626,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_REGISTRY_JSON__", perspectiveRegistryJson);
       // __SERVICE_NAME__ is the assembly name for service identification
       template = template.Replace("__SERVICE_NAME__", assemblyName);
+      // __LIBRARY_VERSION__ is the assembly name used as version identifier for migration tracking
+      template = template.Replace("__LIBRARY_VERSION__", assemblyName);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 
