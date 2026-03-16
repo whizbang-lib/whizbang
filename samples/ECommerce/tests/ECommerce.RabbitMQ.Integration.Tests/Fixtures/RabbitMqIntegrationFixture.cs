@@ -241,17 +241,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
       new TestRabbitMqRoutingStrategy(_testId));
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // Each host gets its own database to eliminate lock contention
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_inventoryPostgresConnection);
-    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    inventoryDataSourceBuilder.EnableDynamicJson();
-    var inventoryDataSource = inventoryDataSourceBuilder.Build();
-    builder.Services.AddSingleton(inventoryDataSource);
-
-    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
-      options.UseNpgsql(inventoryDataSource);
-    });
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<InventoryDbContext> with UseNpgsql
+    // - IDbContextFactory<InventoryDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:inventory-db" above)
 
     // CRITICAL: Register IDatabaseReadinessCheck that always returns true
     // The fixture ensures the database schema is created before starting hosts,
@@ -403,16 +397,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
       new TestRabbitMqRoutingStrategy(_testId));
 
-    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // Each host gets its own database to eliminate lock contention
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_bffPostgresConnection);
-    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-    bffDataSourceBuilder.EnableDynamicJson();
-    var bffDataSource = bffDataSourceBuilder.Build();
-    builder.Services.AddSingleton(bffDataSource);
-
-    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(bffDataSource));
+    // Turnkey registration (via .WithEFCore<T>().WithDriver.Postgres below) handles:
+    // - NpgsqlDataSource creation with ConfigureJsonOptions + EnableDynamicJson
+    // - AddDbContext<BffDbContext> with UseNpgsql
+    // - IDbContextFactory<BffDbContext> singleton registration
+    // Connection string is provided via config ("ConnectionStrings:bff-db" above)
 
     // CRITICAL: Register IDatabaseReadinessCheck that always returns true
     // The fixture ensures the database schema is created before starting hosts,
