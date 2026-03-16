@@ -1,6 +1,7 @@
 using System.Text.Json;
 using TUnit.Core;
 using Whizbang.Core.Commands.System;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Tests.Commands.System;
 
@@ -11,44 +12,87 @@ public class SystemCommandsTests {
   // === RebuildPerspectiveCommand Tests ===
 
   [Test]
-  public async Task RebuildPerspectiveCommand_WithPerspectiveName_CreatesCorrectlyAsync() {
+  public async Task RebuildPerspectiveCommand_WithPerspectiveNames_CreatesCorrectlyAsync() {
     // Arrange & Act
-    var command = new RebuildPerspectiveCommand("OrderSummary");
+    var command = new RebuildPerspectiveCommand(["OrderSummary"]);
 
     // Assert
-    await Assert.That(command.PerspectiveName).IsEqualTo("OrderSummary");
+    await Assert.That(command.PerspectiveNames).IsNotNull();
+    await Assert.That(command.PerspectiveNames![0]).IsEqualTo("OrderSummary");
     await Assert.That(command.FromEventId).IsNull();
+    await Assert.That(command.Mode).IsEqualTo(RebuildMode.BlueGreen);
   }
 
   [Test]
   public async Task RebuildPerspectiveCommand_WithFromEventId_CreatesCorrectlyAsync() {
     // Arrange & Act
-    var command = new RebuildPerspectiveCommand("OrderSummary", 12345L);
+    var command = new RebuildPerspectiveCommand(["OrderSummary"], FromEventId: 12345L);
 
     // Assert
-    await Assert.That(command.PerspectiveName).IsEqualTo("OrderSummary");
+    await Assert.That(command.PerspectiveNames![0]).IsEqualTo("OrderSummary");
     await Assert.That(command.FromEventId).IsEqualTo(12345L);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_DefaultParameters_AllNullAsync() {
+    // Arrange & Act
+    var command = new RebuildPerspectiveCommand();
+
+    // Assert
+    await Assert.That(command.PerspectiveNames).IsNull();
+    await Assert.That(command.Mode).IsEqualTo(RebuildMode.BlueGreen);
+    await Assert.That(command.IncludeStreamIds).IsNull();
+    await Assert.That(command.ExcludeStreamIds).IsNull();
+    await Assert.That(command.FromEventId).IsNull();
   }
 
   [Test]
   public async Task RebuildPerspectiveCommand_ImplementsICommandAsync() {
     // Arrange
-    var command = new RebuildPerspectiveCommand("Test");
+    var command = new RebuildPerspectiveCommand(["Test"]);
 
     // Assert
     await Assert.That(command).IsAssignableTo<ICommand>();
   }
 
   [Test]
-  public async Task RebuildPerspectiveCommand_Equality_WorksCorrectlyAsync() {
-    // Arrange
-    var command1 = new RebuildPerspectiveCommand("OrderSummary", 100L);
-    var command2 = new RebuildPerspectiveCommand("OrderSummary", 100L);
-    var command3 = new RebuildPerspectiveCommand("DifferentPerspective", 100L);
+  public async Task RebuildPerspectiveCommand_Equality_SameReferenceArrayMatchesAsync() {
+    // Arrange — record equality with arrays checks reference equality for array fields
+    var names = new[] { "OrderSummary" };
+    var command1 = new RebuildPerspectiveCommand(names, FromEventId: 100L);
+    var command2 = new RebuildPerspectiveCommand(names, FromEventId: 100L);
 
     // Assert
     await Assert.That(command1).IsEqualTo(command2);
-    await Assert.That(command1).IsNotEqualTo(command3);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_DifferentMode_NotEqualAsync() {
+    // Arrange
+    var command1 = new RebuildPerspectiveCommand(Mode: RebuildMode.BlueGreen);
+    var command2 = new RebuildPerspectiveCommand(Mode: RebuildMode.InPlace);
+
+    // Assert
+    await Assert.That(command1).IsNotEqualTo(command2);
+  }
+
+  [Test]
+  public async Task RebuildPerspectiveCommand_WithInPlaceMode_CreatesCorrectlyAsync() {
+    // Arrange & Act
+    var command = new RebuildPerspectiveCommand(["Test"], Mode: RebuildMode.InPlace);
+
+    // Assert
+    await Assert.That(command.Mode).IsEqualTo(RebuildMode.InPlace);
+  }
+
+  [Test]
+  public async Task CancelPerspectiveRebuildCommand_CreatesCorrectlyAsync() {
+    // Arrange & Act
+    var command = new CancelPerspectiveRebuildCommand("OrderSummary");
+
+    // Assert
+    await Assert.That(command.PerspectiveName).IsEqualTo("OrderSummary");
+    await Assert.That(command).IsAssignableTo<ICommand>();
   }
 
   // === ClearCacheCommand Tests ===
@@ -227,7 +271,7 @@ public class SystemCommandsTests {
   [Test]
   public async Task RebuildPerspectiveCommand_SerializesCorrectlyAsync() {
     // Arrange
-    var command = new RebuildPerspectiveCommand("TestPerspective", 42L);
+    var command = new RebuildPerspectiveCommand(["TestPerspective"], FromEventId: 42L);
 
     // Act
     var json = JsonSerializer.Serialize(command);
@@ -235,7 +279,7 @@ public class SystemCommandsTests {
 
     // Assert
     await Assert.That(deserialized).IsNotNull();
-    await Assert.That(deserialized!.PerspectiveName).IsEqualTo("TestPerspective");
+    await Assert.That(deserialized!.PerspectiveNames![0]).IsEqualTo("TestPerspective");
     await Assert.That(deserialized.FromEventId).IsEqualTo(42L);
   }
 

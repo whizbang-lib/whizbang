@@ -20,6 +20,8 @@ DECLARE
   v_was_new BOOLEAN;
   v_work_id UUID;
 BEGIN
+  IF jsonb_array_length(p_events) = 0 THEN RETURN; END IF;
+
   FOR v_event IN
     SELECT
       (elem->>'StreamId')::UUID as v_stream_id,

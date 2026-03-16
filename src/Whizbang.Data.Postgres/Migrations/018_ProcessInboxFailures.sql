@@ -11,6 +11,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_inbox_failures(
 DECLARE
   v_failure RECORD;
 BEGIN
+  IF jsonb_array_length(p_failures) = 0 THEN RETURN; END IF;
+
   FOR v_failure IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,

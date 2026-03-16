@@ -3,47 +3,54 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
+using Whizbang.Core.Data;
 
 namespace Whizbang.Data.Postgres;
 
 /// <summary>
 /// Provides access to embedded SQL migration scripts.
 /// Loads SQL files from the Migrations folder as embedded resources.
+/// Implements IMigrationProvider for hash-based change detection.
 /// </summary>
-/// <tests>No tests found</tests>
-public class PostgresMigrationProvider {
+public class PostgresMigrationProvider : IMigrationProvider {
   private readonly Assembly _assembly;
   private readonly string _resourcePrefix;
+  private readonly string _schemaName;
 
   /// <summary>
   /// Initializes a new instance of the PostgresMigrationProvider.
-  /// Defaults to loading from Whizbang.Data.Postgres assembly.
+  /// Defaults to loading from Whizbang.Data.Postgres assembly with "public" schema.
   /// </summary>
-  /// <tests>No tests found</tests>
   public PostgresMigrationProvider()
-    : this(typeof(PostgresMigrationProvider).Assembly) {
+    : this(typeof(PostgresMigrationProvider).Assembly, "public") {
   }
 
   /// <summary>
-  /// Initializes a new instance with a specific assembly.
-  /// Useful for loading migrations from different assemblies.
+  /// Initializes a new instance with a specific assembly and schema name.
   /// </summary>
   /// <param name="assembly">Assembly containing embedded SQL resources</param>
-  /// <tests>No tests found</tests>
-  public PostgresMigrationProvider(Assembly assembly) {
+  /// <param name="schemaName">PostgreSQL schema name to replace __SCHEMA__ placeholders with</param>
+  public PostgresMigrationProvider(Assembly assembly, string schemaName = "public") {
     _assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
+    _schemaName = schemaName ?? throw new ArgumentNullException(nameof(schemaName));
     _resourcePrefix = $"{_assembly.GetName().Name}.Migrations.";
   }
 
   /// <summary>
-  /// Gets all migration scripts in order (sorted by filename).
-  /// Migration scripts are named 001_*.sql, 002_*.sql, etc.
+  /// Library version baked in at compile time from Directory.Build.props.
+  /// AOT-safe: no reflection needed.
   /// </summary>
-  /// <returns>List of migration scripts with names and SQL content</returns>
-  /// <tests>No tests found</tests>
-  public List<MigrationScript> GetAllMigrations() {
+  public string Version => BuildInfo.Version;
+
+  /// <summary>
+  /// Release notes for this version. Set manually for releases.
+  /// </summary>
+  public string? ReleaseNotes { get; init; }
+
+  /// <summary>
+  /// Gets all migration scripts in order (sorted by filename) with __SCHEMA__ replaced.
+  /// </summary>
+  public IReadOnlyList<MigrationScript> GetMigrations() {
     var resourceNames = _assembly
       .GetManifestResourceNames()
       .Where(name => name.StartsWith(_resourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
@@ -59,21 +66,26 @@ public class PostgresMigrationProvider {
 
       var sql = _readEmbeddedResource(resourceName);
 
-      migrations.Add(new MigrationScript {
-        Name = scriptName,
-        Sql = sql
-      });
+      // Replace __SCHEMA__ placeholder with configured schema name
+      sql = sql.Replace("__SCHEMA__", _schemaName);
+
+      migrations.Add(new MigrationScript(scriptName, sql));
     }
 
     return migrations;
   }
 
   /// <summary>
+  /// Gets all migration scripts in order (sorted by filename).
+  /// </summary>
+  [Obsolete("Use GetMigrations() instead")]
+  public List<Core.Data.MigrationScript> GetAllMigrations() => GetMigrations().ToList();
+
+  /// <summary>
   /// Gets a specific migration script by name.
   /// </summary>
   /// <param name="scriptName">Name of the script (without .sql extension)</param>
   /// <returns>Migration script, or null if not found</returns>
-  /// <tests>No tests found</tests>
   public MigrationScript? GetMigration(string scriptName) {
     var resourceName = $"{_resourcePrefix}{scriptName}.sql";
 
@@ -82,44 +94,9 @@ public class PostgresMigrationProvider {
     }
 
     var sql = _readEmbeddedResource(resourceName);
+    sql = sql.Replace("__SCHEMA__", _schemaName);
 
-    return new MigrationScript {
-      Name = scriptName,
-      Sql = sql
-    };
-  }
-
-  /// <summary>
-  /// Executes all migrations against a database connection.
-  /// Each migration is executed in a separate transaction.
-  /// </summary>
-  /// <param name="connectionString">PostgreSQL connection string</param>
-  /// <param name="cancellationToken">Cancellation token</param>
-  /// <returns>Task representing the async operation</returns>
-  /// <tests>No tests found</tests>
-  public async Task ExecuteAllMigrationsAsync(
-    string connectionString,
-    CancellationToken cancellationToken = default
-  ) {
-    var migrations = GetAllMigrations();
-
-    using var connection = new Npgsql.NpgsqlConnection(connectionString);
-    await connection.OpenAsync(cancellationToken);
-
-    foreach (var migration in migrations) {
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-      try {
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = migration.Sql;
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-      } catch {
-        await transaction.RollbackAsync(cancellationToken);
-        throw;
-      }
-    }
+    return new MigrationScript(scriptName, sql);
   }
 
   private string _readEmbeddedResource(string resourceName) {
@@ -129,22 +106,4 @@ public class PostgresMigrationProvider {
     using var reader = new StreamReader(stream);
     return reader.ReadToEnd();
   }
-}
-
-/// <summary>
-/// Represents a single SQL migration script.
-/// </summary>
-/// <tests>No tests found</tests>
-public class MigrationScript {
-  /// <summary>
-  /// Name of the migration (e.g., "001_AlterOutboxTableForLeasing")
-  /// </summary>
-  /// <tests>No tests found</tests>
-  public required string Name { get; init; }
-
-  /// <summary>
-  /// SQL content of the migration script
-  /// </summary>
-  /// <tests>No tests found</tests>
-  public required string Sql { get; init; }
 }
