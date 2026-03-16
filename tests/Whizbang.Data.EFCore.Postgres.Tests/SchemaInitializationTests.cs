@@ -170,11 +170,14 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    // wh_schema_versions should have at least one version entry
+    // wh_schema_versions should have exactly one version entry with the library version (not assembly name)
     await using var versionCmd = new NpgsqlCommand(
-      "SELECT COUNT(*) FROM wh_schema_versions", connection);
-    var versionCount = (long)(await versionCmd.ExecuteScalarAsync())!;
-    await Assert.That(versionCount).IsGreaterThanOrEqualTo(1);
+      "SELECT library_version FROM wh_schema_versions LIMIT 1", connection);
+    var libraryVersion = (string)(await versionCmd.ExecuteScalarAsync())!;
+    await Assert.That(libraryVersion).IsNotNull();
+    // Library version should look like a semver string (e.g., "0.9.4-local.64"), not an assembly name
+    await Assert.That(libraryVersion).Contains(".")
+      .Because("library_version should be a semver version like '0.9.4', not an assembly name");
 
     // wh_schema_migrations should have entries for each migration
     await using var migrationCmd = new NpgsqlCommand(
