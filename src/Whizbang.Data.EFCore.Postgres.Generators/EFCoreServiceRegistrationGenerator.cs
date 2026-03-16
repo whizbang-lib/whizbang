@@ -1637,6 +1637,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         libraryVersion = libraryVersion.Substring(0, plusIdx);
       }
       template = template.Replace("__LIBRARY_VERSION__", libraryVersion);
+      // __APPLICATION_VERSION__ is the consuming assembly name + version for tracking which app applied migrations
+      var appVersion = compilation.Assembly.Identity.Version.ToString();
+      var applicationVersion = $"{assemblyName}/{appVersion}";
+      template = template.Replace("__APPLICATION_VERSION__", applicationVersion);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 

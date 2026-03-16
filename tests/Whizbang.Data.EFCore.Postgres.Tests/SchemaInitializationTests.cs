@@ -170,14 +170,27 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    // wh_schema_versions should have exactly one version entry with the library version (not assembly name)
-    await using var versionCmd = new NpgsqlCommand(
-      "SELECT library_version FROM wh_schema_versions LIMIT 1", connection);
-    var libraryVersion = (string)(await versionCmd.ExecuteScalarAsync())!;
-    await Assert.That(libraryVersion).IsNotNull();
-    // Library version should look like a semver string (e.g., "0.9.4-local.64"), not an assembly name
+    // wh_schema_versions should have a version entry with both library and application versions
+    string libraryVersion;
+    string applicationVersion;
+    {
+      await using var versionCmd = new NpgsqlCommand(
+        "SELECT library_version, application_version FROM wh_schema_versions LIMIT 1", connection);
+      await using var versionReader = await versionCmd.ExecuteReaderAsync();
+      await Assert.That(await versionReader.ReadAsync()).IsTrue();
+      libraryVersion = versionReader.GetString(0);
+      applicationVersion = versionReader.GetString(1);
+    }
+
+    // Library version should be a semver string (e.g., "0.9.4-local.64")
     await Assert.That(libraryVersion).Contains(".")
       .Because("library_version should be a semver version like '0.9.4', not an assembly name");
+
+    // Application version should contain the assembly name and version (e.g., "Whizbang.Data.EFCore.Postgres.Tests/0.9.4.0")
+    await Assert.That(applicationVersion).Contains("/")
+      .Because("application_version should be 'AssemblyName/Version' format");
+    await Assert.That(applicationVersion).Contains(".")
+      .Because("application_version should include a version number");
 
     // wh_schema_migrations should have entries for each migration
     await using var migrationCmd = new NpgsqlCommand(

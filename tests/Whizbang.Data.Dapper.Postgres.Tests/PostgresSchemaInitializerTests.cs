@@ -527,6 +527,33 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       .Throws<ArgumentNullException>();
   }
 
+  /// <summary>
+  /// Test 16b: Application version is recorded in wh_schema_versions when provided
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_WithApplicationVersion_RecordsBothVersionsAsync() {
+    // Arrange
+    var entries = new[] {
+      new KeyValuePair<string, string>("OrderPerspective",
+        "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
+    };
+    var initializer = new PostgresSchemaInitializer(
+      _connectionString!, entries, applicationVersion: "MyApp/1.2.3");
+
+    // Act
+    await initializer.InitializeSchemaAsync();
+
+    // Assert
+    await using var connection = new NpgsqlConnection(_connectionString!);
+    await connection.OpenAsync();
+
+    var record = await connection.QuerySingleAsync<dynamic>(
+      "SELECT library_version, application_version FROM wh_schema_versions LIMIT 1");
+
+    await Assert.That((string)record.library_version).Contains(".");
+    await Assert.That((string)record.application_version).IsEqualTo("MyApp/1.2.3");
+  }
+
   // --- Preview / Dry-Run Tests ---
 
   /// <summary>
