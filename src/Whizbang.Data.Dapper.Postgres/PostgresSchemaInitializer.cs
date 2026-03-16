@@ -103,6 +103,71 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
+  /// Rolls back a blue-green swapped table by renaming the backup back to active.
+  /// Only works for tables that were swapped via column-copy blue-green migration.
+  /// </summary>
+  /// <param name="migrationKey">The migration key (e.g., "perspective:OrderPerspective") to rollback.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True if rollback succeeded, false if no backup found.</returns>
+  public async Task<bool> RollbackAsync(string migrationKey, CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    // Find backup table by convention: <table>_bak_<date>
+    // Query wh_schema_migrations for the migration key to determine the table name
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+      AND table_name LIKE '%\_bak\_%' ESCAPE '\'
+      ORDER BY table_name DESC
+      LIMIT 1";
+    cmd.CommandTimeout = 10;
+
+    var backupTableName = await cmd.ExecuteScalarAsync(cancellationToken) as string;
+    if (backupTableName == null) {
+      return false;
+    }
+
+    // Extract the original table name from backup name (remove _bak_<date> suffix)
+    var bakIdx = backupTableName.LastIndexOf("_bak_", StringComparison.Ordinal);
+    if (bakIdx < 0) {
+      return false;
+    }
+
+    var originalTableName = backupTableName[..bakIdx];
+
+    // Atomic swap: active → discarded, backup → active
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    try {
+      var discardedName = $"{originalTableName}_discarded_{DateTime.UtcNow:yyyyMMddHHmmss}";
+
+      await _executeSqlAsync(connection, transaction,
+          $"ALTER TABLE IF EXISTS {originalTableName} RENAME TO {discardedName}", cancellationToken);
+      await _executeSqlAsync(connection, transaction,
+          $"ALTER TABLE {backupTableName} RENAME TO {originalTableName}", cancellationToken);
+
+      // Restore previous hash in wh_schema_migrations
+      await using var restoreCmd = connection.CreateCommand();
+      restoreCmd.Transaction = transaction;
+      restoreCmd.CommandText = @"
+        UPDATE wh_schema_migrations
+        SET status = 2, status_description = 'Rolled back', updated_at = NOW()
+        WHERE file_name = @name";
+      restoreCmd.Parameters.AddWithValue("name", migrationKey);
+      restoreCmd.CommandTimeout = 10;
+      await restoreCmd.ExecuteNonQueryAsync(cancellationToken);
+
+      await transaction.CommitAsync(cancellationToken);
+      return true;
+    } catch {
+      await transaction.RollbackAsync(cancellationToken);
+      throw;
+    }
+  }
+
+  /// <summary>
   /// Synchronous version of InitializeSchemaAsync for use during application startup.
   /// Optionally executes perspective schema SQL if provided.
   /// </summary>

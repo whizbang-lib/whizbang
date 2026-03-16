@@ -707,4 +707,53 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       $"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_per_test_bak_{recentDate}')");
     await Assert.That(exists).IsTrue();
   }
+
+  // --- Rollback Tests ---
+
+  /// <summary>
+  /// Test 23: Rollback restores backup table
+  /// </summary>
+  [Test]
+  public async Task RollbackAsync_WithBackupTable_RestoresItAsync() {
+    // Arrange - Create original table and a backup
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    // Create original table and backup manually (simulating a blue-green swap)
+    await conn.ExecuteAsync("CREATE TABLE IF NOT EXISTS wh_per_rollback_test (id UUID PRIMARY KEY, data TEXT)");
+    await conn.ExecuteAsync("INSERT INTO wh_per_rollback_test (id, data) VALUES (gen_random_uuid(), 'new_data')");
+
+    var bakDate = DateTime.UtcNow.AddMinutes(-5).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_rollback_test_bak_{bakDate} (id UUID PRIMARY KEY, data TEXT)");
+    await conn.ExecuteAsync($"INSERT INTO wh_per_rollback_test_bak_{bakDate} (id, data) VALUES (gen_random_uuid(), 'old_data')");
+
+    // Act
+    var result = await initializer.RollbackAsync("perspective:RollbackTestPerspective");
+
+    // Assert
+    await Assert.That(result).IsTrue();
+
+    // The backup table should now be the active table
+    var data = await conn.ExecuteScalarAsync<string>("SELECT data FROM wh_per_rollback_test LIMIT 1");
+    await Assert.That(data).IsEqualTo("old_data");
+  }
+
+  /// <summary>
+  /// Test 24: Rollback returns false when no backup exists
+  /// </summary>
+  [Test]
+  public async Task RollbackAsync_WithNoBackup_ReturnsFalseAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    // Act
+    var result = await initializer.RollbackAsync("perspective:NonexistentPerspective");
+
+    // Assert
+    await Assert.That(result).IsFalse();
+  }
 }
