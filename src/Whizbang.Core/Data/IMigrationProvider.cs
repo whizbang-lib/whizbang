@@ -4,6 +4,7 @@ namespace Whizbang.Core.Data;
 /// Provides migration scripts and version metadata for database schema management.
 /// Database implementations must provide this for hash-based change detection.
 /// </summary>
+/// <docs>infrastructure/migrations</docs>
 public interface IMigrationProvider {
   /// <summary>
   /// Library version (e.g., "0.9.4-local.61"). Must be AOT-safe (no reflection).
