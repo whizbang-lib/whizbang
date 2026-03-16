@@ -5,9 +5,11 @@
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_versions (
   id SERIAL PRIMARY KEY,
-  library_version VARCHAR(50) NOT NULL UNIQUE,
+  library_version VARCHAR(50) NOT NULL,
+  application_version VARCHAR(200),
   notes TEXT,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(library_version, application_version)
 );
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_migrations (
@@ -22,8 +24,14 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_migrations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Add columns for rollback support and ordering (idempotent for existing installs)
+-- Add columns for existing installs (idempotent)
 DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'wh_schema_versions' AND column_name = 'application_version') THEN
+    ALTER TABLE __SCHEMA__.wh_schema_versions ADD COLUMN application_version VARCHAR(200);
+    -- Drop old unique constraint on library_version alone, add new composite unique
+    ALTER TABLE __SCHEMA__.wh_schema_versions DROP CONSTRAINT IF EXISTS wh_schema_versions_library_version_key;
+    ALTER TABLE __SCHEMA__.wh_schema_versions ADD CONSTRAINT wh_schema_versions_lib_app_version_key UNIQUE(library_version, application_version);
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'wh_schema_migrations' AND column_name = 'previous_content') THEN
     ALTER TABLE __SCHEMA__.wh_schema_migrations ADD COLUMN previous_content TEXT;
   END IF;

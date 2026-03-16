@@ -285,9 +285,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       createCmd.CommandText = @"
         CREATE TABLE IF NOT EXISTS __QUOTED_SCHEMA__.wh_schema_versions (
           id SERIAL PRIMARY KEY,
-          library_version VARCHAR(50) NOT NULL UNIQUE,
+          library_version VARCHAR(50) NOT NULL,
+          application_version VARCHAR(200),
           notes TEXT,
-          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(library_version, application_version)
         );
         CREATE TABLE IF NOT EXISTS __QUOTED_SCHEMA__.wh_schema_migrations (
           file_name VARCHAR(200) PRIMARY KEY,
@@ -375,11 +377,12 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
   private static async Task<int> _upsertVersionAsync(Npgsql.NpgsqlConnection connection, CancellationToken ct) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO __QUOTED_SCHEMA__.wh_schema_versions (library_version, notes)
-      VALUES (@version, @notes)
-      ON CONFLICT (library_version) DO UPDATE SET notes = EXCLUDED.notes
+      INSERT INTO __QUOTED_SCHEMA__.wh_schema_versions (library_version, application_version, notes)
+      VALUES (@version, @appVersion, @notes)
+      ON CONFLICT (library_version, application_version) DO UPDATE SET notes = EXCLUDED.notes
       RETURNING id";
     cmd.Parameters.AddWithValue("version", "__LIBRARY_VERSION__");
+    cmd.Parameters.AddWithValue("appVersion", "__APPLICATION_VERSION__");
     cmd.Parameters.AddWithValue("notes", DBNull.Value);
     cmd.CommandTimeout = 10;
     var result = await cmd.ExecuteScalarAsync(ct);

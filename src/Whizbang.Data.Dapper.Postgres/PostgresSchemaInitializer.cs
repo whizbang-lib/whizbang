@@ -34,6 +34,7 @@ public sealed class PostgresSchemaInitializer {
   private readonly string? _perspectiveSchemaSql;
   private readonly KeyValuePair<string, string>[]? _perspectiveEntries;
   private readonly IMigrationProvider _migrationProvider;
+  private readonly string? _applicationVersion;
 
   public PostgresSchemaInitializer(string connectionString, string? perspectiveSchemaSql = null)
     : this(connectionString, perspectiveSchemaSql, new PostgresMigrationProvider()) {
@@ -53,12 +54,15 @@ public sealed class PostgresSchemaInitializer {
   /// <param name="connectionString">PostgreSQL connection string.</param>
   /// <param name="perspectiveEntries">Per-perspective SQL entries from PerspectiveSchemas.Entries.</param>
   /// <param name="migrationProvider">Migration provider for infrastructure SQL scripts.</param>
+  /// <param name="applicationVersion">Optional application version string (e.g., assembly name + version).</param>
   public PostgresSchemaInitializer(
       string connectionString,
       KeyValuePair<string, string>[] perspectiveEntries,
-      IMigrationProvider? migrationProvider = null)
+      IMigrationProvider? migrationProvider = null,
+      string? applicationVersion = null)
     : this(connectionString, perspectiveSchemaSql: null, migrationProvider ?? new PostgresMigrationProvider()) {
     _perspectiveEntries = perspectiveEntries ?? throw new ArgumentNullException(nameof(perspectiveEntries));
+    _applicationVersion = applicationVersion;
   }
 
   /// <summary>
@@ -372,11 +376,12 @@ public sealed class PostgresSchemaInitializer {
   private async Task<int> _upsertVersionAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
     await using var cmd = connection.CreateCommand();
     cmd.CommandText = @"
-      INSERT INTO wh_schema_versions (library_version, notes)
-      VALUES (@version, @notes)
-      ON CONFLICT (library_version) DO UPDATE SET notes = EXCLUDED.notes
+      INSERT INTO wh_schema_versions (library_version, application_version, notes)
+      VALUES (@version, @appVersion, @notes)
+      ON CONFLICT (library_version, application_version) DO UPDATE SET notes = EXCLUDED.notes
       RETURNING id";
     cmd.Parameters.AddWithValue("version", _migrationProvider.Version);
+    cmd.Parameters.AddWithValue("appVersion", (object?)_applicationVersion ?? DBNull.Value);
     cmd.Parameters.AddWithValue("notes", (object?)_migrationProvider.ReleaseNotes ?? DBNull.Value);
     cmd.CommandTimeout = 10;
 
