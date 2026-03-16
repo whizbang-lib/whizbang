@@ -228,12 +228,47 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(skippedCount).IsGreaterThanOrEqualTo(1)
       .Because("On second run, unchanged migrations should be skipped (status 3)");
 
-    // No migrations should be Applied (1) on second run
-    await using var appliedCmd = new NpgsqlCommand(
-      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 1", connection);
-    var appliedCount = (long)(await appliedCmd.ExecuteScalarAsync())!;
-    await Assert.That(appliedCount).IsEqualTo(0)
-      .Because("No migrations should be newly applied on second identical run");
+    // Infrastructure migrations should not be Applied (1) on second run — they should all be Skipped (3)
+    await using var appliedInfraCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 1 AND file_name NOT LIKE 'perspective:%'", connection);
+    var appliedInfraCount = (long)(await appliedInfraCmd.ExecuteScalarAsync())!;
+    await Assert.That(appliedInfraCount).IsEqualTo(0)
+      .Because("No infrastructure migrations should be newly applied on second identical run");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_TracksPerspectivedIndividuallyAsync() {
+    // Arrange
+    await DropAllWhizbangTablesAsync();
+
+    // Act
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - Perspective tables should be tracked individually in wh_schema_migrations
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+      "SELECT file_name, status, content_hash FROM wh_schema_migrations WHERE file_name LIKE 'perspective:%'", connection);
+    await using var reader = await cmd.ExecuteReaderAsync();
+
+    var perspectiveEntries = new List<(string Name, int Status, string Hash)>();
+    while (await reader.ReadAsync()) {
+      perspectiveEntries.Add((reader.GetString(0), reader.GetInt16(1), reader.GetString(2)));
+    }
+
+    // Should have at least one perspective entry tracked
+    await Assert.That(perspectiveEntries.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Per-perspective entries should be tracked individually in wh_schema_migrations");
+
+    // Each entry should have a valid hash
+    foreach (var entry in perspectiveEntries) {
+      await Assert.That(entry.Hash.Length).IsEqualTo(64)
+        .Because($"Perspective entry '{entry.Name}' should have a 64-char SHA256 hash");
+      await Assert.That(entry.Status == 1 || entry.Status == 3).IsTrue()
+        .Because($"Perspective entry '{entry.Name}' should be Applied (1) or Skipped (3)");
+    }
   }
 
   [Test]
