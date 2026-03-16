@@ -21,4 +21,4 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_migrations (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_schema_versions IS 'Tracks library versions that have applied migrations. Each version maps to a set of migration hashes.';
-COMMENT ON TABLE __SCHEMA__.wh_schema_migrations IS 'Tracks individual migration files by content hash for skip-on-unchanged detection. Status: 0=Pending, 1=Applied, 2=Updated, 3=Skipped, -1=Failed.';
+COMMENT ON TABLE __SCHEMA__.wh_schema_migrations IS 'Tracks individual migration files by content hash for skip-on-unchanged detection. Status: 0=Pending, 1=Applied, 2=Updated, 3=Skipped, 4=MigratingInBackground, -1=Failed.';

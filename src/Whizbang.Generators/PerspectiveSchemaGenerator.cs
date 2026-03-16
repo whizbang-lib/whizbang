@@ -26,6 +26,9 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_LowercaseClassName_GeneratesTableNameWithoutLeadingUnderscoreAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_PerspectiveAtExactThreshold_GeneratesWarningAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_ClassWithBaseListButNotPerspective_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesEntriesArrayAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithMultiplePerspectives_GeneratesEntriesForEachAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_EntriesSqlMatchesConcatenatedSqlAsync</tests>
 /// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).
@@ -368,11 +371,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         "PerspectiveSchemaSnippets.sql",
         "CREATE_INDEXES_SNIPPET");
 
-    // Build SQL content
+    // Build SQL content — collect per-perspective SQL for both concatenated Sql and individual Entries[]
     var sqlBuilder = new StringBuilder();
     sqlBuilder.AppendLine("-- Whizbang Perspective Tables - Auto-Generated");
     sqlBuilder.AppendLine("-- 3-Column JSONB Pattern: model_data (projection state), metadata (correlation/causation), scope (tenant/user)");
     sqlBuilder.AppendLine();
+
+    var perspectiveEntries = new System.Collections.Generic.List<(string Name, string Sql)>();
 
     foreach (var perspective in perspectives) {
       // Report size warning if estimated size is large
@@ -415,21 +420,28 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         }
       }
 
-      sqlBuilder.AppendLine(tableCode);
-      sqlBuilder.AppendLine();
+      // Build per-perspective SQL (table + indexes)
+      var perspectiveSqlBuilder = new StringBuilder();
+      perspectiveSqlBuilder.AppendLine(tableCode);
+      perspectiveSqlBuilder.AppendLine();
 
       // Generate standard indexes from snippet
       var indexesCode = createIndexesSnippet
           .Replace("__TABLE_NAME__", perspective.TableName);
 
-      sqlBuilder.AppendLine(indexesCode);
+      perspectiveSqlBuilder.AppendLine(indexesCode);
 
       // Generate physical field indexes
       var physicalIndexesSql = _generatePhysicalIndexesSql(perspective.TableName, perspective.PhysicalFields);
       if (!string.IsNullOrEmpty(physicalIndexesSql)) {
-        sqlBuilder.AppendLine(physicalIndexesSql);
+        perspectiveSqlBuilder.AppendLine(physicalIndexesSql);
       }
 
+      // Collect per-perspective entry
+      perspectiveEntries.Add((perspective.ClassName, perspectiveSqlBuilder.ToString()));
+
+      // Append to concatenated SQL (backward compat)
+      sqlBuilder.Append(perspectiveSqlBuilder);
       sqlBuilder.AppendLine();
     }
 
@@ -451,6 +463,20 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    public const string Sql = @\"");
     schemaBuilder.Append(sqlBuilder.ToString().Replace("\"", "\"\""));  // Escape quotes for verbatim string
     schemaBuilder.AppendLine("\";");
+    schemaBuilder.AppendLine();
+    schemaBuilder.AppendLine("    /// <summary>");
+    schemaBuilder.AppendLine("    /// Per-perspective SQL entries for individual hash tracking.");
+    schemaBuilder.AppendLine("    /// Each entry maps a perspective name to its DDL (CREATE TABLE + indexes).");
+    schemaBuilder.AppendLine("    /// </summary>");
+    schemaBuilder.AppendLine("    public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries = new System.Collections.Generic.KeyValuePair<string, string>[] {");
+    foreach (var entry in perspectiveEntries) {
+      schemaBuilder.Append("        new System.Collections.Generic.KeyValuePair<string, string>(\"");
+      schemaBuilder.Append(entry.Name);
+      schemaBuilder.Append("\", @\"");
+      schemaBuilder.Append(entry.Sql.Replace("\"", "\"\""));
+      schemaBuilder.AppendLine("\"),");
+    }
+    schemaBuilder.AppendLine("    };");
     schemaBuilder.AppendLine("}");
 
     // Add source file as C# code
