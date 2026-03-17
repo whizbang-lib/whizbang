@@ -263,11 +263,11 @@ public class SchemaInitializationTests : EFCoreTestBase {
       .Because("Per-perspective entries should be tracked individually in wh_schema_migrations");
 
     // Each entry should have a valid hash
-    foreach (var entry in perspectiveEntries) {
-      await Assert.That(entry.Hash.Length).IsEqualTo(64)
-        .Because($"Perspective entry '{entry.Name}' should have a 64-char SHA256 hash");
-      await Assert.That(entry.Status == 1 || entry.Status == 3).IsTrue()
-        .Because($"Perspective entry '{entry.Name}' should be Applied (1) or Skipped (3)");
+    foreach (var (name, status, hash) in perspectiveEntries) {
+      await Assert.That(hash.Length).IsEqualTo(64)
+        .Because($"Perspective entry '{name}' should have a 64-char SHA256 hash");
+      await Assert.That(status == 1 || status == 3).IsTrue()
+        .Because($"Perspective entry '{name}' should be Applied (1) or Skipped (3)");
     }
   }
 

@@ -145,11 +145,9 @@ __PHYSICAL_FIELD_CONFIGS__
     services.AddScoped<global::Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
       var jsonOptions = global::Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
-      var perspectiveInvoker = sp.GetService<global::Whizbang.Core.Perspectives.IPerspectiveInvoker>();
       return new global::Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
         context,
-        jsonOptions,
-        perspectiveInvoker
+        jsonOptions
       );
     });
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinator, global::Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();

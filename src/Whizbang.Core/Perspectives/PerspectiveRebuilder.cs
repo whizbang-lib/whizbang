@@ -84,7 +84,7 @@ public sealed partial class PerspectiveRebuilder(
         ct.ThrowIfCancellationRequested();
 
         try {
-          var completion = await runner.RunAsync(streamId, perspectiveName, null, ct);
+          await runner.RunAsync(streamId, perspectiveName, null, ct);
           streamsProcessed++;
           eventsReplayed++;
 

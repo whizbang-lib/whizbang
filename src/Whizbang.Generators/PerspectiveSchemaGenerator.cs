@@ -469,11 +469,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("    /// Each entry maps a perspective name to its DDL (CREATE TABLE + indexes).");
     schemaBuilder.AppendLine("    /// </summary>");
     schemaBuilder.AppendLine("    public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries = new System.Collections.Generic.KeyValuePair<string, string>[] {");
-    foreach (var entry in perspectiveEntries) {
+    foreach (var (name, sql) in perspectiveEntries) {
       schemaBuilder.Append("        new System.Collections.Generic.KeyValuePair<string, string>(\"");
-      schemaBuilder.Append(entry.Name);
+      schemaBuilder.Append(name);
       schemaBuilder.Append("\", @\"");
-      schemaBuilder.Append(entry.Sql.Replace("\"", "\"\""));
+      schemaBuilder.Append(sql.Replace("\"", "\"\""));
       schemaBuilder.AppendLine("\"),");
     }
     schemaBuilder.AppendLine("    };");
