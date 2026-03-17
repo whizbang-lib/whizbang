@@ -124,7 +124,12 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
-    services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
@@ -214,7 +219,12 @@ public static class ServiceCollectionExtensions {
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
-    services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
+    services.AddSingleton<IWorkCoordinator>(sp =>
+      new DapperWorkCoordinator(
+        connectionString,
+        jsonOptions,
+        sp.GetService<ILogger<DapperWorkCoordinator>>(),
+        options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 

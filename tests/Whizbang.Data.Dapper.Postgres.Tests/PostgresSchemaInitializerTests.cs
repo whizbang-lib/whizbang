@@ -756,4 +756,449 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     // Assert
     await Assert.That(result).IsFalse();
   }
+
+  /// <summary>
+  /// Test 25: CleanupBackups skips tables with unsafe characters in the name.
+  /// Validates that the SQL injection protection in _isSafeIdentifier works correctly.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithUnsafeTableName_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    // Create a table with a name containing special characters (simulating a crafted name)
+    // PostgreSQL allows quoted identifiers with special chars via CREATE TABLE "name"
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test; DROP TABLE--_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName}\" (id INT)");
+
+    // Also create a safe backup so we can verify it IS dropped
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_safe_bak_{oldDate} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert - only the safe table should be dropped, unsafe should be skipped
+    await Assert.That(dropped).Count().IsEqualTo(1);
+    await Assert.That(dropped[0]).Contains("wh_per_safe_bak_");
+
+    // Verify the unsafe table still exists (was skipped)
+    var unsafeExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = @name)",
+      new { name = unsafeTableName });
+    await Assert.That(unsafeExists).IsTrue();
+  }
+
+  /// <summary>
+  /// Test 26: CleanupBackups skips tables with double-quote injection in the name.
+  /// Double quotes could escape the identifier quoting if not validated.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithDoubleQuoteInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    // Double quote injection: tries to break out of quoted identifier
+    var unsafeTableName = $"wh_per_test\"_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert - table with quotes should be skipped
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 27: CleanupBackups skips tables with SQL comment injection.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithCommentInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test/**/DROP TABLE wh_event_store/**/_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 28: CleanupBackups skips tables with parentheses injection.
+  /// Parentheses could be used to inject function calls.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithParenthesesInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test(SELECT 1)_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 29: Rollback returns false when backup table has unsafe characters.
+  /// Validates that _isSafeIdentifier blocks the rollback path.
+  /// </summary>
+  [Test]
+  public async Task RollbackAsync_WithUnsafeBackupTableName_ReturnsFalseAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    // Create a backup table with injection characters
+    var bakDate = DateTime.UtcNow.AddMinutes(-5).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test; DROP TABLE wh_event_store--_bak_{bakDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Remove any safe backup tables so the unsafe one is the only match
+    await conn.ExecuteAsync(@"
+      DO $$
+      DECLARE t TEXT;
+      BEGIN
+        FOR t IN SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name LIKE 'wh_per%_bak_%'
+          AND table_name NOT LIKE '%DROP%'
+        LOOP
+          EXECUTE format('DROP TABLE IF EXISTS %I', t);
+        END LOOP;
+      END $$");
+
+    // Act
+    var result = await initializer.RollbackAsync("perspective:TestPerspective");
+
+    // Assert - should return false because the table name is unsafe
+    await Assert.That(result).IsFalse();
+
+    // Verify the event store was NOT dropped (injection didn't execute)
+    var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
+    await Assert.That(eventStoreExists).IsTrue();
+  }
+
+  /// <summary>
+  /// Test 30: CleanupBackups correctly drops multiple safe old backup tables.
+  /// Verifies that quoting doesn't break normal operations.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithMultipleSafeBackups_DropsAllAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate1 = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var oldDate2 = DateTime.UtcNow.AddDays(-90).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_orders_bak_{oldDate1} (id INT)");
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_products_bak_{oldDate2} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert - both safe old tables should be dropped
+    await Assert.That(dropped).Count().IsEqualTo(2);
+  }
+
+  // --- SQL Injection Attack Vector Tests ---
+
+  /// <summary>
+  /// Test 31: Single quote injection — classic SQL injection vector.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithSingleQuoteInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test' OR '1'='1_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 32: Backslash escape injection — attempts to escape quote characters.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithBackslashInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test\\_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 33: Newline injection — attempts to break statement boundaries.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithNewlineInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test\nDROP TABLE wh_event_store\n_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+
+    // Verify event store was NOT dropped
+    var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
+    await Assert.That(eventStoreExists).IsTrue();
+  }
+
+  /// <summary>
+  /// Test 34: Dollar-quoted string injection — PostgreSQL-specific quoting mechanism.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithDollarQuoteInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test$$DROP TABLE wh_event_store$$_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 35: Pipe concatenation injection — PostgreSQL string concatenation operator.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithPipeConcatInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test||pg_sleep(5)||_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 36: Space injection — whitespace in identifiers could allow statement manipulation.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithSpaceInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test DROP TABLE wh_event_store_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 37: Backtick injection — alternative identifier quoting in some databases.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithBacktickInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test`_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 38: pg_sleep time-based injection — attempts blind injection via function call.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithPgSleepInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test);SELECT pg_sleep(10);--_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 39: UNION SELECT injection — attempts to exfiltrate data.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithUnionSelectInjection_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test UNION SELECT usename FROM pg_user--_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 40: Hyphen/dash injection — double dashes start SQL line comments.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithDoubleDashComment_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test--_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert
+    await Assert.That(dropped).Count().IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Test 41: Mixed attack — combines multiple injection techniques in one name.
+  /// </summary>
+  [Test]
+  public async Task CleanupBackupsAsync_WithMixedInjectionAttack_SkipsItAsync() {
+    // Arrange
+    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_connectionString!);
+    await conn.OpenAsync();
+
+    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+    var unsafeTableName = $"wh_per_test\"; DROP TABLE wh_event_store; --_bak_{oldDate}";
+    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    // Also create a safe table to verify normal operation continues
+    await conn.ExecuteAsync($"CREATE TABLE wh_per_safe_bak_{oldDate} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    // Assert - only safe table dropped, attack table skipped
+    await Assert.That(dropped).Count().IsEqualTo(1);
+    await Assert.That(dropped[0]).Contains("wh_per_safe_bak_");
+
+    // Verify event store survived the attack
+    var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
+    await Assert.That(eventStoreExists).IsTrue();
+  }
 }
