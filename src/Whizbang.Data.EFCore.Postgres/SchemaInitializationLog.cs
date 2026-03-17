@@ -1,0 +1,43 @@
+using Microsoft.Extensions.Logging;
+
+namespace Whizbang.Data.EFCore.Postgres;
+
+/// <summary>
+/// Source-generated logging methods for schema initialization advisory lock operations.
+/// These are defined in the runtime library (not in generated code) because Roslyn source generators
+/// cannot see other generators' output — [LoggerMessage] attributes in generated code won't be
+/// processed by Microsoft's logger source generator.
+/// </summary>
+/// <docs>data/turnkey-initialization#multi-instance</docs>
+/// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
+public static partial class SchemaInitializationLog {
+  [LoggerMessage(
+      Level = LogLevel.Debug,
+      Message = "Acquiring advisory lock {LockId} for schema '{Schema}'...")]
+  public static partial void AcquiringAdvisoryLock(ILogger logger, int lockId, string schema);
+
+  [LoggerMessage(
+      Level = LogLevel.Debug,
+      Message = "Advisory lock {LockId} held by another instance, retrying (attempt {Attempt}, delay {DelayMs}ms)...")]
+  public static partial void AdvisoryLockRetry(ILogger logger, int lockId, int attempt, int delayMs);
+
+  [LoggerMessage(
+      Level = LogLevel.Debug,
+      Message = "Acquired advisory lock {LockId} for schema '{Schema}'")]
+  public static partial void AcquiredAdvisoryLock(ILogger logger, int lockId, string schema);
+
+  [LoggerMessage(
+      Level = LogLevel.Debug,
+      Message = "Released advisory lock {LockId} for schema '{Schema}'")]
+  public static partial void ReleasedAdvisoryLock(ILogger logger, int lockId, string schema);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Failed to release advisory lock {LockId} for schema '{Schema}'")]
+  public static partial void FailedToReleaseAdvisoryLock(ILogger logger, Exception ex, int lockId, string schema);
+
+  [LoggerMessage(
+      Level = LogLevel.Warning,
+      Message = "Failed to close database connection for schema '{Schema}'")]
+  public static partial void FailedToCloseConnection(ILogger logger, Exception ex, string schema);
+}
