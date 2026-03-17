@@ -49,4 +49,16 @@ public class PostgresOptions {
   public bool RetryIndefinitely { get; set; } = true;
 
   #endregion
+
+  #region Command Timeout Options
+
+  /// <summary>
+  /// Command timeout in seconds for database operations like process_work_batch.
+  /// Controls how long a single SQL command can run before being cancelled.
+  /// Default: 5 seconds
+  /// </summary>
+  /// <docs>components/data/postgres#command-timeout</docs>
+  public int CommandTimeoutSeconds { get; set; } = 5;
+
+  #endregion
 }

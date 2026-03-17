@@ -19,6 +19,8 @@ DECLARE
   v_new_status INTEGER;
   v_stream_id UUID;
 BEGIN
+  IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
+
   FOR v_completion IN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,

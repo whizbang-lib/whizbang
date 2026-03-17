@@ -6,7 +6,7 @@ coverage:
 
 comment:
   layout: "reach,diff,flags,tree"
-  behavior: default
+  behavior: new
   require_changes: false
 
 ignore:

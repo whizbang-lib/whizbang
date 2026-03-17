@@ -9,6 +9,8 @@
 [![NuGet](https://img.shields.io/nuget/v/Whizbang.Core.svg)](https://www.nuget.org/packages/Whizbang.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+[![Codecov Sunburst](https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM)](https://codecov.io/gh/whizbang-lib/whizbang)
+
 A comprehensive .NET library for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.
 
 ## Version 0.1.0 - Foundation Release
@@ -78,7 +80,7 @@ All tests are currently **failing** by design. This is TDD - tests define the be
 
 ## Documentation
 
-See the [whizbang-lib.github.io](https://github.com/whizbang/whizbang-lib.github.io) repository for comprehensive documentation of all features and design decisions.
+See the [documentation site](https://whizba.ng/) for comprehensive documentation of all features and design decisions.
 
 ## Release Workflow
 
