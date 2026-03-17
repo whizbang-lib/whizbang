@@ -660,7 +660,7 @@ public class PerspectiveSchemaGeneratorTests {
 
     // Count occurrences of CREATE TABLE in the Sql const (before Entries array)
     var entriesIdx = generatedSource.IndexOf("Entries", StringComparison.Ordinal);
-    var sqlSection = entriesIdx > 0 ? generatedSource.Substring(0, entriesIdx) : generatedSource;
+    var sqlSection = entriesIdx > 0 ? generatedSource[..entriesIdx] : generatedSource;
     var createTableCount = sqlSection.Split("CREATE TABLE IF NOT EXISTS").Length - 1;
     await Assert.That(createTableCount).IsEqualTo(2)
       .Because("each nested Projection should have its own table");
@@ -670,7 +670,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesEntriesArrayAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -699,7 +699,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate Entries[] array alongside Sql const
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries");
+    await Assert.That(generatedSource).Contains("public static readonly System.Collections.Generic.KeyValuePair<string, string>[] Entries");
     await Assert.That(generatedSource).Contains("\"OrderPerspective\"");
     await Assert.That(generatedSource).Contains("CREATE TABLE");
   }
@@ -708,7 +708,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultiplePerspectives_GeneratesEntriesForEachAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -747,7 +747,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate separate entries for each perspective
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("\"OrderPerspective\"");
+    await Assert.That(generatedSource).Contains("\"OrderPerspective\"");
     await Assert.That(generatedSource).Contains("\"CustomerPerspective\"");
 
     // Count entries - should be exactly 2
@@ -759,7 +759,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_EntriesSqlMatchesConcatenatedSqlAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -789,12 +789,12 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Both the Sql const and the Entries[] should reference the same table
-    await Assert.That(generatedSource!).Contains("order_perspective");
+    await Assert.That(generatedSource).Contains("order_perspective");
 
     // The Entries array entry should contain CREATE TABLE for that perspective
     // Extract the portion after "Entries" declaration
     var entriesIdx = generatedSource.IndexOf("Entries", StringComparison.Ordinal);
-    var entriesSection = generatedSource.Substring(entriesIdx);
+    var entriesSection = generatedSource[entriesIdx..];
     await Assert.That(entriesSection).Contains("CREATE TABLE IF NOT EXISTS");
     await Assert.That(entriesSection).Contains("order_perspective");
   }

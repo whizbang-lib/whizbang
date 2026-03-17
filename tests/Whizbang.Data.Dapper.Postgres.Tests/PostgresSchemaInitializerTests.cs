@@ -16,6 +16,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 public class PostgresSchemaInitializerTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string? _connectionString;
+  private string _testConnectionString => _connectionString ?? throw new InvalidOperationException("Test not initialized");
 
   [Before(Test)]
   public async Task SetupAsync() {
@@ -72,7 +73,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task Constructor_WithConnectionStringOnly_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
 
     // Assert
     await Assert.That(initializer).IsNotNull();
@@ -87,7 +88,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     const string perspectiveSql = "CREATE TABLE IF NOT EXISTS test_perspective (id INT);";
 
     // Act
-    var initializer = new PostgresSchemaInitializer(_connectionString!, perspectiveSql);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, perspectiveSql);
 
     // Assert
     await Assert.That(initializer).IsNotNull();
@@ -99,13 +100,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task InitializeSchemaAsync_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Verify Whizbang infrastructure tables exist
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
@@ -133,13 +134,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         name TEXT NOT NULL
       );";
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, perspectiveSql);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, perspectiveSql);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Verify both infrastructure and perspective tables exist
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     // Check infrastructure table
@@ -172,13 +173,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task InitializeSchemaAsync_PerspectiveSqlNull_SkipsPerspectiveSqlAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!, perspectiveSchemaSql: null);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: null);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Only infrastructure exists (tested above), no exception thrown
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
@@ -200,13 +201,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task InitializeSchemaAsync_PerspectiveSqlEmpty_SkipsPerspectiveSqlAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!, perspectiveSchemaSql: "");
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, perspectiveSchemaSql: "");
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Only infrastructure exists, no exception thrown
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
@@ -227,13 +228,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task InitializeSchema_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
 
     // Act
     initializer.InitializeSchema(); // Synchronous method
 
     // Assert - Verify Whizbang infrastructure tables exist
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
@@ -261,13 +262,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         value TEXT NOT NULL
       );";
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, perspectiveSql);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, perspectiveSql);
 
     // Act
     initializer.InitializeSchema(); // Synchronous method
 
     // Assert - Verify both infrastructure and perspective tables exist
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     // Check infrastructure table
@@ -306,7 +307,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     };
 
     // Act
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Assert
     await Assert.That(initializer).IsNotNull();
@@ -323,13 +324,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_data JSONB NOT NULL);")
     };
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Verify perspective table was created
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var tableExists = await connection.ExecuteScalarAsync<bool>(
@@ -355,14 +356,14 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_data JSONB NOT NULL);")
     };
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Act - Run twice with same SQL
     await initializer.InitializeSchemaAsync();
     await initializer.InitializeSchemaAsync();
 
     // Assert - Should be status 3 (Skipped) on second run
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var status = await connection.ExecuteScalarAsync<short>(
@@ -383,11 +384,11 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
     };
 
-    var initializer1 = new PostgresSchemaInitializer(_connectionString!, entries1);
+    var initializer1 = new PostgresSchemaInitializer(_testConnectionString, entries1);
     await initializer1.InitializeSchemaAsync();
 
     // Insert a test row to verify data preservation
-    await using var setupConn = new NpgsqlConnection(_connectionString!);
+    await using var setupConn = new NpgsqlConnection(_testConnectionString);
     await setupConn.OpenAsync();
     await setupConn.ExecuteAsync("INSERT INTO wh_per_order (id, model_data) VALUES (gen_random_uuid(), '{}'::jsonb)");
 
@@ -397,11 +398,11 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL, metadata JSONB);")
     };
 
-    var initializer2 = new PostgresSchemaInitializer(_connectionString!, entries2);
+    var initializer2 = new PostgresSchemaInitializer(_testConnectionString, entries2);
     await initializer2.InitializeSchemaAsync();
 
     // Assert - Status depends on detected strategy
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var record = await connection.QuerySingleAsync<dynamic>(
@@ -428,13 +429,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_customer (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_data JSONB NOT NULL);")
     };
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Both perspectives should be tracked
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var orderStatus = await connection.ExecuteScalarAsync<short>(
@@ -468,7 +469,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_customer (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_data JSONB NOT NULL);")
     };
 
-    var initializer1 = new PostgresSchemaInitializer(_connectionString!, entries1);
+    var initializer1 = new PostgresSchemaInitializer(_testConnectionString, entries1);
     await initializer1.InitializeSchemaAsync();
 
     // Act - Second run: only CustomerPerspective changed
@@ -479,11 +480,11 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_customer (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_data JSONB NOT NULL, metadata JSONB);")
     };
 
-    var initializer2 = new PostgresSchemaInitializer(_connectionString!, entries2);
+    var initializer2 = new PostgresSchemaInitializer(_testConnectionString, entries2);
     await initializer2.InitializeSchemaAsync();
 
     // Assert
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var orderStatus = await connection.ExecuteScalarAsync<short>(
@@ -503,13 +504,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   public async Task InitializeSchemaAsync_WithEmptyEntries_ExecutesInfrastructureOnlyAsync() {
     // Arrange
     var entries = Array.Empty<KeyValuePair<string, string>>();
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert - Infrastructure tables should exist
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var exists = await connection.ExecuteScalarAsync<bool>(
@@ -523,7 +524,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task Constructor_WithNullPerspectiveEntries_ThrowsAsync() {
     // Act & Assert
-    await Assert.That(() => new PostgresSchemaInitializer(_connectionString!, perspectiveEntries: null!))
+    await Assert.That(() => new PostgresSchemaInitializer(_testConnectionString, perspectiveEntries: null!))
       .Throws<ArgumentNullException>();
   }
 
@@ -538,13 +539,13 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
     };
     var initializer = new PostgresSchemaInitializer(
-      _connectionString!, entries, applicationVersion: "MyApp/1.2.3");
+      _testConnectionString, entries, applicationVersion: "MyApp/1.2.3");
 
     // Act
     await initializer.InitializeSchemaAsync();
 
     // Assert
-    await using var connection = new NpgsqlConnection(_connectionString!);
+    await using var connection = new NpgsqlConnection(_testConnectionString);
     await connection.OpenAsync();
 
     var record = await connection.QuerySingleAsync<dynamic>(
@@ -567,7 +568,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
     };
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
 
     // Act
     var plan = await initializer.PreviewAsync();
@@ -599,7 +600,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
     };
 
-    var initializer = new PostgresSchemaInitializer(_connectionString!, entries);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString, entries);
     await initializer.InitializeSchemaAsync();
 
     // Act
@@ -622,7 +623,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       new KeyValuePair<string, string>("OrderPerspective",
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL);")
     };
-    var initializer1 = new PostgresSchemaInitializer(_connectionString!, entries1);
+    var initializer1 = new PostgresSchemaInitializer(_testConnectionString, entries1);
     await initializer1.InitializeSchemaAsync();
 
     // Act - Preview with added column
@@ -630,7 +631,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       new KeyValuePair<string, string>("OrderPerspective",
         "CREATE TABLE IF NOT EXISTS wh_per_order (id UUID PRIMARY KEY, model_data JSONB NOT NULL, metadata JSONB);")
     };
-    var initializer2 = new PostgresSchemaInitializer(_connectionString!, entries2);
+    var initializer2 = new PostgresSchemaInitializer(_testConnectionString, entries2);
     var plan = await initializer2.PreviewAsync();
 
     // Assert
@@ -648,7 +649,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_NoBackups_ReturnsEmptyAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
     // Act
@@ -664,11 +665,11 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithOldBackup_DropsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
     // Create a fake old backup table (pretend it was created 60 days ago)
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
     await conn.ExecuteAsync($"CREATE TABLE wh_per_test_bak_{oldDate} (id INT)");
@@ -687,11 +688,11 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithRecentBackup_KeepsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
     // Create a recent backup table
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
     var recentDate = DateTime.UtcNow.AddDays(-5).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
     await conn.ExecuteAsync($"CREATE TABLE wh_per_test_bak_{recentDate} (id INT)");
@@ -716,10 +717,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task RollbackAsync_WithBackupTable_RestoresItAsync() {
     // Arrange - Create original table and a backup
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     // Create original table and backup manually (simulating a blue-green swap)
@@ -747,7 +748,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task RollbackAsync_WithNoBackup_ReturnsFalseAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
     // Act
@@ -764,10 +765,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithUnsafeTableName_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     // Create a table with a name containing special characters (simulating a crafted name)
@@ -800,10 +801,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithDoubleQuoteInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -824,10 +825,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithCommentInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -848,10 +849,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithParenthesesInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -872,10 +873,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task RollbackAsync_WithUnsafeBackupTableName_ReturnsFalseAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     // Create a backup table with injection characters
@@ -915,10 +916,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithMultipleSafeBackups_DropsAllAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate1 = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -941,10 +942,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithSingleQuoteInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -964,10 +965,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithBackslashInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -987,10 +988,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithNewlineInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1015,10 +1016,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithDollarQuoteInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1038,10 +1039,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithPipeConcatInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1061,10 +1062,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithSpaceInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1084,10 +1085,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithBacktickInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1107,10 +1108,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithPgSleepInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1130,10 +1131,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithUnionSelectInjection_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1153,10 +1154,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithDoubleDashComment_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -1176,10 +1177,10 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   [Test]
   public async Task CleanupBackupsAsync_WithMixedInjectionAttack_SkipsItAsync() {
     // Arrange
-    var initializer = new PostgresSchemaInitializer(_connectionString!);
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
     await initializer.InitializeSchemaAsync();
 
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_testConnectionString);
     await conn.OpenAsync();
 
     var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);

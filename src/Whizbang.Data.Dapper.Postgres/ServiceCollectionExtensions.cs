@@ -98,15 +98,13 @@ public static class ServiceCollectionExtensions {
       logger?.LogInformation("Initializing PostgreSQL schema with per-perspective tracking...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveEntries);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized");
-
-      logger?.LogInformation("Waiting for PostgreSQL schema to be ready...");
+      logger?.LogInformation("PostgreSQL schema initialized, waiting for readiness...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
       logger?.LogInformation("PostgreSQL database ready");
     }
 
     // Register database infrastructure
-    services.AddSingleton<IDbConnectionFactory>(sp =>
+    services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
@@ -182,17 +180,13 @@ public static class ServiceCollectionExtensions {
       logger?.LogInformation("Initializing PostgreSQL schema...");
       var initializer = new PostgresSchemaInitializer(connectionString, perspectiveSchemaSql);
       initializer.InitializeSchema();
-      logger?.LogInformation("PostgreSQL schema initialized");
-
-      // Wait for schema to be ready (tables and functions exist)
-      // This ensures workers don't start until schema is fully initialized
-      logger?.LogInformation("Waiting for PostgreSQL schema to be ready...");
+      logger?.LogInformation("PostgreSQL schema initialized, waiting for readiness...");
       connectionRetry.WaitForSchemaReadyAsync(connectionString).GetAwaiter().GetResult();
       logger?.LogInformation("PostgreSQL database ready");
     }
 
     // Register database infrastructure
-    services.AddSingleton<IDbConnectionFactory>(sp =>
+    services.AddSingleton<IDbConnectionFactory>(_ =>
       new PostgresConnectionFactory(connectionString));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 

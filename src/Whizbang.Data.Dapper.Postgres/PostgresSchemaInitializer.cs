@@ -126,8 +126,7 @@ public sealed class PostgresSchemaInitializer {
       LIMIT 1";
     cmd.CommandTimeout = 10;
 
-    var backupTableName = await cmd.ExecuteScalarAsync(cancellationToken) as string;
-    if (backupTableName == null) {
+    if (await cmd.ExecuteScalarAsync(cancellationToken) is not string backupTableName) {
       return false;
     }
 
@@ -191,11 +190,18 @@ public sealed class PostgresSchemaInitializer {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
-    // Preview infrastructure migrations
     var migrations = _migrationProvider.GetMigrations();
+    await _previewBootstrapAsync(connection, migrations, cancellationToken);
+    await _previewCoreMigrations(steps, connection, migrations, cancellationToken);
+    await _previewPerspectiveMigrationsAsync(steps, connection, cancellationToken);
+
+    return new MigrationPlan(steps);
+  }
+
+  private static async Task _previewBootstrapAsync(
+      NpgsqlConnection connection, IReadOnlyList<Core.Data.MigrationScript> migrations, CancellationToken cancellationToken) {
     var bootstrap = migrations.FirstOrDefault(m => m.Name.StartsWith("000", StringComparison.Ordinal));
     if (bootstrap != null) {
-      // Bootstrap always runs
       await using var bootstrapCmd = connection.CreateCommand();
       bootstrapCmd.CommandText = bootstrap.Sql;
       bootstrapCmd.CommandTimeout = 30;
@@ -205,7 +211,11 @@ public sealed class PostgresSchemaInitializer {
         // Bootstrap may fail if tables don't exist yet — that's expected for preview
       }
     }
+  }
 
+  private static async Task _previewCoreMigrations(
+      List<MigrationStep> steps, NpgsqlConnection connection,
+      IReadOnlyList<Core.Data.MigrationScript> migrations, CancellationToken cancellationToken) {
     foreach (var migration in migrations.Where(m => !m.Name.StartsWith("000", StringComparison.Ordinal))) {
       var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(migration.Sql)));
       var existingHash = await _getExistingHashAsync(connection, migration.Name, cancellationToken);
@@ -218,45 +228,54 @@ public sealed class PostgresSchemaInitializer {
         steps.Add(new MigrationStep(migration.Name, MigrationAction.Apply, null, hash, null, null));
       }
     }
+  }
 
-    // Preview perspective migrations
-    if (_perspectiveEntries is { Length: > 0 }) {
-      foreach (var entry in _perspectiveEntries) {
-        var perspectiveName = $"perspective:{entry.Key}";
-        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
-        var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
-
-        if (existingHash == hash) {
-          steps.Add(new MigrationStep(perspectiveName, MigrationAction.Skip, existingHash, hash, null, null));
-        } else if (existingHash != null) {
-          var tableName = _extractTableName(entry.Value);
-          if (tableName != null) {
-            var strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
-            var action = strategy switch {
-              MigrationStrategy.ColumnCopy => MigrationAction.BlueGreenColumnCopy,
-              MigrationStrategy.EventReplay => MigrationAction.BlueGreenEventReplay,
-              _ => MigrationAction.Update
-            };
-
-            // Compute column diff for preview
-            var oldCols = await _getTableColumnsAsync(connection, tableName, cancellationToken);
-            var newCols = _parseColumnsFromDdl(entry.Value);
-            var added = newCols.Keys.Except(oldCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
-            var removed = oldCols.Keys.Except(newCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
-
-            steps.Add(new MigrationStep(perspectiveName, action, existingHash, hash,
-                added.Length > 0 ? added : null,
-                removed.Length > 0 ? removed : null));
-          } else {
-            steps.Add(new MigrationStep(perspectiveName, MigrationAction.Update, existingHash, hash, null, null));
-          }
-        } else {
-          steps.Add(new MigrationStep(perspectiveName, MigrationAction.Apply, null, hash, null, null));
-        }
-      }
+  private async Task _previewPerspectiveMigrationsAsync(
+      List<MigrationStep> steps, NpgsqlConnection connection, CancellationToken cancellationToken) {
+    if (_perspectiveEntries is not { Length: > 0 }) {
+      return;
     }
 
-    return new MigrationPlan(steps);
+    foreach (var entry in _perspectiveEntries) {
+      var perspectiveName = $"perspective:{entry.Key}";
+      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+      var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
+
+      if (existingHash == hash) {
+        steps.Add(new MigrationStep(perspectiveName, MigrationAction.Skip, existingHash, hash, null, null));
+      } else if (existingHash != null) {
+        await _previewChangedPerspectiveAsync(steps, connection, entry, perspectiveName, existingHash, hash, cancellationToken);
+      } else {
+        steps.Add(new MigrationStep(perspectiveName, MigrationAction.Apply, null, hash, null, null));
+      }
+    }
+  }
+
+  private static async Task _previewChangedPerspectiveAsync(
+      List<MigrationStep> steps, NpgsqlConnection connection,
+      KeyValuePair<string, string> entry, string perspectiveName,
+      string existingHash, string hash, CancellationToken cancellationToken) {
+    var tableName = _extractTableName(entry.Value);
+    if (tableName == null) {
+      steps.Add(new MigrationStep(perspectiveName, MigrationAction.Update, existingHash, hash, null, null));
+      return;
+    }
+
+    var strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+    var action = strategy switch {
+      MigrationStrategy.ColumnCopy => MigrationAction.BlueGreenColumnCopy,
+      MigrationStrategy.EventReplay => MigrationAction.BlueGreenEventReplay,
+      _ => MigrationAction.Update
+    };
+
+    var oldCols = await _getTableColumnsAsync(connection, tableName, cancellationToken);
+    var newCols = _parseColumnsFromDdl(entry.Value);
+    var added = newCols.Keys.Except(oldCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+    var removed = oldCols.Keys.Except(newCols.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
+
+    steps.Add(new MigrationStep(perspectiveName, action, existingHash, hash,
+        added.Length > 0 ? added : null,
+        removed.Length > 0 ? removed : null));
   }
 
   /// <summary>
@@ -379,74 +398,68 @@ public sealed class PostgresSchemaInitializer {
   /// Hash matches → skip (status 3). Hash differs or missing → execute DDL → record hash (status 1 or 2).
   /// </summary>
   private async Task _executePerspectiveMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken) {
-    // Reuse the version ID from infrastructure migrations
     var versionId = await _upsertVersionAsync(connection, cancellationToken);
 
     foreach (var entry in _perspectiveEntries!) {
-      var perspectiveName = $"perspective:{entry.Key}";
-      var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+      await _executeSinglePerspectiveMigrationAsync(connection, entry, versionId, cancellationToken);
+    }
+  }
 
-      var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
+  private static async Task _executeSinglePerspectiveMigrationAsync(
+      NpgsqlConnection connection, KeyValuePair<string, string> entry,
+      int versionId, CancellationToken cancellationToken) {
+    var perspectiveName = $"perspective:{entry.Key}";
+    var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Value)));
+    var existingHash = await _getExistingHashAsync(connection, perspectiveName, cancellationToken);
 
-      if (existingHash == hash) {
-        // Hash matches — skip execution, record as Skipped
-        await _updateMigrationStatusAsync(connection, perspectiveName, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
-        continue;
-      }
+    if (existingHash == hash) {
+      await _updateMigrationStatusAsync(connection, perspectiveName, versionId, 3, "Skipped (hash unchanged)", cancellationToken);
+      return;
+    }
 
-      var isUpdate = existingHash != null;
+    var isUpdate = existingHash != null;
+    var tableName = _extractTableName(entry.Value);
+    var strategy = MigrationStrategy.DirectDdl;
 
-      // Detect migration strategy when updating existing perspective
-      var tableName = _extractTableName(entry.Value);
-      var strategy = MigrationStrategy.DirectDdl;
+    if (isUpdate && tableName != null) {
+      strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
+    }
 
-      if (isUpdate && tableName != null) {
-        strategy = await _detectStrategyAsync(connection, tableName, entry.Value, cancellationToken);
-      }
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+    try {
+      if (strategy == MigrationStrategy.ColumnCopy) {
+        await _migrateTableColumnCopyAsync(connection, transaction, entry.Value, tableName!, cancellationToken);
+      } else if (strategy == MigrationStrategy.EventReplay) {
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = entry.Value;
+        cmd.CommandTimeout = 30;
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
 
-      // Wrap DDL + hash recording in a transaction for atomicity
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-      try {
-        if (strategy == MigrationStrategy.ColumnCopy && tableName != null) {
-          // Blue-green column copy: create new table, copy shared columns, swap
-          await _migrateTableColumnCopyAsync(connection, transaction, entry.Value, tableName, cancellationToken);
-        } else if (strategy == MigrationStrategy.EventReplay) {
-          // Event replay required — record status 4 (MigratingInBackground) for background worker
-          // Execute DDL with IF NOT EXISTS to create new schema, background worker handles data migration
-          await using var cmd = connection.CreateCommand();
-          cmd.Transaction = transaction;
-          cmd.CommandText = entry.Value;
-          cmd.CommandTimeout = 30;
-          await cmd.ExecuteNonQueryAsync(cancellationToken);
-
-          await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, 4,
-            $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)",
-            cancellationToken, transaction);
-          await transaction.CommitAsync(cancellationToken);
-          continue;
-        } else {
-          // Direct DDL execution (new table or identical structure)
-          await using var cmd = connection.CreateCommand();
-          cmd.Transaction = transaction;
-          cmd.CommandText = entry.Value;
-          cmd.CommandTimeout = 30;
-          await cmd.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        var status = isUpdate ? 2 : 1; // Updated vs Applied
-        var desc = isUpdate
-          ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
-          : "First apply";
-
-        await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, status, desc, cancellationToken, transaction);
-
+        await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, 4,
+          $"MigratingInBackground from hash {existingHash![..8]}... (destructive change detected, event replay required)",
+          cancellationToken, transaction);
         await transaction.CommitAsync(cancellationToken);
-      } catch (Exception ex) {
-        await transaction.RollbackAsync(cancellationToken);
-        // Record failure (outside transaction since it rolled back)
-        await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}", cancellationToken);
-        throw;
+        return;
+      } else {
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = entry.Value;
+        cmd.CommandTimeout = 30;
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
       }
+
+      var status = isUpdate ? 2 : 1;
+      var desc = isUpdate
+        ? $"Updated from hash {existingHash![..8]}... (strategy: {strategy})"
+        : "First apply";
+
+      await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, status, desc, cancellationToken, transaction);
+      await transaction.CommitAsync(cancellationToken);
+    } catch (Exception ex) {
+      await transaction.RollbackAsync(cancellationToken);
+      await _upsertMigrationAsync(connection, perspectiveName, hash, versionId, -1, $"Failed: {ex.Message}", cancellationToken);
+      throw;
     }
   }
 
@@ -483,9 +496,9 @@ public sealed class PostgresSchemaInitializer {
       SET status = @status, status_description = @desc, version_id = @versionId, updated_at = NOW()
       WHERE file_name = @name";
     cmd.Parameters.AddWithValue("name", fileName);
-    cmd.Parameters.AddWithValue("status", (short)status);
-    cmd.Parameters.AddWithValue("desc", desc);
-    cmd.Parameters.AddWithValue("versionId", versionId);
+    cmd.Parameters.AddWithValue(nameof(status), (short)status);
+    cmd.Parameters.AddWithValue(nameof(desc), desc);
+    cmd.Parameters.AddWithValue(nameof(versionId), versionId);
     cmd.CommandTimeout = 10;
     await cmd.ExecuteNonQueryAsync(cancellationToken);
   }
@@ -508,10 +521,10 @@ public sealed class PostgresSchemaInitializer {
         execution_order = COALESCE(EXCLUDED.execution_order, wh_schema_migrations.execution_order),
         updated_at = NOW()";
     cmd.Parameters.AddWithValue("name", fileName);
-    cmd.Parameters.AddWithValue("hash", hash);
-    cmd.Parameters.AddWithValue("versionId", versionId);
-    cmd.Parameters.AddWithValue("status", (short)status);
-    cmd.Parameters.AddWithValue("desc", desc);
+    cmd.Parameters.AddWithValue(nameof(hash), hash);
+    cmd.Parameters.AddWithValue(nameof(versionId), versionId);
+    cmd.Parameters.AddWithValue(nameof(status), (short)status);
+    cmd.Parameters.AddWithValue(nameof(desc), desc);
     cmd.Parameters.AddWithValue("prevContent", (object?)previousContent ?? DBNull.Value);
     cmd.Parameters.AddWithValue("execOrder", (object?)executionOrder ?? DBNull.Value);
     cmd.CommandTimeout = 10;
@@ -566,7 +579,7 @@ public sealed class PostgresSchemaInitializer {
 
     var tempName = $"{tableName}_new";
     var backupName = $"{tableName}_bak_{DateTime.UtcNow:yyyyMMddHHmmss}";
-    var (createTableSql, postTableSql) = _splitDdl(ddlSql, tableName);
+    var (createTableSql, postTableSql) = _splitDdl(ddlSql);
 
     // 1. Create new table with temp name
     var tempCreateSql = createTableSql.Replace(tableName, tempName);
@@ -610,7 +623,7 @@ public sealed class PostgresSchemaInitializer {
       FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = @tableName
       ORDER BY ordinal_position";
-    cmd.Parameters.AddWithValue("tableName", tableName);
+    cmd.Parameters.AddWithValue(nameof(tableName), tableName);
     cmd.CommandTimeout = 10;
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -679,28 +692,9 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Checks if a table exists in the public schema.
-  /// </summary>
-  private static async Task<bool> _tableExistsAsync(
-      NpgsqlConnection connection, string tableName, CancellationToken ct) {
-
-    await using var cmd = connection.CreateCommand();
-    cmd.CommandText = @"
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = @tableName
-      )";
-    cmd.Parameters.AddWithValue("tableName", tableName);
-    cmd.CommandTimeout = 10;
-
-    var result = await cmd.ExecuteScalarAsync(ct);
-    return (bool)result!;
-  }
-
-  /// <summary>
   /// Splits DDL into CREATE TABLE statement and post-table DDL (indexes, comments).
   /// </summary>
-  private static (string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql, string tableName) {
+  private static (string CreateTableSql, string PostTableSql) _splitDdl(string ddlSql) {
     // Find the end of the CREATE TABLE statement (first ); after CREATE TABLE)
     var createTableMatch = Regex.Match(ddlSql,
         @"(CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s*\(.*?\)\s*;)",
@@ -711,7 +705,7 @@ public sealed class PostgresSchemaInitializer {
     }
 
     var createTableSql = createTableMatch.Groups[1].Value;
-    var postTableSql = ddlSql.Substring(createTableMatch.Index + createTableMatch.Length).Trim();
+    var postTableSql = ddlSql[(createTableMatch.Index + createTableMatch.Length)..].Trim();
 
     return (createTableSql, postTableSql);
   }
@@ -780,16 +774,6 @@ public sealed class PostgresSchemaInitializer {
   /// identifiers, so this validation prevents SQL injection when interpolating table names.
   /// </summary>
   private static bool _isSafeIdentifier(string identifier) {
-    if (string.IsNullOrEmpty(identifier)) {
-      return false;
-    }
-
-    foreach (var c in identifier) {
-      if (!char.IsLetterOrDigit(c) && c != '_') {
-        return false;
-      }
-    }
-
-    return true;
+    return !string.IsNullOrEmpty(identifier) && identifier.All(c => char.IsLetterOrDigit(c) || c == '_');
   }
 }
