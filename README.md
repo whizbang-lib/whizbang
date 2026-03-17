@@ -34,6 +34,12 @@
   <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM" alt="Codecov Sunburst" width="200"></a>
 </p>
 
+---
+
+<h3 align="center"><a href="https://whizba.ng">Read the full documentation at whizba.ng</a></h3>
+
+---
+
 ## Why Whizbang?
 
 - **Blazing Performance** — < 20ns in-process message dispatch with zero allocations on the hot path
