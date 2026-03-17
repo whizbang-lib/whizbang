@@ -19,15 +19,29 @@ namespace Whizbang.Core.Commands.System;
 /// <docs>core-concepts/routing#system-commands</docs>
 
 /// <summary>
-/// Command to rebuild a specific perspective across all services.
-/// Services with the matching perspective will reprocess from their last checkpoint.
+/// Command to rebuild one or more perspectives. Supports multiple modes and optional stream filtering.
 /// </summary>
-/// <param name="PerspectiveName">Name of the perspective to rebuild.</param>
-/// <param name="FromEventId">Optional event ID to start rebuilding from. If null, rebuilds from last checkpoint.</param>
+/// <param name="PerspectiveNames">Perspectives to rebuild. Null = all registered perspectives.</param>
+/// <param name="Mode">Rebuild mode: BlueGreen (new table + swap), InPlace (truncate + replay).</param>
+/// <param name="IncludeStreamIds">Optional: only rebuild these specific streams. Null = all streams.</param>
+/// <param name="ExcludeStreamIds">Optional: exclude these streams from rebuild. Null = no exclusions.</param>
+/// <param name="FromEventId">Optional: start replaying from this event ID. Null = from beginning.</param>
 /// <docs>core-concepts/perspectives#rebuild</docs>
 public record RebuildPerspectiveCommand(
-    string PerspectiveName,
+    string[]? PerspectiveNames = null,
+    Perspectives.RebuildMode Mode = Perspectives.RebuildMode.BlueGreen,
+    Guid[]? IncludeStreamIds = null,
+    Guid[]? ExcludeStreamIds = null,
     long? FromEventId = null
+) : ICommand;
+
+/// <summary>
+/// Command to cancel an in-progress perspective rebuild.
+/// </summary>
+/// <param name="PerspectiveName">Name of the perspective whose rebuild should be cancelled.</param>
+/// <docs>core-concepts/perspectives#rebuild</docs>
+public record CancelPerspectiveRebuildCommand(
+    string PerspectiveName
 ) : ICommand;
 
 /// <summary>

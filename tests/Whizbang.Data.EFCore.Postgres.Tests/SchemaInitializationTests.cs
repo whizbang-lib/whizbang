@@ -158,6 +158,120 @@ public class SchemaInitializationTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_RecordsMigrationTrackingDataAsync() {
+    // Arrange
+    await DropAllWhizbangTablesAsync();
+
+    // Act
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - Migration tracking tables should have data
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    // wh_schema_versions should have a version entry with both library and application versions
+    string libraryVersion;
+    string applicationVersion;
+    {
+      await using var versionCmd = new NpgsqlCommand(
+        "SELECT library_version, application_version FROM wh_schema_versions LIMIT 1", connection);
+      await using var versionReader = await versionCmd.ExecuteReaderAsync();
+      await Assert.That(await versionReader.ReadAsync()).IsTrue();
+      libraryVersion = versionReader.GetString(0);
+      applicationVersion = versionReader.GetString(1);
+    }
+
+    // Library version should be a semver string (e.g., "0.9.4-local.64")
+    await Assert.That(libraryVersion).Contains(".")
+      .Because("library_version should be a semver version like '0.9.4', not an assembly name");
+
+    // Application version should contain the assembly name and version (e.g., "Whizbang.Data.EFCore.Postgres.Tests/0.9.4.0")
+    await Assert.That(applicationVersion).Contains("/")
+      .Because("application_version should be 'AssemblyName/Version' format");
+    await Assert.That(applicationVersion).Contains(".")
+      .Because("application_version should include a version number");
+
+    // wh_schema_migrations should have entries for each migration
+    await using var migrationCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status IN (1, 3)", connection);
+    var migrationCount = (long)(await migrationCmd.ExecuteScalarAsync())!;
+    await Assert.That(migrationCount).IsGreaterThanOrEqualTo(1)
+      .Because("At least one migration should be recorded as Applied (1) or Skipped (3)");
+
+    // Each migration should have a content hash
+    await using var hashCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE content_hash IS NOT NULL AND LENGTH(content_hash) = 64", connection);
+    var hashCount = (long)(await hashCmd.ExecuteScalarAsync())!;
+    await Assert.That(hashCount).IsEqualTo(migrationCount)
+      .Because("Every recorded migration should have a 64-char SHA256 hash");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_SkipsUnchangedMigrationsOnSecondRunAsync() {
+    // Arrange - First initialization
+    await DropAllWhizbangTablesAsync();
+    await using var dbContext1 = CreateDbContext();
+    await dbContext1.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Act - Second initialization (same migrations)
+    await using var dbContext2 = CreateDbContext();
+    await dbContext2.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - All migrations should be Skipped (status 3) on second run
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 3", connection);
+    var skippedCount = (long)(await cmd.ExecuteScalarAsync())!;
+    await Assert.That(skippedCount).IsGreaterThanOrEqualTo(1)
+      .Because("On second run, unchanged migrations should be skipped (status 3)");
+
+    // Infrastructure migrations should not be Applied (1) on second run — they should all be Skipped (3)
+    await using var appliedInfraCmd = new NpgsqlCommand(
+      "SELECT COUNT(*) FROM wh_schema_migrations WHERE status = 1 AND file_name NOT LIKE 'perspective:%'", connection);
+    var appliedInfraCount = (long)(await appliedInfraCmd.ExecuteScalarAsync())!;
+    await Assert.That(appliedInfraCount).IsEqualTo(0)
+      .Because("No infrastructure migrations should be newly applied on second identical run");
+  }
+
+  [Test]
+  public async Task EnsureWhizbangDatabaseInitialized_TracksPerspectivedIndividuallyAsync() {
+    // Arrange
+    await DropAllWhizbangTablesAsync();
+
+    // Act
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+
+    // Assert - Perspective tables should be tracked individually in wh_schema_migrations
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+      "SELECT file_name, status, content_hash FROM wh_schema_migrations WHERE file_name LIKE 'perspective:%'", connection);
+    await using var reader = await cmd.ExecuteReaderAsync();
+
+    var perspectiveEntries = new List<(string Name, int Status, string Hash)>();
+    while (await reader.ReadAsync()) {
+      perspectiveEntries.Add((reader.GetString(0), reader.GetInt16(1), reader.GetString(2)));
+    }
+
+    // Should have at least one perspective entry tracked
+    await Assert.That(perspectiveEntries.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Per-perspective entries should be tracked individually in wh_schema_migrations");
+
+    // Each entry should have a valid hash
+    foreach (var entry in perspectiveEntries) {
+      await Assert.That(entry.Hash.Length).IsEqualTo(64)
+        .Because($"Perspective entry '{entry.Name}' should have a 64-char SHA256 hash");
+      await Assert.That(entry.Status == 1 || entry.Status == 3).IsTrue()
+        .Because($"Perspective entry '{entry.Name}' should be Applied (1) or Skipped (3)");
+    }
+  }
+
+  [Test]
   public async Task EnsureWhizbangDatabaseInitialized_HandlesPartialInitializationAsync() {
     // Arrange - Create only core tables, no migrations
     await DropAllWhizbangTablesAsync();
@@ -318,6 +432,8 @@ public class SchemaInitializationTests : EFCoreTestBase {
 
     // Drop all Whizbang tables in correct order (respecting foreign keys)
     var dropSql = @"
+      DROP TABLE IF EXISTS wh_schema_migrations CASCADE;
+      DROP TABLE IF EXISTS wh_schema_versions CASCADE;
       DROP TABLE IF EXISTS wh_receptor_processing CASCADE;
       DROP TABLE IF EXISTS wh_perspective_checkpoints CASCADE;
       DROP TABLE IF EXISTS wh_per_order CASCADE;
