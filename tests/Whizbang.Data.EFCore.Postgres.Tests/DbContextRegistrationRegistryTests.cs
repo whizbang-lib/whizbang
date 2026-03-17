@@ -35,7 +35,7 @@ public class DbContextRegistrationRegistryTests {
     // Arrange
     var invoked = false;
     DbContextRegistrationRegistry.Register<FakeRegDbContextA>(
-        (_, _) => { invoked = true; });
+        (_, _) => invoked = true);
     var services = new ServiceCollection();
 
     // Act
@@ -101,9 +101,9 @@ public class DbContextRegistrationRegistryTests {
     var firstCalled = false;
     var secondCalled = false;
     DbContextRegistrationRegistry.Register<FakeRegDbContextA>(
-        (_, _) => { firstCalled = true; });
+        (_, _) => firstCalled = true);
     DbContextRegistrationRegistry.Register<FakeRegDbContextA>(
-        (_, _) => { secondCalled = true; });
+        (_, _) => secondCalled = true);
     var services = new ServiceCollection();
 
     // Act
@@ -120,7 +120,7 @@ public class DbContextRegistrationRegistryTests {
     // Arrange
     var callCount = 0;
     DbContextRegistrationRegistry.Register<FakeRegDbContextA>(
-        (_, _) => { callCount++; });
+        (_, _) => callCount++);
     var services1 = new ServiceCollection();
     var services2 = new ServiceCollection();
 
