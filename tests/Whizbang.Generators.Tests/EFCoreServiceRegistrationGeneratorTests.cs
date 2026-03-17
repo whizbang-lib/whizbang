@@ -757,6 +757,46 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
   }
 
+  [Test]
+  public async Task Generator_SchemaExtensions_UsesTryAdvisoryLockWithBackoffAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PERSPECTIVE_BOILERPLATE}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should use non-blocking pg_try_advisory_lock, NOT blocking pg_advisory_lock
+    await Assert.That(sourceText).Contains("pg_try_advisory_lock");
+    await Assert.That(sourceText).DoesNotContain("SELECT pg_advisory_lock(");
+
+    // Should use CancellationToken.None for unlock (prevents crash on cancellation)
+    await Assert.That(sourceText).Contains("CancellationToken.None");
+
+    // Should reference SchemaInitializationLog for structured logging
+    await Assert.That(sourceText).Contains("SchemaInitializationLog");
+
+    // Should use NpgsqlDataSource for VACUUM connection (not raw connection string)
+    await Assert.That(sourceText).Contains("NpgsqlDataSource");
+  }
+
   #endregion
 
   #region No Generators Diagnostic Tests
