@@ -1517,10 +1517,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"    DbContextInitializationRegistry.Register<{dbContext.FullyQualifiedName}>(async (sp, logger, ct) => {{");
     sb.AppendLine($"      using var scope = sp.CreateScope();");
     sb.AppendLine($"      var dbContext = scope.ServiceProvider.GetService<{dbContext.FullyQualifiedName}>();");
-    sb.AppendLine($"      if (dbContext == null) {{");
+    sb.AppendLine("      if (dbContext == null) {");
     sb.AppendLine($"        logger?.LogDebug(\"{{DbContextName}} not registered in DI, skipping initialization\", \"{dbContext.ClassName}\");");
-    sb.AppendLine($"        return;");
-    sb.AppendLine($"      }}");
+    sb.AppendLine("        return;");
+    sb.AppendLine("      }");
     sb.AppendLine($"      await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);");
     sb.AppendLine($"    }});");
     sb.AppendLine();
@@ -1638,7 +1638,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Strip build metadata suffix (e.g., "0.9.4-local.62+abc123" → "0.9.4-local.62")
       var plusIdx = libraryVersion.IndexOf('+');
       if (plusIdx > 0) {
-        libraryVersion = libraryVersion.Substring(0, plusIdx);
+        libraryVersion = libraryVersion[..plusIdx];
       }
       template = template.Replace("__LIBRARY_VERSION__", libraryVersion);
       // __APPLICATION_VERSION__ is the consuming assembly name + version for tracking which app applied migrations
@@ -1908,53 +1908,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspective = uniqueTables[i];
       var perspSql = new StringBuilder();
 
-      // CREATE TABLE
-      perspSql.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
-      perspSql.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
-      perspSql.AppendLine($"  data JSONB NOT NULL,");
-      perspSql.AppendLine($"  metadata JSONB NOT NULL,");
-      perspSql.AppendLine($"  scope JSONB NOT NULL,");
-      perspSql.AppendLine($"  created_at TIMESTAMPTZ NOT NULL,");
-      perspSql.AppendLine($"  updated_at TIMESTAMPTZ NOT NULL,");
+      _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
+      _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
-      if (perspective.PhysicalFields.IsEmpty) {
-        perspSql.AppendLine($"  version INTEGER NOT NULL");
-      } else {
-        perspSql.AppendLine($"  version INTEGER NOT NULL,");
-        for (int j = 0; j < perspective.PhysicalFields.Length; j++) {
-          var field = perspective.PhysicalFields[j];
-          var columnType = _getPostgresColumnType(field);
-          var isLast = j == perspective.PhysicalFields.Length - 1;
-          perspSql.AppendLine($"  {field.ColumnName} {columnType}{(isLast ? "" : ",")}");
-        }
-      }
-      perspSql.AppendLine($");");
-
-      // Indexes
-      var shortName = perspective.TableName.Replace("wh_per_", "");
-      perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at ON {quotedSchema}.{perspective.TableName} (created_at);");
-      perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin ON {quotedSchema}.{perspective.TableName} USING gin (data);");
-      perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
-      perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
-
-      // Physical field indexes
-      foreach (var field in perspective.PhysicalFields) {
-        if (field.IsIndexed) {
-          if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value <= 2000) {
-            perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
-          } else if (!field.IsVector) {
-            perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName} ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
-          }
-        }
-      }
-
-      // Escape for C# verbatim string
       var escapedSql = perspSql.ToString()
           .Replace("\"", "\"\"")
           .Replace("{", "{{")
           .Replace("}", "}}");
 
-      // Use the perspective class name (from ModelTypeName) as the entry key
       var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
 
       sb.Append($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
@@ -1964,6 +1925,49 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return sb.ToString();
+  }
+
+  private static void _generatePerspectiveTableSql(
+      StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
+    perspSql.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
+    perspSql.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
+    perspSql.AppendLine("  data JSONB NOT NULL,");
+    perspSql.AppendLine("  metadata JSONB NOT NULL,");
+    perspSql.AppendLine("  scope JSONB NOT NULL,");
+    perspSql.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
+    perspSql.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+
+    if (perspective.PhysicalFields.IsEmpty) {
+      perspSql.AppendLine("  version INTEGER NOT NULL");
+    } else {
+      perspSql.AppendLine("  version INTEGER NOT NULL,");
+      for (int j = 0; j < perspective.PhysicalFields.Length; j++) {
+        var field = perspective.PhysicalFields[j];
+        var columnType = _getPostgresColumnType(field);
+        var isLast = j == perspective.PhysicalFields.Length - 1;
+        perspSql.AppendLine($"  {field.ColumnName} {columnType}{(isLast ? "" : ",")}");
+      }
+    }
+    perspSql.AppendLine(");");
+  }
+
+  private static void _generatePerspectiveIndexSql(
+      StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
+    var shortName = perspective.TableName.Replace("wh_per_", "");
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at ON {quotedSchema}.{perspective.TableName} (created_at);");
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin ON {quotedSchema}.{perspective.TableName} USING gin (data);");
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
+    perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
+
+    foreach (var field in perspective.PhysicalFields) {
+      if (field.IsIndexed) {
+        if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value <= 2000) {
+          perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+        } else if (!field.IsVector) {
+          perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName} ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+        }
+      }
+    }
   }
 
   /// <summary>

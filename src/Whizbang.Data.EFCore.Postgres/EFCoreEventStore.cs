@@ -31,8 +31,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
   public EFCoreEventStore(
     TDbContext context,
-    JsonSerializerOptions? jsonOptions = null,
-    Whizbang.Core.Perspectives.IPerspectiveInvoker? perspectiveInvoker = null) {
+    JsonSerializerOptions? jsonOptions = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
   }

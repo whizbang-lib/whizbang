@@ -591,6 +591,7 @@ public partial class DapperWorkCoordinator(
     Level = LogLevel.Debug,
     Message = "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}"
   )]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "LoggerMessage requires flat parameters matching the structured log template")]
   static partial void LogProcessingWorkBatch(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId,
     int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchFlags flags);
 

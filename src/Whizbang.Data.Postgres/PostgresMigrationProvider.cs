@@ -60,8 +60,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
     var migrations = new List<MigrationScript>();
 
     foreach (var resourceName in resourceNames) {
-      var scriptName = resourceName
-        .Substring(_resourcePrefix.Length)
+      var scriptName = resourceName[_resourcePrefix.Length..]
         .Replace(".sql", string.Empty);
 
       var sql = _readEmbeddedResource(resourceName);
