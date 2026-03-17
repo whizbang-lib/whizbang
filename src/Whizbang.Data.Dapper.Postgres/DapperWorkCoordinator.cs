@@ -46,47 +46,27 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Dapper implementation of IWorkCoordinator for lease-based work coordination.
 /// Uses the PostgreSQL process_work_batch function for atomic operations.
 /// </summary>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
-public class DapperWorkCoordinator(
+public partial class DapperWorkCoordinator(
   string connectionString,
   JsonSerializerOptions jsonOptions,
-  ILogger<DapperWorkCoordinator>? logger = null
+  ILogger<DapperWorkCoordinator>? logger = null,
+  int commandTimeoutSeconds = 5
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
+  private readonly int _commandTimeoutSeconds = commandTimeoutSeconds;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var instanceId = request.InstanceId;
-      var serviceName = request.ServiceName;
-      var hostName = request.HostName;
-      var processId = request.ProcessId;
-      var outboxCompletionsCount = request.OutboxCompletions.Length;
-      var outboxFailuresCount = request.OutboxFailures.Length;
-      var inboxCompletionsCount = request.InboxCompletions.Length;
-      var inboxFailuresCount = request.InboxFailures.Length;
-      var newOutboxCount = request.NewOutboxMessages.Length;
-      var newInboxCount = request.NewInboxMessages.Length;
-      var flags = request.Flags;
-      _logger.LogDebug(
-        "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-        instanceId,
-        serviceName,
-        hostName,
-        processId,
-        outboxCompletionsCount,
-        outboxFailuresCount,
-        inboxCompletionsCount,
-        inboxFailuresCount,
-        newOutboxCount,
-        newInboxCount,
-        flags
-      );
+    if (_logger is not null) {
+      LogProcessingWorkBatch(_logger, request.InstanceId, request.ServiceName, request.HostName, request.ProcessId,
+        request.OutboxCompletions.Length, request.OutboxFailures.Length,
+        request.InboxCompletions.Length, request.InboxFailures.Length,
+        request.NewOutboxMessages.Length, request.NewInboxMessages.Length, request.Flags);
     }
 
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -162,10 +142,29 @@ public class DapperWorkCoordinator(
     var commandDefinition = new CommandDefinition(
       sql,
       parameters,
+      commandTimeout: _commandTimeoutSeconds,
       cancellationToken: cancellationToken
     );
 
-    var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
+    IEnumerable<WorkBatchRow> results;
+    try {
+      results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
+    } catch (NpgsqlException ex) when (ex.InnerException is TimeoutException || ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase)) {
+      if (_logger is not null) {
+        LogWorkBatchTimedOut(_logger, _commandTimeoutSeconds, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    } catch (OperationCanceledException ex) {
+      if (_logger is not null) {
+        LogWorkBatchCancelled(_logger, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    } catch (Exception ex) {
+      if (_logger is not null) {
+        LogWorkBatchFailed(_logger, request.InstanceId, request.ServiceName, ex);
+      }
+      throw;
+    }
     var resultList = results.ToList();
 
     // Single-pass categorization of results by source type
@@ -275,18 +274,8 @@ public class DapperWorkCoordinator(
       }
     }
 
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var outboxWorkCount = outboxWork.Count;
-      var inboxWorkCount = inboxWork.Count;
-      var perspectiveWorkCount = perspectiveWork.Count;
-      var syncResultsCount = syncInquiryResults.Count;
-      _logger.LogDebug(
-        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results",
-        outboxWorkCount,
-        inboxWorkCount,
-        perspectiveWorkCount,
-        syncResultsCount
-      );
+    if (_logger is not null) {
+      LogWorkBatchProcessed(_logger, outboxWork.Count, inboxWork.Count, perspectiveWork.Count, syncInquiryResults.Count);
     }
 
     return new WorkBatch {
@@ -330,18 +319,11 @@ public class DapperWorkCoordinator(
     var json = JsonSerializer.Serialize(messages, typeInfo);
 
     // Log the first message for debugging
-    if (messages.Length > 0 && _logger?.IsEnabled(LogLevel.Debug) == true) {
-      // OutboxMessage is non-generic - access properties directly
+    if (messages.Length > 0 && _logger is not null) {
       var firstMessage = messages[0];
-      var messageId = firstMessage.MessageId;
-      var destination = firstMessage.Destination;
-      var envelopeType = firstMessage.EnvelopeType;
-      var hopsCount = firstMessage.Envelope.Hops?.Count ?? 0;
       var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
-
-      _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
-        messageId, destination, envelopeType, hopsCount);
-      _logger.LogDebug("First outbox message JSON: {Json}", jsonPreview);
+      LogSerializingOutboxMessage(_logger, firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType, firstMessage.Envelope.Hops?.Count ?? 0);
+      LogOutboxMessageJson(_logger, jsonPreview);
     }
 
     return json;
@@ -413,8 +395,8 @@ public class DapperWorkCoordinator(
   /// </summary>
   private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     // Log the envelope data for debugging
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      _logger.LogDebug("Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}", envelopeTypeName, envelopeDataJson);
+    if (_logger is not null) {
+      LogDeserializingEnvelope(_logger, envelopeTypeName, envelopeDataJson);
     }
 
     // Always deserialize as MessageEnvelope<JsonElement> to support covariance casting to IMessageEnvelope<object>
@@ -427,10 +409,8 @@ public class DapperWorkCoordinator(
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     // Log result for debugging
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var messageId = envelope.MessageId;
-      var hopsCount = envelope.Hops?.Count ?? 0;
-      _logger.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", messageId, hopsCount);
+    if (_logger is not null) {
+      LogDeserializedEnvelope(_logger, envelope.MessageId.Value, envelope.Hops?.Count ?? 0);
     }
 
     return envelope;
@@ -535,10 +515,8 @@ public class DapperWorkCoordinator(
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
-    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var severity = args.Notice.Severity;
-      var message = args.Notice.MessageText;
-      _logger.LogDebug("PostgreSQL Notice [{Severity}]: {Message}", severity, message);
+    if (_logger is not null) {
+      LogPostgresNotice(_logger, args.Notice.Severity, args.Notice.MessageText);
     }
   }
 
@@ -606,6 +584,71 @@ public class DapperWorkCoordinator(
       return null;
     }
   }
+
+  #region LoggerMessage Declarations
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}"
+  )]
+  static partial void LogProcessingWorkBatch(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId,
+    int outboxCompletions, int outboxFailures, int inboxCompletions, int inboxFailures, int newOutbox, int newInbox, WorkBatchFlags flags);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work, {SyncResults} sync results"
+  )]
+  static partial void LogWorkBatchProcessed(ILogger logger, int outboxWork, int inboxWork, int perspectiveWork, int syncResults);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}"
+  )]
+  static partial void LogSerializingOutboxMessage(ILogger logger, Guid messageId, string? destination, string envelopeType, int hopsCount);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "First outbox message JSON: {Json}"
+  )]
+  static partial void LogOutboxMessageJson(ILogger logger, string json);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}"
+  )]
+  static partial void LogDeserializingEnvelope(ILogger logger, string envelopeType, string envelopeJson);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}"
+  )]
+  static partial void LogDeserializedEnvelope(ILogger logger, Guid messageId, int hopsCount);
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "PostgreSQL Notice [{Severity}]: {Message}"
+  )]
+  static partial void LogPostgresNotice(ILogger logger, string severity, string message);
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "process_work_batch timed out after {TimeoutSeconds}s for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchTimedOut(ILogger logger, int timeoutSeconds, Guid instanceId, string serviceName, Exception ex);
+
+  [LoggerMessage(
+    Level = LogLevel.Information,
+    Message = "process_work_batch cancelled for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchCancelled(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+
+  [LoggerMessage(
+    Level = LogLevel.Error,
+    Message = "process_work_batch failed for instance {InstanceId} ({ServiceName})"
+  )]
+  static partial void LogWorkBatchFailed(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+
+  #endregion
 }
 
 /// <summary>

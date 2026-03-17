@@ -139,15 +139,20 @@ public sealed class PostgresSchemaInitializer {
 
     var originalTableName = backupTableName[..bakIdx];
 
+    // Validate all identifiers before using in DDL
+    if (!_isSafeIdentifier(originalTableName) || !_isSafeIdentifier(backupTableName)) {
+      return false;
+    }
+
     // Atomic swap: active → discarded, backup → active
     await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
     try {
       var discardedName = $"{originalTableName}_discarded_{DateTime.UtcNow:yyyyMMddHHmmss}";
 
       await _executeSqlAsync(connection, transaction,
-          $"ALTER TABLE IF EXISTS {originalTableName} RENAME TO {discardedName}", cancellationToken);
+          $"ALTER TABLE IF EXISTS \"{originalTableName}\" RENAME TO \"{discardedName}\"", cancellationToken);
       await _executeSqlAsync(connection, transaction,
-          $"ALTER TABLE {backupTableName} RENAME TO {originalTableName}", cancellationToken);
+          $"ALTER TABLE \"{backupTableName}\" RENAME TO \"{originalTableName}\"", cancellationToken);
 
       // Restore previous hash in wh_schema_migrations
       await using var restoreCmd = connection.CreateCommand();
@@ -295,8 +300,14 @@ public sealed class PostgresSchemaInitializer {
       if (DateTime.TryParseExact(datePart, "yyyyMMddHHmmss",
           System.Globalization.CultureInfo.InvariantCulture,
           System.Globalization.DateTimeStyles.None, out var backupDate) && backupDate < cutoff) {
+        // Validate table name contains only safe PostgreSQL identifier characters
+        // to prevent SQL injection (even though the name comes from information_schema)
+        if (!_isSafeIdentifier(tableName)) {
+          continue;
+        }
+
         await using var dropCmd = connection.CreateCommand();
-        dropCmd.CommandText = $"DROP TABLE IF EXISTS {tableName}";
+        dropCmd.CommandText = $"DROP TABLE IF EXISTS \"{tableName}\"";
         dropCmd.CommandTimeout = 30;
         await dropCmd.ExecuteNonQueryAsync(cancellationToken);
         dropped.Add(tableName);
@@ -569,14 +580,14 @@ public sealed class PostgresSchemaInitializer {
     if (shared.Count > 0) {
       var colList = string.Join(", ", shared.Select(c => $"\"{c}\""));
       await _executeSqlAsync(connection, transaction,
-          $"INSERT INTO {tempName} ({colList}) SELECT {colList} FROM {tableName}", ct);
+          $"INSERT INTO \"{tempName}\" ({colList}) SELECT {colList} FROM \"{tableName}\"", ct);
     }
 
     // 3. Swap: old → backup, new → active
     await _executeSqlAsync(connection, transaction,
-        $"ALTER TABLE {tableName} RENAME TO {backupName}", ct);
+        $"ALTER TABLE \"{tableName}\" RENAME TO \"{backupName}\"", ct);
     await _executeSqlAsync(connection, transaction,
-        $"ALTER TABLE {tempName} RENAME TO {tableName}", ct);
+        $"ALTER TABLE \"{tempName}\" RENAME TO \"{tableName}\"", ct);
 
     // 4. Execute post-table DDL (indexes reference final table name)
     if (!string.IsNullOrWhiteSpace(postTableSql)) {
@@ -761,5 +772,24 @@ public sealed class PostgresSchemaInitializer {
     }
 
     return normalized.ToUpperInvariant();
+  }
+
+  /// <summary>
+  /// Validates that a string is a safe PostgreSQL identifier (letters, digits, underscores only).
+  /// DDL statements (DROP TABLE, ALTER TABLE, RENAME) cannot use parameterized queries for
+  /// identifiers, so this validation prevents SQL injection when interpolating table names.
+  /// </summary>
+  private static bool _isSafeIdentifier(string identifier) {
+    if (string.IsNullOrEmpty(identifier)) {
+      return false;
+    }
+
+    foreach (var c in identifier) {
+      if (!char.IsLetterOrDigit(c) && c != '_') {
+        return false;
+      }
+    }
+
+    return true;
   }
 }
