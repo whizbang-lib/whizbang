@@ -1,17 +1,38 @@
-# Whizbang
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="Whizbang" src="assets/logo-light.svg" width="500">
+  </picture>
+</p>
 
-[![CI](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg)](https://codecov.io/gh/whizbang-lib/whizbang)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status)](https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang)
-[![Secret Scanning](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml)
-[![Supply Chain](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml)
-[![OSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge)](https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang)
-[![NuGet](https://img.shields.io/nuget/v/Whizbang.Core.svg)](https://www.nuget.org/packages/Whizbang.Core/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  A comprehensive .NET library for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.
+</p>
 
-[![Codecov Sunburst](https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM)](https://codecov.io/gh/whizbang-lib/whizbang)
+<p align="center">
+  <a href="https://whizba.ng/">Documentation</a> &middot;
+  <a href="https://www.nuget.org/packages/Whizbang.Core/">NuGet</a> &middot;
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-A comprehensive .NET library for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.
+<p align="center">
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang"><img src="https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status" alt="Quality Gate Status"></a>
+  <a href="https://www.nuget.org/packages/Whizbang.Core/"><img src="https://img.shields.io/nuget/v/Whizbang.Core.svg" alt="NuGet"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg" alt="Secret Scanning"></a>
+  <a href="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml"><img src="https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg" alt="Supply Chain"></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang"><img src="https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge" alt="OSSF Scorecard"></a>
+</p>
+
+<p align="center">
+  <a href="https://codecov.io/gh/whizbang-lib/whizbang"><img src="https://codecov.io/gh/whizbang-lib/whizbang/graphs/sunburst.svg?token=F1AZXLI2MM" alt="Codecov Sunburst" width="200"></a>
+</p>
 
 ## Version 0.1.0 - Foundation Release
 
@@ -77,10 +98,6 @@ All tests are currently **failing** by design. This is TDD - tests define the be
 - **AOT Compatible** - Native AOT from day one
 - **Type Safe** - Compile-time safety everywhere
 - **Test Driven** - Comprehensive test coverage
-
-## Documentation
-
-See the [documentation site](https://whizba.ng/) for comprehensive documentation of all features and design decisions.
 
 ## Release Workflow
 
