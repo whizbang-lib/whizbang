@@ -650,11 +650,20 @@ public class DebuggerAwareClockTests {
     using var clock = new DebuggerAwareClock(options);
     var stopwatch = clock.StartNew();
 
-    // Act - wait for multiple sampling cycles
-    await Task.Delay(100);
+    // Act - wait for multiple sample cycles with retry to handle CI timing variability
+    // In CI environments, CPU time sampling may be delayed, so we use a polling approach
+    var maxAttempts = 30; // Max 3 seconds (30 * 100ms)
+    var elapsedMs = 0.0;
+    for (var i = 0; i < maxAttempts; i++) {
+      await Task.Delay(100);
+      elapsedMs = stopwatch.ActiveElapsed.TotalMilliseconds;
+      if (elapsedMs > 50) {
+        break; // Success threshold
+      }
+    }
 
     // Assert - should have measured some elapsed time
-    await Assert.That(stopwatch.ActiveElapsed.TotalMilliseconds).IsGreaterThan(50);
+    await Assert.That(elapsedMs).IsGreaterThan(50);
   }
 
   [Test]

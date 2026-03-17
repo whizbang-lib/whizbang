@@ -1,7 +1,7 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Defines the 20 lifecycle stages where receptors can execute.
+/// Defines the 22 lifecycle stages where receptors can execute.
 /// Controls timing of receptor execution relative to database operations and message processing.
 /// Stages fall into pairs: Async (non-blocking) and Inline (blocks per unit of work).
 /// </summary>
@@ -19,6 +19,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerPostLifecycleTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerPostLifecycleTests.cs</tests>
 public enum LifecycleStage {
   /// <summary>
   /// Special value for tag hooks: Fire immediately after receptor completes in Dispatcher.
@@ -180,5 +182,21 @@ public enum LifecycleStage {
   /// Blocks perspective processing for this unit until completion.
   /// Best for: Critical derived updates, cross-perspective consistency.
   /// </summary>
-  PostPerspectiveInline
+  PostPerspectiveInline,
+
+  /// <summary>
+  /// Executed once per event after all perspectives in the batch have processed it.
+  /// Async processing, does not block perspective worker.
+  /// For events without perspectives, fires immediately after PostInbox.
+  /// Best for: Notifications, final event processing, cross-perspective aggregation.
+  /// </summary>
+  PostLifecycleAsync,
+
+  /// <summary>
+  /// Executed once per event after all perspectives in the batch have processed it.
+  /// Blocks perspective processing for this unit until completion.
+  /// For events without perspectives, fires immediately after PostInbox.
+  /// Best for: Critical final processing, guaranteed-delivery notifications.
+  /// </summary>
+  PostLifecycleInline
 }
