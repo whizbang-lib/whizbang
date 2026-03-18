@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -19,6 +20,7 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// Extension methods for __DBCONTEXT_CLASS__ schema initialization.
 /// AOT-compatible - uses PostgresSchemaBuilder instead of EF Core's GenerateCreateScript().
 /// </summary>
+/// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
@@ -55,13 +57,48 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     try {
       // Acquire advisory lock to prevent race conditions when multiple services start simultaneously
       // Lock ID is based on schema name hash to allow parallel initialization of different schemas
-      // Uses pg_advisory_lock (blocking) - waits until lock is available
+      // Uses pg_try_advisory_lock (non-blocking) with randomized exponential backoff
+      // to avoid thundering herd when many pods start simultaneously
       var lockId = Math.Abs("__SCHEMA__".GetHashCode()) % int.MaxValue;
-      logger?.LogDebug("Acquiring advisory lock {LockId} for schema '__SCHEMA__'...", lockId);
+      if (logger is not null) {
+        Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiringAdvisoryLock(logger, lockId, "__SCHEMA__");
+      }
 
-      await dbContext.Database.ExecuteSqlRawAsync(
-        $"SELECT pg_advisory_lock({lockId})",
-        cancellationToken);
+      {
+        var attempt = 0;
+        var baseDelayMs = 100;
+        var maxDelayMs = 20_000;
+        var rng = new Random();
+        var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+        while (true) {
+          cancellationToken.ThrowIfCancellationRequested();
+
+          // pg_try_advisory_lock returns boolean: true if lock acquired, false if held by another session
+          // Use ExecuteScalarAsync to read the boolean result directly
+          await using var lockCmd = connection.CreateCommand();
+          lockCmd.CommandText = $"SELECT pg_try_advisory_lock({lockId})";
+          var lockResult = await lockCmd.ExecuteScalarAsync(cancellationToken);
+          if (lockResult is true) {
+            break;
+          }
+
+          attempt++;
+          // Exponential backoff: 100ms, 200ms, 400ms, ... capped at 20s, plus random jitter
+          var delay = Math.Min(baseDelayMs * (1 << Math.Min(attempt - 1, 20)), maxDelayMs);
+          var jitter = rng.Next(0, delay / 2);
+          var totalDelay = delay + jitter;
+
+          if (logger is not null) {
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AdvisoryLockRetry(logger, lockId, attempt, totalDelay);
+          }
+
+          await Task.Delay(totalDelay, cancellationToken);
+        }
+      }
+
+      if (logger is not null) {
+        Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.AcquiredAdvisoryLock(logger, lockId, "__SCHEMA__");
+      }
 
       try {
         logger?.LogInformation("Starting database initialization for {DbContext} (schema: __SCHEMA__)...", "__DBCONTEXT_CLASS__");
@@ -125,14 +162,33 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         logger?.LogDebug("Cleared Npgsql connection pools to refresh function OID mappings");
       } finally {
         // Release advisory lock - allows other services waiting on initialization to proceed
-        await dbContext.Database.ExecuteSqlRawAsync(
-          $"SELECT pg_advisory_unlock({lockId})",
-          cancellationToken);
-        logger?.LogDebug("Released advisory lock {LockId} for schema '__SCHEMA__'", lockId);
+        // Use CancellationToken.None to ensure the lock is always released, even if the
+        // original cancellationToken has been cancelled. A cancelled unlock would crash
+        // and leave the lock held, blocking all other pods indefinitely.
+        try {
+          var connection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+          await using var unlockCmd = connection.CreateCommand();
+          unlockCmd.CommandText = $"SELECT pg_advisory_unlock({lockId})";
+          await unlockCmd.ExecuteScalarAsync(CancellationToken.None);
+
+          if (logger is not null) {
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.ReleasedAdvisoryLock(logger, lockId, "__SCHEMA__");
+          }
+        } catch (Exception ex) {
+          if (logger is not null) {
+            Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToReleaseAdvisoryLock(logger, ex, lockId, "__SCHEMA__");
+          }
+        }
       }
     } finally {
       // Close the explicitly-opened connection (returns to pool, which also releases advisory lock)
-      await dbContext.Database.CloseConnectionAsync();
+      try {
+        await dbContext.Database.CloseConnectionAsync();
+      } catch (Exception ex) {
+        if (logger is not null) {
+          Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.FailedToCloseConnection(logger, ex, "__SCHEMA__");
+        }
+      }
     }
   }
 
@@ -738,19 +794,40 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
           taskName, rowsAffected, durationMs, status);
       }
 
-      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined
-      var connectionString = dbContext.Database.GetConnectionString();
-      if (!string.IsNullOrEmpty(connectionString)) {
-        await using var conn = new Npgsql.NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events" };
-        foreach (var table in tables) {
-          await using var cmd = conn.CreateCommand();
-          cmd.CommandTimeout = 120;
-          cmd.CommandText = @"VACUUM ANALYZE __QUOTED_SCHEMA__." + table;
-          await cmd.ExecuteNonQueryAsync(cancellationToken);
+      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined.
+      // When using NpgsqlDataSource (Aspire/cloud), GetConnectionString() strips the password,
+      // so creating a new NpgsqlConnection from it would fail auth.
+      // Instead, get the DbDataSource from EF Core's options extension which preserves full auth.
+      Npgsql.NpgsqlConnection? vacuumConn = null;
+      try {
+        var npgsqlExt = dbContext.GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>()
+          .Extensions.OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
+          .FirstOrDefault();
+        var dataSource = npgsqlExt?.DataSource as Npgsql.NpgsqlDataSource;
+        if (dataSource != null) {
+          vacuumConn = dataSource.CreateConnection();
+        } else {
+          var connectionString = dbContext.Database.GetConnectionString();
+          if (!string.IsNullOrEmpty(connectionString)) {
+            vacuumConn = new Npgsql.NpgsqlConnection(connectionString);
+          }
         }
-        logger?.LogDebug("VACUUM ANALYZE completed for work coordination tables");
+
+        if (vacuumConn != null) {
+          await vacuumConn.OpenAsync(cancellationToken);
+          var tables = new[] { "wh_outbox", "wh_inbox", "wh_perspective_events" };
+          foreach (var table in tables) {
+            await using var cmd = vacuumConn.CreateCommand();
+            cmd.CommandTimeout = 120;
+            cmd.CommandText = @"VACUUM ANALYZE __QUOTED_SCHEMA__." + table;
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+          }
+          logger?.LogDebug("VACUUM ANALYZE completed for work coordination tables");
+        }
+      } finally {
+        if (vacuumConn != null) {
+          await vacuumConn.DisposeAsync();
+        }
       }
     } catch (Exception ex) {
       logger?.LogWarning(ex, "Database maintenance failed (non-fatal, will retry on next startup)");

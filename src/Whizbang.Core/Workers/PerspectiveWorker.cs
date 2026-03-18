@@ -327,6 +327,9 @@ public partial class PerspectiveWorker(
     }
 #pragma warning restore CA1848, CA1873
 
+    // Collect all processed events across groups for PostLifecycle firing
+    var batchProcessedEvents = new Dictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)>();
+
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
     foreach (var group in groupedWork) {
       var streamId = group.Key.StreamId;
@@ -564,6 +567,11 @@ public partial class PerspectiveWorker(
           LogDiagnosticLoadedEvents(_logger, eventsCount, perspectiveName, streamId);
         }
 
+        // Collect processed events for PostLifecycle firing at batch end (deduplicate by event ID)
+        foreach (var envelope in processedEvents) {
+          batchProcessedEvents.TryAdd(envelope.MessageId.Value, (envelope, streamId));
+        }
+
         // NOTE: PostPerspectiveAsync is fired from the generated perspective runner, not here.
         // The runner fires it after flushing data but before returning the completion.
         // This ensures it fires before checkpoint commits, as designed.
@@ -692,6 +700,47 @@ public partial class PerspectiveWorker(
         // Report failure via strategy
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken);
         throw; // Never swallow exceptions
+      }
+    }
+
+    // Phase 5: Fire PostLifecycle once per unique event processed in this batch
+    // PostLifecycle fires AFTER all perspectives in the batch have processed, enabling
+    // single-notification patterns (e.g., one SignalR notification per event, not per perspective)
+    if (batchProcessedEvents.Count > 0 && receptorInvoker is not null) {
+      foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
+        var context = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.PostLifecycleAsync,
+          StreamId = streamId,
+          PerspectiveType = null, // Not perspective-specific
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1
+        };
+
+        // Establish security context from envelope hops
+        await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+
+        // PostLifecycleAsync (non-blocking)
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, cancellationToken);
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+          context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
+        // PostLifecycleInline (blocking)
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
+          context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);
+        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+          context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
+        // Process message tags at PostLifecycleInline
+        var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+        if (tagProcessor is not null) {
+          var eventPayload = envelope.Payload;
+          var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
+          await tagProcessor.ProcessTagsAsync(
+            eventPayload, eventPayload.GetType(),
+            LifecycleStage.PostLifecycleInline,
+            extractedScope, cancellationToken
+          ).ConfigureAwait(false);
+        }
       }
     }
 
