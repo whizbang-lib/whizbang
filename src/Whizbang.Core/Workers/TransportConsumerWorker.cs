@@ -9,9 +9,11 @@ using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 
@@ -504,6 +506,31 @@ public class TransportConsumerWorker : BackgroundService {
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
 
           await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+          // PostLifecycle stages for events WITHOUT perspectives
+          // Events with perspectives get PostLifecycle from PerspectiveWorker at batch end
+          if (_isEventWithoutPerspectives(work.MessageType, scope.ServiceProvider)) {
+            // PostLifecycleAsync (non-blocking)
+            lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, cancellationToken);
+            await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+            // PostLifecycleInline (blocking)
+            lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
+            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, cancellationToken);
+            await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+            // Process message tags at PostLifecycleInline
+            var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+            if (tagProcessor is not null && message is not null) {
+              var extractedScope = EnvelopeContextExtractor.ExtractScope(typedEnvelope.Hops);
+              await tagProcessor.ProcessTagsAsync(
+                message, message.GetType(),
+                LifecycleStage.PostLifecycleInline,
+                extractedScope, cancellationToken
+              ).ConfigureAwait(false);
+            }
+          }
         }
       }
 
@@ -539,6 +566,32 @@ public class TransportConsumerWorker : BackgroundService {
   private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken cancellationToken) {
     await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+  }
+
+  /// <summary>
+  /// Checks if the given message type is an event type that has NO associated perspectives.
+  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
+  /// Events without perspectives need PostLifecycle fired here immediately.
+  /// </summary>
+  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      // No perspectives registered at all - all events are "without perspectives"
+      return true;
+    }
+
+    var perspectives = registry.GetRegisteredPerspectives();
+    foreach (var perspective in perspectives) {
+      foreach (var eventType in perspective.EventTypes) {
+        if (eventType.EndsWith(messageType, StringComparison.Ordinal)
+            || messageType.EndsWith(eventType, StringComparison.Ordinal)
+            || string.Equals(eventType, messageType, StringComparison.Ordinal)) {
+          return false; // This event type has at least one perspective
+        }
+      }
+    }
+
+    return true; // No perspectives handle this event type
   }
 
   /// <summary>

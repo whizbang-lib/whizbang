@@ -260,6 +260,8 @@ public class LifecycleStageScopePropagationTests {
     yield return LifecycleStage.PrePerspectiveInline;
     yield return LifecycleStage.PostPerspectiveAsync;
     yield return LifecycleStage.PostPerspectiveInline;
+    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleInline;
   }
 
   #endregion
