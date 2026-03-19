@@ -1,0 +1,376 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400">
+  <defs>
+    <style>
+      /* Background */
+      .bg { fill: #0a0a0f; }
+      .bg-light { fill: #f0f2f8; }
+
+      /* Stars - 3 layers with different twinkle speeds */
+      .star { fill: #fff; }
+      .s1 { opacity: 0; animation: twinkle 3s ease-in-out infinite; }
+      .s2 { opacity: 0; animation: twinkle 4s ease-in-out infinite; }
+      .s3 { opacity: 0; animation: twinkle 5s ease-in-out infinite; }
+
+      /* Stagger star animations */
+      .d0 { animation-delay: 0s; } .d1 { animation-delay: 0.3s; } .d2 { animation-delay: 0.7s; }
+      .d3 { animation-delay: 1.1s; } .d4 { animation-delay: 1.5s; } .d5 { animation-delay: 1.9s; }
+      .d6 { animation-delay: 2.3s; } .d7 { animation-delay: 2.7s; } .d8 { animation-delay: 3.1s; }
+      .d9 { animation-delay: 3.5s; } .d10 { animation-delay: 0.5s; } .d11 { animation-delay: 1.3s; }
+      .d12 { animation-delay: 2.1s; } .d13 { animation-delay: 2.9s; } .d14 { animation-delay: 0.9s; }
+      .d15 { animation-delay: 1.7s; } .d16 { animation-delay: 3.3s; } .d17 { animation-delay: 0.1s; }
+      .d18 { animation-delay: 2.5s; } .d19 { animation-delay: 3.7s; }
+
+      @keyframes twinkle {
+        0%, 100% { opacity: 0.1; }
+        50% { opacity: 0.9; }
+      }
+
+      /* Ambient glow orbs */
+      .orb1 { animation: drift1 12s ease-in-out infinite; }
+      .orb2 { animation: drift2 15s ease-in-out infinite; }
+      .orb3 { animation: drift3 18s ease-in-out infinite; }
+
+      @keyframes drift1 {
+        0%, 100% { transform: translate(0, 0); opacity: 0.08; }
+        50% { transform: translate(15px, -10px); opacity: 0.14; }
+      }
+      @keyframes drift2 {
+        0%, 100% { transform: translate(0, 0); opacity: 0.06; }
+        50% { transform: translate(-20px, 12px); opacity: 0.12; }
+      }
+      @keyframes drift3 {
+        0%, 100% { transform: translate(0, 0); opacity: 0.07; }
+        50% { transform: translate(10px, 15px); opacity: 0.13; }
+      }
+
+      /* Meteor streaks — visible ~1.5s, pause ~4-6s between */
+      .meteor1 { animation: mfly1 6s ease-out infinite; }
+      .meteor2 { animation: mfly2 7s ease-out infinite; animation-delay: 2s; animation-fill-mode: backwards; }
+      .meteor3 { animation: mfly3 8s ease-out infinite; animation-delay: 4.5s; animation-fill-mode: backwards; }
+      .meteor4 { animation: mfly4 7s ease-out infinite; animation-delay: 1s; animation-fill-mode: backwards; }
+      .meteor5 { animation: mfly5 9s ease-out infinite; animation-delay: 6s; animation-fill-mode: backwards; }
+
+      /* Meteor trail is drawn on -x axis, so rotate = atan2(dy, dx)
+         to make trail point BEHIND direction of travel.
+         m1: (850,40)→(530,200) dx=-320 dy=160 → atan2=153°
+         m2: (500,70)→(240,200) dx=-260 dy=130 → atan2=153°
+         m3: (1100,90)→(810,190) dx=-290 dy=100 → atan2=161°
+         m4: (300,120)→(60,290) dx=-240 dy=170 → atan2=145°
+         m5: (1000,180)→(650,270) dx=-350 dy=90 → atan2=166° */
+      @keyframes mfly1 {
+        0% { transform: translate(850px, 40px) rotate(153deg); opacity: 0; }
+        2% { opacity: 0.9; }
+        25% { transform: translate(530px, 200px) rotate(153deg); opacity: 0; }
+        100% { transform: translate(530px, 200px) rotate(153deg); opacity: 0; }
+      }
+      @keyframes mfly2 {
+        0% { transform: translate(500px, 70px) rotate(153deg); opacity: 0; }
+        2% { opacity: 0.7; }
+        22% { transform: translate(240px, 200px) rotate(153deg); opacity: 0; }
+        100% { transform: translate(240px, 200px) rotate(153deg); opacity: 0; }
+      }
+      @keyframes mfly3 {
+        0% { transform: translate(1100px, 90px) rotate(161deg); opacity: 0; }
+        2% { opacity: 0.8; }
+        20% { transform: translate(810px, 190px) rotate(161deg); opacity: 0; }
+        100% { transform: translate(810px, 190px) rotate(161deg); opacity: 0; }
+      }
+      @keyframes mfly4 {
+        0% { transform: translate(300px, 120px) rotate(145deg); opacity: 0; }
+        2% { opacity: 0.6; }
+        24% { transform: translate(60px, 290px) rotate(145deg); opacity: 0; }
+        100% { transform: translate(60px, 290px) rotate(145deg); opacity: 0; }
+      }
+      @keyframes mfly5 {
+        0% { transform: translate(1000px, 180px) rotate(166deg); opacity: 0; }
+        2% { opacity: 0.8; }
+        18% { transform: translate(650px, 270px) rotate(166deg); opacity: 0; }
+        100% { transform: translate(650px, 270px) rotate(166deg); opacity: 0; }
+      }
+
+      /* Rocket ships - 3 with different trajectories */
+      /* ~14s flight + ~30s off-screen pause = ~44s total */
+      .rocket-group-1 { animation: rocketFly1 44s linear infinite; }
+      .rocket-group-2 { animation: rocketFly2 60s linear infinite; animation-delay: 18s; animation-fill-mode: backwards; }
+      .rocket-group-3 { animation: rocketFly3 55s linear infinite; animation-delay: 35s; animation-fill-mode: backwards; }
+
+      @keyframes rocketFly1 {
+        0% { transform: translate(-40px, 340px); opacity: 0; }
+        0.5% { opacity: 1; }
+        31% { opacity: 1; }
+        32% { transform: translate(1260px, 30px); opacity: 0; }
+        100% { transform: translate(1260px, 30px); opacity: 0; }
+      }
+      @keyframes rocketFly2 {
+        0% { transform: translate(1260px, 350px); opacity: 0; }
+        0.5% { opacity: 1; }
+        27% { opacity: 1; }
+        28% { transform: translate(-40px, 80px); opacity: 0; }
+        100% { transform: translate(-40px, 80px); opacity: 0; }
+      }
+      @keyframes rocketFly3 {
+        0% { transform: translate(-40px, 60px); opacity: 0; }
+        0.5% { opacity: 1; }
+        29% { opacity: 1; }
+        30% { transform: translate(1260px, 300px); opacity: 0; }
+        100% { transform: translate(1260px, 300px); opacity: 0; }
+      }
+
+      .rocket-body { fill: #fff; }
+      .rocket-window { fill: #18D3ED; }
+      .rocket-flame { animation: flicker 0.3s ease-in-out infinite alternate; }
+      @keyframes flicker {
+        0% { opacity: 0.6; transform: scaleY(0.85); }
+        100% { opacity: 1; transform: scaleY(1.15); }
+      }
+
+      /* Wordmark glow */
+      .wordmark-glow {
+        animation: breathe 4s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        0%, 100% { opacity: 0.3; filter: blur(20px); }
+        50% { opacity: 0.5; filter: blur(25px); }
+      }
+
+      /* Tagline fade */
+      .tagline {
+        fill: #9ca3af;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 18px;
+        font-weight: 300;
+        letter-spacing: 0.05em;
+      }
+      .tagline-glow {
+        animation: tagGlow 6s ease-in-out infinite;
+      }
+      @keyframes tagGlow {
+        0%, 100% { opacity: 0.7; }
+        50% { opacity: 1; }
+      }
+
+      /* Brand gradient text */
+      .brand-text {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        fill: url(#brandGrad);
+      }
+
+      /* Light mode */
+      @media (prefers-color-scheme: light) {
+        .bg { fill: #f0f2f8; }
+        .star { fill: #64748b; }
+        .tagline { fill: #475569; }
+        .s1, .s2, .s3 {
+          animation-name: twinkle-light;
+        }
+      }
+      @keyframes twinkle-light {
+        0%, 100% { opacity: 0.05; }
+        50% { opacity: 0.35; }
+      }
+    </style>
+
+    <!-- Brand gradient -->
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#18D3ED"/>
+      <stop offset="25%" stop-color="#4C5DBE"/>
+      <stop offset="50%" stop-color="#FB32A2"/>
+      <stop offset="75%" stop-color="#FB6D19"/>
+      <stop offset="100%" stop-color="#F8AF12"/>
+    </linearGradient>
+
+    <!-- Glow gradient for orbs -->
+    <radialGradient id="glow1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF7C00"/>
+      <stop offset="100%" stop-color="#FF7C00" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF0066"/>
+      <stop offset="100%" stop-color="#FF0066" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow3" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7B3FF8"/>
+      <stop offset="100%" stop-color="#7B3FF8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Exhaust trail gradient (vertical, fades down from rocket) -->
+    <linearGradient id="exhaustGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FF7C00" stop-opacity="0.7"/>
+      <stop offset="30%" stop-color="#FB32A2" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#FB32A2" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Meteor gradient -->
+    <linearGradient id="meteorGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="80%" stop-color="#fff" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="meteorGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF7C00" stop-opacity="0"/>
+      <stop offset="80%" stop-color="#FF7C00" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#FF7C00" stop-opacity="0.7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="1200" height="400" rx="8"/>
+
+  <!-- Ambient glow orbs -->
+  <circle class="orb1" cx="200" cy="150" r="120" fill="url(#glow1)"/>
+  <circle class="orb2" cx="850" cy="100" r="100" fill="url(#glow2)"/>
+  <circle class="orb3" cx="600" cy="300" r="140" fill="url(#glow3)"/>
+
+  <!-- Stars - Layer 1 (small, dim) -->
+  <circle class="star s1 d0" cx="45" cy="32" r="0.8"/>
+  <circle class="star s1 d1" cx="120" cy="85" r="0.6"/>
+  <circle class="star s1 d2" cx="210" cy="45" r="0.7"/>
+  <circle class="star s1 d3" cx="305" cy="120" r="0.6"/>
+  <circle class="star s1 d4" cx="390" cy="28" r="0.8"/>
+  <circle class="star s1 d5" cx="480" cy="95" r="0.6"/>
+  <circle class="star s1 d6" cx="560" cy="42" r="0.7"/>
+  <circle class="star s1 d7" cx="650" cy="115" r="0.6"/>
+  <circle class="star s1 d8" cx="740" cy="35" r="0.8"/>
+  <circle class="star s1 d9" cx="830" cy="80" r="0.6"/>
+  <circle class="star s1 d10" cx="920" cy="55" r="0.7"/>
+  <circle class="star s1 d11" cx="1010" cy="130" r="0.6"/>
+  <circle class="star s1 d12" cx="1095" cy="40" r="0.8"/>
+  <circle class="star s1 d13" cx="1160" cy="100" r="0.6"/>
+  <circle class="star s1 d14" cx="75" cy="280" r="0.7"/>
+  <circle class="star s1 d15" cx="165" cy="340" r="0.6"/>
+  <circle class="star s1 d16" cx="350" cy="310" r="0.8"/>
+  <circle class="star s1 d17" cx="530" cy="355" r="0.6"/>
+  <circle class="star s1 d18" cx="710" cy="290" r="0.7"/>
+  <circle class="star s1 d19" cx="890" cy="345" r="0.6"/>
+  <circle class="star s1 d0" cx="1050" cy="320" r="0.8"/>
+  <circle class="star s1 d3" cx="1140" cy="280" r="0.6"/>
+
+  <!-- Stars - Layer 2 (medium) -->
+  <circle class="star s2 d5" cx="88" cy="160" r="1"/>
+  <circle class="star s2 d8" cx="260" cy="210" r="0.9"/>
+  <circle class="star s2 d11" cx="420" cy="180" r="1"/>
+  <circle class="star s2 d14" cx="580" cy="160" r="0.9"/>
+  <circle class="star s2 d17" cx="760" cy="220" r="1"/>
+  <circle class="star s2 d2" cx="940" cy="190" r="0.9"/>
+  <circle class="star s2 d6" cx="1100" cy="210" r="1"/>
+  <circle class="star s2 d9" cx="150" cy="370" r="0.9"/>
+  <circle class="star s2 d12" cx="450" cy="370" r="1"/>
+  <circle class="star s2 d15" cx="800" cy="360" r="0.9"/>
+  <circle class="star s2 d18" cx="1000" cy="375" r="1"/>
+
+  <!-- Stars - Layer 3 (large, bright) -->
+  <circle class="star s3 d1" cx="180" cy="70" r="1.3"/>
+  <circle class="star s3 d7" cx="500" cy="50" r="1.5"/>
+  <circle class="star s3 d13" cx="850" cy="60" r="1.3"/>
+  <circle class="star s3 d4" cx="1130" cy="150" r="1.5"/>
+  <circle class="star s3 d10" cx="70" cy="350" r="1.3"/>
+  <circle class="star s3 d16" cx="630" cy="370" r="1.5"/>
+  <circle class="star s3 d19" cx="1070" cy="350" r="1.3"/>
+
+  <!-- Meteor streaks (5, scattered across banner — positioned via keyframes) -->
+  <g class="meteor1">
+    <rect x="-60" y="-1" width="60" height="2" rx="1" fill="url(#meteorGrad)"/>
+    <circle cx="0" cy="0" r="2" fill="#fff" opacity="0.9"/>
+  </g>
+  <g class="meteor2">
+    <rect x="-50" y="-0.8" width="50" height="1.6" rx="0.8" fill="url(#meteorGrad2)"/>
+    <circle cx="0" cy="0" r="1.5" fill="#FF7C00" opacity="0.7"/>
+  </g>
+  <g class="meteor3">
+    <rect x="-55" y="-0.8" width="55" height="1.6" rx="0.8" fill="url(#meteorGrad)"/>
+    <circle cx="0" cy="0" r="1.8" fill="#fff" opacity="0.8"/>
+  </g>
+  <g class="meteor4">
+    <rect x="-45" y="-0.8" width="45" height="1.6" rx="0.8" fill="url(#meteorGrad2)"/>
+    <circle cx="0" cy="0" r="1.3" fill="#FF7C00" opacity="0.6"/>
+  </g>
+  <g class="meteor5">
+    <rect x="-65" y="-1" width="65" height="2" rx="1" fill="url(#meteorGrad)"/>
+    <circle cx="0" cy="0" r="2" fill="#fff" opacity="0.8"/>
+  </g>
+
+  <!-- Rocket 1: bottom-left → top-right (angle ≈ -13°, rotate nose by +77°) -->
+  <g class="rocket-group-1">
+    <g transform="rotate(77) scale(0.7)">
+      <rect x="-2" y="14" width="4" height="30" rx="2" fill="url(#exhaustGrad)"/>
+      <path class="rocket-body" d="M0,-12 C3,-12 6,-8 6,-4 L6,8 C6,10 3,12 0,14 C-3,12 -6,10 -6,8 L-6,-4 C-6,-8 -3,-12 0,-12 Z" opacity="0.9"/>
+      <circle class="rocket-window" cx="0" cy="-2" r="2.5" opacity="0.9"/>
+      <path d="M-6,6 L-10,12 L-6,10 Z" fill="#FB32A2" opacity="0.7"/>
+      <path d="M6,6 L10,12 L6,10 Z" fill="#FB32A2" opacity="0.7"/>
+      <g class="rocket-flame" transform="translate(0, 14)">
+        <path d="M-3,0 L0,12 L3,0 Z" fill="#FF7C00" opacity="0.8"/>
+        <path d="M-2,0 L0,8 L2,0 Z" fill="#F8AF12" opacity="0.9"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Rocket 2: top-right → bottom-left (angle ≈ 192°, rotate nose by +282°) -->
+  <g class="rocket-group-2">
+    <g transform="rotate(282) scale(0.55)">
+      <rect x="-2" y="14" width="4" height="25" rx="2" fill="url(#exhaustGrad)"/>
+      <path class="rocket-body" d="M0,-12 C3,-12 6,-8 6,-4 L6,8 C6,10 3,12 0,14 C-3,12 -6,10 -6,8 L-6,-4 C-6,-8 -3,-12 0,-12 Z" opacity="0.85"/>
+      <circle class="rocket-window" cx="0" cy="-2" r="2.5" opacity="0.9"/>
+      <path d="M-6,6 L-10,12 L-6,10 Z" fill="#18D3ED" opacity="0.6"/>
+      <path d="M6,6 L10,12 L6,10 Z" fill="#18D3ED" opacity="0.6"/>
+      <g class="rocket-flame" transform="translate(0, 14)">
+        <path d="M-3,0 L0,10 L3,0 Z" fill="#FF7C00" opacity="0.7"/>
+        <path d="M-2,0 L0,7 L2,0 Z" fill="#F8AF12" opacity="0.8"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Rocket 3: left → bottom-right (angle ≈ 10°, rotate nose by +100°) -->
+  <g class="rocket-group-3">
+    <g transform="rotate(100) scale(0.5)">
+      <rect x="-2" y="14" width="4" height="22" rx="2" fill="url(#exhaustGrad)"/>
+      <path class="rocket-body" d="M0,-12 C3,-12 6,-8 6,-4 L6,8 C6,10 3,12 0,14 C-3,12 -6,10 -6,8 L-6,-4 C-6,-8 -3,-12 0,-12 Z" opacity="0.8"/>
+      <circle class="rocket-window" cx="0" cy="-2" r="2.5" opacity="0.9"/>
+      <path d="M-6,6 L-10,12 L-6,10 Z" fill="#7B3FF8" opacity="0.6"/>
+      <path d="M6,6 L10,12 L6,10 Z" fill="#7B3FF8" opacity="0.6"/>
+      <g class="rocket-flame" transform="translate(0, 14)">
+        <path d="M-3,0 L0,10 L3,0 Z" fill="#FF7C00" opacity="0.7"/>
+        <path d="M-2,0 L0,7 L2,0 Z" fill="#F8AF12" opacity="0.8"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Wordmark glow (behind the logo) -->
+  <ellipse class="wordmark-glow" cx="600" cy="155" rx="250" ry="50" fill="url(#brandGrad)" opacity="0.3"/>
+
+  <!-- "Meet" text -->
+  <text x="370" y="170" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="62" font-weight="800" fill="#f0f0f0">Meet</text>
+
+  <!-- Whizbang wordmark (using brand gradient) -->
+  <text x="565" y="170" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="62" font-weight="800" fill="url(#brandGrad)">Whizbang</text>
+
+  <!-- Tagline -->
+  <text class="tagline tagline-glow" x="600" y="220" text-anchor="middle">One Runtime. Any Store. Every Message.</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="255" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#6b7280">The unified event-sourced data &amp; messaging runtime for .NET</text>
+
+  <!-- Bottom brand accent line -->
+  <rect x="400" y="290" width="400" height="2" rx="1" fill="url(#brandGrad)" opacity="0.4"/>
+
+  <!-- Feature pills (centered: 4 pills, 20px gaps, total width=490, start at 355) -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="500">
+    <g transform="translate(355, 325)">
+      <rect x="0" y="-12" width="120" height="24" rx="12" fill="#fff" fill-opacity="0.06" stroke="#fff" stroke-opacity="0.1" stroke-width="0.5"/>
+      <text x="60" y="4" text-anchor="middle" fill="#9ca3af">Zero Reflection</text>
+    </g>
+    <g transform="translate(495, 325)">
+      <rect x="0" y="-12" width="100" height="24" rx="12" fill="#fff" fill-opacity="0.06" stroke="#fff" stroke-opacity="0.1" stroke-width="0.5"/>
+      <text x="50" y="4" text-anchor="middle" fill="#9ca3af">Native AOT</text>
+    </g>
+    <g transform="translate(615, 325)">
+      <rect x="0" y="-12" width="110" height="24" rx="12" fill="#fff" fill-opacity="0.06" stroke="#fff" stroke-opacity="0.1" stroke-width="0.5"/>
+      <text x="55" y="4" text-anchor="middle" fill="#9ca3af">Compile-Time</text>
+    </g>
+    <g transform="translate(745, 325)">
+      <rect x="0" y="-12" width="100" height="24" rx="12" fill="#fff" fill-opacity="0.06" stroke="#fff" stroke-opacity="0.1" stroke-width="0.5"/>
+      <text x="50" y="4" text-anchor="middle" fill="#9ca3af">Poly-Store</text>
+    </g>
+  </g>
+</svg>
