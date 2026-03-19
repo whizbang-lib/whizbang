@@ -1066,7 +1066,262 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(claimed.Count()).IsEqualTo(2);
   }
 
+  // ========================================
+  // Lease Renewal Tests (outbox partition bug fix)
+  // ========================================
+
+  /// <summary>
+  /// 
+  /// </summary>
+  /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 6</tests>
+  [Test]
+  public async Task ProcessWorkBatch_LeaseRenewedOutbox_ReturnedAsWorkAsync() {
+    // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store outbox message via process_work_batch (registers instance + stores + returns as work)
+    var messages = JsonSerializer.Serialize(new[] {
+      new {
+        MessageId = (Guid)messageId,
+        Destination = "test-destination",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
+        EnvelopeData = "{}",
+        Metadata = "{}",
+        Scope = (string?)null,
+        StreamId = (Guid)streamId,
+        IsEvent = false
+      }
+    });
+
+    var result1 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now,
+        p_new_outbox_messages := @messages::jsonb
+      )",
+      new { instanceId, now, messages });
+
+    // Baseline: new message returned as work
+    var outboxWork1 = result1.Where(r => r.source == "outbox").ToList();
+    await Assert.That(outboxWork1.Count).IsEqualTo(1);
+    await Assert.That(outboxWork1[0].work_id).IsEqualTo(messageId);
+
+    // Act — call process_work_batch again with lease renewal only (no new messages)
+    var renewIds = JsonSerializer.Serialize(new[] { (Guid)messageId });
+    var now2 = now.AddSeconds(1);
+
+    var result2 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now2,
+        p_renew_outbox_lease_ids := @renewIds::jsonb
+      )",
+      new { instanceId, now2, renewIds });
+
+    // Assert — lease-renewed message MUST be returned as outbox work
+    var outboxWork2 = result2.Where(r => r.source == "outbox").ToList();
+    await Assert.That(outboxWork2.Count).IsEqualTo(1)
+      .Because("Lease-renewed outbox messages must be returned as work to avoid message loss");
+    await Assert.That(outboxWork2[0].work_id).IsEqualTo(messageId);
+  }
+
+  /// <summary>
+  /// 
+  /// </summary>
+  /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 6</tests>
+  [Test]
+  public async Task ProcessWorkBatch_LeaseRenewedInbox_ReturnedAsWorkAsync() {
+    // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Store inbox message via process_work_batch
+    var messages = JsonSerializer.Serialize(new[] {
+      new {
+        MessageId = (Guid)messageId,
+        HandlerName = "TestHandler",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
+        EnvelopeData = "{}",
+        Metadata = "{}",
+        Scope = (string?)null,
+        StreamId = (Guid)streamId,
+        IsEvent = false
+      }
+    });
+
+    var result1 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now,
+        p_new_inbox_messages := @messages::jsonb
+      )",
+      new { instanceId, now, messages });
+
+    // Baseline: new message returned as work
+    var inboxWork1 = result1.Where(r => r.source == "inbox").ToList();
+    await Assert.That(inboxWork1.Count).IsEqualTo(1);
+    await Assert.That(inboxWork1[0].work_id).IsEqualTo(messageId);
+
+    // Act — call process_work_batch again with inbox lease renewal only
+    var renewIds = JsonSerializer.Serialize(new[] { (Guid)messageId });
+    var now2 = now.AddSeconds(1);
+
+    var result2 = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now2,
+        p_renew_inbox_lease_ids := @renewIds::jsonb
+      )",
+      new { instanceId, now2, renewIds });
+
+    // Assert — lease-renewed message MUST be returned as inbox work
+    var inboxWork2 = result2.Where(r => r.source == "inbox").ToList();
+    await Assert.That(inboxWork2.Count).IsEqualTo(1)
+      .Because("Lease-renewed inbox messages must be returned as work to avoid message loss");
+    await Assert.That(inboxWork2[0].work_id).IsEqualTo(messageId);
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_FailedOutbox_NotReturnedBeforeScheduledTimeAsync() {
+    // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Insert outbox message and report failure with scheduled_for in the future
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at, instance_id, lease_expiry, scheduled_for, partition_number)
+      VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 32769, @streamId, 1, @now, @instanceId, @leaseExpiry, @scheduledFor, 1)",
+      new {
+        messageId,
+        streamId,
+        now,
+        instanceId,
+        leaseExpiry = now.AddMinutes(5),
+        scheduledFor = now.AddSeconds(60)
+      });
+
+    // Register instance so process_work_batch can work
+    await connection.ExecuteAsync(@"
+      SELECT register_instance_heartbeat(@instanceId, 'TestService', 'test-host', 12345, NULL, @now, @leaseExpiry)",
+      new { instanceId, now, leaseExpiry = now.AddMinutes(5) });
+
+    // Act — call process_work_batch immediately (before scheduled_for)
+    var result = await connection.QueryAsync<WorkBatchRow>(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := NULL::jsonb,
+        p_now := @now
+      )",
+      new { instanceId, now });
+
+    // Assert — failed message with future scheduled_for should NOT be returned as work
+    var outboxWork = result.Where(r => r.source == "outbox").ToList();
+    await Assert.That(outboxWork.Count).IsEqualTo(0)
+      .Because("Failed messages should not be returned before their scheduled_for time");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_DuplicateMessageId_IdempotentAsync() {
+    // Arrange
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+    var leaseExpiry = now.AddMinutes(5);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    var messages = JsonSerializer.Serialize(new[] {
+      new {
+        MessageId = (Guid)messageId,
+        Destination = "test-destination",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
+        EnvelopeData = "{}",
+        Metadata = "{}",
+        Scope = (string?)null,
+        StreamId = (Guid)streamId,
+        IsEvent = false
+      }
+    });
+
+    // Act — store same message twice
+    var result1 = await connection.QueryAsync<StoreMessageResult>(@"
+      SELECT message_id, stream_id, was_newly_created
+      FROM store_outbox_messages(@messages::jsonb, @instanceId, @leaseExpiry, @now, 10000)",
+      new { messages, instanceId, leaseExpiry, now });
+
+    var result2 = await connection.QueryAsync<StoreMessageResult>(@"
+      SELECT message_id, stream_id, was_newly_created
+      FROM store_outbox_messages(@messages::jsonb, @instanceId, @leaseExpiry, @now, 10000)",
+      new { messages, instanceId, leaseExpiry, now });
+
+    // Assert — first call is new, second is idempotent
+    await Assert.That(result1.Single().was_newly_created).IsTrue();
+    await Assert.That(result2.Single().was_newly_created).IsFalse();
+
+    // Verify only one row exists
+    var count = await connection.QuerySingleAsync<int>(@"
+      SELECT COUNT(*) FROM wh_outbox WHERE message_id = @messageId",
+      new { messageId });
+    await Assert.That(count).IsEqualTo(1);
+  }
+
   // Helper record types for query results
+  private sealed record WorkBatchRow(
+    int? instance_rank,
+    int? active_instance_count,
+    string source,
+    Guid work_id,
+    Guid? work_stream_id,
+    int? partition_number,
+    string? destination,
+    string? message_type,
+    string? envelope_type,
+    string? message_data,
+    string? metadata,
+    int status,
+    int attempts,
+    bool is_newly_stored,
+    bool is_orphaned,
+    string? error,
+    int? failure_reason,
+    string? perspective_name);
+
   private sealed record ServiceInstanceRow(
     Guid instance_id,
     string service_name,

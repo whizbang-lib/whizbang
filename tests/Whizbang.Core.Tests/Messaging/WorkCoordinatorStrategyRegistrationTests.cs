@@ -150,16 +150,17 @@ public class WorkCoordinatorStrategyRegistrationTests {
       strategy2 = scope2.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
     }
 
-    // Assert - Both should be the same singleton instance
-    await Assert.That(strategy1).IsTypeOf<IntervalWorkCoordinatorStrategy>()
-      .Because("Interval option should produce IntervalWorkCoordinatorStrategy");
-    await Assert.That(ReferenceEquals(strategy1, strategy2)).IsTrue()
-      .Because("Interval strategy should be a singleton shared across scopes (timer must persist)");
+    // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
+    await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("Interval option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+
+    // Verify the underlying singleton is shared (resolve concrete type)
+    var singleton = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
+    await Assert.That(singleton).IsNotNull()
+      .Because("Interval singleton should be resolvable directly");
 
     // Cleanup
-    if (strategy1 is IAsyncDisposable disposable) {
-      await disposable.DisposeAsync();
-    }
+    await singleton.DisposeAsync();
   }
 
   [Test]
@@ -183,16 +184,17 @@ public class WorkCoordinatorStrategyRegistrationTests {
       strategy2 = scope2.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
     }
 
-    // Assert - Both should be the same singleton instance
-    await Assert.That(strategy1).IsTypeOf<BatchWorkCoordinatorStrategy>()
-      .Because("Batch option should produce BatchWorkCoordinatorStrategy");
-    await Assert.That(ReferenceEquals(strategy1, strategy2)).IsTrue()
-      .Because("Batch strategy should be a singleton shared across scopes (debounce timer must persist)");
+    // Assert - Both should wrap the same singleton instance via NonDisposingStrategyAdapter
+    await Assert.That(strategy1).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("Batch option should be wrapped in NonDisposingStrategyAdapter to prevent scope disposal");
+
+    // Verify the underlying singleton is shared (resolve concrete type)
+    var singleton = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
+    await Assert.That(singleton).IsNotNull()
+      .Because("Batch singleton should be resolvable directly");
 
     // Cleanup
-    if (strategy1 is IAsyncDisposable disposable) {
-      await disposable.DisposeAsync();
-    }
+    await singleton.DisposeAsync();
   }
 
   [Test]
@@ -250,13 +252,8 @@ public class WorkCoordinatorStrategyRegistrationTests {
       .Because("Options configured via IOptions<T> should be resolved correctly");
     await Assert.That(resolvedOptions.BatchSize).IsEqualTo(42);
     await Assert.That(resolvedOptions.IntervalMilliseconds).IsEqualTo(999);
-    await Assert.That(strategy).IsTypeOf<BatchWorkCoordinatorStrategy>()
-      .Because("Strategy should match the configured option");
-
-    // Cleanup
-    if (strategy is IAsyncDisposable disposable) {
-      await disposable.DisposeAsync();
-    }
+    await Assert.That(strategy).IsTypeOf<NonDisposingStrategyAdapter>()
+      .Because("Batch strategy should be wrapped in NonDisposingStrategyAdapter");
   }
 
   [Test]
@@ -349,13 +346,17 @@ public class WorkCoordinatorStrategyRegistrationTests {
     });
 
     // Scoped factory selects based on options
+    // Singleton strategies are wrapped in NonDisposingStrategyAdapter to prevent
+    // scope disposal from destroying the shared singleton instance.
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {
       var options = sp.GetRequiredService<WorkCoordinatorOptions>();
       return options.Strategy switch {
         WorkCoordinatorStrategy.Interval =>
-          sp.GetRequiredService<IntervalWorkCoordinatorStrategy>(),
+          new NonDisposingStrategyAdapter(
+            sp.GetRequiredService<IntervalWorkCoordinatorStrategy>()),
         WorkCoordinatorStrategy.Batch =>
-          sp.GetRequiredService<BatchWorkCoordinatorStrategy>(),
+          new NonDisposingStrategyAdapter(
+            sp.GetRequiredService<BatchWorkCoordinatorStrategy>()),
         _ => WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
       };
     });

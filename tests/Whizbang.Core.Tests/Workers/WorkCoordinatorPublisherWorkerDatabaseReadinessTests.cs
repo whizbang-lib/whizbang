@@ -320,10 +320,11 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReadyResult { get; set; } = true;
+    private volatile bool _isReadyResult = true;
+    public bool IsReadyResult { get => _isReadyResult; set => _isReadyResult = value; }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReadyResult);
+      return Task.FromResult(_isReadyResult);
     }
   }
 

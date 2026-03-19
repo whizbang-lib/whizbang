@@ -1,0 +1,40 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core.Observability;
+
+namespace Whizbang.Core.Messaging;
+
+/// <summary>
+/// Wraps a singleton <see cref="IWorkCoordinatorStrategy"/> to prevent scope disposal
+/// from disposing the underlying singleton. When Interval or Batch strategies are
+/// registered as singletons and resolved via a scoped <see cref="IWorkCoordinatorStrategy"/>
+/// factory, scope disposal would otherwise destroy the shared singleton instance.
+/// This adapter delegates all operations but swallows <see cref="IAsyncDisposable.DisposeAsync"/>.
+/// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
+public sealed class NonDisposingStrategyAdapter : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  private readonly IWorkCoordinatorStrategy _inner;
+
+  public NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) {
+    _inner = inner;
+  }
+
+  public void QueueOutboxMessage(OutboxMessage message) => _inner.QueueOutboxMessage(message);
+  public void QueueInboxMessage(InboxMessage message) => _inner.QueueInboxMessage(message);
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) => _inner.QueueOutboxCompletion(messageId, completedStatus);
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) => _inner.QueueInboxCompletion(messageId, completedStatus);
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueOutboxFailure(messageId, completedStatus, errorMessage);
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueInboxFailure(messageId, completedStatus, errorMessage);
+  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) => _inner.FlushAsync(flags, mode, ct);
+
+  /// <inheritdoc />
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    _inner.FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+
+  /// <summary>
+  /// No-op: the singleton is owned by the DI container, not by scopes.
+  /// </summary>
+  public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

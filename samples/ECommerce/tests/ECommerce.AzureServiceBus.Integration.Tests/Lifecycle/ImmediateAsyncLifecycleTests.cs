@@ -27,33 +27,22 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 [Category("Integration")]
 [Category("Lifecycle")]
 [NotInParallel("ServiceBus")]
+[Timeout(120_000)]
 public class ImmediateAsyncLifecycleTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      try {
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose - shared fixture is reused across tests
   }
 
   /// <summary>

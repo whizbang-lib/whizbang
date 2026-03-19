@@ -109,15 +109,17 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
-    // Instance A acquires with very short timeout
-    var shortTimeoutOptions = new PerspectiveStreamLockOptions { LockTimeout = TimeSpan.FromMilliseconds(1) };
+    // Instance A acquires with short timeout (100ms provides enough margin for
+    // PostgreSQL timestamp precision while still being fast for tests)
+    var shortTimeoutOptions = new PerspectiveStreamLockOptions { LockTimeout = TimeSpan.FromMilliseconds(100) };
     var shortLocker = new DapperPerspectiveStreamLocker(
       _testBase.TestConnectionString, Options.Create(shortTimeoutOptions));
 
     await shortLocker.TryAcquireLockAsync(streamId, perspectiveName, instanceA, "rewind");
 
-    // Wait for expiry
-    await Task.Delay(50);
+    // Wait well past expiry (500ms >> 100ms timeout) to ensure lock is expired
+    // even under heavy CI load or clock skew
+    await Task.Delay(500);
 
     // Instance B should be able to acquire the expired lock
     var acquired = await _locker.TryAcquireLockAsync(streamId, perspectiveName, instanceB, "bootstrap");

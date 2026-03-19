@@ -846,23 +846,35 @@ BEGIN
   -- Phase 6: Lease Renewals
   -- ========================================
 
-  -- Renew outbox leases
-  UPDATE wh_outbox
-  SET lease_expiry = v_lease_expiry
-  WHERE instance_id = p_instance_id
-    AND message_id = ANY(
-      SELECT (elem::TEXT)::UUID
-      FROM jsonb_array_elements_text(p_renew_outbox_lease_ids) as elem
-    );
+  -- Renew outbox leases and capture renewed rows into temp table for Phase 7 return
+  WITH renewed AS (
+    UPDATE wh_outbox
+    SET lease_expiry = v_lease_expiry
+    WHERE instance_id = p_instance_id
+      AND message_id = ANY(
+        SELECT (elem::TEXT)::UUID
+        FROM jsonb_array_elements_text(p_renew_outbox_lease_ids) as elem
+      )
+    RETURNING message_id, stream_id
+  )
+  INSERT INTO temp_orphaned_outbox (message_id, stream_id)
+  SELECT message_id, stream_id FROM renewed
+  ON CONFLICT DO NOTHING;
 
-  -- Renew inbox leases
-  UPDATE wh_inbox
-  SET lease_expiry = v_lease_expiry
-  WHERE instance_id = p_instance_id
-    AND message_id = ANY(
-      SELECT (elem::TEXT)::UUID
-      FROM jsonb_array_elements_text(p_renew_inbox_lease_ids) as elem
-    );
+  -- Renew inbox leases and capture renewed rows into temp table for Phase 7 return
+  WITH renewed AS (
+    UPDATE wh_inbox
+    SET lease_expiry = v_lease_expiry
+    WHERE instance_id = p_instance_id
+      AND message_id = ANY(
+        SELECT (elem::TEXT)::UUID
+        FROM jsonb_array_elements_text(p_renew_inbox_lease_ids) as elem
+      )
+    RETURNING message_id, stream_id
+  )
+  INSERT INTO temp_orphaned_inbox (message_id, stream_id)
+  SELECT message_id, stream_id FROM renewed
+  ON CONFLICT DO NOTHING;
 
   -- Renew perspective event leases
   UPDATE wh_perspective_events

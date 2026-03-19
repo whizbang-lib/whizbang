@@ -45,8 +45,11 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       ReceivedCompletions.AddRange(request.OutboxCompletions);
       ReceivedFailures.AddRange(request.OutboxFailures);
 
+      var work = new List<OutboxWork>(WorkToReturn);
+      WorkToReturn.Clear();  // Return work once, then empty
+
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [.. WorkToReturn],
+        OutboxWork = work,
         InboxWork = [],
         PerspectiveWork = []
       });
@@ -76,9 +79,10 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     public ConcurrentBag<OutboxWork> PublishedWork { get; } = [];
     public Func<OutboxWork, MessagePublishResult>? PublishResultFunc { get; set; }
     public TimeSpan PublishDelay { get; set; } = TimeSpan.Zero;
+    public bool IsReadyResult { get; set; } = true;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(true);
+      return Task.FromResult(IsReadyResult);
     }
 
     public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
@@ -211,6 +215,93 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(5);
   }
 
+  [Test]
+  public async Task TransportNotReady_MessageRequeuedToChannelAsync() {
+    // Arrange
+    var workCoordinator = new TestWorkCoordinator();
+    var messageId = Guid.CreateVersion7();
+    workCoordinator.WorkToReturn = [
+      new OutboxWork {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+        StreamId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Attempts = 0,
+        Status = MessageProcessingStatus.Stored,
+        Flags = WorkBatchFlags.None,
+      }
+    ];
+    var publishStrategy = new TestPublishStrategy { IsReadyResult = false };
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act — start worker, let it process one batch, then stop
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await Task.Delay(400);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the message must be re-queued via TryWrite (WrittenWork will have >1 entry)
+    // First write is from _processWorkBatchAsync, subsequent writes are re-queues from publisher loop
+    await Assert.That(channelWriter.WrittenWork.Count).IsGreaterThan(1)
+      .Because("Transport-not-ready must re-queue work to the channel via TryWrite to prevent message loss");
+    await Assert.That(channelWriter.WrittenWork.All(w => w.MessageId == messageId)).IsTrue()
+      .Because("All re-queued messages should be the same work item");
+  }
+
+  [Test]
+  public async Task TransportException_MessageRequeuedToChannelAsync() {
+    // Arrange
+    var workCoordinator = new TestWorkCoordinator();
+    var messageId = Guid.CreateVersion7();
+    workCoordinator.WorkToReturn = [
+      new OutboxWork {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+        StreamId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Attempts = 0,
+        Status = MessageProcessingStatus.Stored,
+        Flags = WorkBatchFlags.None,
+      }
+    ];
+    var publishStrategy = new TestPublishStrategy {
+      PublishResultFunc = _ => new MessagePublishResult {
+        MessageId = messageId,
+        Success = false,
+        CompletedStatus = MessageProcessingStatus.Stored,
+        Error = "Transport connection failed",
+        Reason = MessageFailureReason.TransportException
+      }
+    };
+    var instanceProvider = _createTestInstanceProvider();
+    var channelWriter = new TestWorkChannelWriter();
+    var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
+
+    // Act — start worker, let it process one batch, then stop
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await Task.Delay(400);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert — the message must be re-queued via TryWrite after transport exception
+    await Assert.That(channelWriter.WrittenWork.Count).IsGreaterThan(1)
+      .Because("Transport exception must re-queue work to the channel via TryWrite to prevent message loss");
+    await Assert.That(channelWriter.WrittenWork.All(w => w.MessageId == messageId)).IsTrue()
+      .Because("All re-queued messages should be the same work item");
+  }
+
   private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
@@ -232,6 +323,25 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     services.AddSingleton<IWorkChannelWriter>(new TestWorkChannelWriter());  // Required by WorkCoordinatorPublisherWorker
     services.AddLogging();
     return services;
+  }
+
+  private static ServiceProvider _createHostedServiceCollection(
+    IWorkCoordinator workCoordinator,
+    IMessagePublishStrategy publishStrategy,
+    IServiceInstanceProvider instanceProvider,
+    IWorkChannelWriter workChannelWriter) {
+
+    var services = new ServiceCollection();
+    services.AddSingleton(workCoordinator);
+    services.AddSingleton(publishStrategy);
+    services.AddSingleton(instanceProvider);
+    services.AddSingleton(workChannelWriter);
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
+      PollingIntervalMilliseconds = 100
+    }));
+    services.AddLogging();
+    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    return services.BuildServiceProvider();
   }
 
   // Test helper - Mock work channel writer
