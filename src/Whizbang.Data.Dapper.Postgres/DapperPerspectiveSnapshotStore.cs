@@ -10,7 +10,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Dapper/Npgsql implementation of <see cref="IPerspectiveSnapshotStore"/>.
 /// Stores and retrieves perspective snapshots for efficient rewind after late-arriving events.
 /// </summary>
-/// <docs>perspectives/snapshots</docs>
+/// <docs>fundamentals/perspectives/snapshots</docs>
 public sealed partial class DapperPerspectiveSnapshotStore(
   string connectionString,
   ILogger<DapperPerspectiveSnapshotStore>? logger = null) : IPerspectiveSnapshotStore {

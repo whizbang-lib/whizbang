@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// cancelled — without affecting other awaiters waiting on the same events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#tracker-implementation</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 public sealed class SyncEventTracker : ISyncEventTracker {
   // Key is (eventId, perspectiveName) to allow the same event to be tracked for multiple perspectives

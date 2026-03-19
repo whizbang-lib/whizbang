@@ -26,7 +26,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </remarks>
 /// <typeparam name="TCommand">The command type being processed.</typeparam>
 /// <typeparam name="TResponse">The response type from the receptor.</typeparam>
-/// <docs>core-concepts/system-events#command-auditing</docs>
+/// <docs>fundamentals/events/system-events#command-auditing</docs>
 public sealed class CommandAuditPipelineBehavior<TCommand, TResponse> : PipelineBehavior<TCommand, TResponse>
     where TCommand : notnull {
   private readonly ISystemEventEmitter _emitter;

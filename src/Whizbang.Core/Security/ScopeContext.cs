@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Default implementation of IScopeContext.
 /// </summary>
-/// <docs>core-concepts/security#scope-context</docs>
+/// <docs>fundamentals/security/security#scope-context</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
 public sealed class ScopeContext : IScopeContext {
   /// <inheritdoc />

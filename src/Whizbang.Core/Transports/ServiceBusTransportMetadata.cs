@@ -18,7 +18,7 @@ namespace Whizbang.Core.Transports;
 /// - X-User-Id: User identifier
 /// - X-Roles: Comma-separated role list
 /// </remarks>
-/// <docs>core-concepts/message-security#service-bus-metadata</docs>
+/// <docs>fundamentals/security/message-security#service-bus-metadata</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>
 public sealed class ServiceBusTransportMetadata : ITransportMetadata {
   private readonly Dictionary<string, object> _applicationProperties;

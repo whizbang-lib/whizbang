@@ -16,7 +16,7 @@ namespace Whizbang.Core.Serialization;
 /// - Date only: "2024-01-01" (assumes midnight UTC)
 /// - PostgreSQL special: "-infinity" (maps to MinValue), "infinity" (maps to MaxValue)
 /// </remarks>
-/// <docs>internals/json-serialization-customizations</docs>
+/// <docs>extending/internals/json-serialization-customizations</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/LenientDateTimeOffsetConverterTests.cs</tests>
 public sealed class LenientDateTimeOffsetConverter : JsonConverter<DateTimeOffset> {
   /// <inheritdoc/>
@@ -70,7 +70,7 @@ public sealed class LenientDateTimeOffsetConverter : JsonConverter<DateTimeOffse
 /// <summary>
 /// A lenient nullable DateTimeOffset JSON converter.
 /// </summary>
-/// <docs>internals/json-serialization-customizations</docs>
+/// <docs>extending/internals/json-serialization-customizations</docs>
 /// <tests>tests/Whizbang.Core.Tests/Serialization/LenientDateTimeOffsetConverterTests.cs:LenientNullableDateTimeOffsetConverterTests</tests>
 public sealed class LenientNullableDateTimeOffsetConverter : JsonConverter<DateTimeOffset?> {
   private static readonly LenientDateTimeOffsetConverter _innerConverter = new();

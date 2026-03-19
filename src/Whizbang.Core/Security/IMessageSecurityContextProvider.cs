@@ -17,7 +17,7 @@ namespace Whizbang.Core.Security;
 /// 3. Calls all ISecurityContextCallback instances after context is established
 /// 4. Returns an ImmutableScopeContext that cannot be modified
 /// </remarks>
-/// <docs>core-concepts/message-security</docs>
+/// <docs>fundamentals/security/message-security</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 /// <example>
 /// // Register the provider

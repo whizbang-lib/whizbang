@@ -13,7 +13,7 @@ namespace Whizbang.Core.Resilience;
 /// exponential backoff with a maximum delay cap, and optional infinite retry.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
 public static partial class SubscriptionRetryHelper {
   /// <summary>

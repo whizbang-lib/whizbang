@@ -5,7 +5,7 @@ namespace Whizbang.Core.Lenses;
 /// <summary>
 /// Information about scope filters to be applied.
 /// </summary>
-/// <docs>core-concepts/scoping#filter-composition</docs>
+/// <docs>fundamentals/security/scoping#filter-composition</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterBuilderTests.cs</tests>
 public readonly record struct ScopeFilterInfo {
   /// <summary>
@@ -59,7 +59,7 @@ public readonly record struct ScopeFilterInfo {
 /// Builds scope filter information from ScopeFilter flags and context.
 /// Handles special OR logic when User + Principal are both specified.
 /// </summary>
-/// <docs>core-concepts/scoping#filter-composition</docs>
+/// <docs>fundamentals/security/scoping#filter-composition</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterBuilderTests.cs</tests>
 public static class ScopeFilterBuilder {
   /// <summary>

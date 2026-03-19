@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Metrics for the dispatcher: Send, Publish, LocalInvoke, cascade, perspective sync.
 /// Meter name: Whizbang.Dispatcher
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/DispatcherMetricsTests.cs</tests>
 public sealed class DispatcherMetrics {
 #pragma warning disable CA1707

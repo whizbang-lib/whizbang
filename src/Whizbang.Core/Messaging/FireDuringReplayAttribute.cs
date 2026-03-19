@@ -41,6 +41,6 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors#replay-safety</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors#replay-safety</docs>
 [AttributeUsage(AttributeTargets.Class, Inherited = false)]
 public sealed class FireDuringReplayAttribute : Attribute;

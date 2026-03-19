@@ -15,7 +15,7 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Properties_CanBeSetViaInitializer_WithInitSyntaxAsync</tests>
 /// Default implementation of <see cref="IMessageContext"/>.
 /// </summary>
-/// <docs>core-concepts/message-context</docs>
+/// <docs>fundamentals/messages/message-context</docs>
 public class MessageContext : IMessageContext {
   /// <inheritdoc />
   public MessageId MessageId { get; init; } = MessageId.New();
@@ -41,7 +41,7 @@ public class MessageContext : IMessageContext {
   /// When a message is created, it captures the current scope and carries it.
   /// AsyncLocal reads FROM the initiating message context's ScopeContext.
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#scope-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#scope-context</docs>
   public IScopeContext? ScopeContext { get; init; }
 
   /// <inheritdoc />
@@ -104,7 +104,7 @@ public class MessageContext : IMessageContext {
   /// 2. CurrentContext.Scope (fallback for backward compatibility)
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#message-context-new</docs>
+  /// <docs>fundamentals/messages/cascade-context#message-context-new</docs>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesAllNewIdentifiersAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_CapturesScopeContextFromAmbientAsync</tests>

@@ -8,7 +8,7 @@ namespace Whizbang.Core.Lenses;
 /// Ensures DbContext isolation and prevents stale data when used from singleton services.
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/scoped-queries</docs>
+/// <docs>fundamentals/lenses/scoped-queries</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
 public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : class {
   private readonly IServiceScopeFactory _scopeFactory;

@@ -30,7 +30,7 @@ namespace Whizbang.Core.Attributes;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/audit-logging#selective-auditing</docs>
+/// <docs>fundamentals/security/audit-logging#selective-auditing</docs>
 /// <tests>Whizbang.Core.Tests/Audit/AuditEventAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class AuditEventAttribute : MessageTagAttribute {

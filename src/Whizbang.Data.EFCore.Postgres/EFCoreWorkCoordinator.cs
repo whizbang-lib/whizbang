@@ -658,7 +658,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <summary>
   /// Serializes perspective sync inquiries to JSON for database storage.
   /// </summary>
-  /// <docs>core-concepts/perspectives/perspective-sync</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
   private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
     if (inquiries == null || inquiries.Length == 0) {
       return "[]";

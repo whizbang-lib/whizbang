@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// enabling type-safe queries via the <c>WherePolymorphic</c> extension methods.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/polymorphic-discriminator</docs>
+/// <docs>fundamentals/perspectives/polymorphic-discriminator</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PolymorphicDiscriminatorAttributeTests.cs</tests>
 /// <example>
 /// <code>

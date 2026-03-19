@@ -24,7 +24,7 @@ namespace Whizbang.Core.Lenses;
 /// var order = await syncQuery.GetByIdAsync(orderId);
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
 public sealed class SyncAwareLensQuery<TModel> : ISyncAwareLensQuery<TModel> where TModel : class {
   private readonly ILensQuery<TModel> _innerQuery;

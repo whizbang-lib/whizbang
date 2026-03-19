@@ -22,7 +22,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// or materialized into a new message instance using envelope extension methods.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/AutoPopulateProcessorTests.cs</tests>
 public sealed class AutoPopulateProcessor : IAutoPopulateProcessor {
   /// <summary>

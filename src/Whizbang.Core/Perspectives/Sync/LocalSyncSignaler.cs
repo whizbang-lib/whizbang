@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// perspective synchronization. It uses a pub/sub pattern with perspective type filtering.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
 public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
   private readonly ConcurrentDictionary<Type, ConcurrentBag<Action<PerspectiveCursorSignal>>> _subscribers = new();

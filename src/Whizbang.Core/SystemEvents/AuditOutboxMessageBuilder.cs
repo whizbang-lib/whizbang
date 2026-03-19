@@ -11,7 +11,7 @@ namespace Whizbang.Core.SystemEvents;
 /// Builds <see cref="EventAudited"/> outbox messages from domain event outbox messages.
 /// Used by the work coordinator strategy to generate audit trail entries when events are queued.
 /// </summary>
-/// <docs>core-concepts/system-events#audit-builder</docs>
+/// <docs>fundamentals/events/system-events#audit-builder</docs>
 public static class AuditOutboxMessageBuilder {
   /// <summary>
   /// Attempts to build an audit <see cref="OutboxMessage"/> from a domain event outbox message.

@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Shared parent metrics class that owns the IMeterFactory reference.
 /// Other Whizbang metrics classes inject this to access the factory.
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/WorkCoordinatorMetricsTests.cs</tests>
 public sealed class WhizbangMetrics {
   /// <summary>The meter factory for creating meters.</summary>

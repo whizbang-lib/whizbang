@@ -4,7 +4,7 @@ namespace Whizbang.Core.Scoping;
 /// Marker interface for models that contain TenantId in the DATA model.
 /// Optional - use when tenant ID is part of business data, not just infrastructure.
 /// </summary>
-/// <docs>core-concepts/scoping#marker-interfaces</docs>
+/// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -29,7 +29,7 @@ public interface ITenantScoped {
 /// <summary>
 /// Marker interface for models scoped to both tenant and user.
 /// </summary>
-/// <docs>core-concepts/scoping#marker-interfaces</docs>
+/// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
 public interface IUserScoped : ITenantScoped {
   /// <summary>
@@ -41,7 +41,7 @@ public interface IUserScoped : ITenantScoped {
 /// <summary>
 /// Marker interface for models scoped to organization.
 /// </summary>
-/// <docs>core-concepts/scoping#marker-interfaces</docs>
+/// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
 public interface IOrganizationScoped : ITenantScoped {
   /// <summary>
@@ -53,7 +53,7 @@ public interface IOrganizationScoped : ITenantScoped {
 /// <summary>
 /// Marker interface for models scoped to customer.
 /// </summary>
-/// <docs>core-concepts/scoping#marker-interfaces</docs>
+/// <docs>fundamentals/security/scoping#marker-interfaces</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/MarkerInterfaceTests.cs</tests>
 public interface ICustomerScoped : ITenantScoped {
   /// <summary>

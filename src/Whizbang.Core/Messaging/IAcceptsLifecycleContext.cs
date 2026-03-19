@@ -10,7 +10,7 @@ namespace Whizbang.Core.Messaging;
 /// Production receptors typically don't need this as they're registered via [FireAt] attribute
 /// which provides compile-time filtering.
 /// </remarks>
-/// <docs>testing/lifecycle-synchronization</docs>
+/// <docs>operations/testing/lifecycle-synchronization</docs>
 public interface IAcceptsLifecycleContext {
   /// <summary>
   /// Sets the lifecycle context for the current invocation.

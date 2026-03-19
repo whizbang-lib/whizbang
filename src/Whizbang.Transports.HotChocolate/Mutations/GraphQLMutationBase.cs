@@ -11,7 +11,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// </summary>
 /// <typeparam name="TCommand">The command type that implements <see cref="ICommand"/>.</typeparam>
 /// <typeparam name="TResult">The result type returned after command execution.</typeparam>
-/// <docs>graphql/mutations</docs>
+/// <docs>apis/graphql/mutations</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/GraphQLMutationBaseTests.cs</tests>
 /// <example>
 /// // Generated mutation type (partial, user can extend):

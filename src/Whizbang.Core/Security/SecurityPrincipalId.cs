@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Type-safe identifier for security principals (users, groups, services, applications).
 /// Enables group-based access control with nested group support.
 /// </summary>
-/// <docs>core-concepts/security#security-principals</docs>
+/// <docs>fundamentals/security/security#security-principals</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityPrincipalIdTests.cs</tests>
 /// <example>
 /// // Create principals with type prefixes

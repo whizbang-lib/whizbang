@@ -51,14 +51,14 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent eventData);
 /// Generated code creates these delegates with proper type safety - zero reflection.
 /// The result is wrapped in a pre-completed ValueTask for uniform handling.
 /// </summary>
-/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+/// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
 public delegate TResult SyncReceptorInvoker<out TResult>(object message);
 
 /// <summary>
 /// Delegate for invoking a void synchronous receptor's Handle method.
 /// Generated code creates these delegates with proper type safety - zero reflection.
 /// </summary>
-/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+/// <docs>fundamentals/receptors/receptors#synchronous-receptors</docs>
 public delegate void VoidSyncReceptorInvoker(object message);
 
 /// <summary>
@@ -214,7 +214,7 @@ public abstract partial class Dispatcher(
   /// This enables cross-scope sync where one handler emits events and another handler
   /// waits for the perspective to process them before firing.
   /// </summary>
-  /// <docs>core-concepts/perspectives/perspective-sync#dispatcher-integration</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#dispatcher-integration</docs>
   private async ValueTask _awaitPerspectiveSyncIfNeededAsync(
       object message,
       Type messageType,
@@ -303,7 +303,7 @@ public abstract partial class Dispatcher(
   /// Events are tracked via <see cref="IScopedEventTracker"/> or <see cref="ScopedEventTrackerAccessor"/>.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/perspectives/event-completion#dispatcher-integration</docs>
+  /// <docs>fundamentals/perspectives/event-completion#dispatcher-integration</docs>
   private async ValueTask _waitForPerspectivesIfNeededAsync(DispatchOptions options) {
     // Short-circuit if not waiting for perspectives
     if (!options.WaitForPerspectives) {
@@ -929,7 +929,7 @@ public abstract partial class Dispatcher(
   /// on InvalidCastException. This handles the case where the receptor returns a
   /// complex type (tuple, array, etc.) but the caller requests a specific type.
   /// </summary>
-  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async ValueTask<TResult> _localInvokeWithCastFallbackAsync<TResult>(
     ReceptorInvoker<TResult> asyncInvoker,
@@ -992,7 +992,7 @@ public abstract partial class Dispatcher(
   /// <param name="messageType">The runtime type of the message.</param>
   /// <returns>The extracted TResult value.</returns>
   /// <exception cref="InvalidOperationException">Thrown when TResult cannot be extracted from the receptor result.</exception>
-  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async ValueTask<TResult> _localInvokeWithRpcExtractionAsync<TResult>(
     Func<object, ValueTask<object?>> invoker,
@@ -1047,7 +1047,7 @@ public abstract partial class Dispatcher(
   /// <param name="result">The full receptor result containing multiple values.</param>
   /// <param name="extractedResponse">The value that was extracted and returned to the RPC caller.</param>
   /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
-  /// <docs>core-concepts/rpc-extraction</docs>
+  /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async Task _cascadeEventsExcludingResponseAsync<TResult>(
     object? result,
@@ -2382,7 +2382,7 @@ public abstract partial class Dispatcher(
   /// </list>
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null, IMessageEnvelope? sourceEnvelope = null) {
@@ -2560,7 +2560,7 @@ public abstract partial class Dispatcher(
   /// - No IMessageTagProcessor is registered
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-tags#processing</docs>
+  /// <docs>fundamentals/messages/message-tags#processing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Tags/DispatcherTagProcessingTests.cs</tests>
   /// <summary>
   /// Invokes lifecycle receptors at the specified stages via a scoped IReceptorInvoker.
@@ -2602,7 +2602,7 @@ public abstract partial class Dispatcher(
   /// Called after the business receptor completes, cascade, and tag processing.
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
-  /// <docs>core-concepts/lifecycle-stages#immediate-async</docs>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
   private async ValueTask _invokeImmediateAsyncReceptorsAsync(
       IMessageEnvelope envelope,
       Type messageType,
@@ -2641,7 +2641,7 @@ public abstract partial class Dispatcher(
   /// Local events don't go through perspectives, so PostLifecycle fires immediately.
   /// Creates a scope to resolve scoped IReceptorInvoker (Dispatcher is a singleton).
   /// </summary>
-  /// <docs>core-concepts/lifecycle-stages#post-lifecycle</docs>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#post-lifecycle</docs>
   private async ValueTask _invokePostLifecycleReceptorsAsync(
       IMessageEnvelope envelope,
       object message,
@@ -2733,7 +2733,7 @@ public abstract partial class Dispatcher(
   /// known event type. This avoids reflection and maintains AOT compatibility.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
   protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Base implementation is a no-op.
@@ -2763,7 +2763,7 @@ public abstract partial class Dispatcher(
   /// Events are stored to wh_event_store and perspective events are created, but transport is skipped.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
   protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
@@ -2913,8 +2913,8 @@ public abstract partial class Dispatcher(
   /// Cascades a message with explicit routing mode.
   /// Called by IEventCascader after resolving routing from wrappers and attributes.
   /// </summary>
-  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
-  /// <docs>core-concepts/message-security#security-context-in-event-cascades</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
+  /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
@@ -3076,7 +3076,7 @@ public abstract partial class Dispatcher(
   /// This ensures cascaded events carry the security context from their originating command.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -3270,7 +3270,7 @@ public abstract partial class Dispatcher(
   /// <param name="messageId">The message ID for tracking</param>
   /// <param name="sourceEnvelope">Optional source envelope for context propagation</param>
   /// <param name="eventStoreOnly">If true, stores event without transport delivery</param>
-  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   protected async Task PublishToOutboxDynamicAsync(IMessage eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false) {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
@@ -4144,7 +4144,7 @@ public abstract partial class Dispatcher(
   /// Defers an event to the in-memory channel for next lifecycle loop.
   /// The work coordinator will drain and write to outbox in that transaction.
   /// </summary>
-  /// <docs>core-concepts/dispatcher#deferred-publishing</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#deferred-publishing</docs>
   /// <tests>Whizbang.Core.Tests/Messaging/DeferredDispatchTests.cs</tests>
   private async Task _deferEventToChannelAsync<TEvent>(
     TEvent eventData,
@@ -4399,8 +4399,8 @@ public abstract partial class Dispatcher(
   /// <item>Disposes the scope</item>
   /// </list>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#cascade-security-context</docs>
-  /// <docs>core-concepts/message-security#security-context-in-event-cascades</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#cascade-security-context</docs>
+  /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
   protected abstract Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType);
 
   /// <summary>
@@ -4408,7 +4408,7 @@ public abstract partial class Dispatcher(
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// Returns null if no sync receptor found (falls back to async).
   /// </summary>
-  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#synchronous-invocation</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_InvokesSynchronouslyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_ReturnsCompletedValueTaskAsync</tests>
   protected abstract SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType);
@@ -4418,7 +4418,7 @@ public abstract partial class Dispatcher(
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// Returns null if no void sync receptor found.
   /// </summary>
-  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#synchronous-invocation</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
   protected abstract VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType);
 
@@ -4435,7 +4435,7 @@ public abstract partial class Dispatcher(
   /// 3. Void async receptor (IReceptor&lt;TMessage&gt;)
   /// 4. Void sync receptor (ISyncReceptor&lt;TMessage&gt;)
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#void-cascade</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#void-cascade</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherVoidCascadeTests.cs</tests>
   protected abstract Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType);
 
@@ -4447,7 +4447,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <param name="messageType">The runtime type of the message</param>
   /// <returns>The default dispatch mode from the receptor's [DefaultRouting] attribute, or null</returns>
-  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
   protected abstract Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType);
 

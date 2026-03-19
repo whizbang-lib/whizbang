@@ -21,7 +21,7 @@ namespace Whizbang.Generators.Analyzers;
 /// the correct parameter name to use.
 /// </para>
 /// </remarks>
-/// <docs>diagnostics/whiz090</docs>
+/// <docs>operations/diagnostics/whiz090</docs>
 /// <tests>Whizbang.Generators.Tests/Analyzers/MessageTagParameterAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {

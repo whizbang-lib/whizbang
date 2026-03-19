@@ -1182,7 +1182,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
     sb.AppendLine("/// Use this to conditionally enable pgvector support based on compile-time discovery.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("/// <docs>features/vector-search#auto-config</docs>");
+    sb.AppendLine("/// <docs>extending/features/vector-search#auto-config</docs>");
     sb.AppendLine("public static class VectorConfigurationRegistry {");
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// Indicates whether any perspective models have [VectorField] attributes.");

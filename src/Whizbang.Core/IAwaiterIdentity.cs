@@ -12,7 +12,7 @@ namespace Whizbang.Core;
 /// other awaiters waiting on the same events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#awaiter-identity</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
 public interface IAwaiterIdentity {
   /// <summary>

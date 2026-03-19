@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 namespace Whizbang.Data.Schema.Schemas;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// Schema definition for partition assignments table (distributed work coordination).
 /// Tracks which service instance owns which partition for consistent hashing-based work distribution.
 /// Based on gold standard SQL: src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/003_CreateServiceInstancesTable.sql

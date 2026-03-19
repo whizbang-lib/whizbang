@@ -5,7 +5,7 @@ namespace Whizbang.Core;
 /// Uses [StreamId] attribute on both events and commands.
 /// Uses source-generated extractors - zero reflection, AOT compatible.
 /// </summary>
-/// <docs>core-concepts/delivery-receipts</docs>
+/// <docs>fundamentals/messages/delivery-receipts</docs>
 /// <tests>tests/Whizbang.Core.Tests/StreamIdExtractorTests.cs</tests>
 public interface IStreamIdExtractor {
   /// <summary>

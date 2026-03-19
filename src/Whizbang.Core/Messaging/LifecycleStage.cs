@@ -13,7 +13,7 @@ namespace Whizbang.Core.Messaging;
 /// </list>
 /// <para>Receptors without [FireAt] fire at default stages for the current path.</para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-stages</docs>
+/// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/LocalImmediateLifecycleStageTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>

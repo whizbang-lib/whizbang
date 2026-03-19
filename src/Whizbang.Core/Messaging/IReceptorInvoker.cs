@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// <item><description>Distributed path: PreOutbox (sender) + PostInbox (receiver)</description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public interface IReceptorInvoker {
   /// <summary>

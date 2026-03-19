@@ -21,7 +21,7 @@ namespace Whizbang.Core.Workers;
 /// immediate consistency, use <see cref="InstantCompletionStrategy"/> instead.
 /// </para>
 /// </remarks>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_ReportCompletionAsync_DoesNotCallCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_GetPendingCompletions_ReturnsCollectedCompletions_Async</tests>
 public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {

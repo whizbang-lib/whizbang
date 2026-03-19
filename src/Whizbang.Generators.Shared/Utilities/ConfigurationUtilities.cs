@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Utilities for reading MSBuild properties from analyzer configuration.
 /// Used by generators to read user configuration such as table naming options.
 /// </summary>
-/// <docs>source-generators/configuration</docs>
+/// <docs>extending/source-generators/configuration</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/ConfigurationUtilitiesTests.cs</tests>
 public static class ConfigurationUtilities {
   /// <summary>

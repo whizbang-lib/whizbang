@@ -14,7 +14,7 @@ public class ScopeEntry {
 /// Read model for audit events materialized from <see cref="EventAudited"/>.
 /// Stored in the <c>wh_per_audit_event</c> perspective table.
 /// </summary>
-/// <docs>core-concepts/system-events#audit-model</docs>
+/// <docs>fundamentals/events/system-events#audit-model</docs>
 public class AuditEventModel {
   [StreamId]
   public Guid Id { get; set; }
@@ -59,7 +59,7 @@ public class AuditEventModel {
 /// will discover the perspective automatically from the referenced assembly.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#audit-projection</docs>
+/// <docs>fundamentals/events/system-events#audit-projection</docs>
 public static class AuditEventProjection {
   /// <summary>
   /// Global custom humanizer set via <see cref="SystemEventOptions.EventNameHumanizer"/>.

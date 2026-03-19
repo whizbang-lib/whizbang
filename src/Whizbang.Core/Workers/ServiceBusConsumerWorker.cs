@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <docs>components/workers/service-bus-consumer</docs>
+/// <docs>messaging/transports/service-bus-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
 public partial class ServiceBusConsumerWorker(

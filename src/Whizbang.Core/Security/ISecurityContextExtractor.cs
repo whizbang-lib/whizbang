@@ -15,7 +15,7 @@ namespace Whizbang.Core.Security;
 /// Extractors should return null if they cannot handle the message, allowing
 /// the next extractor in priority order to try.
 /// </remarks>
-/// <docs>core-concepts/message-security#extractors</docs>
+/// <docs>fundamentals/security/message-security#extractors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 /// <example>
 /// public class JwtPayloadExtractor : ISecurityContextExtractor {

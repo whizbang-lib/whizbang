@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security;
 /// Result of security context extraction from a message.
 /// Contains all security-related information extracted from the message.
 /// </summary>
-/// <docs>core-concepts/message-security#extraction</docs>
+/// <docs>fundamentals/security/message-security#extraction</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 public sealed record SecurityExtraction {
   /// <summary>

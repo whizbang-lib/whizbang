@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// when invoking lifecycle receptors. User code rarely needs to create instances directly.
 /// Uses record type for convenient 'with' syntax when updating context properties.
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 public sealed record LifecycleExecutionContext : ILifecycleContext {
   /// <inheritdoc/>
   public required LifecycleStage CurrentStage { get; init; }

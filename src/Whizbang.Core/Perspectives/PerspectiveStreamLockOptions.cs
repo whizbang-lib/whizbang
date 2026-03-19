@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Configuration options for perspective stream locking.
 /// Controls lock duration and keepalive interval for rewind, bootstrap, and purge operations.
 /// </summary>
-/// <docs>perspectives/stream-locking</docs>
+/// <docs>fundamentals/perspectives/stream-locking</docs>
 public class PerspectiveStreamLockOptions {
   /// <summary>
   /// How long a lock is valid before expiring. Must be longer than KeepAliveInterval.

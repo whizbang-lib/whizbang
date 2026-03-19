@@ -3,7 +3,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <summary>
 /// The outcome of a perspective synchronization wait operation.
 /// </summary>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 public enum SyncOutcome {
   /// <summary>

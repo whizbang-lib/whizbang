@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// Ensures AOT compatibility by flagging object, dynamic, and non-generic interface properties.
 /// Recursively checks nested child types to ensure entire object graph is serializable.
 /// </summary>
-/// <docs>diagnostics/serializable-property-analyzer</docs>
+/// <docs>operations/diagnostics/serializable-property-analyzer</docs>
 /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {

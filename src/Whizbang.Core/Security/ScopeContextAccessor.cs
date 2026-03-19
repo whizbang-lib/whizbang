@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// AsyncLocal-based implementation of IScopeContextAccessor.
 /// Provides ambient scope context that flows across async calls within the same logical context.
 /// </summary>
-/// <docs>core-concepts/security#scope-context-accessor</docs>
+/// <docs>fundamentals/security/security#scope-context-accessor</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -73,7 +73,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   /// the initiating message context for security propagation.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#initiating-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
   /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public static IMessageContext? CurrentInitiatingContext {
     get => _initiatingContext.Value;
@@ -84,14 +84,14 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   /// Static accessor for UserId from InitiatingContext (SOURCE OF TRUTH).
   /// This is a POINTER to InitiatingContext.UserId, not a copy.
   /// </summary>
-  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  /// <docs>fundamentals/messages/cascade-context#pointer-properties</docs>
   public static string? CurrentUserId => _initiatingContext.Value?.UserId;
 
   /// <summary>
   /// Static accessor for TenantId from InitiatingContext (SOURCE OF TRUTH).
   /// This is a POINTER to InitiatingContext.TenantId, not a copy.
   /// </summary>
-  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  /// <docs>fundamentals/messages/cascade-context#pointer-properties</docs>
   public static string? CurrentTenantId => _initiatingContext.Value?.TenantId;
 
   /// <inheritdoc />
@@ -105,7 +105,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   }
 
   /// <inheritdoc />
-  /// <docs>core-concepts/cascade-context#initiating-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
   /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public IMessageContext? InitiatingContext {
     get => _initiatingContext.Value;

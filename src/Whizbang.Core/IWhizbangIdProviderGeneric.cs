@@ -38,7 +38,7 @@ namespace Whizbang.Core;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids</docs>
 #pragma warning disable S3246 // Variance not possible on value type constraint (struct)
 public interface IWhizbangIdProvider<TId> where TId : struct {
 #pragma warning restore S3246

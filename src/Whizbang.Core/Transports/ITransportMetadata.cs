@@ -13,7 +13,7 @@ namespace Whizbang.Core.Transports;
 /// Security extractors can use transport metadata to extract tokens, tenant IDs, user IDs,
 /// and other security-relevant information that was set by the message producer.
 /// </remarks>
-/// <docs>core-concepts/message-security#transport-metadata</docs>
+/// <docs>fundamentals/security/message-security#transport-metadata</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/TransportMetadataTests.cs</tests>
 public interface ITransportMetadata {
   /// <summary>

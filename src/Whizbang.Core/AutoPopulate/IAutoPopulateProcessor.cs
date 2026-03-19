@@ -15,7 +15,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// This is called automatically by the Dispatcher at the appropriate lifecycle points.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public interface IAutoPopulateProcessor {
   /// <summary>
   /// Processes auto-populate registrations for a message and stores values in envelope metadata.

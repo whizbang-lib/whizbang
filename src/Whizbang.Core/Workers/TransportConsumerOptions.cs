@@ -6,7 +6,7 @@ namespace Whizbang.Core.Workers;
 /// Configuration options for TransportConsumerWorker.
 /// Specifies which destinations to subscribe to.
 /// </summary>
-/// <docs>components/workers/transport-consumer</docs>
+/// <docs>messaging/transports/transport-consumer</docs>
 public class TransportConsumerOptions {
   /// <summary>
   /// Gets the list of destinations to subscribe to.

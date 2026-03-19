@@ -16,7 +16,7 @@ namespace Whizbang.Core.Security;
 /// - Setting up tenant-specific database connections
 /// - Initializing audit/logging contexts
 /// </remarks>
-/// <docs>core-concepts/message-security#callbacks</docs>
+/// <docs>fundamentals/security/message-security#callbacks</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_WithCallbacks_CallsAllCallbacksAfterContextEstablishedAsync</tests>
 /// <example>
 /// public class UserContextManagerCallback : ISecurityContextCallback {

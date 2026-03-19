@@ -15,7 +15,7 @@ namespace Whizbang.Core.ValueObjects;
 /// - Efficient JSONB queries
 /// - Interoperability with other systems expecting standard UUID format
 /// </remarks>
-/// <docs>core-concepts/whizbang-ids#tracked-guid</docs>
+/// <docs>fundamentals/identity/whizbang-ids#tracked-guid</docs>
 public sealed class TrackedGuidJsonConverter : JsonConverter<TrackedGuid> {
   /// <inheritdoc/>
   public override TrackedGuid Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {

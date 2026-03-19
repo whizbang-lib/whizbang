@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 public interface ILifecycleContext {
   /// <summary>
   /// Gets the current lifecycle stage at which the receptor is being invoked.
@@ -142,6 +142,6 @@ public interface ILifecycleContext {
   /// }
   /// </code>
   /// </remarks>
-  /// <docs>core-concepts/lifecycle-receptors#processing-mode</docs>
+  /// <docs>fundamentals/receptors/lifecycle-receptors#processing-mode</docs>
   ProcessingMode? ProcessingMode { get; }
 }

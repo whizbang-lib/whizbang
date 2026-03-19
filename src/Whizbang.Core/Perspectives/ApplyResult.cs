@@ -32,7 +32,7 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <typeparam name="TModel">The perspective model type.</typeparam>
-/// <docs>core-concepts/model-action</docs>
+/// <docs>fundamentals/perspectives/model-action</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ApplyResultTests.cs</tests>
 /// <example>
 /// <para><strong>Using static factory methods:</strong></para>

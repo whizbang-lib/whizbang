@@ -29,7 +29,7 @@ namespace Whizbang.Core.Workers;
 /// - Marks completed/failed messages
 /// - Claims and processes orphaned work (outbox and inbox)
 /// </summary>
-/// <docs>workers/work-coordinator-publisher-worker</docs>
+/// <docs>operations/workers/work-coordinator-publisher-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ConsecutiveBuffers_TracksCountAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ExceedsThreshold_LogsWarningAsync</tests>

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Transports;
 /// - RabbitMQ: Declare topic exchanges
 /// - Kafka: Create topics via AdminClient
 /// </remarks>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs</tests>
 public interface IInfrastructureProvisioner {
   /// <summary>
@@ -49,7 +49,7 @@ public interface IInfrastructureProvisioner {
   /// multiple service instances attempt to create the same topic.
   /// The default implementation is a no-op for transports that don't need pre-creation (e.g., RabbitMQ).
   /// </remarks>
-  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>

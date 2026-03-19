@@ -9,7 +9,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </summary>
 /// <param name="connection">The RabbitMQ connection (should be a singleton).</param>
 /// <param name="maxChannels">Maximum number of channels in the pool.</param>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels) : IDisposable {
   private readonly IConnection _connection = connection ?? throw new ArgumentNullException(nameof(connection));
   private readonly ConcurrentBag<IChannel> _availableChannels = [];

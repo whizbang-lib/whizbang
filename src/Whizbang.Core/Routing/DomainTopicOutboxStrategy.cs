@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// services subscribe to namespaces they care about.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#domain-topic-outbox</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-outbox</docs>
 public sealed class DomainTopicOutboxStrategy : IOutboxRoutingStrategy {
   private readonly ITopicRoutingStrategy _topicResolver;
 

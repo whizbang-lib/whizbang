@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// Provides access to the current sync context within a scoped request.
 /// Similar to IHttpContextAccessor pattern.
 /// </summary>
-/// <docs>core-concepts/perspectives/perspective-sync#sync-context</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#sync-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncContextAccessorTests.cs</tests>
 public interface ISyncContextAccessor {
   /// <summary>
@@ -40,7 +40,7 @@ public class SyncContextAccessor : ISyncContextAccessor {
   /// Use sparingly - prefer the scoped ISyncContextAccessor for proper DI patterns.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/perspectives/perspective-sync#sync-context</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#sync-context</docs>
   public static SyncContext? CurrentContext {
     get => _syncContextCurrent.Value?.Context;
     set {

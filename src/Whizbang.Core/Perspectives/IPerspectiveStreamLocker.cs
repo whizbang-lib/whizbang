@@ -5,7 +5,7 @@ namespace Whizbang.Core.Perspectives;
 /// Prevents concurrent event application while destructive or rebuilding operations are in progress.
 /// New events queue up in wh_perspective_events and are processed after the lock is released.
 /// </summary>
-/// <docs>perspectives/stream-locking</docs>
+/// <docs>fundamentals/perspectives/stream-locking</docs>
 public interface IPerspectiveStreamLocker {
   /// <summary>
   /// Attempts to acquire a stream lock for the given perspective.

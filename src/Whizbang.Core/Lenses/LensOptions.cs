@@ -28,7 +28,7 @@ namespace Whizbang.Core.Lenses;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/scoped-lenses#configuration</docs>
+/// <docs>fundamentals/lenses/scoped-lenses#configuration</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
 public sealed class LensOptions {
   private readonly List<ScopeDefinition> _scopes = [];

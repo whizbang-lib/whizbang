@@ -23,7 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// ensuring full security context propagation and event cascading.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public interface IReceptorRegistry {
   /// <summary>
@@ -53,7 +53,7 @@ public interface IReceptorRegistry {
   /// full security context, event cascading, and trace correlation.
   /// </para>
   /// </remarks>
-  /// <docs>testing/lifecycle-synchronization</docs>
+  /// <docs>operations/testing/lifecycle-synchronization</docs>
   void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage;
 
   /// <summary>
@@ -73,7 +73,7 @@ public interface IReceptorRegistry {
   /// <typeparam name="TResponse">The response type the receptor returns.</typeparam>
   /// <param name="receptor">The receptor instance to invoke.</param>
   /// <param name="stage">The lifecycle stage at which to invoke the receptor.</param>
-  /// <docs>testing/lifecycle-synchronization</docs>
+  /// <docs>operations/testing/lifecycle-synchronization</docs>
   void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage;
 
   /// <summary>

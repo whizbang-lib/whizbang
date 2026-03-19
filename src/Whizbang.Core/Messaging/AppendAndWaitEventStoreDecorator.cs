@@ -21,7 +21,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/event-store#append-and-wait</docs>
+/// <docs>fundamentals/events/event-store#append-and-wait</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
 public sealed class AppendAndWaitEventStoreDecorator : IEventStore {
   private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);

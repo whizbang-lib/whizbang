@@ -1,7 +1,7 @@
 namespace Whizbang.Generators.Shared.Limits;
 
 /// <summary>
-/// <docs>infrastructure/database-limits</docs>
+/// <docs>operations/infrastructure/database-limits</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Limits/DbProviderLimitsTests.cs</tests>
 /// Defines identifier length limits for a database provider.
 /// Used by source generators to validate names at compile time.

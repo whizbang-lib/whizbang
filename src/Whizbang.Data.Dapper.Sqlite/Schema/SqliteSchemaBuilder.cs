@@ -15,7 +15,7 @@ namespace Whizbang.Data.Dapper.Sqlite.Schema;
 /// - No VARCHAR(n) enforcement (all become TEXT)
 /// - UNIQUE constraints supported at column and table level
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>

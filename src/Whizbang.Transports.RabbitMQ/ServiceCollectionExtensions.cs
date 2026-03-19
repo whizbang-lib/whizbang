@@ -14,7 +14,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Extension methods for registering RabbitMQ transport with dependency injection.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers RabbitMQ transport as the ITransport implementation.

@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// complex object hierarchies.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/polymorphic-types</docs>
+/// <docs>fundamentals/perspectives/polymorphic-types</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   /// <inheritdoc/>

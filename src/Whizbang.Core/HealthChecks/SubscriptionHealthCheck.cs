@@ -14,7 +14,7 @@ namespace Whizbang.Core.HealthChecks;
 /// Returns <see cref="HealthStatus.Unhealthy"/> when no subscriptions are healthy.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/HealthChecks/SubscriptionHealthCheckTests.cs</tests>
 public class SubscriptionHealthCheck : IHealthCheck {
   private readonly IReadOnlyDictionary<TransportDestination, SubscriptionState> _states;

@@ -36,7 +36,7 @@ namespace Whizbang.Core;
 /// - Attribute is inherited by derived message types
 /// </para>
 /// </remarks>
-/// <docs>attributes/streamid</docs>
+/// <docs>extending/attributes/streamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
 public sealed class StreamIdAttribute : Attribute {

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Configuration;
 /// </code>
 /// </example>
 /// </remarks>
-/// <docs>configuration/service-registration-options</docs>
+/// <docs>operations/configuration/service-registration-options</docs>
 public sealed class ServiceRegistrationOptions {
   /// <summary>
   /// If true, registers concrete types as themselves in addition to their interfaces.

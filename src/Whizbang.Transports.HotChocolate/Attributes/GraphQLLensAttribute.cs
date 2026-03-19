@@ -5,7 +5,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// The source generator discovers this attribute and generates GraphQL type extensions,
 /// query resolvers, and schema registrations.
 /// </summary>
-/// <docs>graphql/lens-integration</docs>
+/// <docs>apis/graphql/lens-integration</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/GraphQLLensAttributeTests.cs</tests>
 /// <example>
 /// // Simple - uses system default scope

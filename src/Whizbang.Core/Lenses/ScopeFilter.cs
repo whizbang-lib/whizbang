@@ -4,7 +4,7 @@ namespace Whizbang.Core.Lenses;
 /// Composable scope filters for lens queries.
 /// Combine with bitwise OR to apply multiple filters.
 /// </summary>
-/// <docs>core-concepts/scoping#composable-filters</docs>
+/// <docs>fundamentals/security/scoping#composable-filters</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 /// <example>
 /// // Single filter
@@ -53,7 +53,7 @@ public enum ScopeFilter {
 /// <summary>
 /// Extension methods and common filter patterns for ScopeFilter.
 /// </summary>
-/// <docs>core-concepts/scoping#filter-patterns</docs>
+/// <docs>fundamentals/security/scoping#filter-patterns</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 public static class ScopeFilterExtensions {
   /// <summary>

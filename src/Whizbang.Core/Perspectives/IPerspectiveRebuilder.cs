@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Provides perspective rebuild operations in multiple modes.
 /// Used internally by the migration system and available to developers for operational needs.
 /// </summary>
-/// <docs>core-concepts/perspectives#rebuild</docs>
+/// <docs>fundamentals/perspectives/perspectives#rebuild</docs>
 public interface IPerspectiveRebuilder {
   /// <summary>
   /// Blue-green rebuild: create new table, replay all events, swap when complete.

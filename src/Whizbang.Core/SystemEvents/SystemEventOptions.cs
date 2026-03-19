@@ -3,7 +3,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <summary>
 /// Controls which events are audited when event audit is enabled.
 /// </summary>
-/// <docs>core-concepts/system-events#audit-mode</docs>
+/// <docs>fundamentals/events/system-events#audit-mode</docs>
 public enum AuditMode {
   /// <summary>
   /// All events are audited unless marked with <c>[AuditEvent(Exclude = true)]</c>.
@@ -43,7 +43,7 @@ public enum AuditMode {
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events#configuration</docs>
+/// <docs>fundamentals/events/system-events#configuration</docs>
 public sealed class SystemEventOptions {
   /// <summary>
   /// When <c>true</c>, system events are stored locally but NOT published to the outbox

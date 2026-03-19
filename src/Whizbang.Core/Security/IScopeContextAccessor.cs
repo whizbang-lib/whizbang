@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Accessor for ambient scope context (similar to IHttpContextAccessor).
 /// Uses AsyncLocal for request-scoped propagation across async calls.
 /// </summary>
-/// <docs>core-concepts/security#scope-context-accessor</docs>
+/// <docs>fundamentals/security/security#scope-context-accessor</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
 /// <example>
 /// public class OrderService {
@@ -47,7 +47,7 @@ public interface IScopeContextAccessor {
   /// since they derive from the same source.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/cascade-context#initiating-context</docs>
+  /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
   /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   IMessageContext? InitiatingContext { get; set; }
 
@@ -55,14 +55,14 @@ public interface IScopeContextAccessor {
   /// Gets UserId directly from InitiatingContext (SOURCE OF TRUTH).
   /// This is a POINTER to InitiatingContext.UserId, not a copy.
   /// </summary>
-  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  /// <docs>fundamentals/messages/cascade-context#pointer-properties</docs>
   string? UserId => InitiatingContext?.UserId;
 
   /// <summary>
   /// Gets TenantId directly from InitiatingContext (SOURCE OF TRUTH).
   /// This is a POINTER to InitiatingContext.TenantId, not a copy.
   /// </summary>
-  /// <docs>core-concepts/cascade-context#pointer-properties</docs>
+  /// <docs>fundamentals/messages/cascade-context#pointer-properties</docs>
   string? TenantId => InitiatingContext?.TenantId;
 
   /// <summary>

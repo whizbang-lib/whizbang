@@ -14,7 +14,7 @@ namespace Whizbang.Core.Routing;
 /// from perspectives and receptors are available for subscription discovery.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#event-namespace-registry</docs>
+/// <docs>fundamentals/dispatcher/routing#event-namespace-registry</docs>
 public static class EventNamespaceRegistry {
   /// <summary>
   /// Thread-safe collection of registered event namespace sources.

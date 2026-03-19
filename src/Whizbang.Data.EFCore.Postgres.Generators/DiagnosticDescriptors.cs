@@ -59,7 +59,7 @@ internal static class DiagnosticDescriptors {
   /// WHIZ811: Info - Perspective model contains polymorphic type property.
   /// The model uses JSONB storage with System.Text.Json polymorphic serialization.
   /// </summary>
-  /// <docs>perspectives/polymorphic-types</docs>
+  /// <docs>fundamentals/perspectives/polymorphic-types</docs>
   public static readonly DiagnosticDescriptor PerspectiveModelPolymorphicProperty = new(
       id: "WHIZ811",
       title: "Perspective model contains polymorphic type",

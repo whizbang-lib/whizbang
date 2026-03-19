@@ -7,7 +7,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// RabbitMQ implementation of IInfrastructureProvisioner.
 /// Creates topic exchanges for owned domains at worker startup.
 /// </summary>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvisioner {

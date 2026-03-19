@@ -7,7 +7,7 @@ namespace Whizbang.Observability.DependencyInjection;
 /// <summary>
 /// Extension methods for registering OpenTelemetry hooks with the message tag system.
 /// </summary>
-/// <docs>observability/opentelemetry-integration#registration</docs>
+/// <docs>operations/observability/opentelemetry-integration#registration</docs>
 public static class ObservabilityTagExtensions {
   /// <summary>
   /// Registers OpenTelemetry hooks for <see cref="TelemetryTagAttribute"/>

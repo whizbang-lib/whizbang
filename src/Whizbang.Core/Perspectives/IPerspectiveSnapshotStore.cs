@@ -7,7 +7,7 @@ namespace Whizbang.Core.Perspectives;
 /// Snapshots capture the full model state at a specific event, enabling replay from that point
 /// instead of replaying from event zero.
 /// </summary>
-/// <docs>perspectives/snapshots</docs>
+/// <docs>fundamentals/perspectives/snapshots</docs>
 public interface IPerspectiveSnapshotStore {
   /// <summary>
   /// Creates a snapshot of the perspective model state at the given event.

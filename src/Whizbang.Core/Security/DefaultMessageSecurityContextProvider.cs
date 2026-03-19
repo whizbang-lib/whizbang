@@ -19,7 +19,7 @@ namespace Whizbang.Core.Security;
 ///
 /// All operations are AOT-compatible with no reflection.
 /// </remarks>
-/// <docs>core-concepts/message-security#default-provider</docs>
+/// <docs>fundamentals/security/message-security#default-provider</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
 public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityContextProvider {
   private readonly IReadOnlyList<ISecurityContextExtractor> _extractors;

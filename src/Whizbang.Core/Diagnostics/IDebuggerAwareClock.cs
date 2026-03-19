@@ -41,7 +41,7 @@ namespace Whizbang.Core.Diagnostics;
 /// <item><see cref="DebuggerDetectionMode.Auto"/> - Auto-select best method</item>
 /// </list>
 /// </remarks>
-/// <docs>features/debugger-aware-clock</docs>
+/// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public interface IDebuggerAwareClock : IDisposable {
   /// <summary>

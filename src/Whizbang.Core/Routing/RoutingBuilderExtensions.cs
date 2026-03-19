@@ -38,7 +38,7 @@ internal sealed class RoutingConfiguredMarker : IRoutingConfigured { }
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#with-routing</docs>
+/// <docs>fundamentals/dispatcher/routing#with-routing</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs</tests>
 public static class RoutingBuilderExtensions {
   /// <summary>
@@ -75,7 +75,7 @@ public static class RoutingBuilderExtensions {
   ///     .AddTransportConsumer(); // Auto-generates subscriptions from routing config
   /// </code>
   /// </example>
-  /// <docs>core-concepts/routing#with-routing</docs>
+  /// <docs>fundamentals/dispatcher/routing#with-routing</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_RegistersRoutingOptionsAsync</tests>
   public static WhizbangBuilder WithRouting(
       this WhizbangBuilder builder,

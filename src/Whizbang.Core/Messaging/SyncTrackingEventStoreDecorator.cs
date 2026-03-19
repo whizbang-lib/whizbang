@@ -24,7 +24,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
 public sealed class SyncTrackingEventStoreDecorator : IEventStore {
   private readonly IEventStore _inner;

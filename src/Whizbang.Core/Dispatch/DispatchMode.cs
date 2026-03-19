@@ -34,7 +34,7 @@ namespace Whizbang.Core.Dispatch;
 /// return Route.EventStoreOnly(new AuditEvent { Action = "login" });
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchModeTests.cs</tests>
 [Flags]
 public enum DispatchMode {

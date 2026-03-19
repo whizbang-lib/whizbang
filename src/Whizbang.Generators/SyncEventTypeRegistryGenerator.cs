@@ -25,7 +25,7 @@ namespace Whizbang.Generators;
 /// letting the SyncTrackingEventStoreDecorator know which event types to track.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#type-registry</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
 /// <tests>Whizbang.Generators.Tests/SyncEventTypeRegistryGeneratorTests.cs</tests>
 [Generator]
 public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {

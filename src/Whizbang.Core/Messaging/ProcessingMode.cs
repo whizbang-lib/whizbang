@@ -32,7 +32,7 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors#processing-mode</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors#processing-mode</docs>
 public enum ProcessingMode {
   /// <summary>
   /// Normal live processing. All receptors fire as usual.

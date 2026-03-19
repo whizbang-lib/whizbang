@@ -20,7 +20,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public static class AutoPopulateRegistry {
   /// <summary>
   /// Register an assembly's auto-populate registry.

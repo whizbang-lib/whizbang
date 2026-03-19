@@ -7,7 +7,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <param name="StreamId">The stream ID that was processed.</param>
 /// <param name="LastEventId">The ID of the last event processed.</param>
 /// <param name="Timestamp">The time the cursor was updated.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
 public readonly record struct PerspectiveCursorSignal(
     Type PerspectiveType,

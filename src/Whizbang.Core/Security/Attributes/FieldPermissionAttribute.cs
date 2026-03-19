@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// Restricts field visibility based on caller permissions.
 /// When the caller lacks the required permission, the field value is masked.
 /// </summary>
-/// <docs>core-concepts/security#column-level-security</docs>
+/// <docs>fundamentals/security/security#column-level-security</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <example>
 /// public class Customer {
@@ -33,7 +33,7 @@ public sealed class FieldPermissionAttribute(string permission, MaskingStrategy 
 /// <summary>
 /// Strategy for masking restricted fields when permission is not granted.
 /// </summary>
-/// <docs>core-concepts/security#masking-strategies</docs>
+/// <docs>fundamentals/security/security#masking-strategies</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 public enum MaskingStrategy {
   /// <summary>
