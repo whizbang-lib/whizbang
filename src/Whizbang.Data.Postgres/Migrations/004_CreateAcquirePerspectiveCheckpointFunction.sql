@@ -1,10 +1,10 @@
 -- =============================================
--- Create acquire_perspective_checkpoint_work function
+-- Create acquire_perspective_cursor_work function
 -- Creates or updates perspective checkpoints when processing stream events
 -- Uses UPSERT pattern: insert new checkpoint or update existing one
 -- =============================================
 
-CREATE OR REPLACE FUNCTION __SCHEMA__.acquire_perspective_checkpoint_work(
+CREATE OR REPLACE FUNCTION __SCHEMA__.acquire_perspective_cursor_work(
   p_stream_id UUID,
   p_perspective_names TEXT[],
   p_event_id UUID
@@ -24,7 +24,7 @@ BEGIN
   FOREACH v_perspective_name IN ARRAY p_perspective_names
   LOOP
     -- UPSERT: Insert new checkpoint or update if already exists
-    INSERT INTO wh_perspective_checkpoints (
+    INSERT INTO wh_perspective_cursors (
       stream_id,
       perspective_name,
       last_event_id,
@@ -52,7 +52,7 @@ BEGIN
       pc.perspective_name,
       pc.status,
       pc.last_event_id
-    FROM wh_perspective_checkpoints pc
+    FROM wh_perspective_cursors pc
     WHERE pc.stream_id = p_stream_id
       AND pc.perspective_name = v_perspective_name;
   END LOOP;

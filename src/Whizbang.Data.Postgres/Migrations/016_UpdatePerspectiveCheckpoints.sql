@@ -1,10 +1,10 @@
 -- Migration: 016_UpdatePerspectiveCheckpoints.sql
 -- Date: 2025-12-25
--- Description: Creates update_perspective_checkpoints function for updating persistent checkpoint state.
+-- Description: Creates update_perspective_cursors function for updating persistent checkpoint state.
 --              Finds highest completed sequence with no gaps, updates checkpoint atomically.
--- Dependencies: 001-015 (requires wh_perspective_events and wh_perspective_checkpoints tables)
+-- Dependencies: 001-015 (requires wh_perspective_events and wh_perspective_cursors tables)
 
-CREATE OR REPLACE FUNCTION __SCHEMA__.update_perspective_checkpoints(
+CREATE OR REPLACE FUNCTION __SCHEMA__.update_perspective_cursors(
   p_completed_events JSONB,  -- [{StreamId, PerspectiveName}]
   p_debug_mode BOOLEAN DEFAULT FALSE
 ) RETURNS VOID AS $$
@@ -54,7 +54,7 @@ BEGIN
 
     -- Update checkpoint atomically
     -- COALESCE ensures we don't overwrite with NULL if no new progress
-    UPDATE wh_perspective_checkpoints pc
+    UPDATE wh_perspective_cursors pc
     SET last_event_id = COALESCE(v_last_event_id, pc.last_event_id),
         status = CASE WHEN v_is_complete THEN 2 ELSE pc.status END
     WHERE pc.stream_id = v_checkpoint.stream_id
@@ -62,7 +62,7 @@ BEGIN
 
     -- If checkpoint doesn't exist, create it
     IF NOT FOUND THEN
-      INSERT INTO wh_perspective_checkpoints (
+      INSERT INTO wh_perspective_cursors (
         stream_id,
         perspective_name,
         last_event_id,
@@ -78,5 +78,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.update_perspective_checkpoints IS
+COMMENT ON FUNCTION __SCHEMA__.update_perspective_cursors IS
 'Updates persistent perspective checkpoints based on completed events. Finds highest completed sequence with no gaps, ensuring sequential consistency. Updates or creates checkpoint records atomically.';

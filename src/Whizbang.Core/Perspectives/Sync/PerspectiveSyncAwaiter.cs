@@ -327,6 +327,7 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       ReceptorCompletions = [],
       ReceptorFailures = [],
       PerspectiveCompletions = [],
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = [],
       NewOutboxMessages = [],
       NewInboxMessages = [],

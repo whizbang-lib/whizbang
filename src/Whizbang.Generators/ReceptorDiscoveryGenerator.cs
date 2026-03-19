@@ -54,6 +54,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_SYNC_AWAIT_CODE = "__SYNC_AWAIT_CODE__";
   private const string PLACEHOLDER_HANDLER_COUNT = "__HANDLER_COUNT__";
   private const string PLACEHOLDER_IS_EXPLICIT = "__IS_EXPLICIT__";
+  private const string PLACEHOLDER_FIRE_DURING_REPLAY = "__FIRE_DURING_REPLAY__";
   private const string REGION_NAMESPACE = "NAMESPACE";
   private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
   private const string DEFAULT_NAMESPACE = "Whizbang.Core";
@@ -135,6 +136,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Check for [WhizbangTrace] attribute
     var hasTraceAttribute = _hasWhizbangTraceAttribute(classSymbol);
 
+    // Check for [FireDuringReplay] attribute
+    var hasFireDuringReplayAttribute = _hasFireDuringReplayAttribute(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
         classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
@@ -155,7 +159,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
+          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
       );
     }
 
@@ -176,7 +181,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
+          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
       );
     }
 
@@ -200,7 +206,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
+          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
       );
     }
 
@@ -221,7 +228,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           SyncAttributes: syncAttributes,
           HasTraceAttribute: hasTraceAttribute,
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
-          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol)
+          IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
+          HasFireDuringReplayAttribute: hasFireDuringReplayAttribute
       );
     }
 
@@ -582,6 +590,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var attribute in classSymbol.GetAttributes()) {
       if (attribute.AttributeClass?.ToDisplayString() == WHIZBANG_TRACE_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a class symbol has the [FireDuringReplay] attribute.
+  /// Returns true if the attribute is present, false otherwise.
+  /// Used to generate FireDuringReplay metadata on ReceptorInfo so the invoker can
+  /// suppress non-opted-in receptors during replay and rebuild operations.
+  /// </summary>
+  private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
+    const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() == FIRE_DURING_REPLAY_ATTRIBUTE) {
         return true;
       }
     }
@@ -1561,7 +1587,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
         .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName)
-        .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode);
+        .Replace(PLACEHOLDER_SYNC_ATTRIBUTES, syncAttributesCode)
+        .Replace(PLACEHOLDER_FIRE_DURING_REPLAY, receptor.HasFireDuringReplayAttribute ? "true" : "false");
 
     if (!receptor.IsVoid && receptor.ResponseType is not null) {
       result = result.Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType);
@@ -1603,7 +1630,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     sb.AppendLine($"  }},");
-    sb.AppendLine($"  SyncAttributes: {syncAttributesCode}");
+    sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
+    sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")}");
     sb.Append(')');
 
     return sb.ToString();

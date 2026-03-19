@@ -31,4 +31,7 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
 
   /// <inheritdoc/>
   public int? AttemptNumber { get; init; }
+
+  /// <inheritdoc/>
+  public ProcessingMode? ProcessingMode { get; init; }
 }

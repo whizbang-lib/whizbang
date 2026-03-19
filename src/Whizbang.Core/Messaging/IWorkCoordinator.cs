@@ -85,18 +85,25 @@ public sealed record ProcessWorkBatchRequest {
   public required ReceptorProcessingFailure[] ReceptorFailures { get; init; }
 
   /// <summary>
-  /// Array of perspective checkpoint completions (read model projection checkpoints).
+  /// Array of perspective cursor completions (read model projection cursors).
   /// Tracks last processed event per stream.
   /// Empty array if no completions.
   /// </summary>
-  public required PerspectiveCheckpointCompletion[] PerspectiveCompletions { get; init; }
+  public required PerspectiveCursorCompletion[] PerspectiveCompletions { get; init; }
 
   /// <summary>
-  /// Array of perspective checkpoint failures (read model projection failures).
+  /// Array of perspective event completions (work IDs to delete from wh_perspective_events).
+  /// Used to clean up ephemeral event tracking rows after processing.
+  /// Empty array if no completions.
+  /// </summary>
+  public required PerspectiveEventCompletion[] PerspectiveEventCompletions { get; init; }
+
+  /// <summary>
+  /// Array of perspective cursor failures (read model projection failures).
   /// Includes error details and last attempted event.
   /// Empty array if no failures.
   /// </summary>
-  public required PerspectiveCheckpointFailure[] PerspectiveFailures { get; init; }
+  public required PerspectiveCursorFailure[] PerspectiveFailures { get; init; }
 
   /// <summary>
   /// Array of new outbox messages to store.
@@ -254,8 +261,8 @@ public interface IWorkCoordinator {
   );
 
   /// <summary>
-  /// Reports perspective checkpoint completion or failure directly (out-of-band).
-  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// Reports perspective cursor completion or failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
   /// </summary>
   /// <param name="completion">Perspective checkpoint completion to report</param>
@@ -270,12 +277,12 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
   Task ReportPerspectiveCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Reports perspective checkpoint failure directly (out-of-band).
-  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// Reports perspective cursor failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective cursor without affecting
   /// heartbeats, work claiming, or other coordination operations.
   /// </summary>
   /// <param name="failure">Perspective checkpoint failure to report</param>
@@ -290,7 +297,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
   Task ReportPerspectiveFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -305,17 +312,17 @@ public interface IWorkCoordinator {
   /// Used by PerspectiveWorker to determine where to start reading events when processing
   /// grouped work items for a stream/perspective pair.
   /// </remarks>
-  Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+  Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Information about a perspective checkpoint.
+/// Information about a perspective cursor.
 /// Used by PerspectiveWorker to determine where to start reading events.
 /// </summary>
-public record PerspectiveCheckpointInfo {
+public record PerspectiveCursorInfo {
   /// <summary>
   /// Stream ID for the checkpoint.
   /// </summary>
@@ -336,6 +343,12 @@ public record PerspectiveCheckpointInfo {
   /// Current processing status.
   /// </summary>
   public PerspectiveProcessingStatus Status { get; init; }
+
+  /// <summary>
+  /// The event ID that triggered a rewind (set when status has RewindRequired flag).
+  /// NULL when no rewind is needed.
+  /// </summary>
+  public Guid? RewindTriggerEventId { get; init; }
 }
 
 /// <summary>
@@ -737,10 +750,10 @@ public record ReceptorProcessingFailure {
 }
 
 /// <summary>
-/// Represents a perspective checkpoint completion.
+/// Represents a perspective cursor completion.
 /// Indicates successful processing of an event by a perspective (read model projection).
 /// </summary>
-public record PerspectiveCheckpointCompletion {
+public record PerspectiveCursorCompletion {
   /// <summary>
   /// Stream ID being processed.
   /// </summary>
@@ -773,10 +786,10 @@ public record PerspectiveCheckpointCompletion {
 }
 
 /// <summary>
-/// Represents a perspective checkpoint failure.
+/// Represents a perspective cursor failure.
 /// Indicates failed processing of an event by a perspective (read model projection).
 /// </summary>
-public record PerspectiveCheckpointFailure {
+public record PerspectiveCursorFailure {
   /// <summary>
   /// Stream ID being processed.
   /// </summary>
@@ -805,10 +818,16 @@ public record PerspectiveCheckpointFailure {
 }
 
 /// <summary>
-/// Represents perspective checkpoint work that needs to be processed.
+/// Represents perspective cursor work that needs to be processed.
 /// Each item indicates a stream that has new events for a specific perspective to process.
 /// </summary>
 public record PerspectiveWork {
+  /// <summary>
+  /// Work ID from wh_perspective_events (event_work_id).
+  /// Used to report completion and trigger deletion of the event row.
+  /// </summary>
+  public Guid WorkId { get; init; }
+
   /// <summary>
   /// Stream ID to process.
   /// </summary>
@@ -852,6 +871,22 @@ public record PerspectiveWork {
 }
 
 /// <summary>
+/// Represents a perspective event completion (used to delete processed wh_perspective_events rows).
+/// Property names match the SQL function's expected JSONB format (EventWorkId, StatusFlags).
+/// </summary>
+public record PerspectiveEventCompletion {
+  /// <summary>
+  /// Work ID from wh_perspective_events (event_work_id).
+  /// </summary>
+  public required Guid EventWorkId { get; init; }
+
+  /// <summary>
+  /// Status flags to set on the event (e.g., Completed = 2).
+  /// </summary>
+  public int StatusFlags { get; init; } = (int)PerspectiveProcessingStatus.Completed;
+}
+
+/// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
 /// </summary>
 public static class WorkCoordinatorExtensions {
@@ -872,8 +907,8 @@ public static class WorkCoordinatorExtensions {
     MessageFailure[] inboxFailures,
     ReceptorProcessingCompletion[] receptorCompletions,
     ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
+    PerspectiveCursorCompletion[] perspectiveCompletions,
+    PerspectiveCursorFailure[] perspectiveFailures,
     OutboxMessage[] newOutboxMessages,
     InboxMessage[] newInboxMessages,
     Guid[] renewOutboxLeaseIds,
@@ -897,6 +932,7 @@ public static class WorkCoordinatorExtensions {
       ReceptorCompletions = receptorCompletions,
       ReceptorFailures = receptorFailures,
       PerspectiveCompletions = perspectiveCompletions,
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = perspectiveFailures,
       NewOutboxMessages = newOutboxMessages,
       NewInboxMessages = newInboxMessages,

@@ -324,7 +324,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         InboxFailures = inboxFailures,
         ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
+        PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
         NewOutboxMessages = outboxMessages,
         NewInboxMessages = inboxMessages,

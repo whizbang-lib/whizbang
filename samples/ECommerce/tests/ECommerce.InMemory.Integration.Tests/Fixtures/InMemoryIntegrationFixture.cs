@@ -362,7 +362,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -504,7 +504,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
     // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
@@ -665,13 +665,13 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       Console.WriteLine($"[DIAGNOSTIC]   message_type: '{assoc}'");
     }
 
-    // Query perspective checkpoints created
+    // Query perspective cursors created
     var checkpointCount = await dbContext.Database.SqlQueryRaw<int>(@"
-      SELECT COUNT(*)::int FROM inventory.wh_perspective_checkpoints
+      SELECT COUNT(*)::int FROM inventory.wh_perspective_cursors
     ").FirstOrDefaultAsync(cancellationToken);
 
-    output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
-    Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+    output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
+    Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective cursors in wh_perspective_cursors");
 
     // Write to file for examination
     await System.IO.File.WriteAllTextAsync("/tmp/event-type-diagnostic.log", output.ToString(), cancellationToken);
@@ -868,7 +868,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
             DO $$
             BEGIN
               -- Truncate core infrastructure tables (INVENTORY schema)
-              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
               -- Truncate all perspective tables (INVENTORY schema)
               TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -876,7 +876,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
               TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
               -- Truncate core infrastructure tables (BFF schema)
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
               -- Truncate all perspective tables (BFF schema)
               TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
@@ -945,7 +945,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Handles incoming messages from transport - full processing flow.
   /// CRITICAL: Must process inbox work (dispatch to handlers, store events) - not just write to inbox!
-  /// This creates events which trigger perspective checkpoints for PerspectiveWorker to process.
+  /// This creates events which trigger perspective cursors for PerspectiveWorker to process.
   /// </summary>
   private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     try {
@@ -985,14 +985,14 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       // process_work_batch automatically:
       // - Stores events from inbox (Phase 4.5B) if is_event=true
       // - Creates perspective events (Phase 4.6)
-      // - Creates perspective checkpoints (Phase 4.7)
+      // - Creates perspective cursors (Phase 4.7)
       await orderedProcessor.ProcessInboxWorkAsync(
         myWork,
         processor: async (work) => {
           // Deserialize event from work item
           var @event = _deserializeEvent(work, jsonOptions);
 
-          // Mark as EventStored - process_work_batch will store it and create perspective checkpoints
+          // Mark as EventStored - process_work_batch will store it and create perspective cursors
           // The is_event flag (set in _serializeToNewInboxMessage) tells process_work_batch to store it
           if (@event is IEvent) {
             return MessageProcessingStatus.EventStored;

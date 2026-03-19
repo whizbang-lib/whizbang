@@ -8,29 +8,29 @@ using Whizbang.Data.Schema.Schemas;
 namespace Whizbang.Data.Schema.Tests.Schemas;
 
 /// <summary>
-/// Tests for PerspectiveCheckpointsSchema - read model checkpoint tracking table.
+/// Tests for PerspectiveCursorsSchema - read model checkpoint tracking table.
 /// Tests verify table structure, column definitions, indexes, and column name constants.
 /// </summary>
 
-public class PerspectiveCheckpointsSchemaTests {
+public class PerspectiveCursorsSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectNameAsync() {
     // Arrange & Act
-    var tableName = PerspectiveCheckpointsSchema.Table.Name;
+    var tableName = PerspectiveCursorsSchema.Table.Name;
 
     // Assert
-    await Assert.That(tableName).IsEqualTo("perspective_checkpoints");
+    await Assert.That(tableName).IsEqualTo("perspective_cursors");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectColumnsAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
 
-    // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(6);
+    // Assert - Verify column count (6 original + 4 rewind/locking columns)
+    await Assert.That(columns).Count().IsEqualTo(10);
 
     // Verify each column definition (use First to avoid order dependency)
     var streamId = columns.First(c => c.Name == "stream_id");
@@ -64,13 +64,29 @@ public class PerspectiveCheckpointsSchemaTests {
     await Assert.That(error.Name).IsEqualTo("error");
     await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(error.Nullable).IsTrue();
+
+    var rewindTriggerEventId = columns.First(c => c.Name == "rewind_trigger_event_id");
+    await Assert.That(rewindTriggerEventId.DataType).IsEqualTo(WhizbangDataType.UUID);
+    await Assert.That(rewindTriggerEventId.Nullable).IsTrue();
+
+    var streamLockInstanceId = columns.First(c => c.Name == "stream_lock_instance_id");
+    await Assert.That(streamLockInstanceId.DataType).IsEqualTo(WhizbangDataType.UUID);
+    await Assert.That(streamLockInstanceId.Nullable).IsTrue();
+
+    var streamLockExpiry = columns.First(c => c.Name == "stream_lock_expiry");
+    await Assert.That(streamLockExpiry.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
+    await Assert.That(streamLockExpiry.Nullable).IsTrue();
+
+    var streamLockReason = columns.First(c => c.Name == "stream_lock_reason");
+    await Assert.That(streamLockReason.DataType).IsEqualTo(WhizbangDataType.STRING);
+    await Assert.That(streamLockReason.Nullable).IsTrue();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_StreamId_IsCompositePrimaryKeyAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var streamId = columns.First(c => c.Name == "stream_id");
 
     // Assert
@@ -83,7 +99,7 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_PerspectiveName_IsCompositePrimaryKeyAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var perspectiveName = columns.First(c => c.Name == "perspective_name");
 
     // Assert
@@ -96,7 +112,7 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_LastEventId_HasCorrectDefinitionAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var lastEventId = columns.First(c => c.Name == "last_event_id");
 
     // Assert
@@ -109,7 +125,7 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_Status_HasCorrectDefaultAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var status = columns.First(c => c.Name == "status");
 
     // Assert
@@ -124,7 +140,7 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_ProcessedAt_HasDateTimeDefaultAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var processedAt = columns.First(c => c.Name == "processed_at");
 
     // Assert
@@ -139,7 +155,7 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_Error_IsNullableAsync() {
     // Arrange & Act
-    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var columns = PerspectiveCursorsSchema.Table.Columns;
     var error = columns.First(c => c.Name == "error");
 
     // Assert
@@ -151,20 +167,20 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Table_HasCorrectIndexesAsync() {
     // Arrange & Act
-    var indexes = PerspectiveCheckpointsSchema.Table.Indexes;
+    var indexes = PerspectiveCursorsSchema.Table.Indexes;
 
     // Assert - Verify index count
     await Assert.That(indexes).Count().IsEqualTo(2);
 
     // Verify index on perspective_name
     var perspectiveNameIndex = indexes[0];
-    await Assert.That(perspectiveNameIndex.Name).IsEqualTo("idx_perspective_checkpoints_perspective_name");
+    await Assert.That(perspectiveNameIndex.Name).IsEqualTo("idx_perspective_cursors_perspective_name");
     await Assert.That(perspectiveNameIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(perspectiveNameIndex.Columns[0]).IsEqualTo("perspective_name");
 
     // Verify index on last_event_id
     var lastEventIdIndex = indexes[1];
-    await Assert.That(lastEventIdIndex.Name).IsEqualTo("idx_perspective_checkpoints_last_event_id");
+    await Assert.That(lastEventIdIndex.Name).IsEqualTo("idx_perspective_cursors_last_event_id");
     await Assert.That(lastEventIdIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(lastEventIdIndex.Columns[0]).IsEqualTo("last_event_id");
   }
@@ -173,12 +189,16 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var streamId = PerspectiveCheckpointsSchema.Columns.STREAM_ID;
-    var perspectiveName = PerspectiveCheckpointsSchema.Columns.PERSPECTIVE_NAME;
-    var lastEventId = PerspectiveCheckpointsSchema.Columns.LAST_EVENT_ID;
-    var status = PerspectiveCheckpointsSchema.Columns.STATUS;
-    var processedAt = PerspectiveCheckpointsSchema.Columns.PROCESSED_AT;
-    var error = PerspectiveCheckpointsSchema.Columns.ERROR;
+    var streamId = PerspectiveCursorsSchema.Columns.STREAM_ID;
+    var perspectiveName = PerspectiveCursorsSchema.Columns.PERSPECTIVE_NAME;
+    var lastEventId = PerspectiveCursorsSchema.Columns.LAST_EVENT_ID;
+    var status = PerspectiveCursorsSchema.Columns.STATUS;
+    var processedAt = PerspectiveCursorsSchema.Columns.PROCESSED_AT;
+    var error = PerspectiveCursorsSchema.Columns.ERROR;
+    var rewindTriggerEventId = PerspectiveCursorsSchema.Columns.REWIND_TRIGGER_EVENT_ID;
+    var streamLockInstanceId = PerspectiveCursorsSchema.Columns.STREAM_LOCK_INSTANCE_ID;
+    var streamLockExpiry = PerspectiveCursorsSchema.Columns.STREAM_LOCK_EXPIRY;
+    var streamLockReason = PerspectiveCursorsSchema.Columns.STREAM_LOCK_REASON;
 
     // Assert - Verify constants match column names
     await Assert.That(streamId).IsEqualTo("stream_id");
@@ -187,5 +207,9 @@ public class PerspectiveCheckpointsSchemaTests {
     await Assert.That(status).IsEqualTo("status");
     await Assert.That(processedAt).IsEqualTo("processed_at");
     await Assert.That(error).IsEqualTo("error");
+    await Assert.That(rewindTriggerEventId).IsEqualTo("rewind_trigger_event_id");
+    await Assert.That(streamLockInstanceId).IsEqualTo("stream_lock_instance_id");
+    await Assert.That(streamLockExpiry).IsEqualTo("stream_lock_expiry");
+    await Assert.That(streamLockReason).IsEqualTo("stream_lock_reason");
   }
 }

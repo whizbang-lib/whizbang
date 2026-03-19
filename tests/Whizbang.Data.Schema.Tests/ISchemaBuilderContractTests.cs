@@ -167,7 +167,7 @@ public abstract class ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("wh_partition_assignments");
     await Assert.That(sql).Contains("wh_message_deduplication");
     await Assert.That(sql).Contains("wh_receptor_processing");
-    await Assert.That(sql).Contains("wh_perspective_checkpoints");
+    await Assert.That(sql).Contains("wh_perspective_cursors");
     await Assert.That(sql).Contains("wh_message_associations");
     await Assert.That(sql).Contains("wh_perspective_registry");
     await Assert.That(sql).Contains("wh_request_response");
@@ -214,8 +214,10 @@ public abstract class ISchemaBuilderContractTests {
     var sql1 = builder.BuildInfrastructureSchema(config);
     var sql2 = builder.BuildInfrastructureSchema(config);
 
-    // Assert - Same config should produce identical SQL
-    await Assert.That(sql1).IsEqualTo(sql2);
+    // Assert - Same config should produce identical SQL (strip timestamp to avoid race across second boundary)
+    var normalize = (string sql) => string.Join('\n',
+      sql.Split('\n').Where(line => !line.StartsWith("-- Generated:", StringComparison.Ordinal)));
+    await Assert.That(normalize(sql1)).IsEqualTo(normalize(sql2));
   }
 
   [Test]

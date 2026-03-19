@@ -126,7 +126,7 @@ public enum MessageProcessingStatus {
   Failed = 1 << 15
 
   // Note: Receptor and perspective processing are now tracked separately in
-  // wh_receptor_processing and wh_perspective_checkpoints tables.
+  // wh_receptor_processing and wh_perspective_cursors tables.
   // This allows for:
   // - Multiple receptors to process the same event independently
   // - Perspectives to catch up via time-travel (replay from event store)

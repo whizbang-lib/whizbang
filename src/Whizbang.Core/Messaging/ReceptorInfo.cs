@@ -31,6 +31,11 @@ namespace Whizbang.Core.Messaging;
 /// Optional caller info captured from the dispatch site.
 /// Populated by the invoker from the envelope's first Current hop before invocation.
 /// </param>
+/// <param name="FireDuringReplay">
+/// Whether this receptor should fire during replay and rebuild operations.
+/// Set to true when the receptor class is decorated with <see cref="FireDuringReplayAttribute"/>.
+/// Default is false — receptors are suppressed during replay/rebuild for safety.
+/// </param>
 /// <docs>core-concepts/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
@@ -38,7 +43,8 @@ public sealed record ReceptorInfo(
     string ReceptorId,
     Func<IServiceProvider, object, IMessageEnvelope, ICallerInfo?, CancellationToken, ValueTask<object?>> InvokeAsync,
     IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null,
-    ICallerInfo? CallerInfo = null
+    ICallerInfo? CallerInfo = null,
+    bool FireDuringReplay = false
 );
 
 /// <summary>

@@ -436,7 +436,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task UpdatePerspectiveCheckpoints_UpdatesCheckpointWithHighestSequenceAsync() {
+  public async Task UpdatePerspectiveCursors_UpdatesCursorWithHighestSequenceAsync() {
     // Arrange
     var streamId = _idProvider.NewGuid();
     var perspectiveName = "TestPerspective";
@@ -483,12 +483,12 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Act
     await connection.ExecuteAsync(@"
-      SELECT update_perspective_checkpoints(@completedEvents::jsonb, false)",
+      SELECT update_perspective_cursors(@completedEvents::jsonb, false)",
       new { completedEvents });
 
     // Assert - checkpoint should be at event2 (highest with no gaps)
     var checkpointEventId = await connection.QuerySingleOrDefaultAsync<Guid?>(@"
-      SELECT last_event_id FROM wh_perspective_checkpoints
+      SELECT last_event_id FROM wh_perspective_cursors
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
 

@@ -44,7 +44,7 @@ public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionSt
   /// and releases the lease, allowing immediate re-claiming on next poll.
   /// </remarks>
   public async Task ReportCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
     LogReportingCompletion(_logger, completion.PerspectiveName, completion.StreamId, completion.LastEventId);
@@ -62,7 +62,7 @@ public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionSt
   /// and releases the lease, allowing immediate re-claiming on next poll.
   /// </remarks>
   public async Task ReportFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
     // Report immediately via lightweight out-of-band method
@@ -74,7 +74,7 @@ public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionSt
   /// Always returns an empty array because completions are reported immediately.
   /// Nothing is ever pending with the instant strategy.
   /// </remarks>
-  public TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions() {
+  public TrackedCompletion<PerspectiveCursorCompletion>[] GetPendingCompletions() {
     return [];
   }
 
@@ -83,7 +83,7 @@ public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionSt
   /// Always returns an empty array because failures are reported immediately.
   /// Nothing is ever pending with the instant strategy.
   /// </remarks>
-  public TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures() {
+  public TrackedCompletion<PerspectiveCursorFailure>[] GetPendingFailures() {
     return [];
   }
 
@@ -92,8 +92,8 @@ public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionSt
   /// No-op for instant strategy since nothing is ever stored.
   /// </remarks>
   public void MarkAsSent(
-    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
-    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    TrackedCompletion<PerspectiveCursorCompletion>[] completions,
+    TrackedCompletion<PerspectiveCursorFailure>[] failures,
     DateTimeOffset sentAt) {
     // No-op - nothing to mark since we report immediately
   }

@@ -40,8 +40,8 @@ public interface IWorkBatchCoordinator {
     List<MessageFailure>? outboxFailures = null,
     List<MessageCompletion>? inboxCompletions = null,
     List<MessageFailure>? inboxFailures = null,
-    List<PerspectiveCheckpointCompletion>? perspectiveCompletions = null,
-    List<PerspectiveCheckpointFailure>? perspectiveFailures = null,
+    List<PerspectiveCursorCompletion>? perspectiveCompletions = null,
+    List<PerspectiveCursorFailure>? perspectiveFailures = null,
     CancellationToken ct = default
   );
 }

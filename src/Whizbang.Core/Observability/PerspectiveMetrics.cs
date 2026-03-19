@@ -41,7 +41,7 @@ public sealed class PerspectiveMetrics {
     ClaimDuration = _meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");
     EventLoadDuration = _meter.CreateHistogram<double>("whizbang.perspective.event_load.duration", "ms", "GetEventsBetweenPolymorphicAsync query");
     RunnerDuration = _meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
-    CheckpointDuration = _meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCheckpointAsync");
+    CheckpointDuration = _meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");
 
     EventsProcessed = _meter.CreateCounter<long>("whizbang.perspective.events_processed", description: "Events applied to perspectives");
     BatchesProcessed = _meter.CreateCounter<long>("whizbang.perspective.batches_processed", description: "Batches completed");

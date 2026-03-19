@@ -132,6 +132,7 @@ internal sealed class WorkCoordinatorQueues {
       ReceptorCompletions = [],
       ReceptorFailures = [],
       PerspectiveCompletions = [],
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = [],
       NewOutboxMessages = [.. OutboxMessages],
       NewInboxMessages = [.. InboxMessages],

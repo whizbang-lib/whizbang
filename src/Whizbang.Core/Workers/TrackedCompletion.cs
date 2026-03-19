@@ -3,7 +3,7 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Wrapper for completions with status tracking and retry metadata.
 /// </summary>
-/// <typeparam name="T">Type of completion (MessageCompletion, PerspectiveCheckpointCompletion, etc.)</typeparam>
+/// <typeparam name="T">Type of completion (MessageCompletion, PerspectiveCursorCompletion, etc.)</typeparam>
 public sealed class TrackedCompletion<T> where T : notnull {
   /// <summary>
   /// The actual completion data being tracked.

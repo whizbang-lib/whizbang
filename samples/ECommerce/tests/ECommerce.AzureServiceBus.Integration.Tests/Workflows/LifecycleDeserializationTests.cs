@@ -19,7 +19,6 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// </summary>
 [Timeout(30_000)]  // 30s timeout per test
 [NotInParallel("ServiceBus")]
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
 public class LifecycleDeserializationTests {
   private static ServiceBusIntegrationFixture? _fixture;
 

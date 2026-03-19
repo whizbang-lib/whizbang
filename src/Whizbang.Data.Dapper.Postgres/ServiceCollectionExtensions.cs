@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Custom;
@@ -131,6 +132,17 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
+
     services.DecorateEventStoreWithSyncTracking();
 
     return services;
@@ -221,6 +233,17 @@ public static class ServiceCollectionExtensions {
         options.CommandTimeoutSeconds));
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
+
+    // Register perspective snapshot store and stream locker
+    services.TryAddSingleton<IPerspectiveSnapshotStore>(sp =>
+      new DapperPerspectiveSnapshotStore(
+        connectionString,
+        sp.GetService<ILogger<DapperPerspectiveSnapshotStore>>()));
+    services.TryAddSingleton<IPerspectiveStreamLocker>(sp =>
+      new DapperPerspectiveStreamLocker(
+        connectionString,
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerspectiveStreamLockOptions>>(),
+        sp.GetService<ILogger<DapperPerspectiveStreamLocker>>()));
 
     // TURNKEY: Wrap IEventStore with sync tracking decorator
     // This enables perspective synchronization by tracking emitted events

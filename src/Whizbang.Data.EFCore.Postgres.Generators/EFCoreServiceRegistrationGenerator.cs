@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCursors_HasCompositePrimaryKeyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithValidDbContext_ProducesNoDiagnosticsAsync</tests>
 /// Source generator that discovers perspective implementations (IPerspectiveFor&lt;TModel&gt;),

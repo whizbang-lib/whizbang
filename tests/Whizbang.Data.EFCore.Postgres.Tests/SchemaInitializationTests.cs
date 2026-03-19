@@ -44,7 +44,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_outbox");
     await Assert.That(tables).Contains("wh_event_store");
     await Assert.That(tables).Contains("wh_receptor_processing");
-    await Assert.That(tables).Contains("wh_perspective_checkpoints");
+    await Assert.That(tables).Contains("wh_perspective_cursors");
     await Assert.That(tables).Contains("wh_request_response");
     await Assert.That(tables).Contains("wh_sequences");
   }
@@ -435,7 +435,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
       DROP TABLE IF EXISTS wh_schema_migrations CASCADE;
       DROP TABLE IF EXISTS wh_schema_versions CASCADE;
       DROP TABLE IF EXISTS wh_receptor_processing CASCADE;
-      DROP TABLE IF EXISTS wh_perspective_checkpoints CASCADE;
+      DROP TABLE IF EXISTS wh_perspective_cursors CASCADE;
       DROP TABLE IF EXISTS wh_per_order CASCADE;
       DROP TABLE IF EXISTS wh_event_store CASCADE;
       DROP TABLE IF EXISTS wh_outbox CASCADE;
@@ -448,7 +448,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
       DROP FUNCTION IF EXISTS claim_outbox_messages CASCADE;
       DROP FUNCTION IF EXISTS claim_inbox_messages CASCADE;
       DROP FUNCTION IF EXISTS update_receptor_processing CASCADE;
-      DROP FUNCTION IF EXISTS update_perspective_checkpoint CASCADE;";
+      DROP FUNCTION IF EXISTS update_perspective_cursors CASCADE;";
 
     await using var command = new NpgsqlCommand(dropSql, connection);
     await command.ExecuteNonQueryAsync();
