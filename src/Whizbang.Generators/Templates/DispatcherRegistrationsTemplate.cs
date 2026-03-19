@@ -36,6 +36,7 @@ namespace Whizbang.Core.Generated {
     internal static void Initialize() {
       // Register dispatcher callback - includes receptors, registry, and all dispatcher infrastructure
       global::Whizbang.Core.ServiceRegistrationCallbacks.Dispatcher = services => {
+        services.AddReceptors();
         services.AddWhizbangDispatcher();
       };
     }
