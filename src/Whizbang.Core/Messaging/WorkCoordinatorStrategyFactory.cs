@@ -62,6 +62,7 @@ public static class WorkCoordinatorStrategyFactory {
   private static ImmediateWorkCoordinatorStrategy _createImmediate(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
+    var channelWriter = sp.GetService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
     var logger = sp.GetService<ILogger<ImmediateWorkCoordinatorStrategy>>();
     return new ImmediateWorkCoordinatorStrategy(
@@ -73,13 +74,15 @@ public static class WorkCoordinatorStrategyFactory {
       lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
       tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
       deferredChannel: sp.GetService<IDeferredOutboxChannel>(),
-      systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()
+      systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
+      workChannelWriter: channelWriter
     );
   }
 
   private static IntervalWorkCoordinatorStrategy _createInterval(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
+    var channelWriter = sp.GetService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
     var logger = sp.GetService<ILogger<IntervalWorkCoordinatorStrategy>>();
     return new IntervalWorkCoordinatorStrategy(
@@ -89,13 +92,15 @@ public static class WorkCoordinatorStrategyFactory {
       logger,
       scopeFactory: sp.GetService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
-      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>()
+      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      workChannelWriter: channelWriter
     );
   }
 
   private static BatchWorkCoordinatorStrategy _createBatch(IServiceProvider sp) {
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
     var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
+    var channelWriter = sp.GetService<IWorkChannelWriter>();
     var options = sp.GetRequiredService<WorkCoordinatorOptions>();
     var logger = sp.GetService<ILogger<BatchWorkCoordinatorStrategy>>();
     return new BatchWorkCoordinatorStrategy(
@@ -105,7 +110,8 @@ public static class WorkCoordinatorStrategyFactory {
       logger,
       scopeFactory: sp.GetService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
-      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>()
+      tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      workChannelWriter: channelWriter
     );
   }
 }
