@@ -37,7 +37,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task CreateSnapshotAsync_NewSnapshot_InsertsSuccessfullyAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var snapshotEventId = Guid.CreateVersion7();
     var snapshotData = JsonDocument.Parse("""{"totalOrders": 42, "revenue": 1234.56}""");
 
@@ -58,7 +58,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task CreateSnapshotAsync_DuplicateEventId_UpsertsDataAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var snapshotEventId = Guid.CreateVersion7();
 
     var original = JsonDocument.Parse("""{"count": 1}""");
@@ -79,7 +79,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task CreateSnapshotAsync_MultipleSnapshots_IncreasesSequenceNumberAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     for (var i = 1; i <= 3; i++) {
       var eventId = Guid.CreateVersion7();
@@ -99,7 +99,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   public async Task CreateSnapshotAsync_DifferentStreams_IsolatedAsync() {
     var stream1 = Guid.CreateVersion7();
     var stream2 = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     var data1 = JsonDocument.Parse("""{"stream": 1}""");
     var data2 = JsonDocument.Parse("""{"stream": 2}""");
@@ -179,7 +179,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task GetLatestSnapshotAsync_MultipleSnapshots_ReturnsLatestBySequenceAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     var eventId1 = Guid.CreateVersion7();
     var eventId2 = Guid.CreateVersion7();
@@ -211,7 +211,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task GetLatestSnapshotBeforeAsync_AllSnapshotsAfter_ReturnsNullAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     // Create a "before" event ID first (smaller UUID7)
     // Use Guid.Empty-like minimum to guarantee it's before any UUID7
@@ -230,7 +230,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task GetLatestSnapshotBeforeAsync_MixedSnapshots_ReturnsCorrectOneAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     // Create snapshots with guaranteed increasing event IDs using delays
     var eventId1 = Guid.CreateVersion7();
@@ -257,7 +257,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task GetLatestSnapshotBeforeAsync_OnlyOneQualifies_ReturnsThatOneAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     var eventId1 = Guid.CreateVersion7();
     await Task.Delay(10);
@@ -288,7 +288,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task HasAnySnapshotAsync_OneSnapshot_ReturnsTrueAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(),
       JsonDocument.Parse("""{"v": 1}"""));
@@ -327,7 +327,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task PruneOldSnapshotsAsync_FewerThanKeepCount_DeletesNoneAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(),
       JsonDocument.Parse("""{"v": 1}"""));
@@ -346,7 +346,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task PruneOldSnapshotsAsync_MoreThanKeepCount_DeletesOldestAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     // Create 5 snapshots
     var eventIds = new Guid[5];
@@ -372,7 +372,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task PruneOldSnapshotsAsync_ExactKeepCount_DeletesNoneAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     for (var i = 0; i < 3; i++) {
       await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(),
@@ -396,7 +396,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   public async Task PruneOldSnapshotsAsync_DoesNotAffectOtherStreamsAsync() {
     var stream1 = Guid.CreateVersion7();
     var stream2 = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     // Create 3 snapshots for each stream
     for (var i = 0; i < 3; i++) {
@@ -422,7 +422,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   [Test]
   public async Task DeleteAllSnapshotsAsync_WithSnapshots_RemovesAllAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     for (var i = 0; i < 3; i++) {
       await _store.CreateSnapshotAsync(streamId, perspectiveName, Guid.CreateVersion7(),
@@ -444,7 +444,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   public async Task DeleteAllSnapshotsAsync_DoesNotAffectOtherStreamsAsync() {
     var stream1 = Guid.CreateVersion7();
     var stream2 = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
 
     await _store.CreateSnapshotAsync(stream1, perspectiveName, Guid.CreateVersion7(),
       JsonDocument.Parse("""{"s": 1}"""));
@@ -466,11 +466,11 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
-    var act = () => _store.CreateSnapshotAsync(
+    async Task Act() => await _store.CreateSnapshotAsync(
       Guid.CreateVersion7(), "Test", Guid.CreateVersion7(),
       JsonDocument.Parse("""{"v": 1}"""), cts.Token);
 
-    await Assert.That(act).ThrowsException();
+    await Assert.That(Act).ThrowsException();
   }
 
   [Test]
@@ -478,8 +478,8 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
-    var act = () => _store.GetLatestSnapshotAsync(Guid.CreateVersion7(), "Test", cts.Token);
-    await Assert.That(act).ThrowsException();
+    async Task Act() => await _store.GetLatestSnapshotAsync(Guid.CreateVersion7(), "Test", cts.Token);
+    await Assert.That(Act).ThrowsException();
   }
 
   #endregion

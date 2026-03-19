@@ -6,6 +6,8 @@ using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
+#pragma warning disable RCS1118 // Mark local variable as const — conflicts with TUnit's TUnitAssertions0005 (can't pass const to Assert.That)
+
 /// <summary>
 /// Unit tests for perspective snapshot options, stream lock options,
 /// processing status flags, and system event records.
@@ -72,7 +74,7 @@ public class PerspectiveSnapshotAndRewindTests {
 
   [Test]
   public async Task PerspectiveProcessingStatus_RewindRequired_CanBeCombinedWithOtherFlagsAsync() {
-    var status = PerspectiveProcessingStatus.Completed | PerspectiveProcessingStatus.RewindRequired;
+    const PerspectiveProcessingStatus status = PerspectiveProcessingStatus.Completed | PerspectiveProcessingStatus.RewindRequired;
 
     await Assert.That(status.HasFlag(PerspectiveProcessingStatus.Completed)).IsTrue();
     await Assert.That(status.HasFlag(PerspectiveProcessingStatus.RewindRequired)).IsTrue();
@@ -316,19 +318,19 @@ public class PerspectiveSnapshotAndRewindTests {
 
   [Test]
   public async Task PerspectiveProcessingStatus_RewindRequired_IsNotPartOfCompletedAsync() {
-    var status = PerspectiveProcessingStatus.Completed;
+    const PerspectiveProcessingStatus status = PerspectiveProcessingStatus.Completed;
     await Assert.That(status.HasFlag(PerspectiveProcessingStatus.RewindRequired)).IsFalse();
   }
 
   [Test]
   public async Task PerspectiveProcessingStatus_RewindRequired_IsNotPartOfNoneAsync() {
-    var status = PerspectiveProcessingStatus.None;
+    const PerspectiveProcessingStatus status = PerspectiveProcessingStatus.None;
     await Assert.That(status.HasFlag(PerspectiveProcessingStatus.RewindRequired)).IsFalse();
   }
 
   [Test]
   public async Task PerspectiveProcessingStatus_RewindRequired_CanBeCombinedWithFailedAndCatchingUpAsync() {
-    var status = PerspectiveProcessingStatus.Failed
+    const PerspectiveProcessingStatus status = PerspectiveProcessingStatus.Failed
       | PerspectiveProcessingStatus.CatchingUp
       | PerspectiveProcessingStatus.RewindRequired;
 
@@ -590,3 +592,5 @@ public class PerspectiveSnapshotAndRewindTests {
 
   #endregion
 }
+
+#pragma warning restore RCS1118

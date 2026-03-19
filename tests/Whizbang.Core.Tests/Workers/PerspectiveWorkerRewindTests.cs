@@ -536,7 +536,7 @@ public class PerspectiveWorkerRewindTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public bool CaptureRequests { get; set; }
     public List<ProcessWorkBatchRequest> CapturedRequests { get; } = [];
-    public Dictionary<(string PerspectiveName, Guid StreamId), PerspectiveCursorInfo> CursorOverrides { get; } = new();
+    public Dictionary<(string PerspectiveName, Guid StreamId), PerspectiveCursorInfo> CursorOverrides { get; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;

@@ -82,8 +82,8 @@ public class TransportConsumerWorkerPostLifecycleTests {
   [Test]
   public async Task NormalizeTypeName_InboxFormatMatchesNormalized_StripsVersionCulturePublicKeyTokenAsync() {
     // Inbox messages may include Version/Culture/PublicKeyToken — NormalizeTypeName must strip them
-    var inboxFormat = "MyApp.Events.OrderCreated, MyApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
-    var shortFormat = "MyApp.Events.OrderCreated, MyApp";
+    const string inboxFormat = "MyApp.Events.OrderCreated, MyApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string shortFormat = "MyApp.Events.OrderCreated, MyApp";
 
     var normalizedInbox = EventTypeMatchingHelper.NormalizeTypeName(inboxFormat);
     var normalizedShort = EventTypeMatchingHelper.NormalizeTypeName(shortFormat);

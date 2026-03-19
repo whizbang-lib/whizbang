@@ -47,7 +47,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task TryAcquireLockAsync_UnlockedCursor_AcquiresSuccessfullyAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
@@ -69,7 +69,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task TryAcquireLockAsync_LockedByDifferentInstance_ReturnsFalseAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
@@ -88,7 +88,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task TryAcquireLockAsync_LockedBySameInstance_ReacquiresAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
@@ -104,7 +104,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task TryAcquireLockAsync_ExpiredLock_AcquiresSuccessfullyAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
@@ -130,7 +130,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   public async Task TryAcquireLockAsync_MultipleCursors_OnlyLocksTargetAsync() {
     var stream1 = Guid.CreateVersion7();
     var stream2 = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(stream1, perspectiveName);
     await _insertCursorRowAsync(stream2, perspectiveName);
@@ -148,7 +148,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task RenewLockAsync_HeldLock_ExtendsExpiryAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
@@ -167,7 +167,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task RenewLockAsync_WrongInstance_DoesNotRenewAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
@@ -192,7 +192,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task ReleaseLockAsync_HeldLock_ClearsAllLockFieldsAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceId = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
 
@@ -205,7 +205,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task ReleaseLockAsync_WrongInstance_DoesNotReleaseAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
@@ -222,7 +222,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task ReleaseLockAsync_AlreadyUnlocked_DoesNotThrowAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     await _insertCursorRowAsync(streamId, perspectiveName);
 
     // Release a lock that was never acquired — should not throw
@@ -232,7 +232,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task ReleaseLockAsync_MakesLockAcquirableByOtherInstanceAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);
@@ -254,7 +254,7 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
   [Test]
   public async Task FullLifecycle_AcquireRenewReleaseReacquireAsync() {
     var streamId = Guid.CreateVersion7();
-    var perspectiveName = "OrderPerspective";
+    const string perspectiveName = "OrderPerspective";
     var instanceA = Guid.CreateVersion7();
     var instanceB = Guid.CreateVersion7();
     await _insertCursorRowAsync(streamId, perspectiveName);

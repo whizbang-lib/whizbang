@@ -215,9 +215,9 @@ public abstract class ISchemaBuilderContractTests {
     var sql2 = builder.BuildInfrastructureSchema(config);
 
     // Assert - Same config should produce identical SQL (strip timestamp to avoid race across second boundary)
-    var normalize = (string sql) => string.Join('\n',
+    string Normalize(string sql) => string.Join('\n',
       sql.Split('\n').Where(line => !line.StartsWith("-- Generated:", StringComparison.Ordinal)));
-    await Assert.That(normalize(sql1)).IsEqualTo(normalize(sql2));
+    await Assert.That(Normalize(sql1)).IsEqualTo(Normalize(sql2));
   }
 
   [Test]

@@ -3,6 +3,8 @@ using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Messaging;
 
+#pragma warning disable RCS1118 // Mark local variable as const — conflicts with TUnit's TUnitAssertions0005 (can't pass const to Assert.That)
+
 /// <summary>
 /// Tests for ProcessingMode enum and related types.
 /// </summary>
@@ -217,3 +219,5 @@ public class ProcessingModeTests {
 
   #endregion
 }
+
+#pragma warning restore RCS1118

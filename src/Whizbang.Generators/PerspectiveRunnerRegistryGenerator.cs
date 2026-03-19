@@ -140,8 +140,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         ClrTypeName: clrTypeName,
         RunnerName: $"{simpleName.Replace(".", "")}Runner",
         ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        EventTypes: eventTypes.Distinct().ToArray(),
-        EventTypesCodeGen: eventTypesCodeGen.Distinct().ToArray()
+        EventTypes: [.. eventTypes.Distinct()],
+        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
     );
   }
 

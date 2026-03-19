@@ -39,24 +39,18 @@ public class ReceptorSuppressionTests {
   /// Tracks invocations with their context for verification.
   /// </summary>
   private sealed class InvocationTracker {
-    private readonly List<(string ReceptorId, ProcessingMode? Mode)> _invocations = [];
-    public List<(string ReceptorId, ProcessingMode? Mode)> Invocations => _invocations;
-    public int InvocationCount => _invocations.Count;
+    public List<(string ReceptorId, ProcessingMode? Mode)> Invocations { get; } = [];
+    public int InvocationCount => Invocations.Count;
 
     public void RecordInvocation(string receptorId, ProcessingMode? mode) =>
-        _invocations.Add((receptorId, mode));
+        Invocations.Add((receptorId, mode));
   }
 
   /// <summary>
   /// Test registry that supports FireDuringReplay metadata.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly InvocationTracker _tracker;
+  private sealed class TestReceptorRegistry(InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
 
     public void RegisterReceptor<TMessage>(
         string receptorId, LifecycleStage stage, bool fireDuringReplay = false) {
@@ -69,8 +63,8 @@ public class ReceptorSuppressionTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: receptorId,
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-          _tracker.RecordInvocation(receptorId, null);
+        InvokeAsync: (_, _, _, _, _) => {
+          tracker.RecordInvocation(receptorId, null);
           return ValueTask.FromResult<object?>(null);
         },
         FireDuringReplay: fireDuringReplay
@@ -357,22 +351,15 @@ public class ReceptorSuppressionTests {
   /// Registry that captures the ProcessingMode from the lifecycle context accessor during invocation.
   /// The receptor has FireDuringReplay = true so it fires during replay/rebuild.
   /// </summary>
-  private sealed class CaptureContextRegistry : IReceptorRegistry {
-    private readonly Action<ProcessingMode?> _captureMode;
-
-    public CaptureContextRegistry(Action<ProcessingMode?> captureMode) {
-      _captureMode = captureMode;
-    }
-
+  private sealed class CaptureContextRegistry(Action<ProcessingMode?> captureMode) : IReceptorRegistry {
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType == typeof(TestMessage) && stage == LifecycleStage.PostPerspectiveInline) {
         return [new ReceptorInfo(
           MessageType: typeof(TestMessage),
           ReceptorId: "ContextCapture",
-          InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-            // Capture from the lifecycle context accessor
+          InvokeAsync: (sp, _, _, _, _) => {
             var accessor = sp.GetService<ILifecycleContextAccessor>();
-            _captureMode(accessor?.Current?.ProcessingMode);
+            captureMode(accessor?.Current?.ProcessingMode);
             return ValueTask.FromResult<object?>(null);
           },
           FireDuringReplay: true
