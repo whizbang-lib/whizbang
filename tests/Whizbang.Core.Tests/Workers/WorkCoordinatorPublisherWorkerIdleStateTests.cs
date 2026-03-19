@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
+using Whizbang.Testing.Async;
 
 namespace Whizbang.Core.Tests.Workers;
 
@@ -150,7 +151,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
     var publishStrategy = new IdleTestPublishStrategy();
     var instanceProvider = _createTestInstanceProvider();
     var callCount = 0;
-    var idleFired = false;
+    var idleFired = 0;  // Use int + Interlocked for thread-safe cross-thread signaling
     var messageId = Guid.CreateVersion7();
 
     // Return work on first call (transitions to active), then empty
@@ -174,23 +175,23 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
       })
     );
 
-    worker.OnWorkProcessingIdle += () => { idleFired = true; };
+    worker.OnWorkProcessingIdle += () => { Interlocked.Exchange(ref idleFired, 1); };
 
     using var cts = new CancellationTokenSource();
 
     // Act
     var workerTask = worker.StartAsync(cts.Token);
 
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-    while (!idleFired && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    await AsyncTestHelpers.WaitForConditionAsync(
+      () => Volatile.Read(ref idleFired) == 1,
+      TimeSpan.FromSeconds(10),
+      timeoutMessage: "OnWorkProcessingIdle should fire after IdleThresholdPolls consecutive empty polls");
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
     // Assert
-    await Assert.That(idleFired).IsTrue()
+    await Assert.That(Volatile.Read(ref idleFired)).IsEqualTo(1)
       .Because("OnWorkProcessingIdle should fire after IdleThresholdPolls consecutive empty polls");
   }
 

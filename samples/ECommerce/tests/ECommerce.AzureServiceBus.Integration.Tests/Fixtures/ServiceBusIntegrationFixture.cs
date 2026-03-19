@@ -917,44 +917,48 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    // Gracefully handle connection failures (container may have stopped after test completion)
-    try {
-      using (var scope = _inventoryHost!.Services.CreateScope()) {
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    // Retry on deadlock: with shared fixtures, workers may still hold row locks when cleanup runs.
+    // TRUNCATE requires ACCESS EXCLUSIVE locks, so deadlocks are transient — retry after a short delay.
+    const int maxRetries = 3;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        using (var scope = _inventoryHost!.Services.CreateScope()) {
+          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-        // Truncate Whizbang core tables, perspective tables, and checkpoints
-        // CASCADE ensures all dependent data is cleared
-        // Use DO block to gracefully handle case where tables don't exist
-        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-          DO $$
-          BEGIN
-            -- Truncate core infrastructure tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$
+            BEGIN
+              -- Truncate core infrastructure tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
-            -- Truncate all perspective tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
-            TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
-            TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
+              -- Truncate all perspective tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
-            -- Truncate core infrastructure tables (BFF schema)
-            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              -- Truncate core infrastructure tables (BFF schema)
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
-            -- Truncate all perspective tables (BFF schema)
-            TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
-            TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
-            TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
-          EXCEPTION
-            WHEN undefined_table THEN
-              -- Tables don't exist, nothing to clean up
-              NULL;
-          END $$;
-        ", cancellationToken);
+              -- Truncate all perspective tables (BFF schema)
+              TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
+            EXCEPTION
+              WHEN undefined_table THEN
+                -- Tables don't exist, nothing to clean up
+                NULL;
+            END $$;
+          ", cancellationToken);
+        }
+        break; // Success
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        // 40P01 = deadlock_detected — workers still hold locks, retry after delay
+        Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+        await Task.Delay(500 * attempt, cancellationToken);
+      } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
+        Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
+        break;
       }
-    } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
-      // Database container has been stopped - this is expected during test teardown
-      // Silently ignore connection failures since cleanup is not critical after tests complete
-      Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
     }
   }
 

@@ -208,14 +208,18 @@ __PHYSICAL_FIELD_CONFIGS__
     });
 
     // Register scoped strategy factory - selects based on WorkCoordinatorOptions.Strategy
-    // Interval/Batch return the shared singleton; Scoped/Immediate create per-scope instances.
+    // Interval/Batch return the shared singleton wrapped in NonDisposingStrategyAdapter
+    // to prevent scope disposal from destroying the singleton instance.
+    // Scoped/Immediate create per-scope instances via the factory.
     services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       return options.Strategy switch {
         global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Interval =>
-          sp.GetRequiredService<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>(),
+          new global::Whizbang.Core.Messaging.NonDisposingStrategyAdapter(
+            sp.GetRequiredService<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>()),
         global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Batch =>
-          sp.GetRequiredService<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(),
+          new global::Whizbang.Core.Messaging.NonDisposingStrategyAdapter(
+            sp.GetRequiredService<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>()),
         _ => global::Whizbang.Core.Messaging.WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
       };
     });

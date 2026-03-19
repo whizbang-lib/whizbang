@@ -61,6 +61,8 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_SetsMessageContext_WithUserIdAndTenantIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurityInEnvelope_DoesNotThrowAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurity_StillSetsMessageContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportNotReady_MessageRequeuedToChannelAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportException_MessageRequeuedToChannelAsync</tests>
 /// <remarks>
 /// <para>
 /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from a per-work-item scope
@@ -291,6 +293,10 @@ public partial class WorkCoordinatorPublisherWorker(
             LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
           }
 
+          // Re-queue work to channel for retry — without this, the message is consumed
+          // from the channel and lost until lease expiry (which never happens because
+          // the lease keeps being renewed)
+          _workChannelWriter.TryWrite(work);
           continue;
         }
 
@@ -470,6 +476,11 @@ public partial class WorkCoordinatorPublisherWorker(
             _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "transport_exception"));
             _transportMetrics?.OutboxPublishRetries.Add(1);
             _leaseRenewals.Add(work.MessageId);
+
+            // Re-queue work to channel for retry — without this, the message is consumed
+            // from the channel and lost until lease expiry (which never happens because
+            // the lease keeps being renewed)
+            _workChannelWriter.TryWrite(work);
 
             LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error");
           } else {
