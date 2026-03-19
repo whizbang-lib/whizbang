@@ -240,7 +240,7 @@ BEGIN
   );
 
   IF v_completed_events IS NOT NULL THEN
-    PERFORM __SCHEMA__.update_perspective_checkpoints(v_completed_events, (p_flags & 4) != 0);
+    PERFORM __SCHEMA__.update_perspective_cursors(v_completed_events, (p_flags & 4) != 0);
   END IF;
 
   -- Step 4: Delete processed events (if not in debug mode)
@@ -275,7 +275,7 @@ BEGIN
       -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
       -- This prevents FK constraint violation when event doesn't exist in wh_event_store
       IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
-        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+        PERFORM __SCHEMA__.complete_perspective_cursor_work(
           v_completion.stream_id,
           v_completion.perspective_name,
           v_completion.last_event_id,
@@ -319,7 +319,7 @@ BEGIN
       -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
       -- This prevents FK constraint violation when event doesn't exist in wh_event_store
       IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
-        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+        PERFORM __SCHEMA__.complete_perspective_cursor_work(
           v_completion.stream_id,
           v_completion.perspective_name,
           v_completion.last_event_id,
@@ -768,7 +768,7 @@ BEGIN
   -- that have events matching perspective associations but don't have checkpoints yet.
   -- Uses normalize_event_type for consistent type matching.
   -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
-  INSERT INTO __SCHEMA__.wh_perspective_checkpoints (
+  INSERT INTO __SCHEMA__.wh_perspective_cursors (
     stream_id,
     perspective_name,
     last_event_id,
@@ -788,7 +788,7 @@ BEGIN
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_perspective_checkpoints pc_check
+      SELECT 1 FROM __SCHEMA__.wh_perspective_cursors pc_check
       WHERE pc_check.stream_id = es.stream_id
         AND pc_check.perspective_name = ma.target_name
     )
@@ -1027,12 +1027,17 @@ BEGIN
     INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
-    LEFT JOIN __SCHEMA__.wh_perspective_checkpoints pc
+    LEFT JOIN __SCHEMA__.wh_perspective_cursors pc
       ON pe.stream_id = pc.stream_id
       AND pe.perspective_name = pc.perspective_name
     WHERE pe.instance_id = p_instance_id
       AND pe.lease_expiry > p_now
       AND pe.processed_at IS NULL
+      -- Skip streams locked by another active instance (rewind/bootstrap/purge in progress)
+      -- Events accumulate in wh_perspective_events and are processed after lock release
+      AND (pc.stream_lock_instance_id IS NULL
+           OR pc.stream_lock_expiry <= p_now
+           OR pc.stream_lock_instance_id = p_instance_id)
       -- Note: pe.processed_at IS NULL already prevents re-processing individual events
       -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
       -- Filtering on checkpoint status would block all subsequent events in the stream
@@ -1112,7 +1117,7 @@ Completions (Layer 1):
   - 013: process_outbox_completions
   - 014: process_inbox_completions
   - 015: process_perspective_event_completions
-  - 016: update_perspective_checkpoints
+  - 016: update_perspective_cursors
 
 Failures (Layer 2):
   - 017: process_outbox_failures

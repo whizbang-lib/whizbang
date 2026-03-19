@@ -39,9 +39,9 @@ public class PerspectiveProcessingStatusTests {
   }
 
   [Test]
-  public async Task PerspectiveProcessingStatus_HasFiveValuesAsync() {
+  public async Task PerspectiveProcessingStatus_HasSixValuesAsync() {
     var values = Enum.GetValues<PerspectiveProcessingStatus>();
-    await Assert.That(values.Length).IsEqualTo(5);
+    await Assert.That(values.Length).IsEqualTo(6);
   }
 
   [Test]

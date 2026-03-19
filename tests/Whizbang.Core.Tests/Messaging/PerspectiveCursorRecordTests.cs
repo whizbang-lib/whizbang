@@ -6,15 +6,15 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Tests for PerspectiveCheckpointRecord class.
+/// Tests for PerspectiveCursorRecord class.
 /// Verifies checkpoint tracking behavior for perspective processing.
 /// </summary>
 [Category("Messaging")]
 [Category("Perspectives")]
-public class PerspectiveCheckpointRecordTests {
+public class PerspectiveCursorRecordTests {
 
   [Test]
-  public async Task PerspectiveCheckpointRecord_WithAllProperties_CreatesInstanceAsync() {
+  public async Task PerspectiveCursorRecord_WithAllProperties_CreatesInstanceAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
     var perspectiveName = "OrderSummaryPerspective";
@@ -23,7 +23,7 @@ public class PerspectiveCheckpointRecordTests {
     var processedAt = DateTime.UtcNow;
 
     // Act
-    var checkpoint = new PerspectiveCheckpointRecord {
+    var checkpoint = new PerspectiveCursorRecord {
       StreamId = streamId,
       PerspectiveName = perspectiveName,
       LastEventId = lastEventId,
@@ -40,9 +40,9 @@ public class PerspectiveCheckpointRecordTests {
   }
 
   [Test]
-  public async Task PerspectiveCheckpointRecord_WithError_StoresErrorMessageAsync() {
+  public async Task PerspectiveCursorRecord_WithError_StoresErrorMessageAsync() {
     // Arrange & Act
-    var checkpoint = new PerspectiveCheckpointRecord {
+    var checkpoint = new PerspectiveCursorRecord {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = Guid.NewGuid(),
@@ -57,9 +57,9 @@ public class PerspectiveCheckpointRecordTests {
   }
 
   [Test]
-  public async Task PerspectiveCheckpointRecord_UpdatesProcessedAt_WhenCheckpointAdvancesAsync() {
+  public async Task PerspectiveCursorRecord_UpdatesProcessedAt_WhenCheckpointAdvancesAsync() {
     // Arrange
-    var checkpoint = new PerspectiveCheckpointRecord {
+    var checkpoint = new PerspectiveCursorRecord {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = Guid.NewGuid(),
@@ -80,9 +80,9 @@ public class PerspectiveCheckpointRecordTests {
   }
 
   [Test]
-  public async Task PerspectiveCheckpointRecord_Serialization_RoundTripsCorrectlyAsync() {
+  public async Task PerspectiveCursorRecord_Serialization_RoundTripsCorrectlyAsync() {
     // Arrange
-    var checkpoint = new PerspectiveCheckpointRecord {
+    var checkpoint = new PerspectiveCursorRecord {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = Guid.NewGuid(),
@@ -93,7 +93,7 @@ public class PerspectiveCheckpointRecordTests {
 
     // Act
     var json = JsonSerializer.Serialize(checkpoint);
-    var deserialized = JsonSerializer.Deserialize<PerspectiveCheckpointRecord>(json);
+    var deserialized = JsonSerializer.Deserialize<PerspectiveCursorRecord>(json);
 
     // Assert
     await Assert.That(deserialized).IsNotNull();
@@ -106,13 +106,13 @@ public class PerspectiveCheckpointRecordTests {
   }
 
   [Test]
-  public async Task PerspectiveCheckpointRecord_WithUUIDv7EventId_MaintainsTemporalOrderAsync() {
+  public async Task PerspectiveCursorRecord_WithUUIDv7EventId_MaintainsTemporalOrderAsync() {
     // Arrange
     // UUIDv7 embeds timestamp - later events have larger IDs
     var earlierEventId = Guid.CreateVersion7(DateTimeOffset.UtcNow.AddMinutes(-10));
     var laterEventId = Guid.CreateVersion7(DateTimeOffset.UtcNow);
 
-    var checkpoint1 = new PerspectiveCheckpointRecord {
+    var checkpoint1 = new PerspectiveCursorRecord {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = earlierEventId,
@@ -120,7 +120,7 @@ public class PerspectiveCheckpointRecordTests {
       ProcessedAt = DateTime.UtcNow.AddMinutes(-10)
     };
 
-    var checkpoint2 = new PerspectiveCheckpointRecord {
+    var checkpoint2 = new PerspectiveCursorRecord {
       StreamId = checkpoint1.StreamId,
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = laterEventId,

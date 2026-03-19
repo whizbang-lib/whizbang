@@ -1,15 +1,15 @@
 -- Migration: 005_CreateCompletePerspectiveCheckpointFunction.sql
 -- Date: 2025-12-21 (merged from 005 and 005a)
--- Description: Creates complete_perspective_checkpoint_work function for updating perspective checkpoints
+-- Description: Creates complete_perspective_cursor_work function for updating perspective checkpoints
 --              when perspective runners report completion/failure results.
 --              Supports CatchingUp status for time-travel/replay scenarios.
--- Dependencies: 001-004 (requires wh_perspective_checkpoints table)
+-- Dependencies: 001-004 (requires wh_perspective_cursors table)
 -- Used by: 006 (process_work_batch calls this function)
 
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_checkpoint_work(UUID, TEXT, UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_checkpoint_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
+DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, TEXT, UUID, SMALLINT, TEXT);
+DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_cursor_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
 
-CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_checkpoint_work(
+CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_cursor_work(
   p_stream_id UUID,
   p_perspective_name TEXT,
   p_last_event_id UUID,
@@ -22,13 +22,13 @@ BEGIN
   -- Check if this perspective is in CatchingUp mode (status & 8 = 8)
   SELECT (status & 8) = 8
   INTO v_is_catching_up
-  FROM __SCHEMA__.wh_perspective_checkpoints
+  FROM __SCHEMA__.wh_perspective_cursors
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
 
   -- Update checkpoint with results from perspective runner
   -- Includes error message for failed runs, clears error for successful runs
-  UPDATE __SCHEMA__.wh_perspective_checkpoints
+  UPDATE __SCHEMA__.wh_perspective_cursors
   SET last_event_id = p_last_event_id,
       status = p_status,
       processed_at = NOW(),
@@ -49,7 +49,7 @@ BEGIN
 
   -- If we were catching up and successfully completed, clear the CatchingUp flag
   IF v_is_catching_up AND (p_status & 2) = 2 THEN  -- Completed flag
-    UPDATE __SCHEMA__.wh_perspective_checkpoints
+    UPDATE __SCHEMA__.wh_perspective_cursors
     SET status = status & ~8  -- Clear CatchingUp flag (bitwise AND NOT)
     WHERE stream_id = p_stream_id
       AND perspective_name = p_perspective_name;
@@ -57,4 +57,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.complete_perspective_checkpoint_work IS 'Updates perspective checkpoint with completion/failure results from perspective runner. Supports CatchingUp status for time-travel/replay scenarios.';
+COMMENT ON FUNCTION __SCHEMA__.complete_perspective_cursor_work IS 'Updates perspective checkpoint with completion/failure results from perspective runner. Supports CatchingUp status for time-travel/replay scenarios.';

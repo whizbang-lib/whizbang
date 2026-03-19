@@ -914,7 +914,7 @@ public class PerspectiveWorkerCoverageTests {
       // Act
       using var cts = new CancellationTokenSource();
       var workerTask = worker.StartAsync(cts.Token);
-      await Task.Delay(300);
+      await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
       cts.Cancel();
 
       try {
@@ -1272,6 +1272,7 @@ public class PerspectiveWorkerCoverageTests {
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     private readonly TaskCompletionSource _completionReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _failureReported = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public List<PerspectiveWork> PerspectiveWorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -1287,6 +1288,15 @@ public class PerspectiveWorkerCoverageTests {
         await _completionReported.Task.WaitAsync(cts.Token);
       } catch (OperationCanceledException) {
         throw new TimeoutException($"Completion was not reported within {timeout}");
+      }
+    }
+
+    public async Task WaitForFailureReportedAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try {
+        await _failureReported.Task.WaitAsync(cts.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Failure was not reported within {timeout}");
       }
     }
 
@@ -1314,7 +1324,7 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-        PerspectiveCheckpointCompletion completion,
+        PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {
       ReportCompletionCallCount++;
       _completionReported.TrySetResult();
@@ -1322,17 +1332,18 @@ public class PerspectiveWorkerCoverageTests {
     }
 
     public Task ReportPerspectiveFailureAsync(
-        PerspectiveCheckpointFailure failure,
+        PerspectiveCursorFailure failure,
         CancellationToken cancellationToken = default) {
       ReportFailureCallCount++;
+      _failureReported.TrySetResult();
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,
         string perspectiveName,
         CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -1433,27 +1444,33 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
         CancellationToken cancellationToken) {
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   private sealed class TypeAwarePerspectiveRunner : IPerspectiveRunner {
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
         CancellationToken cancellationToken) {
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),
@@ -1461,16 +1478,28 @@ public class PerspectiveWorkerCoverageTests {
         PerspectiveType = typeof(TypeAwarePerspectiveRunner) // Non-null triggers sync signaler
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   private sealed class ThrowingPerspectiveRunner : IPerspectiveRunner {
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
         CancellationToken cancellationToken) {
       throw new InvalidOperationException("Perspective run failed");
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Perspective run failed");
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   private sealed class FakePerspectiveSyncSignaler : IPerspectiveSyncSignaler {
@@ -1486,7 +1515,7 @@ public class PerspectiveWorkerCoverageTests {
 
     public void Dispose() { }
 
-    public IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCheckpointSignal> onSignal) {
+    public IDisposable Subscribe(Type perspectiveType, Action<PerspectiveCursorSignal> onSignal) {
       throw new NotImplementedException();
     }
   }

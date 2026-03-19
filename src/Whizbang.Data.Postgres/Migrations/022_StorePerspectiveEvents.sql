@@ -68,6 +68,26 @@ BEGIN
         AND pe.event_id = v_event.v_event_id;
     END IF;
 
+    -- Out-of-order detection: if event_id is older than cursor's last_event_id,
+    -- the perspective missed this event and needs a rewind from snapshot.
+    -- UUID7 comparison works because UUID7 encodes timestamp in the most significant bits.
+    IF v_was_new THEN
+      IF EXISTS (
+        SELECT 1 FROM wh_perspective_cursors pc
+        WHERE pc.stream_id = v_event.v_stream_id
+          AND pc.perspective_name = v_event.v_perspective_name
+          AND pc.last_event_id IS NOT NULL
+          AND v_event.v_event_id < pc.last_event_id
+      ) THEN
+        UPDATE wh_perspective_cursors
+        SET status = status | 32,  -- RewindRequired flag (1 << 5)
+            rewind_trigger_event_id = v_event.v_event_id
+        WHERE stream_id = v_event.v_stream_id
+          AND perspective_name = v_event.v_perspective_name
+          AND (rewind_trigger_event_id IS NULL OR v_event.v_event_id < rewind_trigger_event_id);
+      END IF;
+    END IF;
+
     RETURN QUERY SELECT v_work_id, v_event.v_stream_id, v_event.v_perspective_name, v_was_new;
   END LOOP;
 END;

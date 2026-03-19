@@ -12,7 +12,6 @@ namespace ECommerce.Integration.Tests;
 /// Tests that verify message creation and serialization with real ECommerce.Contracts types.
 /// These tests verify the core issue: MessageIds and WhizbangIds must not serialize as all zeros!
 /// </summary>
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
 public class MessageSerializationTests {
   /// <summary>
   /// Verify MessageId.New() creates non-zero GUIDs (UUIDv7).

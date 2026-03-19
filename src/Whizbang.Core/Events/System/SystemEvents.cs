@@ -56,6 +56,35 @@ public record PerspectiveRebuildFailed(
     TimeSpan Duration
 ) : IEvent;
 
+// --- Perspective rewind events ---
+
+/// <summary>
+/// Emitted when a perspective rewind begins due to a late-arriving event.
+/// </summary>
+/// <docs>core-concepts/perspectives#rewind-events</docs>
+public record PerspectiveRewindStarted(
+    [property: StreamId] Guid StreamId,
+    string PerspectiveName,
+    Guid TriggeringEventId,
+    Guid? ReplayFromSnapshotEventId,
+    bool HasSnapshot,
+    DateTimeOffset StartedAt
+) : IEvent;
+
+/// <summary>
+/// Emitted when a perspective rewind completes successfully.
+/// </summary>
+/// <docs>core-concepts/perspectives#rewind-events</docs>
+public record PerspectiveRewindCompleted(
+    [property: StreamId] Guid StreamId,
+    string PerspectiveName,
+    Guid TriggeringEventId,
+    Guid FinalEventId,
+    int EventsReplayed,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt
+) : IEvent;
+
 // --- Per-migration events (one per table/function) ---
 
 /// <summary>

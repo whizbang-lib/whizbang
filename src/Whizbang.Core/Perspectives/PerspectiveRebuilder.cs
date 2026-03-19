@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
+using static Whizbang.Core.Messaging.ProcessingModeAccessor;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -79,21 +80,29 @@ public sealed partial class PerspectiveRebuilder(
 
       LogRebuildStarting(logger, mode, perspectiveName, totalStreams);
 
-      // Process each stream
-      foreach (var streamId in streamIds) {
-        ct.ThrowIfCancellationRequested();
+      // Set ambient processing mode so lifecycle receptors are suppressed during rebuild
+      // unless they opt in with [FireDuringReplay]
+      var previousMode = Current;
+      Current = ProcessingMode.Rebuild;
+      try {
+        // Process each stream
+        foreach (var streamId in streamIds) {
+          ct.ThrowIfCancellationRequested();
 
-        try {
-          await runner.RunAsync(streamId, perspectiveName, null, ct);
-          streamsProcessed++;
-          eventsReplayed++;
+          try {
+            await runner.RunAsync(streamId, perspectiveName, null, ct);
+            streamsProcessed++;
+            eventsReplayed++;
 
-          if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
-            _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
+            if (streamsProcessed % 100 == 0 || streamsProcessed == totalStreams) {
+              _activeRebuilds[perspectiveName] = status with { ProcessedStreams = streamsProcessed };
+            }
+          } catch (Exception ex) {
+            LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
           }
-        } catch (Exception ex) {
-          LogStreamFailed(logger, ex, perspectiveName, streamId, streamsProcessed, totalStreams);
         }
+      } finally {
+        Current = previousMode;
       }
 
       sw.Stop();

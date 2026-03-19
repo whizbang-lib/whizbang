@@ -78,15 +78,13 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var dispatcher = _createDispatcher();
     var command = new TestSyncCommand(Guid.NewGuid());
 
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    // Act - should NOT wait for perspective sync, complete immediately.
+    // TimeoutPerspectiveSyncAwaiter throws PerspectiveSyncTimeoutException if WaitAsync is called,
+    // so completing without exception proves sync was NOT triggered.
+    var act = async () => await dispatcher.LocalInvokeAsync(command);
 
-    // Act - should NOT wait for perspective sync, complete immediately
-    await dispatcher.LocalInvokeAsync(command);
-
-    stopwatch.Stop();
-
-    // Assert - should complete almost immediately, NOT wait for the 100ms timeout
-    await Assert.That(stopwatch.ElapsedMilliseconds).IsLessThan(50)
+    // Assert
+    await Assert.That(act).ThrowsNothing()
       .Because("Command should NOT wait for perspective sync (perspectives don't process commands)");
   }
 
@@ -108,17 +106,13 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var dispatcher = _createDispatcher();
     var command = new TestSyncCommandWithResult(Guid.NewGuid());
 
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-
-    // Act - should NOT wait for perspective sync, complete immediately
+    // Act - should NOT wait for perspective sync, complete immediately.
+    // TimeoutPerspectiveSyncAwaiter throws PerspectiveSyncTimeoutException if WaitAsync is called,
+    // so completing without exception proves sync was NOT triggered.
     var result = await dispatcher.LocalInvokeAsync<TestSyncCommandWithResult, TestSyncCommandResult>(command);
-
-    stopwatch.Stop();
 
     // Assert
     await Assert.That(result.Success).IsTrue();
-    await Assert.That(stopwatch.ElapsedMilliseconds).IsLessThan(50)
-      .Because("Command with result should NOT wait for perspective sync");
   }
 
   [Test]
@@ -127,15 +121,13 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     var dispatcher = _createDispatcher();
     var message = new TestSyncPlainMessage(Guid.NewGuid());
 
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    // Act - should NOT wait for perspective sync, complete immediately.
+    // TimeoutPerspectiveSyncAwaiter throws PerspectiveSyncTimeoutException if WaitAsync is called,
+    // so completing without exception proves sync was NOT triggered.
+    var act = async () => await dispatcher.LocalInvokeAsync(message);
 
-    // Act - should NOT wait for perspective sync, complete immediately
-    await dispatcher.LocalInvokeAsync(message);
-
-    stopwatch.Stop();
-
-    // Assert - should complete almost immediately
-    await Assert.That(stopwatch.ElapsedMilliseconds).IsLessThan(50)
+    // Assert
+    await Assert.That(act).ThrowsNothing()
       .Because("Plain IMessage (not IEvent) should NOT wait for perspective sync");
   }
 

@@ -251,6 +251,22 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       return;
     }
 
+    // Suppress receptors during replay/rebuild unless they opt in with [FireDuringReplay]
+    // This prevents duplicate side effects (emails, webhooks, cache busting) when events are replayed
+    var processingMode = context?.ProcessingMode;
+    if (processingMode is ProcessingMode.Replay or ProcessingMode.Rebuild) {
+      var filtered = new List<ReceptorInfo>(receptors.Count);
+      for (int i = 0; i < receptors.Count; i++) {
+        if (receptors[i].FireDuringReplay) {
+          filtered.Add(receptors[i]);
+        }
+      }
+      if (filtered.Count == 0) {
+        return;
+      }
+      receptors = filtered;
+    }
+
     // Try to get stream ID extractor for stream-based sync
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);

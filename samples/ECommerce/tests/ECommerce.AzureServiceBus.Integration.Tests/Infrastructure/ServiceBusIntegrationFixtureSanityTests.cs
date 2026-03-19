@@ -19,7 +19,6 @@ namespace ECommerce.Integration.Tests.Infrastructure;
 /// Tests run sequentially to avoid ServiceBus topic conflicts.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Service Bus emulator connection instability - HTTP connections end prematurely. Needs emulator fix or retry improvements.")]
 public class ServiceBusIntegrationFixtureSanityTests {
   private static ServiceBusIntegrationFixture? _fixture;
 

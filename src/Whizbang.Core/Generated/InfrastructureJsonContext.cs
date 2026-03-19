@@ -106,10 +106,12 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(ReceptorProcessingCompletion[]))]
 [JsonSerializable(typeof(ReceptorProcessingFailure))]
 [JsonSerializable(typeof(ReceptorProcessingFailure[]))]
-[JsonSerializable(typeof(PerspectiveCheckpointCompletion))]
-[JsonSerializable(typeof(PerspectiveCheckpointCompletion[]))]
-[JsonSerializable(typeof(PerspectiveCheckpointFailure))]
-[JsonSerializable(typeof(PerspectiveCheckpointFailure[]))]
+[JsonSerializable(typeof(PerspectiveCursorCompletion))]
+[JsonSerializable(typeof(PerspectiveCursorCompletion[]))]
+[JsonSerializable(typeof(PerspectiveCursorFailure))]
+[JsonSerializable(typeof(PerspectiveCursorFailure[]))]
+[JsonSerializable(typeof(PerspectiveEventCompletion))]
+[JsonSerializable(typeof(PerspectiveEventCompletion[]))]
 [JsonSerializable(typeof(Guid[]))]
 [JsonSerializable(typeof(Guid?[]))]  // Array of nullable Guids
 // Sync inquiry types (for perspective sync awaiter)

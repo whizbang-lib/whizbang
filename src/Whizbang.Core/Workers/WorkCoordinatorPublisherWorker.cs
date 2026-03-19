@@ -540,7 +540,8 @@ public partial class WorkCoordinatorPublisherWorker(
         InboxFailures = [],
         ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
+        PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
         NewOutboxMessages = [],  // Not used in publisher worker (dispatcher handles new messages)
         NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)
