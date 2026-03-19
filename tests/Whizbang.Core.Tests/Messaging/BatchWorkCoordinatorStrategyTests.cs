@@ -679,8 +679,151 @@ public class BatchWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Channel Write Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithReturnedWork_WritesToChannelAsync() {
+    // Arrange
+    var channelWriter = new TestWorkChannelWriter();
+    var messageId1 = Guid.CreateVersion7();
+    var fakeCoordinator = new BatchFakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = messageId1,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createEnvelope(messageId1),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 60000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    try {
+      sut.QueueOutboxMessage(_createOutboxMessage());
+
+      // Act
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      // Assert
+      await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1);
+      await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task FlushAsync_NullChannelWriter_DoesNotThrowAsync() {
+    // Arrange - no channel writer
+    var fakeCoordinator = new BatchFakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createEnvelope(Guid.CreateVersion7()),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 60000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options
+    );
+
+    try {
+      sut.QueueOutboxMessage(_createOutboxMessage());
+
+      // Act & Assert - should not throw
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task FlushAsync_ChannelClosed_HandlesGracefullyAsync() {
+    // Arrange
+    var channelWriter = new ClosedTestWorkChannelWriter();
+    var fakeCoordinator = new BatchFakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createEnvelope(Guid.CreateVersion7()),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 60000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    try {
+      sut.QueueOutboxMessage(_createOutboxMessage());
+
+      // Act & Assert - should handle gracefully
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
+
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() { }
+  }
+
+  private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) =>
+      throw new System.Threading.Channels.ChannelClosedException();
+
+    public bool TryWrite(OutboxWork work) => false;
+
+    public void Complete() { }
+  }
 
   private sealed class BatchFakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -691,6 +834,7 @@ public class BatchWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -705,7 +849,7 @@ public class BatchWorkCoordinatorStrategyTests {
       LastInboxFailures = request.InboxFailures;
 
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
+        OutboxWork = WorkToReturn,
         InboxWork = [],
         PerspectiveWork = []
       });

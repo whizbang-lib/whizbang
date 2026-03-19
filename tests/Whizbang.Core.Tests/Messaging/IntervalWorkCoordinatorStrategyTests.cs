@@ -784,8 +784,196 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Channel Write Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithReturnedWork_WritesToChannelAsync() {
+    // Arrange
+    var channelWriter = new TestWorkChannelWriter();
+    var messageId1 = Guid.CreateVersion7();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = messageId1,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createTestEnvelope(messageId1),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 60000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    try {
+      var messageId = _idProvider.NewGuid();
+      sut.QueueOutboxMessage(new OutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Test",
+        StreamId = _idProvider.NewGuid(),
+        IsEvent = false,
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+      });
+
+      // Act
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      // Assert
+      await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1);
+      await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task FlushAsync_NullChannelWriter_DoesNotThrowAsync() {
+    // Arrange - no channel writer
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createTestEnvelope(Guid.CreateVersion7()),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 60000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options
+    );
+
+    try {
+      var messageId = _idProvider.NewGuid();
+      sut.QueueOutboxMessage(new OutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Test",
+        StreamId = _idProvider.NewGuid(),
+        IsEvent = false,
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+      });
+
+      // Act & Assert - should not throw
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task FlushAsync_ChannelClosed_HandlesGracefullyAsync() {
+    // Arrange
+    var channelWriter = new ClosedTestWorkChannelWriter();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createTestEnvelope(Guid.CreateVersion7()),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 60000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    try {
+      var messageId = _idProvider.NewGuid();
+      sut.QueueOutboxMessage(new OutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Test",
+        StreamId = _idProvider.NewGuid(),
+        IsEvent = false,
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+      });
+
+      // Act & Assert - should handle gracefully
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
+
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() { }
+  }
+
+  private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) =>
+      throw new System.Threading.Channels.ChannelClosedException();
+
+    public bool TryWrite(OutboxWork work) => false;
+
+    public void Complete() { }
+  }
 
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -795,6 +983,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -808,7 +997,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       LastInboxFailures = request.InboxFailures;
 
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
+        OutboxWork = WorkToReturn,
         InboxWork = [],
         PerspectiveWork = []
       });

@@ -32,6 +32,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly IDeferredOutboxChannel? _deferredChannel;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly SystemEventOptions? _systemEventOptions;
@@ -48,7 +49,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IDeferredOutboxChannel? deferredChannel = null,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null,
-    IOptions<SystemEventOptions>? systemEventOptions = null
+    IOptions<SystemEventOptions>? systemEventOptions = null,
+    IWorkChannelWriter? workChannelWriter = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -58,6 +60,7 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
     _deferredChannel = deferredChannel;
+    _workChannelWriter = workChannelWriter;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
     _systemEventOptions = systemEventOptions?.Value;
@@ -158,57 +161,38 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       );
     }
 
-    // Check if lifecycle tracing is enabled
-    var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+    // Snapshot arrays from queues + pending audit messages
+    var outboxMessages = _queues.OutboxMessages.ToArray();
+    var inboxMessages = _queues.InboxMessages.ToArray();
+    var outboxCompletions = _queues.OutboxCompletions.ToArray();
+    var inboxCompletions = _queues.InboxCompletions.ToArray();
+    var outboxFailures = _queues.OutboxFailures.ToArray();
+    var inboxFailures = _queues.InboxFailures.ToArray();
+    var pendingAuditMessages = _queues.PendingAuditMessages.Count > 0
+      ? _queues.PendingAuditMessages.ToArray()
+      : null;
 
-    // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PreDistributeAsync,
-      LifecycleStage.PreDistributeInline,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
+    var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _coordinator,
       _scopeFactory,
+      _instanceProvider,
+      _options,
+      "immediate",
+      outboxMessages,
+      inboxMessages,
+      outboxCompletions,
+      inboxCompletions,
+      outboxFailures,
+      inboxFailures,
+      flags,
       _lifecycleMessageDeserializer,
       _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
-    );
-
-    // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
-    LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
-      _scopeFactory,
-      _lifecycleMessageDeserializer,
-      _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
-    );
-
-    // Merge pending audit messages after lifecycle stages
-    _queues.MergeAuditMessages();
-
-    var request = _queues.BuildRequest(_instanceProvider, _options, flags);
-    var flushSw = System.Diagnostics.Stopwatch.StartNew();
-    var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
-    flushSw.Stop();
-    _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "immediate"));
-
-    // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
-      LifecycleStage.PostDistributeInline,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
-      _scopeFactory,
-      _lifecycleMessageDeserializer,
-      _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
+      _tracingOptions,
+      _metrics,
+      _lifecycleMetrics,
+      workChannelWriter: _workChannelWriter,
+      pendingAuditMessages: pendingAuditMessages,
+      ct
     );
 
     // Clear queues after flush

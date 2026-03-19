@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -44,6 +45,8 @@ internal static class WorkCoordinatorFlushHelper {
     IOptionsMonitor<TracingOptions>? tracingOptions,
     WorkCoordinatorMetrics? metrics,
     LifecycleMetrics? lifecycleMetrics,
+    IWorkChannelWriter? workChannelWriter,
+    OutboxMessage[]? pendingAuditMessages,
     CancellationToken ct
   ) {
 #pragma warning restore S107
@@ -88,6 +91,12 @@ internal static class WorkCoordinatorFlushHelper {
         ct: ct
       );
 
+      // Merge pending audit messages (after lifecycle stages, before request build)
+      var finalOutboxMessages = outboxMessages;
+      if (pendingAuditMessages is { Length: > 0 }) {
+        finalOutboxMessages = [.. outboxMessages, .. pendingAuditMessages];
+      }
+
       // Call process_work_batch with snapshot
       var request = new ProcessWorkBatchRequest {
         InstanceId = instanceProvider.InstanceId,
@@ -104,7 +113,7 @@ internal static class WorkCoordinatorFlushHelper {
         PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
         PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
-        NewOutboxMessages = outboxMessages,
+        NewOutboxMessages = finalOutboxMessages,
         NewInboxMessages = inboxMessages,
         RenewOutboxLeaseIds = [],
         RenewInboxLeaseIds = [],
@@ -131,6 +140,17 @@ internal static class WorkCoordinatorFlushHelper {
         metrics: lifecycleMetrics,
         ct: ct
       );
+
+      // Write returned work to channel for publishing
+      if (workChannelWriter != null && workBatch.OutboxWork.Count > 0) {
+        try {
+          foreach (var work in workBatch.OutboxWork) {
+            await workChannelWriter.WriteAsync(work, ct);
+          }
+        } catch (ChannelClosedException) {
+          // Work is persisted to database, will be picked up on restart
+        }
+      }
 
       return workBatch;
     } finally {

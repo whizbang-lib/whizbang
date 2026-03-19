@@ -30,6 +30,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
@@ -66,7 +67,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null
+    LifecycleMetrics? lifecycleMetrics = null,
+    IWorkChannelWriter? workChannelWriter = null
   ) {
 #pragma warning restore S107
     if (coordinator == null && scopeFactory == null) {
@@ -79,6 +81,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
+    _workChannelWriter = workChannelWriter;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -308,6 +311,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _tracingOptions,
         _metrics,
         _lifecycleMetrics,
+        workChannelWriter: _workChannelWriter,
+        pendingAuditMessages: null,
         ct
       );
 
