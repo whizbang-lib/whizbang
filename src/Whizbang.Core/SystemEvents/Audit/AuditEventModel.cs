@@ -125,8 +125,7 @@ public static class AuditEventProjection {
 
     // Strip namespace (dots) but preserve nested type context (plus signs)
     // e.g. "JDX.Contracts.Session.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
-    var lastDot = eventType.LastIndexOf('.');
-    var withoutNamespace = lastDot >= 0 ? eventType[(lastDot + 1)..] : eventType;
+    var withoutNamespace = TypeNameFormatter.GetSimpleName(eventType);
 
     // Split on '+' to get nested type segments
     // e.g. "SessionContracts+EndedEvent" → ["SessionContracts", "EndedEvent"]

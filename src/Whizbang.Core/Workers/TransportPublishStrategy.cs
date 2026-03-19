@@ -237,39 +237,9 @@ public partial class TransportPublishStrategy : IMessagePublishStrategy {
     return MessageKind.Unknown;
   }
 
-  /// <summary>
-  /// Extracts the namespace from an assembly-qualified type name.
-  /// </summary>
-  /// <param name="typeFullName">Assembly-qualified type name</param>
-  /// <returns>Namespace or null</returns>
-  private static string? _extractNamespace(string typeFullName) {
-    // Format: "Namespace.TypeName, AssemblyName" or "Namespace.TypeName"
-    var commaIndex = typeFullName.IndexOf(',');
-    var fullTypeName = commaIndex >= 0 ? typeFullName[..commaIndex].Trim() : typeFullName.Trim();
+  private static string? _extractNamespace(string typeFullName) =>
+    TypeNameFormatter.GetNamespace(typeFullName);
 
-    var lastDotIndex = fullTypeName.LastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return null;
-    }
-
-    return fullTypeName[..lastDotIndex];
-  }
-
-  /// <summary>
-  /// Extracts the type name from an assembly-qualified type name.
-  /// </summary>
-  /// <param name="typeFullName">Assembly-qualified type name</param>
-  /// <returns>Type name or null</returns>
-  private static string? _extractTypeName(string typeFullName) {
-    // Format: "Namespace.TypeName, AssemblyName" or "Namespace.TypeName"
-    var commaIndex = typeFullName.IndexOf(',');
-    var fullTypeName = commaIndex >= 0 ? typeFullName[..commaIndex].Trim() : typeFullName.Trim();
-
-    var lastDotIndex = fullTypeName.LastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return fullTypeName;
-    }
-
-    return fullTypeName[(lastDotIndex + 1)..];
-  }
+  private static string? _extractTypeName(string typeFullName) =>
+    TypeNameFormatter.GetSimpleName(typeFullName);
 }

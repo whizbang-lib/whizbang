@@ -135,11 +135,7 @@ public static class AuditOutboxMessageBuilder {
     }
   }
 
-  private static string _extractFullTypeName(string messageType) {
-    // MessageType is assembly-qualified: "Namespace.TypeName, AssemblyName, ..."
-    // Extract the full type name including namespace (before the first comma)
-    var commaIndex = messageType.IndexOf(',');
-    return commaIndex > 0 ? messageType[..commaIndex] : messageType;
-  }
+  private static string _extractFullTypeName(string messageType) =>
+    TypeNameFormatter.GetFullName(messageType);
 
 }

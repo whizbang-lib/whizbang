@@ -2052,7 +2052,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.Append(',');
       }
       sb.Append('{');
-      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelTypeName)}\",");
+      // Strip global:: prefix when writing to DB — ModelTypeName uses global:: for C# code generation
+      // but the database needs the plain CLR type name for runtime lookups
+      var dbClrTypeName = perspective.ModelTypeName.Replace("global::", "");
+      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
       sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
       sb.Append($"\"SchemaJson\":{schemaJson},");
       sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
