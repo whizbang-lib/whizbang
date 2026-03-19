@@ -22,7 +22,7 @@ namespace Whizbang.Core.Workers;
 /// derived from <see cref="RoutingOptions"/>. The additional destinations
 /// are appended after auto-generated inbox and event subscriptions.
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#additional-destinations</docs>
+/// <docs>messaging/transports/transport-consumer#additional-destinations</docs>
 public sealed class TransportConsumerConfiguration {
   /// <summary>
   /// Gets the list of additional destinations to subscribe to beyond auto-generated ones.
@@ -40,7 +40,7 @@ public sealed class TransportConsumerConfiguration {
   /// Gets the resilience options for subscription retry behavior.
   /// Resilience is always enabled - subscriptions retry with exponential backoff on failure.
   /// </summary>
-  /// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+  /// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
   public SubscriptionResilienceOptions ResilienceOptions { get; } = new();
 }
 
@@ -62,7 +62,7 @@ public sealed class TransportConsumerConfiguration {
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+/// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
 public static class TransportConsumerBuilderExtensions {
   /// <summary>
@@ -114,7 +114,7 @@ public static class TransportConsumerBuilderExtensions {
   ///     });
   /// </code>
   /// </example>
-  /// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+  /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs:AddTransportConsumer_AutoPopulatesInboxDestination_FromOwnDomainsAsync</tests>
   public static WhizbangBuilder AddTransportConsumer(
       this WhizbangBuilder builder,
@@ -236,7 +236,7 @@ public static class TransportConsumerBuilderExtensions {
   ///     .AddTransportConsumer();
   /// </code>
   /// </example>
-  /// <docs>core-concepts/transport-consumer#auto-configuration</docs>
+  /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
   public static WhizbangPerspectiveBuilder AddTransportConsumer(
       this WhizbangPerspectiveBuilder builder,
       Action<TransportConsumerConfiguration>? configure = null) {

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// </description></item>
 /// </list>
 /// </remarks>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs</tests>
 public interface IPerspectiveCompletionStrategy {
   /// <summary>
@@ -40,7 +40,7 @@ public interface IPerspectiveCompletionStrategy {
   /// Instant strategies will call ProcessWorkBatchAsync immediately.
   /// </remarks>
   Task ReportCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken);
 
@@ -56,7 +56,7 @@ public interface IPerspectiveCompletionStrategy {
   /// Instant strategies will call ProcessWorkBatchAsync immediately.
   /// </remarks>
   Task ReportFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken);
 
@@ -68,7 +68,7 @@ public interface IPerspectiveCompletionStrategy {
   /// Batched strategies return collected completions awaiting the next poll cycle.
   /// Instant strategies always return an empty array (nothing is pending).
   /// </remarks>
-  TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions();
+  TrackedCompletion<PerspectiveCursorCompletion>[] GetPendingCompletions();
 
   /// <summary>
   /// Gets all pending failures that have been collected but not yet reported.
@@ -78,14 +78,14 @@ public interface IPerspectiveCompletionStrategy {
   /// Batched strategies return collected failures awaiting the next poll cycle.
   /// Instant strategies always return an empty array (nothing is pending).
   /// </remarks>
-  TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures();
+  TrackedCompletion<PerspectiveCursorFailure>[] GetPendingFailures();
 
   /// <summary>
   /// Mark items as sent to ProcessWorkBatchAsync.
   /// </summary>
   void MarkAsSent(
-    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
-    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    TrackedCompletion<PerspectiveCursorCompletion>[] completions,
+    TrackedCompletion<PerspectiveCursorFailure>[] failures,
     DateTimeOffset sentAt);
 
   /// <summary>

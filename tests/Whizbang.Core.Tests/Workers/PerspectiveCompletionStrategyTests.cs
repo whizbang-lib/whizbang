@@ -18,7 +18,7 @@ public class PerspectiveCompletionStrategyTests {
   public async Task BatchedStrategy_ReportCompletionAsync_DoesNotCallCoordinatorImmediately_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var completion = new PerspectiveCheckpointCompletion {
+    var completion = new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -39,7 +39,7 @@ public class PerspectiveCompletionStrategyTests {
   public async Task BatchedStrategy_ReportFailureAsync_DoesNotCallCoordinatorImmediately_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var failure = new PerspectiveCheckpointFailure {
+    var failure = new PerspectiveCursorFailure {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -61,13 +61,13 @@ public class PerspectiveCompletionStrategyTests {
   public async Task BatchedStrategy_GetPendingCompletions_ReturnsCollectedCompletions_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var completion1 = new PerspectiveCheckpointCompletion {
+    var completion1 = new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective1",
       LastEventId = Guid.NewGuid(),
       Status = PerspectiveProcessingStatus.Completed
     };
-    var completion2 = new PerspectiveCheckpointCompletion {
+    var completion2 = new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective2",
       LastEventId = Guid.NewGuid(),
@@ -92,14 +92,14 @@ public class PerspectiveCompletionStrategyTests {
   public async Task BatchedStrategy_GetPendingFailures_ReturnsCollectedFailures_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var failure1 = new PerspectiveCheckpointFailure {
+    var failure1 = new PerspectiveCursorFailure {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective1",
       LastEventId = Guid.NewGuid(),
       Status = PerspectiveProcessingStatus.Failed,
       Error = "Error 1"
     };
-    var failure2 = new PerspectiveCheckpointFailure {
+    var failure2 = new PerspectiveCursorFailure {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "Perspective2",
       LastEventId = Guid.NewGuid(),
@@ -125,13 +125,13 @@ public class PerspectiveCompletionStrategyTests {
   public async Task BatchedStrategy_AcknowledgementFlow_RemovesAcknowledgedItems_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var completion = new PerspectiveCheckpointCompletion {
+    var completion = new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
       Status = PerspectiveProcessingStatus.Completed
     };
-    var failure = new PerspectiveCheckpointFailure {
+    var failure = new PerspectiveCursorFailure {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -163,7 +163,7 @@ public class PerspectiveCompletionStrategyTests {
   public async Task InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var completion = new PerspectiveCheckpointCompletion {
+    var completion = new PerspectiveCursorCompletion {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -184,7 +184,7 @@ public class PerspectiveCompletionStrategyTests {
   public async Task InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
-    var failure = new PerspectiveCheckpointFailure {
+    var failure = new PerspectiveCursorFailure {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "TestPerspective",
       LastEventId = Guid.NewGuid(),
@@ -236,8 +236,8 @@ public class PerspectiveCompletionStrategyTests {
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ReportCompletionCallCount { get; private set; }
     public int ReportFailureCallCount { get; private set; }
-    public PerspectiveCheckpointCompletion? LastCompletion { get; private set; }
-    public PerspectiveCheckpointFailure? LastFailure { get; private set; }
+    public PerspectiveCursorCompletion? LastCompletion { get; private set; }
+    public PerspectiveCursorFailure? LastFailure { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -250,7 +250,7 @@ public class PerspectiveCompletionStrategyTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       ReportCompletionCallCount++;
       LastCompletion = completion;
@@ -258,18 +258,18 @@ public class PerspectiveCompletionStrategyTests {
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       ReportFailureCallCount++;
       LastFailure = failure;
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 

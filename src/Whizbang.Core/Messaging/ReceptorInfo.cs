@@ -31,14 +31,20 @@ namespace Whizbang.Core.Messaging;
 /// Optional caller info captured from the dispatch site.
 /// Populated by the invoker from the envelope's first Current hop before invocation.
 /// </param>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <param name="FireDuringReplay">
+/// Whether this receptor should fire during replay and rebuild operations.
+/// Set to true when the receptor class is decorated with <see cref="FireDuringReplayAttribute"/>.
+/// Default is false — receptors are suppressed during replay/rebuild for safety.
+/// </param>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed record ReceptorInfo(
     Type MessageType,
     string ReceptorId,
     Func<IServiceProvider, object, IMessageEnvelope, ICallerInfo?, CancellationToken, ValueTask<object?>> InvokeAsync,
     IReadOnlyList<ReceptorSyncAttributeInfo>? SyncAttributes = null,
-    ICallerInfo? CallerInfo = null
+    ICallerInfo? CallerInfo = null,
+    bool FireDuringReplay = false
 );
 
 /// <summary>
@@ -51,7 +57,7 @@ public sealed record ReceptorInfo(
 /// <param name="EventTypes">Optional event types to filter. Null means all events.</param>
 /// <param name="TimeoutMs">The raw timeout in milliseconds. Use -1 for default.</param>
 /// <param name="FireBehavior">The behavior when sync completes or times out.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 public sealed record ReceptorSyncAttributeInfo(
     Type PerspectiveType,
     IReadOnlyList<Type>? EventTypes,

@@ -7,7 +7,7 @@ namespace Whizbang.Generators;
 /// <param name="ArrayTypeName">Fully qualified array type name (e.g., "global::Whizbang.Core.IEvent[]")</param>
 /// <param name="ElementTypeName">Fully qualified element type name (e.g., "global::Whizbang.Core.IEvent")</param>
 /// <param name="ElementSimpleName">Simple element type name for method generation (e.g., "IEvent")</param>
-/// <docs>internals/json-serialization-customizations</docs>
+/// <docs>extending/internals/json-serialization-customizations</docs>
 public sealed record ArrayTypeInfo(
     string ArrayTypeName,
     string ElementTypeName,

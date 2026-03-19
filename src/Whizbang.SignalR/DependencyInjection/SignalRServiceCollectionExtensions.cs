@@ -7,7 +7,7 @@ namespace Whizbang.SignalR.DependencyInjection;
 /// <summary>
 /// Extension methods for configuring SignalR with Whizbang's AOT-compatible JSON serialization.
 /// </summary>
-/// <docs>integrations/signalr</docs>
+/// <docs>apis/signalr/signalr</docs>
 public static class SignalRServiceCollectionExtensions {
   /// <summary>
   /// Adds SignalR to the service collection and configures it to use Whizbang's
@@ -46,7 +46,7 @@ public static class SignalRServiceCollectionExtensions {
   /// app.MapHub&lt;NotificationHub&gt;("/notifications");
   /// </code>
   /// </example>
-  /// <docs>integrations/signalr</docs>
+  /// <docs>apis/signalr/signalr</docs>
   public static ISignalRServerBuilder AddWhizbangSignalR(this IServiceCollection services) {
     return services.AddSignalR()
         .AddJsonProtocol(options => {
@@ -69,7 +69,7 @@ public static class SignalRServiceCollectionExtensions {
   /// });
   /// </code>
   /// </example>
-  /// <docs>integrations/signalr</docs>
+  /// <docs>apis/signalr/signalr</docs>
   public static ISignalRServerBuilder AddWhizbangSignalR(
       this IServiceCollection services,
       Action<HubOptions> configure) {

@@ -148,7 +148,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// Updates PerspectiveMetadata in place for tracked entities.
   /// Required for EF Core 10 ComplexProperty().ToJson() to avoid index corruption.
   /// </summary>
-  /// <docs>data-access/efcore-complex-types#in-place-updates</docs>
+  /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
     target.EventType = source.EventType;
@@ -164,7 +164,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// EF Core 10's InternalComplexCollectionEntry maintains indexes into collections.
   /// Replacing List instances corrupts those indexes causing ArgumentOutOfRangeException.
   /// </summary>
-  /// <docs>data-access/efcore-complex-types#in-place-updates</docs>
+  /// <docs>data/efcore-complex-types#in-place-updates</docs>
   /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   protected static void UpdateScopeInPlace(PerspectiveScope target, PerspectiveScope source) {
     target.TenantId = source.TenantId;

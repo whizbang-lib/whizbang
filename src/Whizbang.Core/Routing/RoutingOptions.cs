@@ -15,7 +15,7 @@ namespace Whizbang.Core.Routing;
 /// Use SubscribeTo() for additional manual subscriptions beyond auto-discovery.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#routing-options</docs>
+/// <docs>fundamentals/dispatcher/routing#routing-options</docs>
 public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
@@ -103,7 +103,7 @@ public sealed class RoutingOptions {
   /// <example>
   /// opts.OwnNamespaceOf&lt;CreateUserCommand&gt;(); // Owns "myapp.users.commands"
   /// </example>
-  /// <docs>core-concepts/routing#own-namespace-of</docs>
+  /// <docs>fundamentals/dispatcher/routing#own-namespace-of</docs>
   /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
   public RoutingOptions OwnNamespaceOf<T>() {
     var ns = typeof(T).Namespace
@@ -121,7 +121,7 @@ public sealed class RoutingOptions {
   /// is used. Set to <c>false</c> to provide a custom perspective for EventAudited.
   /// </param>
   /// <returns>This options instance for chaining.</returns>
-  /// <docs>core-concepts/system-events#subscribe-to-audit</docs>
+  /// <docs>fundamentals/events/system-events#subscribe-to-audit</docs>
   public RoutingOptions SubscribeToAudit(bool autoGeneratePerspective = true) {
     _subscribedNamespaces.Add(SystemEvents.AuditingEventStoreDecorator.AUDIT_TOPIC_DESTINATION);
     AuditPerspectiveEnabled = autoGeneratePerspective;
@@ -173,7 +173,7 @@ public sealed class RoutingOptions {
   /// <example>
   /// opts.SubscribeToNamespaceOf&lt;OrderCreatedEvent&gt;(); // Subscribes to "myapp.orders.events"
   /// </example>
-  /// <docs>core-concepts/routing#subscribe-to-namespace-of</docs>
+  /// <docs>fundamentals/dispatcher/routing#subscribe-to-namespace-of</docs>
   /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
   public RoutingOptions SubscribeToNamespaceOf<T>() {
     var ns = typeof(T).Namespace

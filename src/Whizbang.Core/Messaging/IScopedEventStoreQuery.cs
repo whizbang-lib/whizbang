@@ -7,7 +7,7 @@ namespace Whizbang.Core.Messaging;
 /// Each operation creates its own service scope, ensuring fresh DbContext and avoiding stale data.
 /// For batch operations requiring multiple queries in one scope, use <see cref="IEventStoreQueryFactory"/>.
 /// </summary>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
 public interface IScopedEventStoreQuery {
   /// <summary>
@@ -40,7 +40,7 @@ public interface IScopedEventStoreQuery {
 /// Factory for creating scoped IEventStoreQuery instances.
 /// Use for batch operations where multiple queries should share one scope (and DbContext).
 /// </summary>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
 public interface IEventStoreQueryFactory {
   /// <summary>

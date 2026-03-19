@@ -6,7 +6,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <remarks>
 /// Filter nodes form a tree structure that can represent complex filter expressions.
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public abstract record SyncFilterNode;
 
@@ -14,7 +14,7 @@ public abstract record SyncFilterNode;
 /// Filters by a specific stream ID.
 /// </summary>
 /// <param name="StreamId">The stream ID to filter by.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record StreamFilter(Guid StreamId) : SyncFilterNode;
 
@@ -22,21 +22,21 @@ public sealed record StreamFilter(Guid StreamId) : SyncFilterNode;
 /// Filters by specific event types.
 /// </summary>
 /// <param name="EventTypes">The event types to filter by.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record EventTypeFilter(IReadOnlyList<Type> EventTypes) : SyncFilterNode;
 
 /// <summary>
 /// Filters to events emitted within the current scope/request.
 /// </summary>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record CurrentScopeFilter : SyncFilterNode;
 
 /// <summary>
 /// Matches all pending events without filtering.
 /// </summary>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record AllPendingFilter : SyncFilterNode;
 
@@ -45,7 +45,7 @@ public sealed record AllPendingFilter : SyncFilterNode;
 /// </summary>
 /// <param name="Left">The left filter operand.</param>
 /// <param name="Right">The right filter operand.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record AndFilter(SyncFilterNode Left, SyncFilterNode Right) : SyncFilterNode;
 
@@ -54,6 +54,6 @@ public sealed record AndFilter(SyncFilterNode Left, SyncFilterNode Right) : Sync
 /// </summary>
 /// <param name="Left">The left filter operand.</param>
 /// <param name="Right">The right filter operand.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed record OrFilter(SyncFilterNode Left, SyncFilterNode Right) : SyncFilterNode;

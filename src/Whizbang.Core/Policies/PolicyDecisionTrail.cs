@@ -14,7 +14,7 @@ namespace Whizbang.Core.Policies;
 /// Records policy decisions made during message processing for debugging and time-travel capabilities.
 /// This trail flows with the message and can be inspected to understand why certain policies were applied.
 /// </summary>
-/// <docs>infrastructure/policies</docs>
+/// <docs>operations/infrastructure/policies</docs>
 public class PolicyDecisionTrail {
   /// <summary>
   /// List of all policy decisions made during processing.

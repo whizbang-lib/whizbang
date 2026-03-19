@@ -18,12 +18,12 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
-/// Background worker that processes perspective checkpoints using IWorkCoordinator.
+/// Background worker that processes perspective cursors using IWorkCoordinator.
 /// Polls for event store streams with new events since last checkpoint,
 /// invokes perspectives, and tracks checkpoint progress per stream.
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
@@ -35,7 +35,10 @@ public partial class PerspectiveWorker(
   IPerspectiveSyncSignaler? syncSignaler = null,
   ISyncEventTracker? syncEventTracker = null,
   ILogger<PerspectiveWorker>? logger = null,
-  PerspectiveMetrics? metrics = null
+  PerspectiveMetrics? metrics = null,
+  IPerspectiveSnapshotStore? snapshotStore = null,
+  IPerspectiveStreamLocker? streamLocker = null,
+  IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -54,6 +57,16 @@ public partial class PerspectiveWorker(
       : 1.0,
     maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
+
+  private readonly IPerspectiveSnapshotStore? _snapshotStore = snapshotStore;
+  private readonly IPerspectiveStreamLocker? _streamLocker = streamLocker;
+  private readonly PerspectiveStreamLockOptions _streamLockOptions = streamLockOptions?.Value ?? new PerspectiveStreamLockOptions();
+
+  // Perspective event completions (WorkIds to delete from wh_perspective_events)
+  private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
+
+  // Cache of streams that have been bootstrapped this session (skip re-check)
+  private readonly HashSet<(Guid StreamId, string PerspectiveName)> _bootstrappedThisSession = [];
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -114,7 +127,7 @@ public partial class PerspectiveWorker(
       }
     }
 
-    // Process any pending perspective checkpoints IMMEDIATELY on startup (before first polling delay)
+    // Process any pending perspective cursors IMMEDIATELY on startup (before first polling delay)
     try {
       LogCheckingPendingCheckpoints(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
@@ -124,7 +137,7 @@ public partial class PerspectiveWorker(
       } else {
         LogDatabaseNotReadyOnStartup(_logger);
       }
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       LogErrorProcessingInitialCheckpoints(_logger, ex);
       throw; // Never swallow exceptions
     }
@@ -154,6 +167,9 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
         await _processWorkBatchAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingCheckpoints(_logger, ex);
         throw; // Never swallow exceptions
@@ -212,6 +228,13 @@ public partial class PerspectiveWorker(
     var completionsToSend = pendingCompletions.Select(tc => tc.Completion).ToArray();
     var failuresToSend = pendingFailures.Select(tc => tc.Completion).ToArray();
 
+    // 2b. Drain buffered perspective event completions (WorkIds for wh_perspective_events deletion)
+    var eventCompletionsList = new List<PerspectiveEventCompletion>();
+    while (_pendingEventCompletions.TryDequeue(out var ec)) {
+      eventCompletionsList.Add(ec);
+    }
+    var eventCompletionsToSend = eventCompletionsList.ToArray();
+
     // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
     var sentAt = DateTimeOffset.UtcNow;
     _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, sentAt);
@@ -232,6 +255,7 @@ public partial class PerspectiveWorker(
         ReceptorCompletions = [],
         ReceptorFailures = [],
         PerspectiveCompletions = completionsToSend,
+        PerspectiveEventCompletions = eventCompletionsToSend,
         PerspectiveFailures = failuresToSend,
         NewOutboxMessages = [],
         NewInboxMessages = [],
@@ -323,7 +347,7 @@ public partial class PerspectiveWorker(
       _logger.LogDebug("  - {PerspectiveName}/{StreamId}: {ItemCount} work items", g.Key.PerspectiveName, g.Key.StreamId, g.Count());
     }
     if (workBatch.PerspectiveWork.Count == 0) {
-      _logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
+      _logger.LogDebug("NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_cursors");
     }
 #pragma warning restore CA1848, CA1873
 
@@ -342,7 +366,7 @@ public partial class PerspectiveWorker(
       // Look up the checkpoint to get the LastProcessedEventId
       // This tells the runner where to start reading events from
       var checkpointSw = System.Diagnostics.Stopwatch.StartNew();
-      var checkpoint = await workCoordinator.GetPerspectiveCheckpointAsync(
+      var checkpoint = await workCoordinator.GetPerspectiveCursorAsync(
         streamId,
         perspectiveName,
         cancellationToken
@@ -353,7 +377,7 @@ public partial class PerspectiveWorker(
 
       if (_logger.IsEnabled(LogLevel.Information)) {
         var lastProcessedStr = lastProcessedEventId?.ToString() ?? "null (never processed)";
-        LogProcessingPerspectiveCheckpoint(_logger, perspectiveName, streamId, lastProcessedStr);
+        LogProcessingPerspectiveCursor(_logger, perspectiveName, streamId, lastProcessedStr);
       }
 
       // Resolve the generated IPerspectiveRunner for this perspective
@@ -525,25 +549,103 @@ public partial class PerspectiveWorker(
         }
 
         // Invoke runner to process ALL events for this stream/perspective
-        // The runner will read from lastProcessedEventId onwards and process all available events
-        // Note: Perspective spans are now linked to the first event's trace context (extracted above)
-        PerspectiveCheckpointCompletion result;
-        using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal) : null) {
-          activity?.SetTag("whizbang.perspective.name", perspectiveName);
-          activity?.SetTag("whizbang.stream.id", streamId.ToString());
-          activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
+        // Route based on status: RewindRequired → rewind path, else normal path
+        PerspectiveCursorCompletion result;
+        ProcessingMode? processingMode = null;  // Track mode for lifecycle receptor suppression
 
-          var runnerSw = System.Diagnostics.Stopwatch.StartNew();
-          result = await runner.RunAsync(
-            streamId,
-            perspectiveName,
-            lastProcessedEventId,
-            cancellationToken
-          );
-          _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
+        // Check if any work item in the group has RewindRequired flag
+        var groupStatus = group.Aggregate(PerspectiveProcessingStatus.None, (acc, w) => acc | w.Status);
+        var needsRewind = groupStatus.HasFlag(PerspectiveProcessingStatus.RewindRequired);
+        // Get the triggering event ID from the cursor (set by SQL during out-of-order detection)
+        var rewindTriggerEventId = checkpoint?.RewindTriggerEventId;
 
-          activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
-          activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+        if (needsRewind && rewindTriggerEventId.HasValue) {
+          processingMode = ProcessingMode.Replay;
+          // Rewind path: acquire stream lock, restore from snapshot and replay
+          var lockAcquired = false;
+          try {
+            if (_streamLocker is not null) {
+              lockAcquired = await _streamLocker.TryAcquireLockAsync(
+                streamId, perspectiveName, _instanceProvider.InstanceId, "rewind", cancellationToken);
+              if (!lockAcquired) {
+                LogFailedToAcquireRewindLock(_logger, perspectiveName, streamId);
+                continue; // Skip this group, retry on next batch
+              }
+            }
+
+            // Start keepalive if lock was acquired
+            using var keepaliveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var keepaliveTask = lockAcquired
+              ? _startLockKeepaliveAsync(streamId, perspectiveName, keepaliveCts.Token)
+              : Task.CompletedTask;
+
+            using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RewindAndRunAsync", ActivityKind.Internal) : null) {
+              activity?.SetTag("whizbang.perspective.name", perspectiveName);
+              activity?.SetTag("whizbang.stream.id", streamId.ToString());
+              activity?.SetTag("whizbang.perspective.rewind_trigger_event_id", rewindTriggerEventId.Value.ToString());
+
+              var runnerSw = System.Diagnostics.Stopwatch.StartNew();
+              result = await runner.RewindAndRunAsync(
+                streamId,
+                perspectiveName,
+                rewindTriggerEventId.Value,
+                cancellationToken
+              );
+              _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
+
+              activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
+              activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+            }
+
+            // Stop keepalive
+            await keepaliveCts.CancelAsync();
+            try { await keepaliveTask; } catch (OperationCanceledException) { /* expected */ }
+          } finally {
+            if (lockAcquired && _streamLocker is not null) {
+              await _streamLocker.ReleaseLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, cancellationToken);
+            }
+          }
+        } else {
+          // Bootstrap snapshot if needed (existing stream with events but no snapshots)
+          if (_snapshotStore is not null && lastProcessedEventId.HasValue
+              && !_bootstrappedThisSession.Contains((streamId, perspectiveName))) {
+            var lockAcquired = false;
+            try {
+              var hasSnapshots = await _snapshotStore.HasAnySnapshotAsync(streamId, perspectiveName, cancellationToken);
+              if (!hasSnapshots) {
+                if (_streamLocker is not null) {
+                  lockAcquired = await _streamLocker.TryAcquireLockAsync(
+                    streamId, perspectiveName, _instanceProvider.InstanceId, "bootstrap", cancellationToken);
+                }
+                // Bootstrap even without lock (graceful degradation)
+                await runner.BootstrapSnapshotAsync(streamId, perspectiveName, lastProcessedEventId.Value, cancellationToken);
+              }
+              _bootstrappedThisSession.Add((streamId, perspectiveName));
+            } finally {
+              if (lockAcquired && _streamLocker is not null) {
+                await _streamLocker.ReleaseLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, cancellationToken);
+              }
+            }
+          }
+
+          // Normal path
+          using (var activity = enablePerspectiveSpans ? WhizbangActivitySource.Tracing.StartActivity("Perspective RunAsync", ActivityKind.Internal) : null) {
+            activity?.SetTag("whizbang.perspective.name", perspectiveName);
+            activity?.SetTag("whizbang.stream.id", streamId.ToString());
+            activity?.SetTag("whizbang.perspective.last_processed_event_id", lastProcessedEventId?.ToString() ?? "null");
+
+            var runnerSw = System.Diagnostics.Stopwatch.StartNew();
+            result = await runner.RunAsync(
+              streamId,
+              perspectiveName,
+              lastProcessedEventId,
+              cancellationToken
+            );
+            _metrics?.RunnerDuration.Record(runnerSw.Elapsed.TotalMilliseconds);
+
+            activity?.SetTag("whizbang.perspective.status", result.Status.ToString());
+            activity?.SetTag("whizbang.perspective.last_event_id", result.LastEventId.ToString());
+          }
         }
 
         // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
@@ -623,7 +725,8 @@ public partial class PerspectiveWorker(
               result.LastEventId,
               LifecycleStage.PostPerspectiveInline,
               scope.ServiceProvider,
-              cancellationToken
+              cancellationToken,
+              processingMode
             );
 
             // ImmediateAsync lifecycle receptors fire at the end of each stage
@@ -635,7 +738,8 @@ public partial class PerspectiveWorker(
               result.LastEventId,
               LifecycleStage.ImmediateAsync,
               scope.ServiceProvider,
-              cancellationToken
+              cancellationToken,
+              processingMode
             );
             LogPostPerspectiveInlineCompleted(_logger);
           } else {
@@ -678,7 +782,15 @@ public partial class PerspectiveWorker(
           }
         }
 
-        LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
+        LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
+
+        // Buffer perspective event completions for next batch (triggers wh_perspective_events deletion)
+        foreach (var workItem in group) {
+          _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
+            EventWorkId = workItem.WorkId,
+            StatusFlags = (int)PerspectiveProcessingStatus.Completed
+          });
+        }
 
         // Record per-stream metrics
         _metrics?.StreamsUpdated.Add(1);
@@ -686,10 +798,10 @@ public partial class PerspectiveWorker(
           _metrics?.EventsProcessed.Add(processedEvents.Count);
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveName, streamId);
+        LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
         _metrics?.Errors.Add(1);
 
-        var failure = new PerspectiveCheckpointFailure {
+        var failure = new PerspectiveCursorFailure {
           StreamId = streamId,
           PerspectiveName = perspectiveName,
           LastEventId = Guid.Empty, // We don't know which event failed
@@ -707,7 +819,7 @@ public partial class PerspectiveWorker(
     // PostLifecycle fires AFTER all perspectives in the batch have processed, enabling
     // single-notification patterns (e.g., one SignalR notification per event, not per perspective)
     if (batchProcessedEvents.Count > 0 && receptorInvoker is not null) {
-      foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
+      foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PostLifecycleAsync,
           StreamId = streamId,
@@ -784,6 +896,24 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
+  /// Starts a background keepalive task that periodically renews a stream lock.
+  /// The task runs until the cancellation token is cancelled.
+  /// </summary>
+  private async Task _startLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
+    if (_streamLocker is null) {
+      return;
+    }
+    try {
+      while (!ct.IsCancellationRequested) {
+        await Task.Delay(_streamLockOptions.KeepAliveInterval, ct);
+        await _streamLocker.RenewLockAsync(streamId, perspectiveName, _instanceProvider.InstanceId, ct);
+      }
+    } catch (OperationCanceledException) {
+      // Expected when the operation completes and keepalive is stopped
+    }
+  }
+
+  /// <summary>
   /// Loads events that were just processed by the perspective run.
   /// Loads once and reuses for both PostPerspectiveAsync and PostPerspectiveInline stages.
   /// </summary>
@@ -849,7 +979,8 @@ public partial class PerspectiveWorker(
       Guid currentEventId,
       LifecycleStage stage,
       IServiceProvider scopedProvider,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      ProcessingMode? processingMode = null) {
 
     var scopedReceptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
     if (scopedReceptorInvoker is null) {
@@ -866,7 +997,8 @@ public partial class PerspectiveWorker(
         PerspectiveType = perspectiveType,
         LastProcessedEventId = currentEventId,
         MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Perspectives process from local event store
+        AttemptNumber = 1, // Perspectives process from local event store
+        ProcessingMode = processingMode
       };
 
       // Invoke receptors for each event
@@ -895,7 +1027,7 @@ public partial class PerspectiveWorker(
   /// Sets IScopeContextAccessor.Current and IMessageContextAccessor.Current.
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
-  /// <docs>workers/perspective-worker#security-context</docs>
+  /// <docs>operations/workers/perspective-worker#security-context</docs>
   /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
   private static async ValueTask _establishSecurityContextAsync(
       MessageEnvelope<IEvent> envelope,
@@ -997,35 +1129,35 @@ public partial class PerspectiveWorker(
   [LoggerMessage(
     EventId = 2,
     Level = LogLevel.Debug,
-    Message = "Checking for pending perspective checkpoints on startup..."
+    Message = "Checking for pending perspective cursors on startup..."
   )]
   static partial void LogCheckingPendingCheckpoints(ILogger logger);
 
   [LoggerMessage(
     EventId = 3,
     Level = LogLevel.Debug,
-    Message = "Initial perspective checkpoint processing complete"
+    Message = "Initial perspective cursor processing complete"
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
 
   [LoggerMessage(
     EventId = 4,
     Level = LogLevel.Warning,
-    Message = "Database not ready on startup - skipping initial perspective checkpoint processing"
+    Message = "Database not ready on startup - skipping initial perspective cursor processing"
   )]
   static partial void LogDatabaseNotReadyOnStartup(ILogger logger);
 
   [LoggerMessage(
     EventId = 5,
     Level = LogLevel.Error,
-    Message = "Error processing initial perspective checkpoints on startup"
+    Message = "Error processing initial perspective cursors on startup"
   )]
   static partial void LogErrorProcessingInitialCheckpoints(ILogger logger, Exception ex);
 
   [LoggerMessage(
     EventId = 6,
     Level = LogLevel.Information,
-    Message = "Database not ready, skipping perspective checkpoint processing (consecutive checks: {ConsecutiveCount})"
+    Message = "Database not ready, skipping perspective cursor processing (consecutive checks: {ConsecutiveCount})"
   )]
   static partial void LogDatabaseNotReady(ILogger logger, int consecutiveCount);
 
@@ -1039,7 +1171,7 @@ public partial class PerspectiveWorker(
   [LoggerMessage(
     EventId = 8,
     Level = LogLevel.Error,
-    Message = "Error processing perspective checkpoints"
+    Message = "Error processing perspective cursors"
   )]
   static partial void LogErrorProcessingCheckpoints(ILogger logger, Exception ex);
 
@@ -1053,9 +1185,9 @@ public partial class PerspectiveWorker(
   [LoggerMessage(
     EventId = 10,
     Level = LogLevel.Information,
-    Message = "Processing perspective checkpoint: {PerspectiveName} for stream {StreamId}, last processed event: {LastProcessedEventId}"
+    Message = "Processing perspective cursor: {PerspectiveName} for stream {StreamId}, last processed event: {LastProcessedEventId}"
   )]
-  static partial void LogProcessingPerspectiveCheckpoint(ILogger logger, string perspectiveName, Guid streamId, string lastProcessedEventId);
+  static partial void LogProcessingPerspectiveCursor(ILogger logger, string perspectiveName, Guid streamId, string lastProcessedEventId);
 
   [LoggerMessage(
     EventId = 11,
@@ -1076,14 +1208,14 @@ public partial class PerspectiveWorker(
     Level = LogLevel.Debug,
     Message = "Perspective checkpoint completed: {PerspectiveName} for stream {StreamId}, last event: {LastEventId}"
   )]
-  static partial void LogPerspectiveCheckpointCompleted(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
+  static partial void LogPerspectiveCursorCompleted(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
 
   [LoggerMessage(
     EventId = 14,
     Level = LogLevel.Error,
-    Message = "Error processing perspective checkpoint: {PerspectiveName} for stream {StreamId}"
+    Message = "Error processing perspective cursor: {PerspectiveName} for stream {StreamId}"
   )]
-  static partial void LogErrorProcessingPerspectiveCheckpoint(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+  static partial void LogErrorProcessingPerspectiveCursor(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
 
   [LoggerMessage(
     EventId = 15,
@@ -1341,6 +1473,13 @@ public partial class PerspectiveWorker(
     Message = "[DIAGNOSTIC] GetEventsBetweenPolymorphicAsync returned {Count} events for {PerspectiveName}/{StreamId}"
   )]
   static partial void LogDiagnosticGetEventsReturned(ILogger logger, int count, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 43,
+    Level = LogLevel.Warning,
+    Message = "Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring"
+  )]
+  static partial void LogFailedToAcquireRewindLock(ILogger logger, string perspectiveName, Guid streamId);
 }
 
 /// <summary>
@@ -1348,14 +1487,14 @@ public partial class PerspectiveWorker(
 /// </summary>
 public class PerspectiveWorkerOptions {
   /// <summary>
-  /// Milliseconds to wait between polling for perspective checkpoint work.
+  /// Milliseconds to wait between polling for perspective cursor work.
   /// Default: 1000 (1 second)
   /// </summary>
   public int PollingIntervalMilliseconds { get; set; } = 1000;
 
   /// <summary>
   /// Lease duration in seconds.
-  /// Perspective checkpoints claimed will be locked for this duration.
+  /// Perspective cursors claimed will be locked for this duration.
   /// Default: 300 (5 minutes)
   /// </summary>
   public int LeaseSeconds { get; set; } = 300;

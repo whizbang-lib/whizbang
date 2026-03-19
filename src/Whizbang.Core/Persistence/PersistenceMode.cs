@@ -13,7 +13,7 @@ namespace Whizbang.Core.Persistence;
 /// or per-receptor via <see cref="Attributes.PersistenceStrategyAttribute"/>.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/persistence#modes</docs>
+/// <docs>fundamentals/persistence/persistence#modes</docs>
 public enum PersistenceMode {
   /// <summary>
   /// Events are committed immediately after each AppendAsync call.

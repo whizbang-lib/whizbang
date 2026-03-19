@@ -1,6 +1,3 @@
-// NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
-// No need for [After(Class)] cleanup - the container may be stopped by then
-
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.Contracts.Events;
@@ -11,77 +8,68 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the product seeding workflow.
 /// Tests the complete flow: SeedMutations → CreateProductCommand → ProductCreatedEvent → Perspectives.
-/// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
+/// All tests share a single fixture and seeded state — products are seeded once via [Before(Class)],
+/// then all tests verify against the shared state.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
 public class SeedProductsWorkflowTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
+
+  [Before(Class)]
+  [Timeout(120_000)]  // Class setup: seeding 12 products through Service Bus
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
+  public static async Task ClassSetupAsync() {
+    // Seed once for all tests in this class — runs outside per-test timeout
+    var fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await fixture.CleanupDatabaseAsync();
+    await _seedProductsOnceAsync(fixture);
+  }
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    var testIndex = 1;
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      try {
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose or clean — all tests share seeded state
   }
 
-
   /// <summary>
-  /// Tests that calling SeedProducts mutation results in:
-  /// 1. 12 CreateProductCommands dispatched
-  /// 2. 12 ProductCreatedEvents published to Event Store
-  /// 3. Products materialized in InventoryWorker perspectives (Product + Inventory)
-  /// 4. Products materialized in BFF perspectives (ProductCatalog + InventoryLevels)
-  /// 5. Products queryable via lenses
+  /// Seeds products once and waits for all perspective processing to complete.
   /// </summary>
-  [Test]
-  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
-  public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
-    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    // Arrange
-
-
-    // Create SeedMutations instance with test dependencies
+  private static async Task _seedProductsOnceAsync(ServiceBusIntegrationFixture fixture) {
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
-    // Act - Call seed mutation
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // All 12 products have InitialStock > 0, so both events are published per product
     using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,  // 12 products × 2 perspectives (Product + Inventory)
-      bffPerspectives: 24);        // 12 products × 2 perspectives (Product + Inventory)
+      inventoryPerspectives: 24,  // 12 products × 2 perspectives
+      bffPerspectives: 24);
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 12,  // 12 products × 1 perspective (Inventory only)
-      bffPerspectives: 12);        // 12 products × 1 perspective (Inventory only)
+      inventoryPerspectives: 12,  // 12 products × 1 perspective
+      bffPerspectives: 12);
+
     var seededCount = await seedMutations.SeedProductsAsync();
+    if (seededCount == 0) {
+      return; // Already seeded
+    }
 
-    // Wait for all perspectives to complete
-    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
-    // Need very generous timeout for emulator message delivery under parallel test load
-    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
+    // Wait concurrently — both event types process in parallel through Service Bus
+    await Task.WhenAll(
+      productWaiter.WaitAsync(timeoutMilliseconds: 60000),
+      restockWaiter.WaitAsync(timeoutMilliseconds: 60000));
+  }
 
-    // Assert - Verify seeding result
-    await Assert.That(seededCount).IsEqualTo(12);
+  [Test]
+  [Timeout(30_000)]  // Assertions only — seeding done in [Before(Class)]
+  public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     // Assert - Verify all 12 products materialized in InventoryWorker perspective
     var inventoryProducts = await fixture.InventoryProductLens.GetAllAsync();
@@ -109,48 +97,22 @@ public class SeedProductsWorkflowTests {
     await Assert.That(sweatshirtInventory.Available).IsEqualTo(75);
   }
 
-  /// <summary>
-  /// Tests that SeedProducts is idempotent - calling it twice doesn't duplicate products.
-  /// </summary>
   [Test]
-  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations)
+  [Timeout(30_000)]
   public async Task SeedProducts_CalledTwice_DoesNotDuplicateProductsAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    // Arrange
-
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
-    // Act - Call seed mutation TWICE
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // All 12 products have InitialStock > 0, so both events are published per product
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,
-      bffPerspectives: 24);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 12,
-      bffPerspectives: 12);
-    var firstSeedCount = await seedMutations.SeedProductsAsync();
-    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
-    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
-
+    // Second call should be idempotent — returns 0 (no new events)
     var secondSeedCount = await seedMutations.SeedProductsAsync();
-    // No wait needed - second call is idempotent and returns 0 (no events published)
-
-    // Assert - First call should seed 12 products
-    await Assert.That(firstSeedCount).IsEqualTo(12);
-
-    // Assert - Second call should skip seeding (idempotent)
     await Assert.That(secondSeedCount).IsEqualTo(0);
 
-    // Assert - Verify only 12 products exist (no duplicates)
+    // Verify only 12 products exist (no duplicates)
     var bffProducts = await fixture.BffProductLens.GetAllAsync();
-
-    // Count products that match seed product names
     var seedProductNames = new[] {
       "Team Sweatshirt", "Team T-Shirt", "Official Match Soccer Ball",
       "Team Baseball Cap", "Foam #1 Finger", "Team Golf Umbrella",
@@ -161,42 +123,15 @@ public class SeedProductsWorkflowTests {
     var seededProducts = bffProducts.Where(p => seedProductNames.Contains(p.Name)).ToList();
     await Assert.That(seededProducts.Count).IsEqualTo(12);
 
-    // Verify no duplicate names
     var distinctNames = seededProducts.Select(p => p.Name).Distinct().Count();
     await Assert.That(distinctNames).IsEqualTo(12);
   }
 
-  /// <summary>
-  /// Tests that seeded products have correct stock levels in both perspectives.
-  /// </summary>
   [Test]
-  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
+  [Timeout(30_000)]
   public async Task SeedProducts_CreatesInventoryLevels_WithCorrectStockAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    // Arrange
 
-
-    var seedMutations = new SeedMutations(
-      fixture.Dispatcher,
-      fixture.BffProductLens,
-      fixture.GetLogger<SeedMutations>());
-
-    // Act
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // All 12 products have InitialStock > 0, so both events are published per product
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,
-      bffPerspectives: 24);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 12,
-      bffPerspectives: 12);
-    await seedMutations.SeedProductsAsync();
-    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
-    // Need very generous timeout for emulator message delivery under parallel test load
-    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
-
-    // Assert - Verify specific product stock levels
     var products = await fixture.BffProductLens.GetAllAsync();
 
     // Team Sweatshirt - 75 units
@@ -224,41 +159,14 @@ public class SeedProductsWorkflowTests {
     await Assert.That(umbrellaInventory!.Quantity).IsEqualTo(35);
   }
 
-  /// <summary>
-  /// Tests that seeded products are properly synchronized across both worker and BFF perspectives.
-  /// </summary>
   [Test]
-  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
+  [Timeout(30_000)]
   public async Task SeedProducts_SynchronizesPerspectives_AcrossBFFAndInventoryWorkerAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    // Arrange
 
-
-    var seedMutations = new SeedMutations(
-      fixture.Dispatcher,
-      fixture.BffProductLens,
-      fixture.GetLogger<SeedMutations>());
-
-    // Act
-    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
-    // All 12 products have InitialStock > 0, so both events are published per product
-    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,
-      bffPerspectives: 24);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 12,
-      bffPerspectives: 12);
-    await seedMutations.SeedProductsAsync();
-    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
-    // Need very generous timeout for emulator message delivery under parallel test load
-    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
-
-    // Assert - Get all products from both perspectives
     var bffProducts = await fixture.BffProductLens.GetAllAsync();
     var inventoryProducts = await fixture.InventoryProductLens.GetAllAsync();
 
-    // Verify both perspectives have the same product count
     var seedProductNames = new[] {
       "Team Sweatshirt", "Team T-Shirt", "Official Match Soccer Ball",
       "Team Baseball Cap", "Foam #1 Finger", "Team Golf Umbrella",
@@ -272,7 +180,6 @@ public class SeedProductsWorkflowTests {
     await Assert.That(bffSeededProducts.Count).IsEqualTo(12);
     await Assert.That(inventorySeededProducts.Count).IsEqualTo(12);
 
-    // Verify each product exists in both perspectives with matching data
     foreach (var productName in seedProductNames) {
       var bffProduct = bffSeededProducts.FirstOrDefault(p => p.Name == productName);
       var inventoryProduct = inventorySeededProducts.FirstOrDefault(p => p.Name == productName);
@@ -280,7 +187,6 @@ public class SeedProductsWorkflowTests {
       await Assert.That(bffProduct).IsNotNull();
       await Assert.That(inventoryProduct).IsNotNull();
 
-      // Verify matching product data
       await Assert.That(bffProduct!.ProductId).IsEqualTo(inventoryProduct!.ProductId);
       await Assert.That(bffProduct.Name).IsEqualTo(inventoryProduct.Name);
       await Assert.That(bffProduct.Description).IsEqualTo(inventoryProduct.Description);

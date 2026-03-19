@@ -27,7 +27,7 @@ namespace Whizbang.Core.Generated;
 /// {{EVENT_TYPE_COUNT}} event type(s) mapped to {{PERSPECTIVE_COUNT}} perspective(s).
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#auto-registration</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#auto-registration</docs>
 internal static class SyncEventTypeAutoRegistration {
   /// <summary>
   /// Module initializer that registers all event type mappings.

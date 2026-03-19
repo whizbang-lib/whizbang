@@ -35,7 +35,7 @@ namespace Whizbang.Generators.Analyzers;
 ///     IPerspectiveWithActionsFor&lt;ProductView, ProductDeleted&gt;  // Different model ✗
 /// </code>
 /// </remarks>
-/// <docs>diagnostics/whiz300</docs>
+/// <docs>operations/diagnostics/whiz300</docs>
 /// <tests>Whizbang.Generators.Tests/Analyzers/PerspectiveModelConsistencyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {

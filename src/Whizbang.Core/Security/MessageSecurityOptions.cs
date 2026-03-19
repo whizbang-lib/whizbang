@@ -9,7 +9,7 @@ namespace Whizbang.Core.Security;
 /// - ValidateCredentials is true by default
 /// - PropagateToOutgoingMessages is true by default
 /// </remarks>
-/// <docs>core-concepts/message-security#configuration</docs>
+/// <docs>fundamentals/security/message-security#configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityOptionsTests.cs</tests>
 /// <example>
 /// services.AddWhizbangMessageSecurity(options => {

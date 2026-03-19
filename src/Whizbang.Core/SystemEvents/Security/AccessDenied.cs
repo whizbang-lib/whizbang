@@ -9,7 +9,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// <summary>
 /// Emitted when access to a resource is denied due to insufficient permissions.
 /// </summary>
-/// <docs>core-concepts/system-events#access-denied</docs>
+/// <docs>fundamentals/events/system-events#access-denied</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
 public sealed record AccessDenied : ISystemEvent {

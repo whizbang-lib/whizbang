@@ -28,7 +28,7 @@ namespace Whizbang.Core.Tags;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#configuration</docs>
+/// <docs>fundamentals/messages/message-tags#configuration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];

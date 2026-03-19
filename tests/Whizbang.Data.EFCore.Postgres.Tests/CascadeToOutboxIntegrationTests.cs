@@ -1011,6 +1011,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
       ReceptorCompletions = [],
       ReceptorFailures = [],
       PerspectiveCompletions = [],
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = [],
       NewOutboxMessages = [outboxMessage],
       NewInboxMessages = [],

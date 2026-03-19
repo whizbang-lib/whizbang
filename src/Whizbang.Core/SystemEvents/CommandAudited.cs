@@ -32,7 +32,7 @@ namespace Whizbang.Core.SystemEvents;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/audit-logging#command-auditing</docs>
+/// <docs>fundamentals/security/audit-logging#command-auditing</docs>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 public sealed record CommandAudited : ISystemEvent {
   /// <summary>

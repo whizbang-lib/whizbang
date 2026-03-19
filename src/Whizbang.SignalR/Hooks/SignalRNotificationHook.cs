@@ -35,7 +35,7 @@ namespace Whizbang.SignalR.Hooks;
 /// public record SystemAnnouncementEvent(string Message) : IEvent;
 /// </code>
 /// </example>
-/// <docs>signalr/notification-hooks</docs>
+/// <docs>apis/signalr/notification-hooks</docs>
 /// <tests>Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
 /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
 public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAttribute>

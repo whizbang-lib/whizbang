@@ -10,7 +10,7 @@ namespace Whizbang.Core;
 /// Represents a delivery receipt for a dispatched message.
 /// Contains correlation information and delivery metadata, but NOT the business result.
 /// </summary>
-/// <docs>core-concepts/dispatcher</docs>
+/// <docs>fundamentals/dispatcher/dispatcher</docs>
 public interface IDeliveryReceipt {
   /// <summary>
   /// Unique identifier for this message
@@ -52,7 +52,7 @@ public interface IDeliveryReceipt {
   /// Stream ID the message belongs to, if applicable.
   /// Extracted from [StreamId] attribute on events, commands, and DTOs.
   /// </summary>
-  /// <docs>core-concepts/delivery-receipts</docs>
+  /// <docs>fundamentals/messages/delivery-receipts</docs>
   Guid? StreamId { get; }
 }
 

@@ -36,7 +36,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithGetOnlyProperty_UsesNullSetterAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithRecordStructNestedType_DiscoversStructAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithReadonlyRecordStruct_UsesConstructorInitializationAsync</tests>
-/// <docs>source-generators/json-contexts</docs>
+/// <docs>extending/source-generators/json-contexts</docs>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
 /// This context handles message types discovered in the current assembly.
@@ -2868,7 +2868,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <returns>Array of InheritanceInfo records for each base class and interface</returns>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithUserBaseClass_AutoDiscoversPolymorphicTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithDeepInheritance_DiscoversAllLevelsAsync</tests>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static InheritanceInfo[] _extractInheritanceInfo(INamedTypeSymbol typeSymbol) {
     var inheritanceList = new List<InheritanceInfo>();
     var derivedTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -2932,7 +2932,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <returns>Array of PolymorphicTypeInfo records for each polymorphic base type</returns>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithExplicitJsonPolymorphic_UsesUserAttributesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithAbstractDerivedType_ExcludesItAsync</tests>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static ImmutableArray<PolymorphicTypeInfo> _buildPolymorphicRegistry(
       ImmutableArray<InheritanceInfo> allInheritanceInfo,
       Compilation compilation) {
@@ -3109,7 +3109,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <param name="messages">All discovered message types (commands, events, serializable types)</param>
   /// <param name="compilation">The compilation for type symbol lookup</param>
   /// <returns>Flat array of all inheritance relationships</returns>
-  /// <docs>source-generators/polymorphic-serialization</docs>
+  /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static ImmutableArray<InheritanceInfo> _collectAllInheritanceInfo(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {

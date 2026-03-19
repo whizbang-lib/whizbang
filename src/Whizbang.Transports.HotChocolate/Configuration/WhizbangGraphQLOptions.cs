@@ -5,7 +5,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// These options provide system-wide defaults that can be overridden per-lens
 /// using <see cref="GraphQLLensAttribute"/>.
 /// </summary>
-/// <docs>graphql/setup#configuration</docs>
+/// <docs>apis/graphql/setup#configuration</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/WhizbangGraphQLOptionsTests.cs</tests>
 /// <example>
 /// services.AddGraphQLServer()

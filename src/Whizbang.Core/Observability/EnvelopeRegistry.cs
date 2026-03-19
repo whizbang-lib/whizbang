@@ -21,7 +21,7 @@ namespace Whizbang.Core.Observability;
 /// scenarios where contention is low.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/envelope-registry</docs>
+/// <docs>fundamentals/messages/envelope-registry</docs>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:Register_WithEnvelope_CanBeRetrievedByMessageAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithUnregisteredMessage_ReturnsNullAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/EnvelopeRegistryTests.cs:TryGetEnvelope_WithDifferentInstanceSameValue_ReturnsNullAsync</tests>

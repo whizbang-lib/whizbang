@@ -29,7 +29,7 @@ namespace Whizbang.Core.SystemEvents;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#event-auditing</docs>
+/// <docs>fundamentals/events/system-events#event-auditing</docs>
 public sealed class AuditingEventStoreDecorator : IEventStore {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.

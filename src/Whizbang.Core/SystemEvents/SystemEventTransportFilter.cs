@@ -43,7 +43,7 @@ namespace Whizbang.Core.SystemEvents;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events#transport-filtering</docs>
+/// <docs>fundamentals/events/system-events#transport-filtering</docs>
 public sealed class SystemEventTransportFilter : ITransportPublishFilter {
   private readonly SystemEventOptions _options;
 

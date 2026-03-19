@@ -12,7 +12,7 @@ namespace Whizbang.Core.Perspectives;
 /// temporal perspectives INSERT a new row for each event, creating an append-only log.
 /// </summary>
 /// <typeparam name="TModel">The log entry model type that this perspective produces</typeparam>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 /// <remarks>
 /// <para>
@@ -68,7 +68,7 @@ public interface ITemporalPerspectiveFor<TModel> where TModel : class {
 /// </summary>
 /// <typeparam name="TModel">The log entry model type</typeparam>
 /// <typeparam name="TEvent1">The event type this perspective handles</typeparam>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveForTests.cs</tests>
 public interface ITemporalPerspectiveFor<TModel, TEvent1> : ITemporalPerspectiveFor<TModel>
   where TModel : class

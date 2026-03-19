@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives;
 /// for backwards compatibility.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/PerspectiveStorageAttributeTests.cs</tests>
 /// <example>
 /// <code>

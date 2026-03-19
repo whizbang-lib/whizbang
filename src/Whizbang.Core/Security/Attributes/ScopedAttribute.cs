@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// Marks a property for automatic row-level security filtering.
 /// Applied to scope properties (TenantId, UserId, etc.) on models.
 /// </summary>
-/// <docs>core-concepts/security#row-level-security</docs>
+/// <docs>fundamentals/security/security#row-level-security</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <example>
 /// public class Order {

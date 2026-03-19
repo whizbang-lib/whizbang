@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// Centralizes envelope serialization/deserialization between typed and JsonElement forms.
 /// Ensures envelope type metadata is correctly captured before serialization.
 /// </summary>
-/// <docs>core-concepts/envelope-serialization</docs>
+/// <docs>fundamentals/messages/envelope-serialization</docs>
 public sealed class EnvelopeSerializer : IEnvelopeSerializer {
   private readonly JsonSerializerOptions _jsonOptions;
 
@@ -116,7 +116,7 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
 /// <summary>
 /// Interface for envelope serialization/deserialization service.
 /// </summary>
-/// <docs>core-concepts/envelope-serialization</docs>
+/// <docs>fundamentals/messages/envelope-serialization</docs>
 public interface IEnvelopeSerializer {
   /// <summary>
   /// Serializes a typed envelope to JsonElement form for storage.
@@ -142,7 +142,7 @@ public interface IEnvelopeSerializer {
 /// <param name="JsonEnvelope">The serialized envelope with JsonElement payload</param>
 /// <param name="EnvelopeType">Assembly-qualified name of the original typed envelope (e.g., "MessageEnvelope`1[[MyMessage, MyAssembly]], Whizbang.Core")</param>
 /// <param name="MessageType">Assembly-qualified name of the message payload type</param>
-/// <docs>core-concepts/envelope-serialization</docs>
+/// <docs>fundamentals/messages/envelope-serialization</docs>
 public sealed record SerializedEnvelope(
   MessageEnvelope<JsonElement> JsonEnvelope,
   string EnvelopeType,

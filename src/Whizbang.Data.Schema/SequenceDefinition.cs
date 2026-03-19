@@ -1,7 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// Defines a database sequence for generating sequential values.
 /// Uses record with structural equality (critical for incremental generators).
 /// PostgreSQL: CREATE SEQUENCE name START WITH start INCREMENT BY increment

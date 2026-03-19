@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// the same events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#event-tracking</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#event-tracking</docs>
 public interface ISyncEventTracker {
   /// <summary>
   /// Track an event that needs to be awaited for perspective sync.

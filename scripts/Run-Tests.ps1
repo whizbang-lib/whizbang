@@ -303,6 +303,11 @@ $useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format ou
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
+# FailFast defaults to true in AI modes (stop on first failure to save time)
+if ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
+    $FailFast = $true
+}
+
 # Handle -CleanupOnly: just clean up containers and exit
 if ($CleanupOnly) {
     Write-Host "Cleaning up ALL test containers..." -ForegroundColor Yellow

@@ -30,7 +30,7 @@ namespace Whizbang.Core.Dispatch;
 ///     .WithTimeout(TimeSpan.FromMinutes(5));
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#dispatch-options</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#dispatch-options</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs</tests>
 public sealed class DispatchOptions {
   /// <summary>

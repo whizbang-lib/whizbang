@@ -7,7 +7,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// Readiness check for RabbitMQ transport.
 /// Verifies that the RabbitMQ connection is established and ready to accept messages.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public class RabbitMQReadinessCheck : ITransportReadinessCheck {
   private readonly IConnection _connection;
 

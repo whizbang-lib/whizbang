@@ -319,7 +319,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<ITransport>(),
@@ -439,7 +439,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -711,7 +711,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Performs SQL diagnostics for event and perspective checkpoint debugging.
-  /// Queries inbox, event store, and perspective checkpoints for a specific event type.
+  /// Queries inbox, event store, and perspective cursors for a specific event type.
   /// Controlled by WHIZBANG_DEBUG environment variable or debug parameter.
   /// </summary>
   /// <param name="eventTypeName">Simple event type name (e.g., "InventoryRestockedEvent")</param>
@@ -775,12 +775,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 3: Check perspective checkpoints (should exist for streams that have events)
+    // Query 3: Check perspective cursors (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM inventory.wh_perspective_checkpoints
+        FROM inventory.wh_perspective_cursors
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -820,12 +820,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 5: Check BFF perspective checkpoints
+    // Query 5: Check BFF perspective cursors
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
         SELECT perspective_name, stream_id, last_event_id, status
-        FROM bff.wh_perspective_checkpoints
+        FROM bff.wh_perspective_cursors
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -833,12 +833,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
         .ToListAsync(cancellationToken);
 
-      logger.LogDebug("[SQL Diagnostic] BFF perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
-        eventTypeName, bffCheckpointResults.Count);
+      if (logger.IsEnabled(LogLevel.Debug)) {
+        logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
+          eventTypeName, bffCheckpointResults.Count);
 
-      foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        foreach (var row in bffCheckpointResults) {
+          logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+            row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        }
       }
     }
   }
@@ -864,7 +866,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (pattern: wh_per_*)
           -- This clears materialized views from both InventoryWorker and BFF
@@ -956,7 +958,7 @@ internal class EventStoreDiagnosticResult {
 
 /// <summary>
 /// Diagnostic result type for perspective checkpoint queries.
-/// Maps to wh_perspective_checkpoints table columns for perspective processing debugging.
+/// Maps to wh_perspective_cursors table columns for perspective processing debugging.
 /// </summary>
 internal class CheckpointDiagnosticResult {
   public string PerspectiveName { get; set; } = string.Empty;

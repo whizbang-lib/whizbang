@@ -15,7 +15,7 @@ namespace Whizbang.Core.Routing;
 /// - Event types from IReceptor&lt;TEvent&gt; implementations (where TEvent : IEvent)
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#event-namespace-source</docs>
+/// <docs>fundamentals/dispatcher/routing#event-namespace-source</docs>
 public interface IEventNamespaceSource {
   /// <summary>
   /// Gets all event namespaces discovered from perspectives in this assembly.

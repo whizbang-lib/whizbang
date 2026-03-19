@@ -34,7 +34,7 @@ public class SubscriptionDisconnectedEventArgs : EventArgs {
 /// Represents an active subscription to a transport.
 /// Allows controlling the subscription (pause, resume, dispose).
 /// </summary>
-/// <docs>components/transports</docs>
+/// <docs>messaging/transports/transports</docs>
 public interface ISubscription : IDisposable {
   /// <summary>
   /// Event raised when the subscription is disconnected unexpectedly.

@@ -1,7 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasUuidTypeAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasStringTypeAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasTimestampTzTypeAsync</tests>

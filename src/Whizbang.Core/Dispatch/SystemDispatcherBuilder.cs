@@ -50,7 +50,7 @@ namespace Whizbang.Core.Dispatch;
 /// // await _dispatcher.AsSystem().SendAsync(command);
 /// </code>
 /// </example>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
 public sealed class SystemDispatcherBuilder {
   private readonly IDispatcher _dispatcher;
@@ -97,7 +97,7 @@ public sealed class SystemDispatcherBuilder {
   /// await _dispatcher.AsSystem().ForAllTenants().SendAsync(new ReindexAllTenantsCommand());
   /// </code>
   /// </example>
-  /// <docs>core-concepts/scope-propagation#cross-tenant-operations</docs>
+  /// <docs>fundamentals/security/scope-propagation#cross-tenant-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync</tests>
   public DispatcherSecurityBuilder ForAllTenants() {
     return new DispatcherSecurityBuilder(
@@ -132,7 +132,7 @@ public sealed class SystemDispatcherBuilder {
   /// }
   /// </code>
   /// </example>
-  /// <docs>core-concepts/scope-propagation#tenant-scoped-system-operations</docs>
+  /// <docs>fundamentals/security/scope-propagation#tenant-scoped-system-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForTenant_SetsExplicitTenantIdAsync</tests>
   public DispatcherSecurityBuilder ForTenant(string tenantId) {
     ArgumentNullException.ThrowIfNull(tenantId, nameof(tenantId));
@@ -167,7 +167,7 @@ public sealed class SystemDispatcherBuilder {
   /// await _dispatcher.AsSystem().KeepTenant().SendAsync(new ProcessPendingItemsCommand());
   /// </code>
   /// </example>
-  /// <docs>core-concepts/scope-propagation#preserve-ambient-tenant</docs>
+  /// <docs>fundamentals/security/scope-propagation#preserve-ambient-tenant</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_KeepTenant_PreservesAmbientTenantIdAsync</tests>
   public DispatcherSecurityBuilder KeepTenant() {
     if (string.IsNullOrEmpty(_ambientTenantId)) {

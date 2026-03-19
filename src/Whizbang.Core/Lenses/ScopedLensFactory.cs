@@ -10,7 +10,7 @@ namespace Whizbang.Core.Lenses;
 /// Factory for creating scoped lens instances with composable filtering.
 /// Resolves lens instances from DI and applies scope filters based on current context.
 /// </summary>
-/// <docs>core-concepts/scoped-lenses</docs>
+/// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
 public sealed class ScopedLensFactory : IScopedLensFactory {
   private readonly IServiceProvider _serviceProvider;

@@ -6,7 +6,7 @@ namespace Whizbang.Core.ValueObjects;
 /// A Guid wrapper that tracks metadata about its creation source and version.
 /// Enables enforcement of UUIDv7 usage and tracking of sub-millisecond precision.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#tracked-guid</docs>
+/// <docs>fundamentals/identity/whizbang-ids#tracked-guid</docs>
 public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<TrackedGuid> {
   private readonly Guid _value;
   private readonly GuidMetadata _metadata;

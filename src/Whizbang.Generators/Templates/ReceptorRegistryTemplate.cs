@@ -34,7 +34,7 @@ namespace Whizbang.Core.Generated;
 /// (like IEventStore, DbContext) to be resolved correctly even when called from singleton services.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public sealed class GeneratedReceptorRegistry : global::Whizbang.Core.Messaging.IReceptorRegistry {

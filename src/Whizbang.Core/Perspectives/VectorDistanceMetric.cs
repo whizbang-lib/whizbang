@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Distance metrics for vector similarity search using pgvector.
 /// Each metric corresponds to a PostgreSQL operator for ordering by similarity.
 /// </summary>
-/// <docs>perspectives/vector-fields</docs>
+/// <docs>fundamentals/perspectives/vector-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorDistanceMetricTests.cs</tests>
 public enum VectorDistanceMetric {
   /// <summary>

@@ -7,7 +7,7 @@ namespace Whizbang.Core;
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
-/// <docs>core-concepts/receptors</docs>
+/// <docs>fundamentals/receptors/receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/ReceptorTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/DispatcherReceptorIntegrationTests.cs</tests>
 public interface IReceptor<in TMessage, TResponse> {
@@ -34,7 +34,7 @@ public interface IReceptor<in TMessage, TResponse> {
 /// Use this interface when you don't need to return a business result, enabling optimal performance.
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
-/// <docs>core-concepts/receptors</docs>
+/// <docs>fundamentals/receptors/receptors</docs>
 /// <tests>tests/Whizbang.Core.Tests/Receptors/VoidReceptorTests.cs</tests>
 public interface IReceptor<in TMessage> {
   /// <summary>

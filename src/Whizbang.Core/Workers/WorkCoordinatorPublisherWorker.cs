@@ -29,7 +29,7 @@ namespace Whizbang.Core.Workers;
 /// - Marks completed/failed messages
 /// - Claims and processes orphaned work (outbox and inbox)
 /// </summary>
-/// <docs>workers/work-coordinator-publisher-worker</docs>
+/// <docs>operations/workers/work-coordinator-publisher-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ConsecutiveBuffers_TracksCountAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ExceedsThreshold_LogsWarningAsync</tests>
@@ -61,6 +61,8 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_SetsMessageContext_WithUserIdAndTenantIdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurityInEnvelope_DoesNotThrowAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurity_StillSetsMessageContextAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportNotReady_MessageRequeuedToChannelAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportException_MessageRequeuedToChannelAsync</tests>
 /// <remarks>
 /// <para>
 /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from a per-work-item scope
@@ -213,7 +215,7 @@ public partial class WorkCoordinatorPublisherWorker(
       } else {
         LogDatabaseNotReadyOnStartup(_logger);
       }
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       LogErrorProcessingInitialWorkBatch(_logger, ex);
     }
 
@@ -242,6 +244,9 @@ public partial class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
         await _processWorkBatchAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingWorkBatch(_logger, ex);
       }
@@ -288,6 +293,10 @@ public partial class WorkCoordinatorPublisherWorker(
             LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
           }
 
+          // Re-queue work to channel for retry — without this, the message is consumed
+          // from the channel and lost until lease expiry (which never happens because
+          // the lease keeps being renewed)
+          _workChannelWriter.TryWrite(work);
           continue;
         }
 
@@ -468,6 +477,11 @@ public partial class WorkCoordinatorPublisherWorker(
             _transportMetrics?.OutboxPublishRetries.Add(1);
             _leaseRenewals.Add(work.MessageId);
 
+            // Re-queue work to channel for retry — without this, the message is consumed
+            // from the channel and lost until lease expiry (which never happens because
+            // the lease keeps being renewed)
+            _workChannelWriter.TryWrite(work);
+
             LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error");
           } else {
             // Non-retryable failures (serialization, validation, etc.) - mark as failed
@@ -482,6 +496,9 @@ public partial class WorkCoordinatorPublisherWorker(
             LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error", result.Reason);
           }
         }
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
         _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "unexpected_exception"));
@@ -540,7 +557,8 @@ public partial class WorkCoordinatorPublisherWorker(
         InboxFailures = [],
         ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
+        PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
         NewOutboxMessages = [],  // Not used in publisher worker (dispatcher handles new messages)
         NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)

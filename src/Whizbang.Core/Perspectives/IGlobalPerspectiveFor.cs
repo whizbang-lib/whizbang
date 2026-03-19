@@ -13,7 +13,7 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <typeparam name="TModel">The read model type that this perspective maintains</typeparam>
 /// <typeparam name="TPartitionKey">The type of partition key (Guid, string, int, etc.)</typeparam>
-/// <docs>core-concepts/perspectives/multi-stream</docs>
+/// <docs>fundamentals/perspectives/multi-stream</docs>
 public interface IGlobalPerspectiveFor<TModel, TPartitionKey>
   where TModel : class
   where TPartitionKey : notnull {
@@ -29,7 +29,7 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey>
 /// <typeparam name="TModel">The read model type</typeparam>
 /// <typeparam name="TPartitionKey">The partition key type (Guid, string, int, etc.)</typeparam>
 /// <typeparam name="TEvent1">The event type this perspective handles</typeparam>
-/// <docs>core-concepts/perspectives/multi-stream</docs>
+/// <docs>fundamentals/perspectives/multi-stream</docs>
 public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> : IGlobalPerspectiveFor<TModel, TPartitionKey>
   where TModel : class
   where TPartitionKey : notnull

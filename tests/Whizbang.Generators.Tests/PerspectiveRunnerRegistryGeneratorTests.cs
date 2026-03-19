@@ -558,6 +558,56 @@ namespace TestNamespace {
     await Assert.That(mIndex).IsLessThan(zIndex);
   }
 
+  // ==================== EventTypes Format Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EventTypesInRegistrationInfo_UseRuntimeFormat_NotGlobalPrefixAsync() {
+    // Arrange — Verify generated PerspectiveRegistrationInfo.EventTypes
+    // uses "FullName, AssemblyName" format (no global:: prefix)
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel current, OrderCreatedEvent @event) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — EventTypes in PerspectiveRegistrationInfo should use runtime format
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    // The PerspectiveRegistrationInfo EventTypes array should contain assembly-qualified format
+    // e.g. "TestNamespace.OrderCreatedEvent, TestProject" — NOT "global::TestNamespace.OrderCreatedEvent"
+    // The EventTypes are in the last argument of PerspectiveRegistrationInfo constructor: [...]
+    // ClassName and ModelType still use global:: format (they're for code gen), but EventTypes must not.
+
+    // Verify EventTypes array uses runtime format (contains assembly name after comma, no global::)
+    // The generated code looks like: ["TestNamespace.OrderCreatedEvent, TestProject"]
+    await Assert.That(registrySource).Contains("[\"TestNamespace.OrderCreatedEvent,");
+    // Verify EventTypes do NOT use global:: prefix
+    await Assert.That(registrySource).DoesNotContain("[\"global::");
+
+    // _allEventTypes should still use typeof(global::...) for code generation
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.OrderCreatedEvent)");
+  }
+
   private static int _countOccurrences(string text, string pattern) {
     int count = 0;
     int index = 0;

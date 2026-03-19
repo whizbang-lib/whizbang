@@ -20,7 +20,7 @@ namespace Whizbang.Core.Observability;
 /// services.AddSingleton&lt;ICascadeContextEnricher, MyEnricher&gt;();
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/cascade-context#factory</docs>
+/// <docs>fundamentals/messages/cascade-context#factory</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>
 public sealed class CascadeContextFactory {
   private readonly IEnumerable<ICascadeContextEnricher> _enrichers;

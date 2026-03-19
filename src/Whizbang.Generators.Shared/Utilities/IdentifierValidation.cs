@@ -4,7 +4,7 @@ using Whizbang.Generators.Shared.Limits;
 namespace Whizbang.Generators.Shared.Utilities;
 
 /// <summary>
-/// <docs>infrastructure/database-limits</docs>
+/// <docs>operations/infrastructure/database-limits</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/IdentifierValidationTests.cs</tests>
 /// Utilities for validating database identifiers against provider limits.
 /// </summary>

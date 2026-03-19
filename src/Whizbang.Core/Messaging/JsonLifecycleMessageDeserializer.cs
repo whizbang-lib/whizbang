@@ -9,7 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// JSON-based implementation of ILifecycleMessageDeserializer.
 /// Uses JsonContextRegistry for AOT-safe deserialization with zero reflection.
 /// </summary>
-/// <docs>core-concepts/lifecycle-stages</docs>
+/// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
 public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
   private readonly JsonSerializerOptions _jsonOptions;
 

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using ECommerce.Contracts.Commands;
@@ -17,28 +18,23 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// deserialized back to their original types when lifecycle receptors are invoked.
 /// This is the code path that was suspected of having a JsonElement bug.
 /// </summary>
-[Timeout(30_000)]  // 30s timeout per test
+[Timeout(120_000)]
 [NotInParallel("ServiceBus")]
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
 public class LifecycleDeserializationTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get shared ServiceBus resources
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
-
-    // Create new fixture with shared ServiceBus client
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, batchIndex: 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+    // Don't dispose - shared fixture is reused across tests
   }
 
   /// <summary>

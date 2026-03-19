@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tags;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#registry</docs>
+/// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagRegistryTests.cs</tests>
 public static class MessageTagRegistry {
   /// <summary>

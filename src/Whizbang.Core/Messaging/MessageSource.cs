@@ -35,7 +35,7 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 public enum MessageSource {
   /// <summary>
   /// Message is being dispatched locally within the same process (no transport involved).

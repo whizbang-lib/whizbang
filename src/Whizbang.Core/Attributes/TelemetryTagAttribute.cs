@@ -27,7 +27,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record PaymentProcessedEvent(Guid PaymentId, decimal Amount, string Currency);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#telemetry-tag</docs>
+/// <docs>fundamentals/messages/message-tags#telemetry-tag</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
 public sealed class TelemetryTagAttribute : MessageTagAttribute {
   /// <summary>

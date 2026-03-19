@@ -162,7 +162,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var renewInboxParam = PostgresJsonHelper.JsonStringToJsonb(renewInboxJson);
     renewInboxParam.ParameterName = "p_renew_inbox_lease_ids";
 
-    var perspectiveEventCompletionsParam = PostgresJsonHelper.JsonStringToJsonb("[]");
+    var perspectiveEventCompletionsJson = _serializePerspectiveEventCompletions(request.PerspectiveEventCompletions);
+    var perspectiveEventCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveEventCompletionsJson);
     perspectiveEventCompletionsParam.ParameterName = "p_perspective_event_completions";
 
     var perspectiveCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveCompletionsJson);
@@ -455,6 +456,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         }
 
         return new PerspectiveWork {
+          WorkId = r.WorkId,
           StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
           PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
           LastProcessedEventId = null,  // No longer returned by process_work_batch
@@ -619,35 +621,44 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Serializes perspective checkpoint completions to JSON for database storage.
+  /// Serializes perspective cursor completions to JSON for database storage.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
+  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
   /// <summary>
-  /// Serializes perspective checkpoint failures to JSON for database storage.
+  /// Serializes perspective cursor failures to JSON for database storage.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
+  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
   /// <summary>
   /// Serializes perspective sync inquiries to JSON for database storage.
   /// </summary>
-  /// <docs>core-concepts/perspectives/perspective-sync</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
   private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
     if (inquiries == null || inquiries.Length == 0) {
       return "[]";
@@ -737,12 +748,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Reports perspective checkpoint completion directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor completion directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
   /// </summary>
   public async Task ReportPerspectiveCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
     // CRITICAL FIX: Use existing DbContext and commit transaction explicitly
     // The DbContext's current transaction scope must be committed for changes to be visible
@@ -784,7 +795,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
         DEFAULT_SCHEMA,
         _logger);
-      var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_checkpoint_work");
+      var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
       var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
 
       await _dbContext.Database.ExecuteSqlRawAsync(
@@ -818,7 +829,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var streamId = completion.StreamId;
       var perspectiveName = completion.PerspectiveName;
       _logger.LogInformation(
-        "[DIAGNOSTIC] complete_perspective_checkpoint_work completed for stream={StreamId}, perspective={PerspectiveName}",
+        "[DIAGNOSTIC] complete_perspective_cursor_work completed for stream={StreamId}, perspective={PerspectiveName}",
         streamId, perspectiveName);
     }
 
@@ -828,7 +839,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_checkpoints");
+    var diagnosticTable = BuildSchemaQualifiedName(diagnosticSchema, "wh_perspective_cursors");
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 
     var checkpointState = await _dbContext.Database
@@ -859,12 +870,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Reports perspective checkpoint failure directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor failure directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
   /// </summary>
   public async Task ReportPerspectiveFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default) {
     // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
     // This works with both traditional connection strings and NpgsqlDataSource
@@ -887,7 +898,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_checkpoint_work");
+    var functionName = BuildSchemaQualifiedName(schema, "complete_perspective_cursor_work");
     var sql = $"SELECT {functionName}({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)";
 
     await _dbContext.Database.ExecuteSqlRawAsync(
@@ -900,7 +911,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Gets the current checkpoint for a perspective stream.
   /// Returns null if no checkpoint exists yet.
   /// </summary>
-  public async Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+  public async Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default) {
@@ -910,11 +921,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_checkpoints");
-    var sql = $"SELECT stream_id, perspective_name, last_event_id, status FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
+    var tableName = BuildSchemaQualifiedName(schema, "wh_perspective_cursors");
+    var sql = $"SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM {tableName} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 
     var result = await _dbContext.Database
-      .SqlQueryRaw<CheckpointQueryResult>(sql, streamId, perspectiveName)
+      .SqlQueryRaw<CursorQueryResult>(sql, streamId, perspectiveName)
       .OrderBy(c => c.StreamId)
       .FirstOrDefaultAsync(cancellationToken);
 
@@ -922,11 +933,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return null;
     }
 
-    return new PerspectiveCheckpointInfo {
+    return new PerspectiveCursorInfo {
       StreamId = result.StreamId,
       PerspectiveName = result.PerspectiveName,
       LastEventId = result.LastEventId,
-      Status = (PerspectiveProcessingStatus)result.Status
+      Status = (PerspectiveProcessingStatus)result.Status,
+      RewindTriggerEventId = result.RewindTriggerEventId
     };
   }
 
@@ -1030,7 +1042,7 @@ internal class WorkBatchRow {
 }
 
 /// <summary>
-/// Diagnostic DTO for querying perspective checkpoint state.
+/// Diagnostic DTO for querying perspective cursor state.
 /// Used in ReportPerspectiveCompletionAsync to verify updates are persisting.
 /// </summary>
 internal class CheckpointDiagnostic {
@@ -1051,10 +1063,10 @@ internal class CheckpointDiagnostic {
 }
 
 /// <summary>
-/// DTO for querying perspective checkpoint info.
-/// Used by GetPerspectiveCheckpointAsync.
+/// DTO for querying perspective cursor info.
+/// Used by GetPerspectiveCursorAsync.
 /// </summary>
-internal class CheckpointQueryResult {
+internal class CursorQueryResult {
   [Column("stream_id")]
   public Guid StreamId { get; set; }
 
@@ -1066,4 +1078,7 @@ internal class CheckpointQueryResult {
 
   [Column("last_event_id")]
   public Guid? LastEventId { get; set; }
+
+  [Column("rewind_trigger_event_id")]
+  public Guid? RewindTriggerEventId { get; set; }
 }

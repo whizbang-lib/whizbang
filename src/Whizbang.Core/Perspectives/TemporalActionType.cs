@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Type of action that triggered a temporal perspective entry.
 /// Aligns with SQL Server temporal table patterns for tracking row history.
 /// </summary>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/TemporalPerspectiveRowTests.cs</tests>
 /// <remarks>
 /// <para>

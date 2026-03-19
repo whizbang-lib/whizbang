@@ -3,7 +3,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Interface for extracting security information from claims or other sources.
 /// </summary>
-/// <docs>core-concepts/security#extractors</docs>
+/// <docs>fundamentals/security/security#extractors</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityOptionsTests.cs</tests>
 public interface IPermissionExtractor {
   /// <summary>

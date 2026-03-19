@@ -11,7 +11,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// tracking events within a single request or operation scope.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 public sealed class ScopedEventTracker : IScopedEventTracker {
   private readonly ConcurrentBag<TrackedEvent> _trackedEvents = new();

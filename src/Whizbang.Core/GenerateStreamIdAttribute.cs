@@ -40,7 +40,7 @@ namespace Whizbang.Core;
 /// before dispatch — the StreamIdGuard will throw if it's Guid.Empty.
 /// </para>
 /// </remarks>
-/// <docs>attributes/generatestreamid</docs>
+/// <docs>extending/attributes/generatestreamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/GenerateStreamIdGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter | AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class GenerateStreamIdAttribute : Attribute {

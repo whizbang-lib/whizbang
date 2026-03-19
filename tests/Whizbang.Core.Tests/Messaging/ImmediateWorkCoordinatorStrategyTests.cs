@@ -632,6 +632,117 @@ public class ImmediateWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Channel Write Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithReturnedWork_WritesToChannelAsync() {
+    // Arrange
+    var channelWriter = new TestWorkChannelWriter();
+    var messageId1 = Guid.CreateVersion7();
+    var messageId2 = Guid.CreateVersion7();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = messageId1,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        },
+        new OutboxWork {
+          MessageId = messageId2,
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
+    await Assert.That(channelWriter.WrittenWork[0].MessageId).IsEqualTo(messageId1);
+    await Assert.That(channelWriter.WrittenWork[1].MessageId).IsEqualTo(messageId2);
+  }
+
+  [Test]
+  public async Task FlushAsync_NullChannelWriter_DoesNotThrowAsync() {
+    // Arrange - no channel writer (null)
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act & Assert - should not throw
+    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task FlushAsync_ChannelClosed_HandlesGracefullyAsync() {
+    // Arrange
+    var channelWriter = new ClosedTestWorkChannelWriter();
+    var fakeCoordinator = new FakeWorkCoordinator {
+      WorkToReturn = [
+        new OutboxWork {
+          MessageId = Guid.CreateVersion7(),
+          Destination = "test-topic",
+          EnvelopeType = "Test",
+          MessageType = "Test",
+          Envelope = _createJsonEnvelope(),
+          Attempts = 0,
+          Status = MessageProcessingStatus.None
+        }
+      ]
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, options, workChannelWriter: channelWriter
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act & Assert - should handle ChannelClosedException gracefully
+    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
+  }
+
+  // ========================================
   // Helper Methods
   // ========================================
 
@@ -697,6 +808,37 @@ public class ImmediateWorkCoordinatorStrategyTests {
   // Test Fakes
   // ========================================
 
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() { }
+  }
+
+  private sealed class ClosedTestWorkChannelWriter : IWorkChannelWriter {
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) =>
+      throw new System.Threading.Channels.ChannelClosedException();
+
+    public bool TryWrite(OutboxWork work) => false;
+
+    public void Complete() { }
+  }
+
   private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
@@ -706,6 +848,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
     public WorkBatchFlags LastFlags { get; private set; }
+    public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -720,29 +863,29 @@ public class ImmediateWorkCoordinatorStrategyTests {
       LastFlags = request.Flags;
 
       return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
+        OutboxWork = WorkToReturn,
         InboxWork = [],
         PerspectiveWork = []
       });
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 

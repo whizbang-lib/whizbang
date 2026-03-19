@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// <summary>
 /// Extension methods for working with message envelopes.
 /// </summary>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 public static class MessageEnvelopeExtensions {
   /// <summary>
   /// Reconstructs a message envelope with a deserialized payload while preserving all envelope metadata.
@@ -41,7 +41,7 @@ public static class MessageEnvelopeExtensions {
   /// await invoker.InvokeAsync(typedEnvelope, stage, context, ct);
   /// </code>
   /// </example>
-  /// <docs>core-concepts/message-security#envelope-reconstruction</docs>
+  /// <docs>fundamentals/security/message-security#envelope-reconstruction</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs</tests>
   public static IMessageEnvelope ReconstructWithPayload(
       this IMessageEnvelope<JsonElement> jsonEnvelope,
@@ -79,7 +79,7 @@ public static class MessageEnvelopeExtensions {
   /// use the non-generic overload which returns <c>MessageEnvelope&lt;object&gt;</c>.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-security#envelope-reconstruction</docs>
+  /// <docs>fundamentals/security/message-security#envelope-reconstruction</docs>
   /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs</tests>
   public static MessageEnvelope<T> ReconstructWithPayload<T>(
       this IMessageEnvelope<JsonElement> jsonEnvelope,

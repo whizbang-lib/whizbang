@@ -228,6 +228,109 @@ public class TypeNameFormatterTests {
     await Assert.That(parsed).IsEqualTo(formatted);
   }
 
+  // ========================================
+  // GETFULLNAME TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetFullName_WithAssemblyQualified_ExtractsFullNameAsync() {
+    var result = TypeNameFormatter.GetFullName("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithGlobalPrefix_StripsGlobalAsync() {
+    var result = TypeNameFormatter.GetFullName("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithSimpleName_ReturnsAsIsAsync() {
+    var result = TypeNameFormatter.GetFullName("MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithVersionInfo_StripsAllQualifiersAsync() {
+    var result = TypeNameFormatter.GetFullName(
+      "MyApp.Events.OrderCreated, MyApp, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  [Test]
+  public async Task GetFullName_WithNullOrEmpty_ReturnsInputAsync() {
+    await Assert.That(TypeNameFormatter.GetFullName(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetFullName("")).IsEqualTo("");
+  }
+
+  [Test]
+  public async Task GetFullName_WithGlobalPrefixAndAssembly_HandlesBothAsync() {
+    var result = TypeNameFormatter.GetFullName("global::MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");
+  }
+
+  // ========================================
+  // GETSIMPLENAME TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetSimpleName_WithAssemblyQualified_ExtractsSimpleNameAsync() {
+    var result = TypeNameFormatter.GetSimpleName("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithGlobalPrefix_ExtractsSimpleNameAsync() {
+    var result = TypeNameFormatter.GetSimpleName("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithNestedType_PreservesNestedSeparatorAsync() {
+    var result = TypeNameFormatter.GetSimpleName("MyApp.Events.SessionContracts+EndedEvent");
+    await Assert.That(result).IsEqualTo("SessionContracts+EndedEvent");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithSimpleName_ReturnsAsIsAsync() {
+    var result = TypeNameFormatter.GetSimpleName("OrderCreated");
+    await Assert.That(result).IsEqualTo("OrderCreated");
+  }
+
+  [Test]
+  public async Task GetSimpleName_WithNullOrEmpty_ReturnsInputAsync() {
+    await Assert.That(TypeNameFormatter.GetSimpleName(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetSimpleName("")).IsEqualTo("");
+  }
+
+  // ========================================
+  // GETNAMESPACE TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetNamespace_WithAssemblyQualified_ExtractsNamespaceAsync() {
+    var result = TypeNameFormatter.GetNamespace("MyApp.Events.OrderCreated, MyApp");
+    await Assert.That(result).IsEqualTo("MyApp.Events");
+  }
+
+  [Test]
+  public async Task GetNamespace_WithGlobalPrefix_ExtractsNamespaceAsync() {
+    var result = TypeNameFormatter.GetNamespace("global::MyApp.Events.OrderCreated");
+    await Assert.That(result).IsEqualTo("MyApp.Events");
+  }
+
+  [Test]
+  public async Task GetNamespace_WithNoNamespace_ReturnsNullAsync() {
+    var result = TypeNameFormatter.GetNamespace("OrderCreated");
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetNamespace_WithNullOrEmpty_ReturnsNullAsync() {
+    await Assert.That(TypeNameFormatter.GetNamespace(null!)).IsNull();
+    await Assert.That(TypeNameFormatter.GetNamespace("")).IsNull();
+  }
+
   // Helper nested class for testing
   private sealed class NestedTestClass { }
 }

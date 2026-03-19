@@ -1571,23 +1571,23 @@ public class PerspectiveWorkerSecurityContextTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-        PerspectiveCheckpointCompletion completion,
+        PerspectiveCursorCompletion completion,
         CancellationToken cancellationToken = default) {
       _completionReported.TrySetResult();
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-        PerspectiveCheckpointFailure failure,
+        PerspectiveCursorFailure failure,
         CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
         Guid streamId,
         string perspectiveName,
         CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
@@ -1628,18 +1628,24 @@ public class PerspectiveWorkerSecurityContextTests {
   }
 
   private sealed class FakePerspectiveRunner : IPerspectiveRunner {
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId,
         string perspectiveName,
         Guid? lastProcessedEventId,
         CancellationToken cancellationToken) {
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.CreateVersion7(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   #endregion

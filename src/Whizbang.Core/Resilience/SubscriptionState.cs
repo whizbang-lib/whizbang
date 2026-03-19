@@ -5,7 +5,7 @@ namespace Whizbang.Core.Resilience;
 /// <summary>
 /// Represents the possible states of a subscription.
 /// </summary>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 public enum SubscriptionStatus {
   /// <summary>
   /// Initial state - subscription has not been attempted yet.
@@ -38,7 +38,7 @@ public enum SubscriptionStatus {
 /// where the worker can continue processing with some subscriptions while others are recovering.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/transport-consumer#subscription-resilience</docs>
+/// <docs>messaging/transports/transport-consumer#subscription-resilience</docs>
 /// <tests>tests/Whizbang.Core.Tests/Resilience/SubscriptionStateTests.cs</tests>
 public class SubscriptionState {
   /// <summary>

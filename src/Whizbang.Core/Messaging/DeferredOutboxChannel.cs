@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// and written to the outbox in that transaction context.</para>
 /// <para>No reflection is used - fully AOT compatible.</para>
 /// </remarks>
-/// <docs>core-concepts/dispatcher#deferred-event-channel</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#deferred-event-channel</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/DeferredOutboxChannelTests.cs</tests>
 public sealed class DeferredOutboxChannel : IDeferredOutboxChannel {
   private readonly ConcurrentQueue<OutboxMessage> _pending = new();

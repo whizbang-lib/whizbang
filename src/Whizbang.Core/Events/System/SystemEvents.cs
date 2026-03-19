@@ -7,7 +7,7 @@ namespace Whizbang.Core.Events.System;
 /// <summary>
 /// Emitted when a perspective rebuild starts (any mode).
 /// </summary>
-/// <docs>core-concepts/perspectives#rebuild-events</docs>
+/// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 public record PerspectiveRebuildStarted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -19,7 +19,7 @@ public record PerspectiveRebuildStarted(
 /// <summary>
 /// Emitted periodically during a rebuild to report progress.
 /// </summary>
-/// <docs>core-concepts/perspectives#rebuild-events</docs>
+/// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 public record PerspectiveRebuildProgress(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -33,7 +33,7 @@ public record PerspectiveRebuildProgress(
 /// <summary>
 /// Emitted when a perspective rebuild completes successfully.
 /// </summary>
-/// <docs>core-concepts/perspectives#rebuild-events</docs>
+/// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 public record PerspectiveRebuildCompleted(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -46,7 +46,7 @@ public record PerspectiveRebuildCompleted(
 /// <summary>
 /// Emitted when a perspective rebuild fails.
 /// </summary>
-/// <docs>core-concepts/perspectives#rebuild-events</docs>
+/// <docs>fundamentals/perspectives/perspectives#rebuild-events</docs>
 public record PerspectiveRebuildFailed(
     [property: StreamId] Guid StreamId,
     string PerspectiveName,
@@ -56,12 +56,41 @@ public record PerspectiveRebuildFailed(
     TimeSpan Duration
 ) : IEvent;
 
+// --- Perspective rewind events ---
+
+/// <summary>
+/// Emitted when a perspective rewind begins due to a late-arriving event.
+/// </summary>
+/// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+public record PerspectiveRewindStarted(
+    [property: StreamId] Guid StreamId,
+    string PerspectiveName,
+    Guid TriggeringEventId,
+    Guid? ReplayFromSnapshotEventId,
+    bool HasSnapshot,
+    DateTimeOffset StartedAt
+) : IEvent;
+
+/// <summary>
+/// Emitted when a perspective rewind completes successfully.
+/// </summary>
+/// <docs>fundamentals/perspectives/perspectives#rewind-events</docs>
+public record PerspectiveRewindCompleted(
+    [property: StreamId] Guid StreamId,
+    string PerspectiveName,
+    Guid TriggeringEventId,
+    Guid FinalEventId,
+    int EventsReplayed,
+    DateTimeOffset StartedAt,
+    DateTimeOffset CompletedAt
+) : IEvent;
+
 // --- Per-migration events (one per table/function) ---
 
 /// <summary>
 /// Emitted when an individual migration starts processing.
 /// </summary>
-/// <docs>infrastructure/migrations#migration-events</docs>
+/// <docs>operations/infrastructure/migrations#migration-events</docs>
 public record MigrationItemStarted(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -73,7 +102,7 @@ public record MigrationItemStarted(
 /// <summary>
 /// Emitted when an individual migration completes.
 /// </summary>
-/// <docs>infrastructure/migrations#migration-events</docs>
+/// <docs>operations/infrastructure/migrations#migration-events</docs>
 public record MigrationItemCompleted(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -85,7 +114,7 @@ public record MigrationItemCompleted(
 /// <summary>
 /// Emitted when an individual migration fails.
 /// </summary>
-/// <docs>infrastructure/migrations#migration-events</docs>
+/// <docs>operations/infrastructure/migrations#migration-events</docs>
 public record MigrationItemFailed(
     [property: StreamId] Guid StreamId,
     string MigrationKey,
@@ -100,7 +129,7 @@ public record MigrationItemFailed(
 /// <summary>
 /// Emitted when the full migration batch starts (all infrastructure + perspectives).
 /// </summary>
-/// <docs>infrastructure/migrations#migration-events</docs>
+/// <docs>operations/infrastructure/migrations#migration-events</docs>
 public record MigrationBatchStarted(
     [property: StreamId] Guid StreamId,
     string LibraryVersion,
@@ -111,7 +140,7 @@ public record MigrationBatchStarted(
 /// <summary>
 /// Emitted when the full migration batch completes. Includes per-item results.
 /// </summary>
-/// <docs>infrastructure/migrations#migration-events</docs>
+/// <docs>operations/infrastructure/migrations#migration-events</docs>
 public record MigrationBatchCompleted(
     [property: StreamId] Guid StreamId,
     string LibraryVersion,

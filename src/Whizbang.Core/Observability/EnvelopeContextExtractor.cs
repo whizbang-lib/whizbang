@@ -24,7 +24,7 @@ namespace Whizbang.Core.Observability;
 /// duplicating the extraction logic.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-context-extraction</docs>
+/// <docs>fundamentals/messages/message-context-extraction</docs>
 /// <tests>Whizbang.Core.Tests/Observability/EnvelopeContextExtractorTests.cs</tests>
 public static class EnvelopeContextExtractor {
   /// <summary>

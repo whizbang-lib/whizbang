@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// authority for determining when perspectives have processed events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed class SyncFilterBuilder {
   private SyncFilterNode _filter;

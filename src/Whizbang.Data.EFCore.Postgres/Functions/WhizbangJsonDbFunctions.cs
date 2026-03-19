@@ -7,7 +7,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// Custom EF Core database functions for Whizbang JSONB operations.
 /// These methods are translated to PostgreSQL operators by custom translators.
 /// </summary>
-/// <docs>core-concepts/security#principal-filtering</docs>
+/// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/Functions/WhizbangJsonDbFunctionsTests.cs</tests>
 public static class WhizbangJsonDbFunctions {
   /// <summary>

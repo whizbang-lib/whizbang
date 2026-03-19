@@ -109,13 +109,18 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
-    // Extract event types (all type arguments after TModel)
+    // Extract event types in TWO formats:
+    // 1. Runtime format ("FullName, AssemblyName") for PerspectiveRegistrationInfo.EventTypes string matching
+    // 2. Code-gen format ("global::FullName") for typeof() in generated code
+    // The runtime format matches TypeNameFormatter.Format() — critical for _isEventWithoutPerspectives.
     var eventTypes = new List<string>();
+    var eventTypesCodeGen = new List<string>();
     if (singleStreamInterfaces.Count > 0) {
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> - events start at index 1
       foreach (var iface in singleStreamInterfaces) {
         for (var i = 1; i < iface.TypeArguments.Length; i++) {
-          eventTypes.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
+          eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
         }
       }
     } else {
@@ -123,7 +128,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       // IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> - events start at index 2
       foreach (var iface in globalInterfaces) {
         for (var i = 2; i < iface.TypeArguments.Length; i++) {
-          eventTypes.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
+          eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
         }
       }
     }
@@ -134,7 +140,8 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         ClrTypeName: clrTypeName,
         RunnerName: $"{simpleName.Replace(".", "")}Runner",
         ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        EventTypes: eventTypes.Distinct().ToArray()
+        EventTypes: [.. eventTypes.Distinct()],
+        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
     );
   }
 
@@ -242,8 +249,9 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
 
     // Generate _allEventTypes array (unique event types across all perspectives)
+    // Use EventTypesCodeGen (global:: format) for typeof() expressions
     var allEventTypes = perspectives
-        .SelectMany(p => p.EventTypes)
+        .SelectMany(p => p.EventTypesCodeGen)
         .Distinct()
         .OrderBy(e => e, StringComparer.Ordinal)
         .ToList();
@@ -342,12 +350,14 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
 /// <param name="ClrTypeName">CLR format type name for database storage (e.g., "Namespace.Parent+Child")</param>
 /// <param name="RunnerName">Generated runner name (e.g., "InventoryLevelsPerspectiveRunner")</param>
 /// <param name="ModelType">Fully qualified model type from IPerspectiveFor&lt;TModel, TEvent&gt;</param>
-/// <param name="EventTypes">Fully qualified event types from IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;</param>
+/// <param name="EventTypes">Runtime-format event types ("FullName, AssemblyName") for string matching in PerspectiveRegistrationInfo</param>
+/// <param name="EventTypesCodeGen">Code-generation-format event types ("global::FullName") for typeof() in generated code</param>
 internal sealed record PerspectiveRegistryInfo(
     string ClassName,
     string SimpleName,
     string ClrTypeName,
     string RunnerName,
     string ModelType,
-    string[] EventTypes
+    string[] EventTypes,
+    string[] EventTypesCodeGen
 );

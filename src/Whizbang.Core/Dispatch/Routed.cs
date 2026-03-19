@@ -21,7 +21,7 @@ namespace Whizbang.Core.Dispatch;
 /// They cannot be extracted as RPC responses.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/rpc-extraction#discriminated-unions</docs>
+/// <docs>fundamentals/dispatcher/rpc-extraction#discriminated-unions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:None_*</tests>
 public readonly struct RoutedNone : IRouted {
   /// <summary>
@@ -66,7 +66,7 @@ public readonly struct RoutedNone : IRouted {
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
 public interface IRouted {
   /// <summary>
@@ -109,7 +109,7 @@ public interface IRouted {
 /// return new Routed&lt;MyEvent&gt;(myEvent, DispatchMode.Local);
 /// </code>
 /// </example>
-/// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
 public readonly struct Routed<T> : IRouted {
   /// <summary>

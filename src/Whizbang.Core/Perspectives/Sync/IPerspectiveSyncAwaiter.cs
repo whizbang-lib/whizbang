@@ -19,7 +19,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// <summary>
@@ -96,7 +96,7 @@ public interface IPerspectiveSyncAwaiter : IAwaiterIdentity {
   /// </param>
   /// <param name="ct">A cancellation token.</param>
   /// <returns>The result of the sync operation.</returns>
-  /// <docs>core-concepts/perspectives/perspective-sync#stream-based</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#stream-based</docs>
   Task<SyncResult> WaitForStreamAsync(
       Type perspectiveType,
       Guid streamId,

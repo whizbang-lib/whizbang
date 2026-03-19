@@ -17,18 +17,20 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:IntervalStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Interval strategy - batches operations and flushes on a timer.
 /// Provides lowest database load with higher latency.
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
-public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
-  private readonly IWorkCoordinator _coordinator;
+public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
   private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
   private readonly Timer _flushTimer;
@@ -41,19 +43,23 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private bool _disposed;
   private bool _flushing;
 
   /// <summary>
   /// Constructs an interval-based work coordinator strategy with periodic flushing.
+  /// Pass <paramref name="coordinator"/> directly for scoped usage (one strategy per scope).
+  /// For singleton usage, pass <c>null</c> for <paramref name="coordinator"/> and provide
+  /// <paramref name="scopeFactory"/> — a new scope is created per flush to resolve IWorkCoordinator.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+#pragma warning disable S107 // Methods should not have too many parameters
   public IntervalWorkCoordinatorStrategy(
-    IWorkCoordinator coordinator,
+    IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
     ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
@@ -61,15 +67,21 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
     WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null
+    LifecycleMetrics? lifecycleMetrics = null,
+    IWorkChannelWriter? workChannelWriter = null
   ) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+#pragma warning restore S107
+    if (coordinator == null && scopeFactory == null) {
+      throw new ArgumentNullException(nameof(coordinator), "Either coordinator or scopeFactory must be provided.");
+    }
+    _coordinator = coordinator;
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;
+    _workChannelWriter = workChannelWriter;
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
@@ -281,82 +293,32 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
       }
 
-      // Check if lifecycle tracing is enabled
-      var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-      // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PreDistributeAsync,
-        LifecycleStage.PreDistributeInline,
+      var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+        _coordinator,
+        _scopeFactory,
+        _instanceProvider,
+        _options,
+        "interval",
         outboxMessages,
         inboxMessages,
-        _scopeFactory,
+        outboxCompletions,
+        inboxCompletions,
+        outboxFailures,
+        inboxFailures,
+        flags,
         _lifecycleMessageDeserializer,
         _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
+        _tracingOptions,
+        _metrics,
+        _lifecycleMetrics,
+        workChannelWriter: _workChannelWriter,
+        pendingAuditMessages: null,
+        ct
       );
-
-      // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
-      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-        LifecycleStage.DistributeAsync,
-        outboxMessages,
-        inboxMessages,
-        _scopeFactory,
-        _lifecycleMessageDeserializer,
-        _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
-      );
-
-      // Call process_work_batch with snapshot
-      var request = new ProcessWorkBatchRequest {
-        InstanceId = _instanceProvider.InstanceId,
-        ServiceName = _instanceProvider.ServiceName,
-        HostName = _instanceProvider.HostName,
-        ProcessId = _instanceProvider.ProcessId,
-        Metadata = null,
-        OutboxCompletions = outboxCompletions,
-        OutboxFailures = outboxFailures,
-        InboxCompletions = inboxCompletions,
-        InboxFailures = inboxFailures,
-        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
-        ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
-        PerspectiveFailures = [],
-        NewOutboxMessages = outboxMessages,
-        NewInboxMessages = inboxMessages,
-        RenewOutboxLeaseIds = [],
-        RenewInboxLeaseIds = [],
-        Flags = flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-        PartitionCount = _options.PartitionCount,
-        LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
-      };
-      var flushSw = System.Diagnostics.Stopwatch.StartNew();
-      var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
-      flushSw.Stop();
-      _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "interval"));
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
-
-      // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PostDistributeAsync,
-        LifecycleStage.PostDistributeInline,
-        outboxMessages,
-        inboxMessages,
-        _scopeFactory,
-        _lifecycleMessageDeserializer,
-        _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
-      );
 
       return workBatch;
     } finally {
@@ -365,6 +327,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       }
     }
   }
+
+  /// <inheritdoc />
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
 
   /// <summary>
   /// Timer callback that triggers periodic flushing of queued operations.
@@ -491,7 +457,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   [LoggerMessage(
     EventId = 8,
-    Level = LogLevel.Warning,
+    Level = LogLevel.Debug,
     Message = "Flush already in progress, returning empty batch"
   )]
   static partial void LogFlushAlreadyInProgress(ILogger logger);

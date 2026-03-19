@@ -162,10 +162,10 @@ public class EFCoreWorkCoordinatorSchemaTests {
     // Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.BuildSchemaQualifiedName(
       "user",
-      "complete_perspective_checkpoint_work");
+      "complete_perspective_cursor_work");
 
     // Assert - Should have quoted schema to handle reserved word
-    await Assert.That(result).IsEqualTo("\"user\".complete_perspective_checkpoint_work");
+    await Assert.That(result).IsEqualTo("\"user\".complete_perspective_cursor_work");
     await Assert.That(result).DoesNotStartWith(".");
   }
 

@@ -18,7 +18,7 @@ namespace Whizbang.Core.Routing;
 /// Example: Topic "myapp.users.events", routing key "tenantcreatedevent"
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#shared-topic-outbox</docs>
+/// <docs>fundamentals/dispatcher/routing#shared-topic-outbox</docs>
 public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
   /// <summary>
   /// The default inbox topic name for commands.

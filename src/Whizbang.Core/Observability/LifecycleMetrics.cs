@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Metrics for all 20 lifecycle stages, tag hooks, and receptor invocation.
 /// Meter name: Whizbang.Lifecycle
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/LifecycleMetricsTests.cs</tests>
 public sealed class LifecycleMetrics {
 #pragma warning disable CA1707

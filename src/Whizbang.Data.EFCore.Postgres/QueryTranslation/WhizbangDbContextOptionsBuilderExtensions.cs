@@ -30,7 +30,7 @@ public static class WhizbangDbContextOptionsBuilderExtensions {
   /// </code>
   /// </para>
   /// </remarks>
-  /// <docs>perspectives/physical-fields</docs>
+  /// <docs>fundamentals/perspectives/physical-fields</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs</tests>
   public static DbContextOptionsBuilder UseWhizbangPhysicalFields(
       this DbContextOptionsBuilder optionsBuilder) {

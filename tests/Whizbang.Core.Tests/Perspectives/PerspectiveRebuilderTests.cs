@@ -239,7 +239,7 @@ public class PerspectiveRebuilderTests {
     public int RunCount { get; private set; }
     public int FailOnStreamIndex { get; init; } = -1;
 
-    public Task<PerspectiveCheckpointCompletion> RunAsync(
+    public Task<PerspectiveCursorCompletion> RunAsync(
         Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
       var index = RunCount;
       RunCount++;
@@ -248,13 +248,19 @@ public class PerspectiveRebuilderTests {
         throw new InvalidOperationException($"Simulated failure on stream index {index}");
       }
 
-      return Task.FromResult(new PerspectiveCheckpointCompletion {
+      return Task.FromResult(new PerspectiveCursorCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = Guid.NewGuid(),
         Status = PerspectiveProcessingStatus.Completed
       });
     }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+        RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
   }
 
   private sealed class FakePerspectiveRunnerRegistry(IPerspectiveRunner? runner) : IPerspectiveRunnerRegistry {

@@ -3,7 +3,7 @@ using System.Collections.Immutable;
 namespace Whizbang.Data.Schema;
 
 /// <summary>
-/// <docs>extensibility/database-schema-framework</docs>
+/// <docs>extending/extensibility/database-schema-framework</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/IndexDefinitionTests.cs:IndexDefinition_WithRequiredProperties_CreatesInstanceAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/IndexDefinitionTests.cs:IndexDefinition_WithoutOptionalProperties_UsesDefaultsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/IndexDefinitionTests.cs:IndexDefinition_WithMultipleColumns_StoresAllAsync</tests>

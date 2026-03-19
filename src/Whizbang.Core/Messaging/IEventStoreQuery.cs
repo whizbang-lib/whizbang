@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// or <see cref="IEventStoreQueryFactory"/> (manual scope control).
 /// </para>
 /// </summary>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs</tests>
 public interface IEventStoreQuery {
   /// <summary>

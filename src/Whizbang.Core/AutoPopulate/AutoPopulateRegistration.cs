@@ -16,7 +16,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// is set based on <see cref="PopulateKind"/>.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public sealed record AutoPopulateRegistration {
   /// <summary>
   /// The message type containing the property.

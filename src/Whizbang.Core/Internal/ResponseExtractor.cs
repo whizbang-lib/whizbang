@@ -11,7 +11,7 @@ namespace Whizbang.Core.Internal;
 /// Supports: single value, tuples (ValueTuple/ITuple), arrays, enumerables, and Routed&lt;T&gt; wrappers.
 /// AOT-compatible: uses ITuple interface and pattern matching, no reflection.
 /// </summary>
-/// <docs>core-concepts/rpc-extraction</docs>
+/// <docs>fundamentals/dispatcher/rpc-extraction</docs>
 /// <tests>Whizbang.Core.Tests/Internal/ResponseExtractorTests.cs</tests>
 public static class ResponseExtractor {
   /// <summary>

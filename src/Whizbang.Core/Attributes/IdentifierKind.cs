@@ -18,7 +18,7 @@ namespace Whizbang.Core.Attributes;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 /// <tests>tests/Whizbang.Core.Tests/AutoPopulate/PopulateFromIdentifierAttributeTests.cs</tests>
 public enum IdentifierKind {
   /// <summary>

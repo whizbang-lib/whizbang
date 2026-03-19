@@ -16,7 +16,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// which happens before <c>AddWhizbang()</c> is called.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#auto-registration</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#auto-registration</docs>
 public static class SyncEventTypeRegistrations {
   private static readonly ConcurrentDictionary<Type, HashSet<string>> _mappings = new();
   private static readonly object _lock = new();

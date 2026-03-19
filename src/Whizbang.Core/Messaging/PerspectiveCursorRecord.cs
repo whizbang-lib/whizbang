@@ -2,12 +2,12 @@ namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Checkpoint-style tracking of perspective processing per stream.
-/// Stored in wh_perspective_checkpoints table.
+/// Stored in wh_perspective_cursors table.
 /// Tracks the last processed event for each perspective on each stream.
 /// Enables time-travel scenarios where new perspectives can catch up by replaying events.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveCheckpointRecordTests.cs</tests>
-public sealed class PerspectiveCheckpointRecord {
+/// <tests>tests/Whizbang.Core.Tests/Messaging/PerspectiveCursorRecordTests.cs</tests>
+public sealed class PerspectiveCursorRecord {
   /// <summary>
   /// The stream being processed.
   /// </summary>

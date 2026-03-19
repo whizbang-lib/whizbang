@@ -13,7 +13,7 @@ namespace Whizbang.Core;
 /// - LocalInvokeAsync: In-process RPC with typed business result (zero allocation)
 /// - PublishAsync: Event broadcasting (fire-and-forget)
 /// </summary>
-/// <docs>core-concepts/dispatcher</docs>
+/// <docs>fundamentals/dispatcher/dispatcher</docs>
 public interface IDispatcher {
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment
@@ -286,7 +286,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_Generic_ReturnsBusinessResultAndReceiptAsync</tests>
-  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message) where TMessage : notnull;
 
@@ -300,7 +300,7 @@ public interface IDispatcher {
   /// <param name="message">The message to process</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_ReturnsBusinessResultAndReceiptAsync</tests>
-  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message);
 
@@ -318,7 +318,7 @@ public interface IDispatcher {
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_PreservesCorrelationIdAsync</tests>
-  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(
       TMessage message,
       IMessageContext context,
@@ -340,7 +340,7 @@ public interface IDispatcher {
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithContext_NonGeneric_PreservesCorrelationIdAsync</tests>
-  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message,
       IMessageContext context,
@@ -357,7 +357,7 @@ public interface IDispatcher {
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>An <see cref="InvokeResult{TResult}"/> containing both the business result and delivery receipt.</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherInvokeWithReceiptTests.cs:LocalInvokeWithReceipt_WithDispatchOptions_ReturnsReceiptAsync</tests>
-  /// <docs>core-concepts/dispatcher#local-invoke-with-receipt</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-with-receipt</docs>
   ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(
       object message, DispatchOptions options);
 
@@ -413,7 +413,7 @@ public interface IDispatcher {
   /// sourceEnvelope's current security context when ambient context is unavailable.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
   Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
 
   // ========================================
@@ -468,7 +468,7 @@ public interface IDispatcher {
   /// Thrown when perspectives don't complete processing within the timeout period.
   /// Note: The handler has already completed successfully; only perspective sync timed out.
   /// </exception>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -505,7 +505,7 @@ public interface IDispatcher {
   /// </param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync</docs>
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncAsync<TMessage>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -536,7 +536,7 @@ public interface IDispatcher {
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>The typed business result from the receptor.</returns>
   /// <exception cref="TimeoutException">Thrown when the perspective doesn't complete processing within the timeout.</exception>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
   Task<TResult> LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,
@@ -569,7 +569,7 @@ public interface IDispatcher {
   /// <param name="onDecisionMade">Optional callback always invoked when the sync decision is made.</param>
   /// <param name="cancellationToken">A cancellation token.</param>
   /// <returns>A <see cref="Perspectives.Sync.SyncResult"/> indicating sync outcome.</returns>
-  /// <docs>core-concepts/dispatcher#local-invoke-and-sync-perspective</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#local-invoke-and-sync-perspective</docs>
   Task<Perspectives.Sync.SyncResult> LocalInvokeAndSyncForPerspectiveAsync<TMessage, TPerspective>(
       TMessage message,
       TimeSpan? timeout = null,

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Lenses;
 /// Provides time-travel and activity feed queries aligned with EF Core temporal table patterns.
 /// </summary>
 /// <typeparam name="TModel">The log entry model type to query</typeparam>
-/// <docs>lenses/temporal-query</docs>
+/// <docs>fundamentals/lenses/temporal-query</docs>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/ITemporalLensQueryTests.cs</tests>
 /// <remarks>
 /// <para>

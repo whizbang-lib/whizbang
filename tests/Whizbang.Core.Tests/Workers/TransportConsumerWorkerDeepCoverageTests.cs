@@ -629,13 +629,22 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Subscription fails
+
+    // Wait for initial subscription attempt to fail (condition-based, not fixed delay)
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+    while (transport.SubscribeCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(20);
+    }
 
     // Stop failing so health monitor recovery succeeds
     transport.StopFailing();
-    await Task.Delay(500); // Health monitor fires and retries
 
-    var states = worker.SubscriptionStates.Values.ToList();
+    // Wait for health monitor to retry (condition-based, not fixed delay)
+    deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+    while (transport.SubscribeCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(20);
+    }
+
     // At this point health monitor should have attempted recovery
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(2)
       .Because("Health monitor should retry failed subscriptions");
@@ -1210,16 +1219,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
   private sealed class DeepCoverageSelectiveFailTransport : ITransport {
     private readonly HashSet<string> _failingTopics;
+    private int _subscribeCallCount;
+    private volatile bool _isFailing = true;
 
     public DeepCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) {
       _failingTopics = new HashSet<string>(failingTopics);
     }
 
-    public int SubscribeCallCount { get; private set; }
+    public int SubscribeCallCount => Volatile.Read(ref _subscribeCallCount);
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
-    public void StopFailing() { _failingTopics.Clear(); }
+    public void StopFailing() { _isFailing = false; }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1233,8 +1244,8 @@ public class TransportConsumerWorkerDeepCoverageTests {
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
         CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
-      if (_failingTopics.Contains(destination.Address)) {
+      Interlocked.Increment(ref _subscribeCallCount);
+      if (_isFailing && _failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }
       return Task.FromResult<ISubscription>(new DeepCoverageSubscription());

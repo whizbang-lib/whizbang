@@ -11,7 +11,7 @@ namespace Whizbang.Core.Security;
 /// Identifies scope properties for delta storage on message hops.
 /// Uses byte-sized enum for minimal serialization.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Serializes with 2-character abbreviated names via <see cref="ScopePropJsonConverter"/>:
@@ -48,7 +48,7 @@ public enum ScopeProp : byte {
 /// Changes to a collection (roles, permissions, principals, claims).
 /// Supports Set (replace all), Add, and Remove operations.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Apply order: Set takes precedence, otherwise Remove first then Add.
@@ -87,7 +87,7 @@ public readonly struct CollectionChanges {
 /// Delta-based scope changes for message hops.
 /// Only stores what changed from previous hop to minimize wire size.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// <para>

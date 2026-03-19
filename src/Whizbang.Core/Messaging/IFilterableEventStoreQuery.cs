@@ -17,6 +17,6 @@ namespace Whizbang.Core.Messaging;
 /// calls <see cref="IFilterableLens.ApplyFilter"/> with the appropriate scope context.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/IFilterableEventStoreQueryTests.cs</tests>
 public interface IFilterableEventStoreQuery : IEventStoreQuery, IFilterableLens { }

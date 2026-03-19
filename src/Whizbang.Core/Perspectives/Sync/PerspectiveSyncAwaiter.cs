@@ -19,8 +19,8 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <see cref="IsCaughtUpAsync"/> still uses database queries for one-shot status checks.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
-/// <docs>observability/tracing#perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
+/// <docs>operations/observability/tracing#perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
   /// <inheritdoc />
@@ -327,6 +327,7 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
       ReceptorCompletions = [],
       ReceptorFailures = [],
       PerspectiveCompletions = [],
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = [],
       NewOutboxMessages = [],
       NewInboxMessages = [],

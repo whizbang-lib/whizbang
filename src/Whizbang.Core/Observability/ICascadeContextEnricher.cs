@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 /// services.AddSingleton&lt;ICascadeContextEnricher, MyCustomEnricher&gt;();
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/cascade-context#enrichers</docs>
+/// <docs>fundamentals/messages/cascade-context#enrichers</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextFactoryTests.cs</tests>
 public interface ICascadeContextEnricher {
   /// <summary>

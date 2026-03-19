@@ -38,7 +38,7 @@ public sealed record MessageAssociation(
 /// <param name="TargetName">Name of the perspective class</param>
 /// <param name="ServiceName">Service name (assembly name)</param>
 /// <param name="ApplyDelegate">Strongly-typed delegate to perspective's Apply method</param>
-/// <docs>perspectives/association-info</docs>
+/// <docs>fundamentals/perspectives/association-metadata</docs>
 public sealed record PerspectiveAssociationInfo<TModel, TEvent>(
   string MessageType,
   string TargetName,
@@ -196,7 +196,7 @@ public static class PerspectiveRegistrationExtensions {
   /// }
   /// </code>
   /// </remarks>
-  /// <docs>perspectives/typed-associations</docs>
+  /// <docs>fundamentals/perspectives/typed-associations</docs>
   public static System.Collections.Generic.IReadOnlyList<PerspectiveAssociationInfo<TModel, TEvent>> GetPerspectiveAssociations<TModel, TEvent>(string serviceName)
     where TEvent : IEvent {
     #region PERSPECTIVE_ASSOCIATIONS_TYPED

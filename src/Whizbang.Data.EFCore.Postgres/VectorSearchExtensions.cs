@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// The WHIZ070 diagnostic will guide you to add this package if missing.
 /// </para>
 /// </remarks>
-/// <docs>lenses/vector-search</docs>
+/// <docs>fundamentals/lenses/vector-search</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorSearchIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorSearchExtensionsTests.cs</tests>
 /// <example>

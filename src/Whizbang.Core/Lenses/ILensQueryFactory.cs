@@ -16,7 +16,7 @@ namespace Whizbang.Core.Lenses;
 /// <see cref="GetQuery{TModel}"/> multiple times - all queries share the same DbContext.
 /// </para>
 /// </summary>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
 public interface ILensQueryFactory : IAsyncDisposable, IDisposable {
   /// <summary>
@@ -33,7 +33,7 @@ public interface ILensQueryFactory : IAsyncDisposable, IDisposable {
 /// Use for batch operations where multiple queries should share one scope (and DbContext).
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/scoped-queries</docs>
+/// <docs>fundamentals/lenses/scoped-queries</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/LensQueryFactoryTests.cs</tests>
 public interface ILensQueryFactory<TModel> where TModel : class {
   /// <summary>
