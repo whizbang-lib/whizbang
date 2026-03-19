@@ -160,8 +160,9 @@ public class LeaseRenewalTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task ProcessWorkBatch_RenewLease_DoesNotReturnMessageAsWorkAsync() {
-    // Arrange - Message with valid lease should NOT be returned as work when lease is just being renewed
+  public async Task ProcessWorkBatch_RenewLease_ReturnsMessageAsWorkWithOrphanedFlagAsync() {
+    // Arrange - Lease-renewed messages must be returned as work to avoid message loss
+    // (if the client crashes after renewing but before processing, the message needs to be re-dispatched)
     await using var dbContext = CreateDbContext();
     var instanceId = Guid.NewGuid();
     var messageId = Guid.NewGuid();
@@ -217,8 +218,12 @@ public class LeaseRenewalTests : EFCoreTestBase {
       cancellationToken: default
     );
 
-    // Assert - Message should NOT be returned as work (lease is still valid)
-    await Assert.That(workBatch.OutboxWork).IsEmpty();
+    // Assert - Lease-renewed message must be returned as work with Orphaned flag
+    await Assert.That(workBatch.OutboxWork.Count).IsEqualTo(1)
+      .Because("Lease-renewed outbox messages must be returned as work to avoid message loss");
+    await Assert.That(workBatch.OutboxWork[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchFlags.Orphaned)).IsTrue()
+      .Because("Lease-renewed messages are returned via the orphaned work path");
 
     // Cleanup
     await using var deleteCmd = new NpgsqlCommand("DELETE FROM wh_outbox WHERE message_id = @id", connection);
