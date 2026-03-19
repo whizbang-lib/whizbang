@@ -8,7 +8,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Azure Service Bus implementation of IInfrastructureProvisioner.
 /// Creates topics for owned domains at worker startup.
 /// </summary>
-/// <docs>core-concepts/routing#domain-topic-provisioning</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
 /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisioner {
@@ -63,7 +63,7 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   }
 
   /// <inheritdoc />
-  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicDoesNotExist_CreatesItAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>

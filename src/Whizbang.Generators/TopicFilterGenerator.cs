@@ -25,7 +25,7 @@ namespace Whizbang.Generators;
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.
 /// </summary>
-/// <docs>source-generators/topic-filter-discovery</docs>
+/// <docs>extending/source-generators/topic-filter-discovery</docs>
 [Generator]
 public class TopicFilterGenerator : IIncrementalGenerator {
   private const string DESCRIPTION_ATTRIBUTE = "global::System.ComponentModel.DescriptionAttribute";

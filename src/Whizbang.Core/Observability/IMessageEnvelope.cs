@@ -11,7 +11,7 @@ namespace Whizbang.Core.Observability;
 /// Use this for heterogeneous collections of envelopes with different payload types.
 /// Use <see cref="IMessageEnvelope{TMessage}"/> when you need strongly-typed access to the payload.
 /// </summary>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public interface IMessageEnvelope {

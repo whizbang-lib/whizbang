@@ -10,7 +10,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// - Cannot contain: #, *, /, \, ,
 /// - Should be lowercase for consistency
 /// </remarks>
-/// <docs>components/transports/azure-service-bus#subscription-naming</docs>
+/// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusSubscriptionNameHelperTests.cs</tests>
 public static class ServiceBusSubscriptionNameHelper {
   private const int MAX_SUBSCRIPTION_NAME_LENGTH = 50;

@@ -6,7 +6,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Interface abstraction for ServiceBusAdministrationClient to enable testing.
 /// Wraps Azure SDK's ServiceBusAdministrationClient which uses sealed classes.
 /// </summary>
-/// <docs>transports/azure-service-bus#admin-client</docs>
+/// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 public interface IServiceBusAdminClient {
   #region Namespace Management

@@ -2,8 +2,8 @@
 -- Date: 2025-12-25
 -- Description: Creates wh_perspective_events table for ephemeral per-event work tracking.
 --              Follows the same inbox/outbox pattern for unified work coordination.
---              Also removes lease columns from wh_perspective_checkpoints (moved to events table).
--- Dependencies: 001-008 (requires wh_event_store and wh_perspective_checkpoints tables)
+--              Also removes lease columns from wh_perspective_cursors (moved to events table).
+-- Dependencies: 001-008 (requires wh_event_store and wh_perspective_cursors tables)
 
 CREATE TABLE IF NOT EXISTS wh_perspective_events (
   -- Identity
@@ -65,9 +65,9 @@ COMMENT ON COLUMN wh_perspective_events.processed_at IS 'When this work item was
 COMMENT ON COLUMN wh_perspective_events.scheduled_for IS 'When to retry this work item (for failed work with backoff)';
 COMMENT ON COLUMN wh_perspective_events.failure_reason IS 'Reason for failure (FailureReason enum)';
 
--- Remove lease management from wh_perspective_checkpoints
+-- Remove lease management from wh_perspective_cursors
 -- (lease management has moved to wh_perspective_events)
-ALTER TABLE wh_perspective_checkpoints
+ALTER TABLE wh_perspective_cursors
   DROP COLUMN IF EXISTS claimed_by_instance_id,
   DROP COLUMN IF EXISTS claimed_at;
 
@@ -75,5 +75,5 @@ ALTER TABLE wh_perspective_checkpoints
 DROP INDEX IF EXISTS idx_perspective_checkpoint_claim;
 
 -- Update table comment to reflect new purpose
-COMMENT ON TABLE wh_perspective_checkpoints IS
+COMMENT ON TABLE wh_perspective_cursors IS
 'Persistent checkpoint tracking for perspectives. Records last processed event ID and completion status. Work item leasing moved to wh_perspective_events table.';

@@ -142,8 +142,8 @@ CREATE INDEX IF NOT EXISTS idx_receptor_processing_event_id ON wh_receptor_proce
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_receptor_name ON wh_receptor_processing (receptor_name);
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_status ON wh_receptor_processing (status);
 
--- Perspective Checkpoints - Read model projection tracking (checkpoint-style)
-CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints (
+-- Perspective Cursors - Read model projection tracking (checkpoint-style)
+CREATE TABLE IF NOT EXISTS wh_perspective_cursors (
   stream_id UUID NOT NULL,
   perspective_name TEXT NOT NULL,
   last_event_id UUID NOT NULL,
@@ -151,11 +151,11 @@ CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints (
   processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   error TEXT NULL
 ,
-  CONSTRAINT pk_perspective_checkpoints PRIMARY KEY (stream_id, perspective_name)
+  CONSTRAINT pk_perspective_cursors PRIMARY KEY (stream_id, perspective_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_perspective_name ON wh_perspective_checkpoints (perspective_name);
-CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_last_event_id ON wh_perspective_checkpoints (last_event_id);
+CREATE INDEX IF NOT EXISTS idx_perspective_cursors_perspective_name ON wh_perspective_cursors (perspective_name);
+CREATE INDEX IF NOT EXISTS idx_perspective_cursors_last_event_id ON wh_perspective_cursors (last_event_id);
 
 -- Message Associations - Message type to consumer mappings
 CREATE TABLE IF NOT EXISTS wh_message_associations (

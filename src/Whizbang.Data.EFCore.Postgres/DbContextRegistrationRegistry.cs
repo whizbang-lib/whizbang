@@ -11,7 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// - NpgsqlDataSource creation with JSON options, EnableDynamicJson(), and UseVector() if needed
 /// - DbContext registration with UseNpgsql() and UseVector() if needed
 /// </summary>
-/// <docs>features/vector-search#turnkey-setup</docs>
+/// <docs>extending/features/vector-search#turnkey-setup</docs>
 public static class DbContextRegistrationRegistry {
   private static readonly List<DbContextRegistration> _registrations = [];
   private static readonly ConditionalWeakTable<IServiceCollection, HashSet<Type>> _invoked = [];

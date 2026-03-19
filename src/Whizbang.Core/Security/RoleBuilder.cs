@@ -3,7 +3,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Fluent builder for defining roles with permissions.
 /// </summary>
-/// <docs>core-concepts/security#role-definition</docs>
+/// <docs>fundamentals/security/security#role-definition</docs>
 /// <tests>Whizbang.Core.Tests/Security/RoleBuilderTests.cs</tests>
 /// <example>
 /// var orderManager = new RoleBuilder("OrderManager")

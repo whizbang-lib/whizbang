@@ -397,7 +397,8 @@ public class DispatcherSnippets {
             }
             return result;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__
         )
       };
     }
@@ -428,7 +429,8 @@ public class DispatcherSnippets {
             await receptor.HandleAsync((__MESSAGE_TYPE__)msg, ct);
             return null;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__
         )
       };
     }
@@ -501,7 +503,8 @@ public class DispatcherSnippets {
             }
             return result;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__
         )
       };
     }
@@ -569,7 +572,8 @@ public class DispatcherSnippets {
             }
             return null;
           },
-          SyncAttributes: __SYNC_ATTRIBUTES__
+          SyncAttributes: __SYNC_ATTRIBUTES__,
+          FireDuringReplay: __FIRE_DURING_REPLAY__
         )
       };
     }

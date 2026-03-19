@@ -41,7 +41,7 @@ namespace Whizbang.Core.Dispatch;
 /// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-security#explicit-security-context-api</docs>
+/// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public sealed partial class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
@@ -99,7 +99,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// await dispatcher.RunAs("target-user").WithTenant("target-tenant").SendAsync(command);
   /// </code>
   /// </example>
-  /// <docs>core-concepts/message-security#cross-tenant-operations</docs>
+  /// <docs>fundamentals/security/message-security#cross-tenant-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
   public DispatcherSecurityBuilder WithTenant(string tenantId) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));

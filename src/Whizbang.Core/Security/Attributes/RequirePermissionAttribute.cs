@@ -3,7 +3,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// <summary>
 /// Requires specific permission to access rows of this type.
 /// </summary>
-/// <docs>core-concepts/security#permission-based-rls</docs>
+/// <docs>fundamentals/security/security#permission-based-rls</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <example>
 /// [RequirePermission("orders:read")]

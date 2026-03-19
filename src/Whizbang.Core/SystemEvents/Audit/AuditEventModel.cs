@@ -14,7 +14,7 @@ public class ScopeEntry {
 /// Read model for audit events materialized from <see cref="EventAudited"/>.
 /// Stored in the <c>wh_per_audit_event</c> perspective table.
 /// </summary>
-/// <docs>core-concepts/system-events#audit-model</docs>
+/// <docs>fundamentals/events/system-events#audit-model</docs>
 public class AuditEventModel {
   [StreamId]
   public Guid Id { get; set; }
@@ -59,7 +59,7 @@ public class AuditEventModel {
 /// will discover the perspective automatically from the referenced assembly.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#audit-projection</docs>
+/// <docs>fundamentals/events/system-events#audit-projection</docs>
 public static class AuditEventProjection {
   /// <summary>
   /// Global custom humanizer set via <see cref="SystemEventOptions.EventNameHumanizer"/>.
@@ -125,8 +125,7 @@ public static class AuditEventProjection {
 
     // Strip namespace (dots) but preserve nested type context (plus signs)
     // e.g. "JDX.Contracts.Session.SessionContracts+EndedEvent" → "SessionContracts+EndedEvent"
-    var lastDot = eventType.LastIndexOf('.');
-    var withoutNamespace = lastDot >= 0 ? eventType[(lastDot + 1)..] : eventType;
+    var withoutNamespace = TypeNameFormatter.GetSimpleName(eventType);
 
     // Split on '+' to get nested type segments
     // e.g. "SessionContracts+EndedEvent" → ["SessionContracts", "EndedEvent"]

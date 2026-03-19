@@ -283,15 +283,15 @@ internal sealed class MockWorkCoordinatorWithTracker : IWorkCoordinator {
     });
   }
 
-  public Task ReportPerspectiveCompletionAsync(PerspectiveCheckpointCompletion completion, CancellationToken ct = default) {
+  public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task ReportPerspectiveFailureAsync(PerspectiveCheckpointFailure failure, CancellationToken ct = default) {
+  public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken ct = default) {
     return Task.CompletedTask;
   }
 
-  public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
-    return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+  public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) {
+    return Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 }

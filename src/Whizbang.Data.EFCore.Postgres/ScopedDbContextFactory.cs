@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// providing the same thread-safety as AddPooledDbContextFactory but without the scope issues.
 /// </remarks>
 /// <typeparam name="TContext">The DbContext type</typeparam>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
 public sealed class ScopedDbContextFactory<[DynamicallyAccessedMembers(
     DynamicallyAccessedMemberTypes.PublicConstructors |
     DynamicallyAccessedMemberTypes.NonPublicConstructors |

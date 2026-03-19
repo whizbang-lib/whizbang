@@ -5,7 +5,7 @@ namespace Whizbang.Core.Lenses;
 /// Used for transient ILensQuery registration - each injection creates factory + query.
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
 public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDisposable, IDisposable
     where TModel : class {

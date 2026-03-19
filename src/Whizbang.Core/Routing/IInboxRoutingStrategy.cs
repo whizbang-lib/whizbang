@@ -3,7 +3,7 @@ namespace Whizbang.Core.Routing;
 /// <summary>
 /// Determines where this service receives commands (inbox subscription).
 /// </summary>
-/// <docs>core-concepts/routing#inbox-routing</docs>
+/// <docs>fundamentals/dispatcher/routing#inbox-routing</docs>
 public interface IInboxRoutingStrategy {
   /// <summary>
   /// Gets the subscription configuration for receiving commands.

@@ -7,7 +7,7 @@ namespace Whizbang.Data.Postgres;
 /// Handles PostgreSQL connection establishment with retry and exponential backoff.
 /// Also supports waiting for schema to be fully initialized before returning success.
 /// </summary>
-/// <docs>components/data/postgres#connection-retry</docs>
+/// <docs>data/postgres#connection-retry</docs>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresConnectionRetryTests.cs</tests>
 public sealed partial class PostgresConnectionRetry {
   private readonly PostgresOptions _options;

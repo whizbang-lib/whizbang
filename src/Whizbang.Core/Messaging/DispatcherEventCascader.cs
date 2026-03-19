@@ -29,7 +29,7 @@ namespace Whizbang.Core.Messaging;
 /// IDispatcher may depend on IReceptorInvoker which depends on IEventCascader.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors#event-cascading</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors#event-cascading</docs>
 public sealed partial class DispatcherEventCascader : IEventCascader {
   private readonly IServiceProvider _serviceProvider;
   private readonly ILogger<DispatcherEventCascader>? _logger;

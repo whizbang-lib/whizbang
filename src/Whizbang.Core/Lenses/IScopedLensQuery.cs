@@ -6,7 +6,7 @@ namespace Whizbang.Core.Lenses;
 /// For batch operations requiring multiple queries in one scope, use <see cref="ILensQueryFactory{TModel}"/>.
 /// </summary>
 /// <typeparam name="TModel">The perspective model type</typeparam>
-/// <docs>lenses/scoped-queries</docs>
+/// <docs>fundamentals/lenses/scoped-queries</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensQueryTests.cs</tests>
 public interface IScopedLensQuery<TModel> where TModel : class {
   /// <summary>

@@ -13,7 +13,7 @@ namespace Whizbang.Generators;
 /// Emits WHIZ070 error when [VectorField] attribute is used but the required package is not referenced.
 /// This ensures users get a helpful compile-time error guiding them to add the necessary package.
 /// </summary>
-/// <docs>diagnostics/whiz070</docs>
+/// <docs>operations/diagnostics/whiz070</docs>
 /// <tests>tests/Whizbang.Generators.Tests/VectorDependencyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class VectorDependencyAnalyzer : DiagnosticAnalyzer {

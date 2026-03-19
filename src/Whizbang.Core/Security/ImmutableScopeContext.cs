@@ -15,7 +15,7 @@ namespace Whizbang.Core.Security;
 ///
 /// The wrapper delegates all IScopeContext methods to the inner context.
 /// </remarks>
-/// <docs>core-concepts/message-security#immutable-context</docs>
+/// <docs>fundamentals/security/message-security#immutable-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs</tests>
 public sealed class ImmutableScopeContext : IScopeContext {
   private readonly SecurityExtraction _extraction;

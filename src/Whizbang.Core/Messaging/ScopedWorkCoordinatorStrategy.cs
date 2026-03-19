@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -32,12 +31,13 @@ public record ScopedWorkCoordinatorDependencies {
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ScopedStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Scoped strategy - batches operations within a scope (e.g., HTTP request, message handler).
 /// Flushes on scope disposal (IAsyncDisposable pattern).
 /// Provides a good balance of latency and efficiency.
 /// Best for: Web APIs, message handlers, transactional operations.
 /// </summary>
-public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
+public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkChannelWriter? _workChannelWriter;
@@ -153,45 +153,42 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       LogFlushingWithInstanceId(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _queues.OutboxMessages.Count);
     }
 
-    // Check if lifecycle tracing is enabled
-    var enableLifecycleTracing = _dependencies.TracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+    // Snapshot arrays from queues + pending audit messages
+    var outboxMessages = _queues.OutboxMessages.ToArray();
+    var inboxMessages = _queues.InboxMessages.ToArray();
+    var outboxCompletions = _queues.OutboxCompletions.ToArray();
+    var inboxCompletions = _queues.InboxCompletions.ToArray();
+    var outboxFailures = _queues.OutboxFailures.ToArray();
+    var inboxFailures = _queues.InboxFailures.ToArray();
+    var pendingAuditMessages = _queues.PendingAuditMessages.Count > 0
+      ? _queues.PendingAuditMessages.ToArray()
+      : null;
 
-    // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PreDistributeAsync,
-      LifecycleStage.PreDistributeInline,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
+    var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+      _coordinator,
       _dependencies.ScopeFactory,
+      _instanceProvider,
+      _options,
+      "scoped",
+      outboxMessages,
+      inboxMessages,
+      outboxCompletions,
+      inboxCompletions,
+      outboxFailures,
+      inboxFailures,
+      flags,
       _dependencies.LifecycleMessageDeserializer,
       _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
+      _dependencies.TracingOptions,
+      _metrics,
+      _lifecycleMetrics,
+      workChannelWriter: _workChannelWriter,
+      pendingAuditMessages: pendingAuditMessages,
+      ct
     );
 
-    // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
-    LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-      LifecycleStage.DistributeAsync,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
-      _dependencies.ScopeFactory,
-      _dependencies.LifecycleMessageDeserializer,
-      _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
-    );
-
-    // Merge pending audit messages after lifecycle stages
-    _queues.MergeAuditMessages();
-
-    // Call process_work_batch with all queued operations
-    var request = _queues.BuildRequest(_instanceProvider, _options, flags);
-    var flushSw = System.Diagnostics.Stopwatch.StartNew();
-    var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
-    flushSw.Stop();
-    _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "scoped"));
+    // Clear queues after successful flush
+    _queues.Clear();
 
     // DIAGNOSTIC: Log what was returned from ProcessWorkBatchAsync
     if (_logger != null) {
@@ -201,58 +198,17 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
           var isNewlyStored = (work.Flags & WorkBatchFlags.NewlyStored) != 0;
           LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
         }
-      } else if (_queues.OutboxMessages.Count > 0) {
-        // CRITICAL: We queued messages but got 0 back - this is the bug!
-        LogNoWorkReturned(_logger, _queues.OutboxMessages.Count, _instanceProvider.InstanceId);
-      }
-    }
-
-    // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-      LifecycleStage.PostDistributeAsync,
-      LifecycleStage.PostDistributeInline,
-      _queues.OutboxMessages,
-      _queues.InboxMessages,
-      _dependencies.ScopeFactory,
-      _dependencies.LifecycleMessageDeserializer,
-      _logger,
-      enableLifecycleTracing: enableLifecycleTracing,
-      metrics: _lifecycleMetrics,
-      ct: ct
-    );
-
-    // Clear queues after successful flush
-    _queues.Clear();
-
-    // DIAGNOSTIC: Check if WorkChannelWriter is available
-    if (workBatch.OutboxWork.Count > 0 && _logger != null) {
-      LogWorkChannelWriterStatus(_logger, _workChannelWriter == null ? "NULL" : "AVAILABLE", workBatch.OutboxWork.Count);
-    }
-
-    // Write returned work to channel for immediate processing
-    // This is the critical fix: work returned from process_work_batch should be
-    // queued for processing immediately, not returned to the caller (Dispatcher)
-    if (_workChannelWriter != null && workBatch.OutboxWork.Count > 0) {
-      if (_logger != null) {
-        LogWritingReturnedWork(_logger, workBatch.OutboxWork.Count);
-      }
-
-      try {
-        foreach (var work in workBatch.OutboxWork) {
-          await _workChannelWriter.WriteAsync(work, ct);
-        }
-      } catch (ChannelClosedException) {
-        // Channel was closed during shutdown - this is expected
-        // The work has already been persisted to the database via ProcessWorkBatchAsync,
-        // it will be picked up on the next service restart
-        if (_logger != null) {
-          LogChannelClosedDuringFlush(_logger, workBatch.OutboxWork.Count);
-        }
+      } else if (outboxMessages.Length > 0) {
+        LogNoWorkReturned(_logger, outboxMessages.Length, _instanceProvider.InstanceId);
       }
     }
 
     return workBatch;
   }
+
+  /// <inheritdoc />
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
 
   public async ValueTask DisposeAsync() {
     if (_disposed) {
@@ -335,20 +291,6 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
   static partial void LogFlushSummary(ILogger logger, int queued, int inboxQueued);
 
   [LoggerMessage(
-    EventId = 8,
-    Level = LogLevel.Debug,
-    Message = "WorkChannelWriter is {Status}, returned work count: {Count}"
-  )]
-  static partial void LogWorkChannelWriterStatus(ILogger logger, string status, int count);
-
-  [LoggerMessage(
-    EventId = 9,
-    Level = LogLevel.Debug,
-    Message = "Writing {Count} returned outbox messages to channel for immediate processing"
-  )]
-  static partial void LogWritingReturnedWork(ILogger logger, int count);
-
-  [LoggerMessage(
     EventId = 10,
     Level = LogLevel.Warning,
     Message = "Scoped strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures"
@@ -390,10 +332,4 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
   )]
   static partial void LogNoWorkReturned(ILogger logger, int queuedCount, Guid instanceId);
 
-  [LoggerMessage(
-    EventId = 16,
-    Level = LogLevel.Warning,
-    Message = "Work channel closed during flush - {Count} messages already persisted to database and will be processed on next startup or by another instance"
-  )]
-  static partial void LogChannelClosedDuringFlush(ILogger logger, int count);
 }

@@ -25,7 +25,7 @@ namespace Whizbang.Generators;
 /// without requiring manual SubscribeTo() configuration in RoutingOptions.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#event-namespace-registry</docs>
+/// <docs>fundamentals/dispatcher/routing#event-namespace-registry</docs>
 [Generator]
 public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";

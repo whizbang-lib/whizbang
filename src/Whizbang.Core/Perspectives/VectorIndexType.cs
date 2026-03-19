@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Index types for vector columns in pgvector.
 /// Each type offers different trade-offs between build time, memory, and query performance.
 /// </summary>
-/// <docs>perspectives/vector-fields</docs>
+/// <docs>fundamentals/perspectives/vector-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/VectorIndexTypeTests.cs</tests>
 public enum VectorIndexType {
   /// <summary>

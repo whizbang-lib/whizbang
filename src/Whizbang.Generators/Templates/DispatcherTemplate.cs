@@ -173,7 +173,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// <param name="messageType">The runtime type of the message.</param>
   /// <param name="sourceEnvelope">Optional source envelope for security context inheritance.</param>
   /// <param name="eventId">Optional event ID for sync tracking consistency. When provided, uses this ID instead of generating a new one.</param>
-  /// <docs>core-concepts/dispatcher#auto-cascade-to-outbox</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#auto-cascade-to-outbox</docs>
   [DebuggerStepThrough]
   protected override Task CascadeToOutboxAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Generated type-switch dispatch - zero reflection!
@@ -194,7 +194,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// <param name="messageType">The runtime type of the message.</param>
   /// <param name="sourceEnvelope">Optional source envelope for security context inheritance.</param>
   /// <param name="eventId">Optional event ID for sync tracking consistency. When provided, uses this ID instead of generating a new one.</param>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   [DebuggerStepThrough]
   protected override Task CascadeToEventStoreOnlyAsync(global::Whizbang.Core.IMessage message, Type messageType, global::Whizbang.Core.Observability.IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Generated type-switch dispatch - zero reflection!

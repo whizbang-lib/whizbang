@@ -12,7 +12,7 @@ namespace Whizbang.Core.Perspectives;
 /// They are eventually-consistent denormalized views optimized for queries.
 /// </summary>
 /// <typeparam name="TModel">The read model type that this perspective maintains</typeparam>
-/// <docs>core-concepts/perspectives</docs>
+/// <docs>fundamentals/perspectives/perspectives</docs>
 public interface IPerspectiveFor<TModel> where TModel : class {
   // Marker interface - no methods required
   // Specific event handling enforced by IPerspectiveFor<TModel, TEvent> variants
@@ -24,7 +24,7 @@ public interface IPerspectiveFor<TModel> where TModel : class {
 /// </summary>
 /// <typeparam name="TModel">The read model type</typeparam>
 /// <typeparam name="TEvent1">The event type this perspective handles</typeparam>
-/// <docs>core-concepts/perspectives</docs>
+/// <docs>fundamentals/perspectives/perspectives</docs>
 public interface IPerspectiveFor<TModel, TEvent1> : IPerspectiveFor<TModel>
   where TModel : class
   where TEvent1 : IEvent {

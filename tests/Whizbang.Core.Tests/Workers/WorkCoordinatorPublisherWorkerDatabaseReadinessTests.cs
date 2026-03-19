@@ -300,30 +300,31 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) {
-      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
     }
   }
 
   private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReadyResult { get; set; } = true;
+    private volatile bool _isReadyResult = true;
+    public bool IsReadyResult { get => _isReadyResult; set => _isReadyResult = value; }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReadyResult);
+      return Task.FromResult(_isReadyResult);
     }
   }
 

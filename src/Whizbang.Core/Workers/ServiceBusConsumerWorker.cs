@@ -19,7 +19,7 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <docs>components/workers/service-bus-consumer</docs>
+/// <docs>messaging/transports/service-bus-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
 public partial class ServiceBusConsumerWorker(
@@ -138,7 +138,7 @@ public partial class ServiceBusConsumerWorker(
 
     if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
       // Start a new activity as child of the sender's span
-      var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+      var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
       inboxActivity = WhizbangActivitySource.Transport.StartActivity(
         $"Inbox {messageType}",
         ActivityKind.Consumer,
@@ -381,11 +381,8 @@ public partial class ServiceBusConsumerWorker(
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name for handler name (last part after last '.')
-    var lastDotIndex = messageTypeName.LastIndexOf('.');
-    var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
-      : messageTypeName.Split(',')[0].Trim();
+    // Extract simple type name for handler name
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);

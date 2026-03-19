@@ -15,17 +15,17 @@ public class PerspectiveSyncSignalerTests {
   private sealed class PerspectiveB { }
 
   // ==========================================================================
-  // PerspectiveCheckpointSignal record tests
+  // PerspectiveCursorSignal record tests
   // ==========================================================================
 
   [Test]
-  public async Task PerspectiveCheckpointSignal_StoresAllPropertiesAsync() {
+  public async Task PerspectiveCursorSignal_StoresAllPropertiesAsync() {
     var perspectiveType = typeof(TestPerspective);
     var streamId = Guid.NewGuid();
     var lastEventId = Guid.NewGuid();
     var timestamp = DateTimeOffset.UtcNow;
 
-    var signal = new PerspectiveCheckpointSignal(perspectiveType, streamId, lastEventId, timestamp);
+    var signal = new PerspectiveCursorSignal(perspectiveType, streamId, lastEventId, timestamp);
 
     await Assert.That(signal.PerspectiveType).IsEqualTo(perspectiveType);
     await Assert.That(signal.StreamId).IsEqualTo(streamId);
@@ -34,8 +34,8 @@ public class PerspectiveSyncSignalerTests {
   }
 
   [Test]
-  public async Task PerspectiveCheckpointSignal_IsValueTypeAsync() {
-    var signal = new PerspectiveCheckpointSignal(typeof(TestPerspective), Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow);
+  public async Task PerspectiveCursorSignal_IsValueTypeAsync() {
+    var signal = new PerspectiveCursorSignal(typeof(TestPerspective), Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow);
 
     await Assert.That(signal.GetType().IsValueType).IsTrue();
   }
@@ -51,7 +51,7 @@ public class PerspectiveSyncSignalerTests {
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
 
-    PerspectiveCheckpointSignal? receivedSignal = null;
+    PerspectiveCursorSignal? receivedSignal = null;
     var signalReceived = new TaskCompletionSource<bool>();
 
     using var subscription = signaler.Subscribe(perspectiveType, signal => {

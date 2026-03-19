@@ -23,7 +23,7 @@ namespace Whizbang.Core.Tags;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#hook-registration</docs>
+/// <docs>fundamentals/messages/message-tags#hook-registration</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagHookRegistrationTests.cs</tests>
 /// <param name="AttributeType">The tag attribute type this hook handles (e.g., typeof(SignalTagAttribute)).</param>
 /// <param name="HookType">The hook implementation type (e.g., typeof(SignalRNotificationHook)).</param>

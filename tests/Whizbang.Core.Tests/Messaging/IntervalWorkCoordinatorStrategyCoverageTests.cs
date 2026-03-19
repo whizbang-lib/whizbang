@@ -542,18 +542,18 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class SlowWorkCoordinator : IWorkCoordinator {
@@ -575,18 +575,18 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
@@ -597,18 +597,18 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     }
 
     public Task ReportPerspectiveCompletionAsync(
-      PerspectiveCheckpointCompletion completion,
+      PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task ReportPerspectiveFailureAsync(
-      PerspectiveCheckpointFailure failure,
+      PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
       Guid streamId,
       string perspectiveName,
       CancellationToken cancellationToken = default) =>
-      Task.FromResult<PerspectiveCheckpointInfo?>(null);
+      Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
   private sealed class RecordingLogger<T> : ILogger<T> {

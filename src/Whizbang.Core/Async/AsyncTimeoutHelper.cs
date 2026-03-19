@@ -8,7 +8,7 @@ namespace Whizbang.Core.Async;
 /// <c>CreateLinkedTokenSource</c> → <c>CancelAfter</c> → <c>WaitAsync</c> →
 /// catch <see cref="OperationCanceledException"/> → throw <see cref="TimeoutException"/>.
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#awaiter-identity</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
 /// <tests>Whizbang.Core.Tests/Async/AsyncTimeoutHelperTests.cs</tests>
 public static class AsyncTimeoutHelper {
   /// <summary>

@@ -3,7 +3,7 @@ namespace Whizbang.Core.Audit;
 /// <summary>
 /// Audit severity level for categorizing audit entries.
 /// </summary>
-/// <docs>core-concepts/audit-logging#levels</docs>
+/// <docs>fundamentals/security/audit-logging#levels</docs>
 public enum AuditLevel {
   /// <summary>
   /// Informational audit entry (default).

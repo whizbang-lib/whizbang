@@ -45,7 +45,7 @@ namespace Whizbang.Core.Tags;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#tag-context</docs>
+/// <docs>fundamentals/messages/message-tags#tag-context</docs>
 /// <tests>Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
 public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>

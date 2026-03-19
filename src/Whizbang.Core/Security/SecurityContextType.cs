@@ -4,7 +4,7 @@ namespace Whizbang.Core.Security;
 /// Indicates how security context was established for the current operation.
 /// Used for audit trail and security policy enforcement.
 /// </summary>
-/// <docs>core-concepts/message-security#explicit-security-context-api</docs>
+/// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public enum SecurityContextType {
   /// <summary>

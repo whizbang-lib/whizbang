@@ -38,7 +38,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record OrderCompletedEvent(Guid OrderId, decimal TotalAmount, string TenantId);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags#metric-tag</docs>
+/// <docs>fundamentals/messages/message-tags#metric-tag</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
 public sealed class MetricTagAttribute : MessageTagAttribute {
   /// <summary>

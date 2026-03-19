@@ -12,12 +12,13 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the RestockInventory workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
+/// All tests share a single fixture (PostgreSQL database + hosts) for performance.
+/// Database cleanup between tests ensures isolation.
 /// </summary>
 [NotInParallel("ServiceBus")]
-[Skip("Temporarily skipped for v0.8.5-beta.1 release - Service Bus emulator timing issues in CI")]
+[Timeout(120_000)]
 public class RestockInventoryWorkflowTests {
-  private static ServiceBusIntegrationFixture? _fixture;
+  private ServiceBusIntegrationFixture? _fixture;
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
   private static readonly ProductId _testProdMultiRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -29,23 +30,14 @@ public class RestockInventoryWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    var testIndex = 3;
-    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
-    await _fixture.InitializeAsync();
+    _fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
+    await Task.Delay(500);
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Test)]
-  public async Task CleanupAsync() {
-    if (_fixture != null) {
-      try {
-        await _fixture.CleanupDatabaseAsync();
-      } catch (Exception ex) {
-        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
-      }
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
+  public async Task TeardownAsync() {
+    // Don't dispose - shared fixture is reused across tests
   }
 
 
@@ -57,7 +49,6 @@ public class RestockInventoryWorkflowTests {
   /// 4. Updated inventory is queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(150000)] // 150 seconds: container init (~15s) + 2x create perspectives (90s) + restock perspectives (45s)
   public async Task RestockInventory_PublishesEvent_UpdatesPerspectivesAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -117,7 +108,6 @@ public class RestockInventoryWorkflowTests {
   /// Tests that multiple restock operations accumulate correctly.
   /// </summary>
   [Test]
-  [Timeout(180000)] // 180 seconds: container init (~15s) + 2x create perspectives (90s) + 3x restock perspectives (75s)
   public async Task RestockInventory_MultipleRestocks_AccumulatesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -176,7 +166,6 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking from zero inventory works correctly.
   /// </summary>
   [Test]
-  [Timeout(120000)] // 120 seconds: container init (~15s) + 2x perspective processing (90s)
   public async Task RestockInventory_FromZeroStock_IncreasesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -228,7 +217,6 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking with zero quantity is handled correctly (edge case).
   /// </summary>
   [Test]
-  [Timeout(150000)] // 150 seconds: container init (~15s) + 2x create perspectives (90s) + restock perspectives (45s)
   public async Task RestockInventory_ZeroQuantity_NoChangeAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -282,7 +270,6 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking large quantities works correctly.
   /// </summary>
   [Test]
-  [Timeout(150000)] // 150 seconds: container init (~15s) + 2x create perspectives (90s) + restock perspectives (45s)
   public async Task RestockInventory_LargeQuantity_HandlesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange

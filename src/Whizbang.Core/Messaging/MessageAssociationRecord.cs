@@ -5,7 +5,7 @@ namespace Whizbang.Core.Messaging;
 /// Stores associations between message types and their consumers (perspectives, handlers, receptors).
 /// Populated during startup via reconciliation to enable auto-creation of perspective checkpoints.
 /// </summary>
-/// <docs>core-concepts/message-associations</docs>
+/// <docs>fundamentals/messages/message-associations</docs>
 public sealed class MessageAssociationRecord {
   /// <summary>
   /// Unique identifier for this association.

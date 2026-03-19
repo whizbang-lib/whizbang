@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tags;
 /// <item><description><see cref="Gauge"/> - Point-in-time values (e.g., current memory usage)</description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/message-tags#metric-type</docs>
+/// <docs>fundamentals/messages/message-tags#metric-type</docs>
 public enum MetricType {
   /// <summary>
   /// Counter metric for monotonically increasing values.

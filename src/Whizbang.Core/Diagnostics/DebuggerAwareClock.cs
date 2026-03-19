@@ -13,7 +13,7 @@ namespace Whizbang.Core.Diagnostics;
 /// that need timeouts that don't trigger during debugging.
 /// </para>
 /// </remarks>
-/// <docs>features/debugger-aware-clock</docs>
+/// <docs>extending/features/debugger-aware-clock</docs>
 /// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   private readonly DebuggerAwareClockOptions _options;

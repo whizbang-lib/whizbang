@@ -10,7 +10,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// Emitted when a scope context is established for a request/operation.
 /// Useful for auditing request authentication.
 /// </summary>
-/// <docs>core-concepts/system-events#scope-context-established</docs>
+/// <docs>fundamentals/events/system-events#scope-context-established</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
 public sealed record ScopeContextEstablished : ISystemEvent {

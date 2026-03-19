@@ -11,7 +11,7 @@ namespace Whizbang.Core.SystemEvents;
 /// Builds <see cref="EventAudited"/> outbox messages from domain event outbox messages.
 /// Used by the work coordinator strategy to generate audit trail entries when events are queued.
 /// </summary>
-/// <docs>core-concepts/system-events#audit-builder</docs>
+/// <docs>fundamentals/events/system-events#audit-builder</docs>
 public static class AuditOutboxMessageBuilder {
   /// <summary>
   /// Attempts to build an audit <see cref="OutboxMessage"/> from a domain event outbox message.
@@ -135,11 +135,7 @@ public static class AuditOutboxMessageBuilder {
     }
   }
 
-  private static string _extractFullTypeName(string messageType) {
-    // MessageType is assembly-qualified: "Namespace.TypeName, AssemblyName, ..."
-    // Extract the full type name including namespace (before the first comma)
-    var commaIndex = messageType.IndexOf(',');
-    return commaIndex > 0 ? messageType[..commaIndex] : messageType;
-  }
+  private static string _extractFullTypeName(string messageType) =>
+    TypeNameFormatter.GetFullName(messageType);
 
 }

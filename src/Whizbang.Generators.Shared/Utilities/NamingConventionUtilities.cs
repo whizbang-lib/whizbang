@@ -15,7 +15,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:StripCommonSuffixes_Dto_StripsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:ToDefaultRouteName_ReturnsApiPrefixedRouteAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/Utilities/NamingConventionUtilitiesTests.cs:ToDefaultQueryName_ReturnsCamelCasePluralAsync</tests>
-/// <docs>perspectives/table-naming</docs>
+/// <docs>fundamentals/perspectives/table-naming</docs>
 /// Utilities for converting between naming conventions.
 /// Consolidated from multiple generators for consistency and testability.
 /// </summary>

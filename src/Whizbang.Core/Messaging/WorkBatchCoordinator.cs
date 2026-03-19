@@ -44,8 +44,8 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
     List<MessageFailure>? outboxFailures = null,
     List<MessageCompletion>? inboxCompletions = null,
     List<MessageFailure>? inboxFailures = null,
-    List<PerspectiveCheckpointCompletion>? perspectiveCompletions = null,
-    List<PerspectiveCheckpointFailure>? perspectiveFailures = null,
+    List<PerspectiveCursorCompletion>? perspectiveCompletions = null,
+    List<PerspectiveCursorFailure>? perspectiveFailures = null,
     CancellationToken ct = default
   ) {
     // Call the central SQL function (process_work_batch)
@@ -62,6 +62,7 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
       ReceptorCompletions = [],
       ReceptorFailures = [],
       PerspectiveCompletions = [.. (perspectiveCompletions ?? [])],
+      PerspectiveEventCompletions = [],
       PerspectiveFailures = [.. (perspectiveFailures ?? [])],
       NewOutboxMessages = [],
       NewInboxMessages = [],

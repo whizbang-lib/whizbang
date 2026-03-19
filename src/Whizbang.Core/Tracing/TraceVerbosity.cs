@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tracing;
 ///   <item><description><see cref="Debug"/> - Full payload, timing breakdown</description></item>
 /// </list>
 /// </remarks>
-/// <docs>tracing/verbosity-levels</docs>
+/// <docs>operations/observability/verbosity-levels</docs>
 public enum TraceVerbosity {
   /// <summary>No tracing output.</summary>
   Off = 0,

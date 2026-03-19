@@ -388,7 +388,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[InventoryHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+    // Disable auto-provisioning since emulator has pre-created topics via Config-Named.json
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      opts.AutoProvisionInfrastructure = false;
+    });
 
     // Register OrderedStreamProcessor for message ordering (required by ServiceBusConsumerWorker)
     builder.Services.AddSingleton<OrderedStreamProcessor>();
@@ -495,7 +498,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer for InventoryWorker
     // CRITICAL: InventoryWorker MUST subscribe to receive its own published events to store them in local event store
@@ -505,17 +508,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // For Azure Service Bus: Address = topic name, RoutingKey = subscription name
     inventoryConsumerOptions.Destinations.Add(new TransportDestination(
       Address: topicA,  // topic-00
-      RoutingKey: "sub-00-b",
-      Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
-      }
+      RoutingKey: "sub-00-b"
     ));
     inventoryConsumerOptions.Destinations.Add(new TransportDestination(
       Address: topicB,  // topic-01
-      RoutingKey: "sub-01-b",
-      Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"inventory-worker\"").RootElement.Clone()
-      }
+      RoutingKey: "sub-01-b"
     ));
     builder.Services.AddSingleton(inventoryConsumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
@@ -581,7 +578,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[BFFHost] Registered SHARED ServiceBusClient in DI");
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+    // Disable auto-provisioning since emulator has pre-created topics via Config-Named.json
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString, opts => {
+      opts.AutoProvisionInfrastructure = false;
+    });
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -606,6 +606,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
 
+    // Register dispatcher infrastructure (includes IReceptorInvoker needed for PostPerspectiveInline lifecycle callbacks)
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
     // Register lifecycle services for Distribute stage support
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
@@ -640,8 +642,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
-    // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
-    // BFF only materializes perspectives - it doesn't send commands
+    // NOTE: BFF.API has no command receptors, but AddWhizbangDispatcher is still required
+    // for IReceptorInvoker registration (needed by PostPerspectiveInline lifecycle callbacks)
 
     // Register BFF perspectives manually (avoid ambiguity with InventoryWorker perspectives)
     // NEW: Converted perspectives - registered by AddPerspectiveRunners, just need scoped instances for runner resolution
@@ -682,7 +684,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
     // BFF subscribes to generic topics with generic subscriptions (sub-00-a, sub-01-a)
@@ -691,17 +693,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // For Azure Service Bus: Address = topic name, RoutingKey = subscription name
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: topicA,  // topic-00
-      RoutingKey: "sub-00-a",
-      Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
-      }
+      RoutingKey: "sub-00-a"
     ));
     consumerOptions.Destinations.Add(new TransportDestination(
       Address: topicB,  // topic-01
-      RoutingKey: "sub-01-a",
-      Metadata: new Dictionary<string, JsonElement> {
-        ["SubscriberName"] = JsonDocument.Parse("\"bff-api\"").RootElement.Clone()
-      }
+      RoutingKey: "sub-01-a"
     ));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
@@ -921,44 +917,48 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    // Gracefully handle connection failures (container may have stopped after test completion)
-    try {
-      using (var scope = _inventoryHost!.Services.CreateScope()) {
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    // Retry on deadlock: with shared fixtures, workers may still hold row locks when cleanup runs.
+    // TRUNCATE requires ACCESS EXCLUSIVE locks, so deadlocks are transient — retry after a short delay.
+    const int maxRetries = 3;
+    for (var attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        using (var scope = _inventoryHost!.Services.CreateScope()) {
+          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-        // Truncate Whizbang core tables, perspective tables, and checkpoints
-        // CASCADE ensures all dependent data is cleared
-        // Use DO block to gracefully handle case where tables don't exist
-        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-        await dbContext.Database.ExecuteSqlRawAsync(@"
-          DO $$
-          BEGIN
-            -- Truncate core infrastructure tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$
+            BEGIN
+              -- Truncate core infrastructure tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
-            -- Truncate all perspective tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
-            TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
-            TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
+              -- Truncate all perspective tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
-            -- Truncate core infrastructure tables (BFF schema)
-            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              -- Truncate core infrastructure tables (BFF schema)
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
-            -- Truncate all perspective tables (BFF schema)
-            TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
-            TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
-            TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
-          EXCEPTION
-            WHEN undefined_table THEN
-              -- Tables don't exist, nothing to clean up
-              NULL;
-          END $$;
-        ", cancellationToken);
+              -- Truncate all perspective tables (BFF schema)
+              TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
+            EXCEPTION
+              WHEN undefined_table THEN
+                -- Tables don't exist, nothing to clean up
+                NULL;
+            END $$;
+          ", cancellationToken);
+        }
+        break; // Success
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        // 40P01 = deadlock_detected — workers still hold locks, retry after delay
+        Console.WriteLine($"[ServiceBusFixture] Deadlock during cleanup (attempt {attempt}/{maxRetries}), retrying...");
+        await Task.Delay(500 * attempt, cancellationToken);
+      } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
+        Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
+        break;
       }
-    } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
-      // Database container has been stopped - this is expected during test teardown
-      // Silently ignore connection failures since cleanup is not critical after tests complete
-      Console.WriteLine("[ServiceBusFixture] Database cleanup skipped - container already stopped");
     }
   }
 
@@ -1084,7 +1084,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0) as outbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0) as inbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var invReader = await invCmd.ExecuteReaderAsync();
       await invReader.ReadAsync();
       var invOutbox = invReader.GetInt32(0);
@@ -1104,7 +1104,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_outbox WHERE (status & 4) = 0) as outbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_inbox WHERE (status & 2) = 0) as inbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var bffReader = await bffCmd.ExecuteReaderAsync();
       await bffReader.ReadAsync();
       var bffOutbox = bffReader.GetInt32(0);
@@ -1140,7 +1140,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Performs SQL diagnostics for event and perspective checkpoint debugging.
-  /// Queries inbox, event store, and perspective checkpoints for a specific event type.
+  /// Queries inbox, event store, and perspective cursors for a specific event type.
   /// Controlled by WHIZBANG_DEBUG environment variable or debug parameter.
   /// </summary>
   /// <param name="eventTypeName">Simple event type name (e.g., "InventoryRestockedEvent")</param>
@@ -1225,7 +1225,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 3: Check perspective checkpoints (should exist for streams that have events)
+    // Query 3: Check perspective cursors (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
@@ -1234,7 +1234,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           stream_id AS StreamId,
           last_event_id AS LastEventId,
           status AS Status
-        FROM inventory.wh_perspective_checkpoints
+        FROM inventory.wh_perspective_cursors
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -1324,7 +1324,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
-    // Query 5: Check BFF perspective checkpoints
+    // Query 5: Check BFF perspective cursors
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
@@ -1333,7 +1333,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           stream_id AS StreamId,
           last_event_id AS LastEventId,
           status AS Status
-        FROM bff.wh_perspective_checkpoints
+        FROM bff.wh_perspective_cursors
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
 
@@ -1341,12 +1341,14 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
         .ToListAsync(cancellationToken);
 
-      logger.LogDebug("[SQL Diagnostic] BFF perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
-        eventTypeName, bffCheckpointResults.Count);
+      if (logger.IsEnabled(LogLevel.Debug)) {
+        logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
+          eventTypeName, bffCheckpointResults.Count);
 
-      foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        foreach (var row in bffCheckpointResults) {
+          logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+            row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        }
       }
 
       // Query 6: Check BFF perspective_events (THE CRITICAL QUERY!)

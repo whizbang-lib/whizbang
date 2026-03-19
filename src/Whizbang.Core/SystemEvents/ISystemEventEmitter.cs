@@ -16,7 +16,7 @@ namespace Whizbang.Core.SystemEvents;
 /// infinite loops.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#emitter</docs>
+/// <docs>fundamentals/events/system-events#emitter</docs>
 public interface ISystemEventEmitter {
   /// <summary>
   /// Emits an <see cref="EventAudited"/> system event for a domain event that was appended.

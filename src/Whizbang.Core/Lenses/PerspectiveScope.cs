@@ -43,7 +43,7 @@ public class ScopeExtension {
 /// Multi-tenancy and security scope for perspective rows.
 /// Stored as JSONB/JSON in scope column using EF Core ComplexProperty().ToJson().
 /// </summary>
-/// <docs>core-concepts/scoping#perspective-scope</docs>
+/// <docs>fundamentals/security/scoping#perspective-scope</docs>
 /// <tests>Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
 /// <example>
 /// var scope = new PerspectiveScope {

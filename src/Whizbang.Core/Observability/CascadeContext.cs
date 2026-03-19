@@ -16,7 +16,7 @@ namespace Whizbang.Core.Observability;
 ///
 /// Use this instead of manually extracting and passing individual properties.
 /// </remarks>
-/// <docs>core-concepts/cascade-context</docs>
+/// <docs>fundamentals/messages/cascade-context</docs>
 /// <tests>tests/Whizbang.Observability.Tests/CascadeContextTests.cs</tests>
 public sealed record CascadeContext {
   /// <summary>

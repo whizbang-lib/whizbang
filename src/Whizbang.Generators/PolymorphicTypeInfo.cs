@@ -19,7 +19,7 @@ namespace Whizbang.Generators;
 /// <param name="BaseSimpleName">Simple type name without namespace, used for method naming</param>
 /// <param name="DerivedTypes">All concrete derived types that inherit from or implement this base</param>
 /// <param name="IsInterface">True if BaseTypeName is an interface, false if it's a class</param>
-/// <docs>source-generators/polymorphic-serialization</docs>
+/// <docs>extending/source-generators/polymorphic-serialization</docs>
 internal sealed record PolymorphicTypeInfo(
     string BaseTypeName,
     string BaseSimpleName,

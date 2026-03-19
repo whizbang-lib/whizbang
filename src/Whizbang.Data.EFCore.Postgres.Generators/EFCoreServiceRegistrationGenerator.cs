@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCursors_HasCompositePrimaryKeyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithValidDbContext_ProducesNoDiagnosticsAsync</tests>
 /// Source generator that discovers perspective implementations (IPerspectiveFor&lt;TModel&gt;),
@@ -1182,7 +1182,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
     sb.AppendLine("/// Use this to conditionally enable pgvector support based on compile-time discovery.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("/// <docs>features/vector-search#auto-config</docs>");
+    sb.AppendLine("/// <docs>extending/features/vector-search#auto-config</docs>");
     sb.AppendLine("public static class VectorConfigurationRegistry {");
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// Indicates whether any perspective models have [VectorField] attributes.");
@@ -2052,7 +2052,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.Append(',');
       }
       sb.Append('{');
-      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelTypeName)}\",");
+      // Strip global:: prefix when writing to DB — ModelTypeName uses global:: for C# code generation
+      // but the database needs the plain CLR type name for runtime lookups
+      var dbClrTypeName = perspective.ModelTypeName.Replace("global::", "");
+      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
       sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
       sb.Append($"\"SchemaJson\":{schemaJson},");
       sb.Append($"\"SchemaHash\":\"{schemaHash}\",");

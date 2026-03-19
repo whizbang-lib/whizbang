@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <see cref="AwaitPerspectiveSyncAttribute"/> has <c>ThrowOnTimeout = true</c>
 /// and the sync operation times out before the perspective catches up.
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 public sealed class PerspectiveSyncTimeoutException : Exception {
   /// <summary>
   /// Initializes a new instance of <see cref="PerspectiveSyncTimeoutException"/>.

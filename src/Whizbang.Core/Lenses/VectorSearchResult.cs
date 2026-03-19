@@ -7,7 +7,7 @@ namespace Whizbang.Core.Lenses;
 /// <param name="Row">The perspective row from the search.</param>
 /// <param name="Distance">The distance from the search vector (lower is closer). Metric depends on the search type.</param>
 /// <param name="Similarity">The similarity score (higher is more similar). For cosine, this is 1 - Distance.</param>
-/// <docs>lenses/vector-search</docs>
+/// <docs>fundamentals/lenses/vector-search</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorSearchExtensionsTests.cs</tests>
 /// <remarks>
 /// <para>

@@ -26,7 +26,7 @@ namespace Whizbang.Core.Transports;
 /// - Security contexts
 /// - Caller information
 /// </summary>
-/// <docs>components/transports</docs>
+/// <docs>messaging/transports/transports</docs>
 public interface IMessageSerializer {
   /// <summary>
   /// Serializes a message envelope to bytes for network transport.

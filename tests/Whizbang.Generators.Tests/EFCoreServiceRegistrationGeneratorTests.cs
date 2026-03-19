@@ -684,11 +684,11 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// Test that perspective_checkpoints table has composite primary key.
+  /// Test that perspective_cursors table has composite primary key.
   /// The PK should be (stream_id, perspective_name).
   /// </summary>
   [Test]
-  public async Task Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync() {
+  public async Task Generator_PerspectiveCursors_HasCompositePrimaryKeyAsync() {
     // Arrange
     var source = $$"""
       using Microsoft.EntityFrameworkCore;

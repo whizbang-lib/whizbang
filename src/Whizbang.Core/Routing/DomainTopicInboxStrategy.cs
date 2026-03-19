@@ -4,7 +4,7 @@ namespace Whizbang.Core.Routing;
 /// Each domain has its own inbox topic.
 /// JDNext-style - explicit inbox per domain.
 /// </summary>
-/// <docs>core-concepts/routing#domain-topic-inbox</docs>
+/// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
 public sealed class DomainTopicInboxStrategy : IInboxRoutingStrategy {
   private readonly string _suffix;
 

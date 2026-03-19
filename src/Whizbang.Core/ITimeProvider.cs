@@ -18,7 +18,7 @@ namespace Whizbang.Core;
 /// For testing, inject a mock or fake implementation to control time.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/time-provider</docs>
+/// <docs>fundamentals/identity/time-provider</docs>
 public interface ITimeProvider {
   /// <summary>
   /// Gets the current UTC date and time.

@@ -5,9 +5,8 @@ on:
     branches:
       - main
       - develop
-      - 'release/**'
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, 'release/**']
   workflow_dispatch:
 
 permissions:

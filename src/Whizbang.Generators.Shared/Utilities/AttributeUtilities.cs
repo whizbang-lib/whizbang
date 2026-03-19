@@ -14,7 +14,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Named arguments are checked first and take precedence over constructor arguments.
 /// Constructor parameter names are matched case-insensitively to property names.
 /// </remarks>
-/// <docs>source-generators/attribute-utilities</docs>
+/// <docs>extending/source-generators/attribute-utilities</docs>
 /// <tests>Whizbang.Generators.Tests/Utilities/AttributeUtilitiesTests.cs</tests>
 public static class AttributeUtilities {
   /// <summary>

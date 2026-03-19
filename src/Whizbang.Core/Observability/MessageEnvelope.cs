@@ -12,7 +12,7 @@ namespace Whizbang.Core.Observability;
 /// Carries context across network boundaries and through the entire execution pipeline.
 /// </summary>
 /// <typeparam name="TMessage">The type of the message payload</typeparam>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {

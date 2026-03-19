@@ -12,7 +12,7 @@ namespace Whizbang.Core.Routing;
 /// 3. Namespace convention (Commands, Events, Queries in namespace)
 /// 4. Type name suffix (Command, Event, Query, Created, Updated, Deleted)
 /// </remarks>
-/// <docs>core-concepts/routing#message-kind</docs>
+/// <docs>fundamentals/dispatcher/routing#message-kind</docs>
 public static class MessageKindDetector {
   // Event suffixes that indicate an event type
   private static readonly string[] _eventSuffixes = [

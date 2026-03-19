@@ -122,7 +122,7 @@ public partial class DapperWorkCoordinator(
       p_partition_count = request.PartitionCount,
       p_outbox_completions = serializedData.OutboxCompletions,
       p_inbox_completions = serializedData.InboxCompletions,
-      p_perspective_event_completions = "[]",  // Not used - perspective events managed internally
+      p_perspective_event_completions = serializedData.PerspectiveEventCompletions,
       p_perspective_completions = serializedData.PerspectiveCompletions,  // Checkpoint-level completions
       p_outbox_failures = serializedData.OutboxFailures,
       p_inbox_failures = serializedData.InboxFailures,
@@ -251,6 +251,7 @@ public partial class DapperWorkCoordinator(
             }
 
             perspectiveWork.Add(new PerspectiveWork {
+              WorkId = r.work_id,
               StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
               PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
               LastProcessedEventId = null,
@@ -362,21 +363,30 @@ public partial class DapperWorkCoordinator(
     return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
-  private string _serializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
+  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
-  private string _serializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
+  private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
     }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
@@ -417,17 +427,17 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <summary>
-  /// Reports perspective checkpoint completion directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor completion directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
   public async Task ReportPerspectiveCompletionAsync(
-    PerspectiveCheckpointCompletion completion,
+    PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
       new {
         StreamId = completion.StreamId,
         PerspectiveName = completion.PerspectiveName,
@@ -438,17 +448,17 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <summary>
-  /// Reports perspective checkpoint failure directly (out-of-band).
-  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Reports perspective cursor failure directly (out-of-band).
+  /// Calls complete_perspective_cursor_work SQL function directly without full work batch processing.
   /// </summary>
   public async Task ReportPerspectiveFailureAsync(
-    PerspectiveCheckpointFailure failure,
+    PerspectiveCursorFailure failure,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
     await connection.ExecuteAsync(
-      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      "SELECT complete_perspective_cursor_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
       new {
         StreamId = failure.StreamId,
         PerspectiveName = failure.PerspectiveName,
@@ -462,26 +472,27 @@ public partial class DapperWorkCoordinator(
   /// Gets the current checkpoint for a perspective stream.
   /// Returns null if no checkpoint exists yet.
   /// </summary>
-  public async Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+  public async Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
     Guid streamId,
     string perspectiveName,
     CancellationToken cancellationToken = default) {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
-    var result = await connection.QueryFirstOrDefaultAsync<CheckpointQueryResult>(
-      "SELECT stream_id, perspective_name, last_event_id, status FROM wh_perspective_checkpoints WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
+    var result = await connection.QueryFirstOrDefaultAsync<CursorQueryResult>(
+      "SELECT stream_id, perspective_name, last_event_id, status, rewind_trigger_event_id FROM wh_perspective_cursors WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
       new { StreamId = streamId, PerspectiveName = perspectiveName });
 
     if (result == null) {
       return null;
     }
 
-    return new PerspectiveCheckpointInfo {
+    return new PerspectiveCursorInfo {
       StreamId = result.stream_id,
       PerspectiveName = result.perspective_name,
       LastEventId = result.last_event_id,
-      Status = (PerspectiveProcessingStatus)result.status
+      Status = (PerspectiveProcessingStatus)result.status,
+      RewindTriggerEventId = result.rewind_trigger_event_id
     };
   }
 
@@ -529,6 +540,7 @@ public partial class DapperWorkCoordinator(
       OutboxFailures: _serializeFailures(request.OutboxFailures),
       InboxCompletions: _serializeCompletions(request.InboxCompletions),
       InboxFailures: _serializeFailures(request.InboxFailures),
+      PerspectiveEventCompletions: _serializePerspectiveEventCompletions(request.PerspectiveEventCompletions),
       PerspectiveCompletions: _serializePerspectiveCompletions(request.PerspectiveCompletions),
       PerspectiveFailures: _serializePerspectiveFailures(request.PerspectiveFailures),
       NewOutboxMessages: _serializeNewOutboxMessages(request.NewOutboxMessages),
@@ -677,14 +689,15 @@ internal class WorkBatchRow {
 }
 
 /// <summary>
-/// DTO for querying perspective checkpoint info.
+/// DTO for querying perspective cursor info.
 /// Uses snake_case to match PostgreSQL column names.
 /// </summary>
-internal class CheckpointQueryResult {
+internal class CursorQueryResult {
   public Guid stream_id { get; set; }
   public string perspective_name { get; set; } = string.Empty;
   public Guid? last_event_id { get; set; }
   public short status { get; set; }
+  public Guid? rewind_trigger_event_id { get; set; }
 }
 
 /// <summary>
@@ -696,6 +709,7 @@ internal sealed record SerializedWorkBatchData(
   string OutboxFailures,
   string InboxCompletions,
   string InboxFailures,
+  string PerspectiveEventCompletions,
   string PerspectiveCompletions,
   string PerspectiveFailures,
   string NewOutboxMessages,

@@ -27,7 +27,7 @@ namespace Whizbang.Core.Lenses;
 /// });
 /// </code>
 /// </example>
-/// <docs>core-concepts/scoped-lenses#scope-definition</docs>
+/// <docs>fundamentals/lenses/scoped-lenses#scope-definition</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
 public sealed class ScopeDefinition {
   /// <summary>

@@ -8,7 +8,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
 /// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
@@ -205,7 +205,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
       (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
       // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
-      (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
+      (PerspectiveCursorsSchema.Table, "Perspective Cursors - Read model projection tracking (cursor-style)"),
+      (PerspectiveSnapshotsSchema.Table, "Perspective Snapshots - Periodic state snapshots for efficient rewind"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (PerspectiveRegistrySchema.Table, "Perspective Registry - CLR type to table name mappings with schema JSON"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),

@@ -38,7 +38,7 @@ namespace Whizbang.Core.Messaging;
 /// }
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
 public interface ILifecycleContext {
   /// <summary>
   /// Gets the current lifecycle stage at which the receptor is being invoked.
@@ -124,4 +124,24 @@ public interface ILifecycleContext {
   /// </code>
   /// </remarks>
   int? AttemptNumber { get; }
+
+  /// <summary>
+  /// Gets the processing mode for this lifecycle invocation, if applicable.
+  /// Null for normal live processing or when mode is not applicable.
+  /// Set to <see cref="Messaging.ProcessingMode.Replay"/> during rewind replay
+  /// and <see cref="Messaging.ProcessingMode.Rebuild"/> during perspective rebuilds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Use Case:</strong> Opted-in receptors (decorated with <see cref="FireDuringReplayAttribute"/>)
+  /// can check this property to branch their behavior during replay:
+  /// </para>
+  /// <code>
+  /// if (_context?.ProcessingMode == ProcessingMode.Replay) {
+  ///   // Lightweight update only — skip expensive operations
+  /// }
+  /// </code>
+  /// </remarks>
+  /// <docs>fundamentals/receptors/lifecycle-receptors#processing-mode</docs>
+  ProcessingMode? ProcessingMode { get; }
 }

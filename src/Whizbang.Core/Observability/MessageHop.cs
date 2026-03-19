@@ -40,7 +40,7 @@ public enum HopType {
 /// Records where and when the message was processed, including caller information for debugging.
 /// Can represent either a hop for the current message or carry-forward hop from the causation message.
 /// </summary>
-/// <docs>core-concepts/observability</docs>
+/// <docs>fundamentals/persistence/observability</docs>
 [JsonConverter(typeof(MessageHopConverter))]
 public record MessageHop {
   /// <summary>

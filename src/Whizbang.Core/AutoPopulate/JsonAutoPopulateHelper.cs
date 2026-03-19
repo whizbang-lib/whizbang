@@ -17,7 +17,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// and requires no reflection.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public static class JsonAutoPopulateHelper {
   /// <summary>
   /// Populates timestamp properties on a JSON payload by message type.

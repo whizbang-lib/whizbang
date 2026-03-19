@@ -33,7 +33,7 @@ namespace Whizbang.Observability.Hooks;
 /// // The hook will automatically create a span when this event is processed
 /// </code>
 /// </example>
-/// <docs>observability/opentelemetry-integration</docs>
+/// <docs>operations/observability/opentelemetry-integration</docs>
 /// <tests>Whizbang.Observability.Tests/Hooks/OpenTelemetrySpanHookTests.cs</tests>
 public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribute> {
   /// <summary>

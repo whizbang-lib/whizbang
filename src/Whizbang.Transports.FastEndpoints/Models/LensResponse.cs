@@ -5,7 +5,7 @@ namespace Whizbang.Transports.FastEndpoints;
 /// Includes data, paging metadata, and navigation helpers.
 /// </summary>
 /// <typeparam name="TModel">The read model type</typeparam>
-/// <docs>rest/lens-integration</docs>
+/// <docs>apis/rest/lens-integration</docs>
 /// <tests>tests/Whizbang.Transports.FastEndpoints.Tests/Unit/LensResponseTests.cs</tests>
 /// <example>
 /// var response = new LensResponse&lt;OrderReadModel&gt; {

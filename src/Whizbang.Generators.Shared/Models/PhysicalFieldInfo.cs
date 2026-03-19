@@ -16,7 +16,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// <param name="VectorDistanceMetric">Distance metric for vector index (L2=0, InnerProduct=1, Cosine=2)</param>
 /// <param name="VectorIndexType">Index type for vectors (None=0, IVFFlat=1, HNSW=2)</param>
 /// <param name="VectorIndexLists">Number of lists for IVFFlat index</param>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/Models/PhysicalFieldInfoTests.cs</tests>
 public sealed record PhysicalFieldInfo(
     string PropertyName,

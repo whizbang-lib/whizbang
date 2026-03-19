@@ -7,7 +7,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Wrapper for ServiceBusAdministrationClient that implements IServiceBusAdminClient.
 /// Provides a testable abstraction over the Azure SDK's sealed classes.
 /// </summary>
-/// <docs>transports/azure-service-bus#admin-client</docs>
+/// <docs>messaging/transports/azure-service-bus#admin-client</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
 public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
   private readonly ServiceBusAdministrationClient _adminClient;

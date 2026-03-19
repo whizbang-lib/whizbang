@@ -3,7 +3,7 @@ namespace Whizbang.Core.Lenses;
 /// <summary>
 /// Specifies how scope filters are applied to lens queries.
 /// </summary>
-/// <docs>core-concepts/scoped-lenses#filter-modes</docs>
+/// <docs>fundamentals/lenses/scoped-lenses#filter-modes</docs>
 public enum FilterMode {
   /// <summary>
   /// Filter using equality comparison (WHERE property = @value).

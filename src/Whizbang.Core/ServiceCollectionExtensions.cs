@@ -83,7 +83,7 @@ public static class ServiceCollectionExtensions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>core-concepts/dependency-injection#multiple-addwhizbang-calls</docs>
+  /// <docs>operations/configuration/dependency-injection#multiple-addwhizbang-calls</docs>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async</tests>
@@ -192,6 +192,12 @@ public static class ServiceCollectionExtensions {
     // Deferred outbox channel for events published outside transaction context
     // Events queued here are drained by the work coordinator in the next lifecycle loop
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
+
+    // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
+    // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
+    // but the factory lambda resolves at runtime so ordering is fine.
+    services.TryAddScoped<Messaging.IWorkFlusher>(sp =>
+      (Messaging.IWorkFlusher)sp.GetRequiredService<Messaging.IWorkCoordinatorStrategy>());
 
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();

@@ -9,7 +9,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <summary>
 /// Extension methods for registering system event services with dependency injection.
 /// </summary>
-/// <docs>core-concepts/system-events#registration</docs>
+/// <docs>fundamentals/events/system-events#registration</docs>
 public static class SystemEventServiceCollectionExtensions {
   /// <summary>
   /// Adds system event infrastructure services.

@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/UnifiedQuerySyntaxTests.cs</tests>
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   private readonly PhysicalFieldExpressionVisitor _visitor = new();

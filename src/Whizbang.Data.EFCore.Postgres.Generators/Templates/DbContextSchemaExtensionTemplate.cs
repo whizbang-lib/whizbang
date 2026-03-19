@@ -195,7 +195,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Executes core infrastructure table DDL at runtime.
   /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
-  /// PerspectiveCheckpoints, RequestResponse, ServiceInstances, PartitionAssignments,
+  /// PerspectiveCursors, RequestResponse, ServiceInstances, PartitionAssignments,
   /// MessageDeduplication, Sequences, and EventSequence.
   /// SQL is generated at runtime using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
   /// AOT-compatible - no reflection or dynamic code generation, just string building.
@@ -204,6 +204,24 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     __DBCONTEXT_FQN__ dbContext,
     ILogger? logger,
     CancellationToken cancellationToken) {
+
+    // Backward-compatibility: rename old table names before creating new ones.
+    // Must happen before CREATE TABLE IF NOT EXISTS, otherwise the old table remains
+    // orphaned and migration 033 fails with 42P07 (relation already exists).
+    const string BackwardCompatRenames = @"
+ALTER TABLE IF EXISTS ""__SCHEMA__"".wh_perspective_checkpoints RENAME TO wh_perspective_cursors;
+ALTER INDEX IF EXISTS idx_perspective_checkpoints_perspective_name RENAME TO idx_perspective_cursors_perspective_name;
+ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_perspective_cursors_last_event_id;
+";
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(BackwardCompatRenames, cancellationToken);
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // Target table already exists — old table was already renamed or new table was created fresh
+      logger?.LogDebug("Backward-compat rename skipped (target already exists): {Message}", ex.MessageText);
+    } catch (Exception ex) {
+      // Non-critical — log and continue (fresh databases won't have the old table)
+      logger?.LogDebug(ex, "Backward-compat rename completed or skipped");
+    }
 
     // Generate schema SQL at runtime from C# definitions
     var schemaConfig = new SchemaConfiguration(
@@ -322,7 +340,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Executes constraint DDL for composite primary keys and foreign keys.
   /// These constraints are not yet supported in TableDefinition, so they're added manually.
-  /// Includes: composite PK for perspective_checkpoints, FKs to event_store, unique constraints.
+  /// Includes: composite PK for perspective_cursors, FKs to event_store, unique constraints.
   /// </summary>
   private static async Task ExecuteConstraintsAsync(
     __DBCONTEXT_FQN__ dbContext,
@@ -343,12 +361,12 @@ BEGIN
       FOREIGN KEY (event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
   END IF;
 
-  -- FK: perspective_checkpoints.last_event_id -> event_store.event_id
+  -- FK: perspective_cursors.last_event_id -> event_store.event_id
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_checkpoints_event'
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_cursors_event'
   ) THEN
-    ALTER TABLE __QUOTED_SCHEMA__.wh_perspective_checkpoints
-      ADD CONSTRAINT fk_perspective_checkpoints_event
+    ALTER TABLE __QUOTED_SCHEMA__.wh_perspective_cursors
+      ADD CONSTRAINT fk_perspective_cursors_event
       FOREIGN KEY (last_event_id) REFERENCES __QUOTED_SCHEMA__.wh_event_store(event_id) ON DELETE RESTRICT;
   END IF;
 END $$;
@@ -361,11 +379,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
   ON __QUOTED_SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
 
-CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_catching_up
-  ON __QUOTED_SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
+CREATE INDEX IF NOT EXISTS idx_perspective_cursors_catching_up
+  ON __QUOTED_SCHEMA__.wh_perspective_cursors(status) WHERE (status & 8) = 8; -- CatchingUp flag
 
-CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
-  ON __QUOTED_SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
+CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
+  ON __QUOTED_SCHEMA__.wh_perspective_cursors(status) WHERE (status & 4) = 4; -- Failed flag
 ";
 
     try {
@@ -596,7 +614,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       "wh_event_store",
       "wh_events", // Alias for wh_event_store
       "wh_receptor_processing",
-      "wh_perspective_checkpoints",
+      "wh_perspective_cursors",
       "wh_perspective_events",
       "wh_message_associations",
       "wh_request_response",
@@ -610,10 +628,26 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
 
     // Replace each table name with schema-qualified version
     // Use word boundaries (\b) to avoid replacing column names or partial matches
+    // First, protect RENAME TO targets by replacing them with a placeholder
+    // PostgreSQL RENAME TO requires an unqualified name, so these must NOT be schema-qualified
+    var renameToPlaceholders = new System.Collections.Generic.Dictionary<string, string>();
+    transformedSql = System.Text.RegularExpressions.Regex.Replace(
+      transformedSql,
+      @"(RENAME\s+TO\s+)(\w+)",
+      m => {
+        var placeholder = $"__RENAME_TARGET_{renameToPlaceholders.Count}__";
+        renameToPlaceholders[placeholder] = m.Groups[2].Value;
+        return m.Groups[1].Value + placeholder;
+      },
+      System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+      System.TimeSpan.FromSeconds(5)
+    );
+
     foreach (var tableName in tableNames) {
       // Pattern: tableName NOT preceded by period (to avoid replacing already-qualified names)
       // Matches: "FROM wh_inbox", "ALTER TABLE wh_inbox", etc.
       // Does NOT match: "inventory.wh_inbox", "wh_inbox_id" (column name)
+      // RENAME TO targets are protected by placeholders above
       // Uses quoted schema to handle PostgreSQL reserved keywords (e.g., "user")
       transformedSql = System.Text.RegularExpressions.Regex.Replace(
         transformedSql,
@@ -622,6 +656,11 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         System.Text.RegularExpressions.RegexOptions.IgnoreCase,
         System.TimeSpan.FromSeconds(5)
       );
+    }
+
+    // Restore RENAME TO placeholders
+    foreach (var (placeholder, original) in renameToPlaceholders) {
+      transformedSql = transformedSql.Replace(placeholder, original);
     }
 
     // List of Whizbang PostgreSQL function names to qualify

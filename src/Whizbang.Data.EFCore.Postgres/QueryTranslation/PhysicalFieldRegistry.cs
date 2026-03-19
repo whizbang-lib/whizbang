@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// Designed for startup initialization by generated code.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/physical-fields</docs>
+/// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PhysicalFieldRegistryTests.cs</tests>
 public static class PhysicalFieldRegistry {
   private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), PhysicalFieldMapping> _mappings = new();

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// Use this service at transport startup to determine which event topics to subscribe to.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#event-subscription-discovery</docs>
+/// <docs>fundamentals/dispatcher/routing#event-subscription-discovery</docs>
 public sealed class EventSubscriptionDiscovery {
   private readonly IEventNamespaceRegistry? _registry;
   private readonly RoutingOptions _routingOptions;

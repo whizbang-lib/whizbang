@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Registered as Transient - each injection gets a fresh factory with its own DbContext.
 /// </remarks>
 /// <typeparam name="TDbContext">The DbContext type</typeparam>
-/// <docs>lenses/lens-query-factory</docs>
+/// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreLensQueryFactoryTests.cs</tests>
 public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
     where TDbContext : DbContext {
