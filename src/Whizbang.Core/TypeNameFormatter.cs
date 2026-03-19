@@ -109,13 +109,13 @@ public static class TypeNameFormatter {
 
     // Strip global:: prefix
     if (result.StartsWith("global::", StringComparison.Ordinal)) {
-      result = result.Substring(8);
+      result = result[8..];
     }
 
     // Strip assembly qualifier (everything after first comma)
     var commaIndex = result.IndexOf(',');
     if (commaIndex >= 0) {
-      result = result.Substring(0, commaIndex).Trim();
+      result = result[..commaIndex].Trim();
     }
 
     return result;
@@ -138,7 +138,7 @@ public static class TypeNameFormatter {
     var fullName = GetFullName(typeName);
 
     var lastDot = fullName.LastIndexOf('.');
-    return lastDot >= 0 ? fullName.Substring(lastDot + 1) : fullName;
+    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
   }
 
   /// <summary>
@@ -157,6 +157,6 @@ public static class TypeNameFormatter {
     var fullName = GetFullName(typeName);
 
     var lastDot = fullName.LastIndexOf('.');
-    return lastDot >= 0 ? fullName.Substring(0, lastDot) : null;
+    return lastDot >= 0 ? fullName[..lastDot] : null;
   }
 }

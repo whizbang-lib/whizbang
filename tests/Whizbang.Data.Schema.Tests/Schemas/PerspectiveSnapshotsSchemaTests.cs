@@ -6,6 +6,8 @@ using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests.Schemas;
 
+#pragma warning disable RCS1118 // Mark local variable as const — conflicts with TUnit's TUnitAssertions0005 (can't pass const to Assert.That)
+
 /// <summary>
 /// Tests for PerspectiveSnapshotsSchema - periodic state snapshot table for rewind.
 /// Tests verify table structure, column definitions, indexes, and column name constants.
@@ -86,12 +88,12 @@ public class PerspectiveSnapshotsSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
-    string streamId = PerspectiveSnapshotsSchema.Columns.STREAM_ID;
-    string perspectiveName = PerspectiveSnapshotsSchema.Columns.PERSPECTIVE_NAME;
-    string snapshotEventId = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_EVENT_ID;
-    string snapshotData = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_DATA;
-    string sequenceNumber = PerspectiveSnapshotsSchema.Columns.SEQUENCE_NUMBER;
-    string createdAt = PerspectiveSnapshotsSchema.Columns.CREATED_AT;
+    var streamId = PerspectiveSnapshotsSchema.Columns.STREAM_ID;
+    var perspectiveName = PerspectiveSnapshotsSchema.Columns.PERSPECTIVE_NAME;
+    var snapshotEventId = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_EVENT_ID;
+    var snapshotData = PerspectiveSnapshotsSchema.Columns.SNAPSHOT_DATA;
+    var sequenceNumber = PerspectiveSnapshotsSchema.Columns.SEQUENCE_NUMBER;
+    var createdAt = PerspectiveSnapshotsSchema.Columns.CREATED_AT;
 
     await Assert.That(streamId).IsEqualTo("stream_id");
     await Assert.That(perspectiveName).IsEqualTo("perspective_name");
@@ -101,3 +103,5 @@ public class PerspectiveSnapshotsSchemaTests {
     await Assert.That(createdAt).IsEqualTo("created_at");
   }
 }
+
+#pragma warning restore RCS1118

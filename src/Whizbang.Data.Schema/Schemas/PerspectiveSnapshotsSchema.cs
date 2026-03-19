@@ -20,20 +20,20 @@ public static class PerspectiveSnapshotsSchema {
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
-        Nullable: false
+        Nullable: false,
+        PrimaryKey: true
       ),
       new ColumnDefinition(
         Name: "perspective_name",
         DataType: WhizbangDataType.STRING,
-        PrimaryKey: true,
-        Nullable: false
+        Nullable: false,
+        PrimaryKey: true
       ),
       new ColumnDefinition(
         Name: "snapshot_event_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
-        Nullable: false
+        Nullable: false,
+        PrimaryKey: true
       ),
       new ColumnDefinition(
         Name: "snapshot_data",
@@ -52,12 +52,12 @@ public static class PerspectiveSnapshotsSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_snapshots_lookup",
-        Columns: ImmutableArray.Create("stream_id", "perspective_name", "sequence_number")
+        Columns: ["stream_id", "perspective_name", "sequence_number"]
       )
-    )
+    ]
   );
 
   /// <summary>

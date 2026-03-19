@@ -15,6 +15,9 @@ public sealed partial class DapperPerspectiveSnapshotStore(
   string connectionString,
   ILogger<DapperPerspectiveSnapshotStore>? logger = null) : IPerspectiveSnapshotStore {
 
+  private const string PARAM_STREAM_ID = "p_stream_id";
+  private const string PARAM_PERSPECTIVE_NAME = "p_perspective_name";
+
   public async Task CreateSnapshotAsync(Guid streamId, string perspectiveName, Guid snapshotEventId, JsonDocument snapshotData, CancellationToken ct = default) {
     await using var connection = new NpgsqlConnection(connectionString);
     await connection.OpenAsync(ct);
@@ -31,8 +34,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
     cmd.Parameters.AddWithValue("p_snapshot_event_id", snapshotEventId);
     cmd.Parameters.Add(new NpgsqlParameter("p_snapshot_data", NpgsqlDbType.Jsonb) { Value = snapshotData.RootElement.GetRawText() });
 
@@ -56,8 +59,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     if (!await reader.ReadAsync(ct)) {
@@ -83,8 +86,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
     cmd.Parameters.AddWithValue("p_before_event_id", beforeEventId);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -108,8 +111,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
 
     var result = await cmd.ExecuteScalarAsync(ct);
     return result is true;
@@ -130,8 +133,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
     cmd.Parameters.AddWithValue("p_keep_count", keepCount);
 
     var deleted = await cmd.ExecuteNonQueryAsync(ct);
@@ -150,8 +153,8 @@ public sealed partial class DapperPerspectiveSnapshotStore(
       """;
 
     await using var cmd = new NpgsqlCommand(sql, connection);
-    cmd.Parameters.AddWithValue("p_stream_id", streamId);
-    cmd.Parameters.AddWithValue("p_perspective_name", perspectiveName);
+    cmd.Parameters.AddWithValue(PARAM_STREAM_ID, streamId);
+    cmd.Parameters.AddWithValue(PARAM_PERSPECTIVE_NAME, perspectiveName);
 
     await cmd.ExecuteNonQueryAsync(ct);
   }

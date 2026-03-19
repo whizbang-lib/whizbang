@@ -565,7 +565,7 @@ namespace TestNamespace {
   public async Task Generator_EventTypesInRegistrationInfo_UseRuntimeFormat_NotGlobalPrefixAsync() {
     // Arrange — Verify generated PerspectiveRegistrationInfo.EventTypes
     // uses "FullName, AssemblyName" format (no global:: prefix)
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 using System;
@@ -600,7 +600,7 @@ namespace TestNamespace {
 
     // Verify EventTypes array uses runtime format (contains assembly name after comma, no global::)
     // The generated code looks like: ["TestNamespace.OrderCreatedEvent, TestProject"]
-    await Assert.That(registrySource!).Contains("[\"TestNamespace.OrderCreatedEvent,");
+    await Assert.That(registrySource).Contains("[\"TestNamespace.OrderCreatedEvent,");
     // Verify EventTypes do NOT use global:: prefix
     await Assert.That(registrySource).DoesNotContain("[\"global::");
 

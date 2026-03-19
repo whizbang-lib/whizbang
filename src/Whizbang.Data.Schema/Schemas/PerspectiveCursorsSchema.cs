@@ -32,14 +32,14 @@ public static class PerspectiveCursorsSchema {
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
-        Nullable: false
+        Nullable: false,
+        PrimaryKey: true
       ),
       new ColumnDefinition(
         Name: "perspective_name",
         DataType: WhizbangDataType.STRING,
-        PrimaryKey: true,
-        Nullable: false
+        Nullable: false,
+        PrimaryKey: true
       ),
       new ColumnDefinition(
         Name: "last_event_id",
@@ -85,16 +85,16 @@ public static class PerspectiveCursorsSchema {
         MaxLength: 50
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes: [
       new IndexDefinition(
         Name: "idx_perspective_cursors_perspective_name",
-        Columns: ImmutableArray.Create("perspective_name")
+        Columns: ["perspective_name"]
       ),
       new IndexDefinition(
         Name: "idx_perspective_cursors_last_event_id",
-        Columns: ImmutableArray.Create("last_event_id")
+        Columns: ["last_event_id"]
       )
-    )
+    ]
   );
 
   /// <summary>

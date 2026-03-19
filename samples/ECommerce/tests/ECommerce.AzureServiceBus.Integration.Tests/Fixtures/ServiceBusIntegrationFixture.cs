@@ -1337,12 +1337,14 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
         .ToListAsync(cancellationToken);
 
-      logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
-        eventTypeName, bffCheckpointResults.Count);
+      if (logger.IsEnabled(LogLevel.Debug)) {
+        logger.LogDebug("[SQL Diagnostic] BFF perspective cursors for streams with {EventType}: {Count} checkpoints found",
+          eventTypeName, bffCheckpointResults.Count);
 
-      foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        foreach (var row in bffCheckpointResults) {
+          logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+            row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+        }
       }
 
       // Query 6: Check BFF perspective_events (THE CRITICAL QUERY!)

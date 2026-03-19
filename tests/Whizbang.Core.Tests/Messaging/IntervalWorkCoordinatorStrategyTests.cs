@@ -724,6 +724,66 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Graceful Shutdown Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(async () => { await sut.FlushAsync(WorkBatchFlags.None); })
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_ConcurrentFlush_ReturnsEmptyBatchAsync() {
+    // Arrange - use a slow coordinator so we can trigger concurrent flushes
+    var slowCoordinator = new SlowWorkCoordinator(delayMilliseconds: 500);
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 60000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(slowCoordinator, instanceProvider, options);
+
+    // Queue a message so the first flush has work to do
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+    sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = []
+      }
+    });
+
+    // Act - start a flush, then immediately try a second flush
+    var firstFlush = sut.FlushAsync(WorkBatchFlags.None);
+    await Task.Delay(50); // Let first flush acquire the lock
+
+    var secondResult = await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - second flush should return empty (first is in progress)
+    await Assert.That(secondResult.OutboxWork).IsEmpty()
+      .Because("Concurrent flush should return empty batch when another flush is in progress");
+
+    // Cleanup
+    await firstFlush;
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
 
@@ -858,5 +918,43 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     public SecurityContext? GetCurrentSecurityContext() => null;
     public ScopeContext? GetCurrentScope() => null;
+  }
+
+  private sealed class SlowWorkCoordinator : IWorkCoordinator {
+    private readonly int _delayMilliseconds;
+
+    public SlowWorkCoordinator(int delayMilliseconds) {
+      _delayMilliseconds = delayMilliseconds;
+    }
+
+    public async Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      await Task.Delay(_delayMilliseconds, cancellationToken);
+      return new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      };
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCursorInfo?>(null);
+    }
   }
 }

@@ -42,7 +42,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private bool _disposed;
   private bool _flushing;
 
@@ -56,6 +56,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+#pragma warning disable S107 // Methods should not have too many parameters
   public IntervalWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
@@ -67,6 +68,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null
   ) {
+#pragma warning restore S107
     if (coordinator == null && scopeFactory == null) {
       throw new ArgumentNullException(nameof(coordinator), "Either coordinator or scopeFactory must be provided.");
     }

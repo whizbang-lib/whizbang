@@ -7,6 +7,8 @@ using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests.Schemas;
 
+#pragma warning disable RCS1118 // Mark local variable as const — conflicts with TUnit's TUnitAssertions0005 (can't pass const to Assert.That)
+
 /// <summary>
 /// Tests for PerspectiveCursorsSchema - read model checkpoint tracking table.
 /// Tests verify table structure, column definitions, indexes, and column name constants.
@@ -213,3 +215,5 @@ public class PerspectiveCursorsSchemaTests {
     await Assert.That(streamLockReason).IsEqualTo("stream_lock_reason");
   }
 }
+
+#pragma warning restore RCS1118

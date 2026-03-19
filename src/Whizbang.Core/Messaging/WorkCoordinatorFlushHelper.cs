@@ -25,6 +25,7 @@ internal static class WorkCoordinatorFlushHelper {
   /// and resetting _flushing in their own finally block. This method handles coordinator resolution
   /// through scope disposal.
   /// </remarks>
+#pragma warning disable S107 // Methods should not have too many parameters
   internal static async Task<WorkBatch> ExecuteFlushAsync(
     IWorkCoordinator? coordinator,
     IServiceScopeFactory? scopeFactory,
@@ -45,6 +46,7 @@ internal static class WorkCoordinatorFlushHelper {
     LifecycleMetrics? lifecycleMetrics,
     CancellationToken ct
   ) {
+#pragma warning restore S107
     // Resolve coordinator: use direct reference if available, otherwise create a scope
     IServiceScope? flushScope = null;
     IWorkCoordinator resolvedCoordinator;

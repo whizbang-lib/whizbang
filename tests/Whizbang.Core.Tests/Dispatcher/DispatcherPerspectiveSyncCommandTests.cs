@@ -81,10 +81,10 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     // Act - should NOT wait for perspective sync, complete immediately.
     // TimeoutPerspectiveSyncAwaiter throws PerspectiveSyncTimeoutException if WaitAsync is called,
     // so completing without exception proves sync was NOT triggered.
-    var act = async () => await dispatcher.LocalInvokeAsync(command);
+    async Task Act() => await dispatcher.LocalInvokeAsync(command);
 
     // Assert
-    await Assert.That(act).ThrowsNothing()
+    await Assert.That(Act).ThrowsNothing()
       .Because("Command should NOT wait for perspective sync (perspectives don't process commands)");
   }
 
@@ -124,10 +124,10 @@ public sealed class DispatcherPerspectiveSyncCommandTests {
     // Act - should NOT wait for perspective sync, complete immediately.
     // TimeoutPerspectiveSyncAwaiter throws PerspectiveSyncTimeoutException if WaitAsync is called,
     // so completing without exception proves sync was NOT triggered.
-    var act = async () => await dispatcher.LocalInvokeAsync(message);
+    async Task Act() => await dispatcher.LocalInvokeAsync(message);
 
     // Assert
-    await Assert.That(act).ThrowsNothing()
+    await Assert.That(Act).ThrowsNothing()
       .Because("Plain IMessage (not IEvent) should NOT wait for perspective sync");
   }
 

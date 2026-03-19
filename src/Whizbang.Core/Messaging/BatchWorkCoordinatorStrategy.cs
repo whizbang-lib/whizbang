@@ -45,7 +45,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private bool _disposed;
   private bool _flushing;
 
@@ -57,6 +57,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
+#pragma warning disable S107 // Methods should not have too many parameters
   public BatchWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
@@ -68,6 +69,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     WorkCoordinatorMetrics? metrics = null,
     LifecycleMetrics? lifecycleMetrics = null
   ) {
+#pragma warning restore S107
     if (coordinator == null && scopeFactory == null) {
       throw new ArgumentNullException(nameof(coordinator), "Either coordinator or scopeFactory must be provided.");
     }

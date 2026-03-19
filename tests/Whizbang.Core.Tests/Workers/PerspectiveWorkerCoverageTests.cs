@@ -1262,6 +1262,60 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
+  #region Graceful Shutdown Tests
+
+  [Test]
+  public async Task Worker_WhenServiceProviderDisposed_ExitsGracefullyAsync() {
+    // Arrange - create a worker whose service provider we can dispose mid-flight
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new FakePerspectiveRunnerRegistry();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50
+      }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness
+    );
+
+    // Act - start the worker, then dispose the service provider to simulate host shutdown
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+
+    // Let the worker process at least one cycle
+    await Task.Delay(100);
+
+    // Dispose the service provider (simulates host teardown)
+    await serviceProvider.DisposeAsync();
+
+    // Give the worker time to hit the disposed provider
+    await Task.Delay(200);
+
+    // Cancel to ensure cleanup
+    await cts.CancelAsync();
+
+    // Assert - the worker task should complete without throwing
+    // (ObjectDisposedException should be caught internally, not propagated)
+    var completedWithinTimeout = workerTask.Wait(TimeSpan.FromSeconds(5));
+    await Assert.That(completedWithinTimeout).IsTrue()
+      .Because("Worker should exit gracefully when service provider is disposed during shutdown");
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestCoverageEvent(string Data) : IEvent;
