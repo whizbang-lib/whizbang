@@ -1071,7 +1071,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   // ========================================
 
   /// <summary>
-  /// 
+  /// Verifies that outbox messages with renewed leases are returned as work items.
   /// </summary>
   /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 6</tests>
   [Test]
@@ -1140,7 +1140,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// 
+  /// Verifies that inbox messages with renewed leases are returned as work items.
   /// </summary>
   /// <tests>src/Whizbang.Data.Postgres/Migrations/029_ProcessWorkBatch.sql:Phase 6</tests>
   [Test]
