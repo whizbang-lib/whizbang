@@ -40,7 +40,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>components/workers/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
-public class TransportConsumerWorker : BackgroundService {
+public partial class TransportConsumerWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly TransportConsumerOptions _options;
   private readonly SubscriptionResilienceOptions _resilienceOptions;
@@ -547,6 +547,11 @@ public class TransportConsumerWorker : BackgroundService {
 
       _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
+    } catch (ObjectDisposedException) {
+      // Service provider or strategy disposed during host shutdown — drop message gracefully.
+      // It will be redelivered from the transport on next startup.
+      LogMessageDroppedDuringShutdown(_logger, envelope.MessageId.Value);
+      return;
     } catch (Exception ex) {
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -803,4 +808,10 @@ public class TransportConsumerWorker : BackgroundService {
         TimestampKind.DeliveredAt,
         DateTimeOffset.UtcNow);
   }
+
+  [LoggerMessage(
+    Level = LogLevel.Debug,
+    Message = "Message {MessageId} dropped during shutdown (ObjectDisposedException)"
+  )]
+  private static partial void LogMessageDroppedDuringShutdown(ILogger logger, Guid messageId);
 }

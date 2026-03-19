@@ -3218,7 +3218,20 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
 
       // Queue event for batched processing
-      strategy.QueueOutboxMessage(newOutboxMessage);
+      // Guard against ObjectDisposedException — the singleton IntervalWorkCoordinatorStrategy
+      // may be disposed during host shutdown while in-flight receptors are still publishing.
+      try {
+        strategy.QueueOutboxMessage(newOutboxMessage);
+      } catch (ObjectDisposedException) {
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+        if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+          CascadeLogger.LogWarning(
+            "[CASCADE] PublishToOutboxAsync: Strategy disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
+            eventType.Name, messageId);
+        }
+#pragma warning restore CA1848
+        return;
+      }
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] PublishToOutboxAsync: Called QueueOutboxMessage");

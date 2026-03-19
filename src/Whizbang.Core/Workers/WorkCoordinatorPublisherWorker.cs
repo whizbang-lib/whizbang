@@ -213,7 +213,7 @@ public partial class WorkCoordinatorPublisherWorker(
       } else {
         LogDatabaseNotReadyOnStartup(_logger);
       }
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       LogErrorProcessingInitialWorkBatch(_logger, ex);
     }
 
@@ -242,6 +242,9 @@ public partial class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
         await _processWorkBatchAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingWorkBatch(_logger, ex);
       }
@@ -482,6 +485,9 @@ public partial class WorkCoordinatorPublisherWorker(
             LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error", result.Reason);
           }
         }
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
         _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "unexpected_exception"));

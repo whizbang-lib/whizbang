@@ -66,7 +66,7 @@ public partial class PerspectiveWorker(
   private readonly System.Collections.Concurrent.ConcurrentQueue<PerspectiveEventCompletion> _pendingEventCompletions = new();
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
-  private readonly HashSet<(Guid StreamId, string PerspectiveName)> _bootstrappedThisSession = new();
+  private readonly HashSet<(Guid StreamId, string PerspectiveName)> _bootstrappedThisSession = [];
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -137,7 +137,7 @@ public partial class PerspectiveWorker(
       } else {
         LogDatabaseNotReadyOnStartup(_logger);
       }
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
+    } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       LogErrorProcessingInitialCheckpoints(_logger, ex);
       throw; // Never swallow exceptions
     }
@@ -167,6 +167,9 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
         await _processWorkBatchAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        // Service provider disposed during host shutdown — exit gracefully
+        break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingCheckpoints(_logger, ex);
         throw; // Never swallow exceptions
@@ -816,7 +819,7 @@ public partial class PerspectiveWorker(
     // PostLifecycle fires AFTER all perspectives in the batch have processed, enabling
     // single-notification patterns (e.g., one SignalR notification per event, not per perspective)
     if (batchProcessedEvents.Count > 0 && receptorInvoker is not null) {
-      foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
+      foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PostLifecycleAsync,
           StreamId = streamId,

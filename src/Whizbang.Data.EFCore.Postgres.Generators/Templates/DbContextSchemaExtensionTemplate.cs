@@ -205,6 +205,24 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     ILogger? logger,
     CancellationToken cancellationToken) {
 
+    // Backward-compatibility: rename old table names before creating new ones.
+    // Must happen before CREATE TABLE IF NOT EXISTS, otherwise the old table remains
+    // orphaned and migration 033 fails with 42P07 (relation already exists).
+    const string BackwardCompatRenames = @"
+ALTER TABLE IF EXISTS ""__SCHEMA__"".wh_perspective_checkpoints RENAME TO wh_perspective_cursors;
+ALTER INDEX IF EXISTS idx_perspective_checkpoints_perspective_name RENAME TO idx_perspective_cursors_perspective_name;
+ALTER INDEX IF EXISTS idx_perspective_checkpoints_last_event_id RENAME TO idx_perspective_cursors_last_event_id;
+";
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(BackwardCompatRenames, cancellationToken);
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // Target table already exists — old table was already renamed or new table was created fresh
+      logger?.LogDebug("Backward-compat rename skipped (target already exists): {Message}", ex.MessageText);
+    } catch (Exception ex) {
+      // Non-critical — log and continue (fresh databases won't have the old table)
+      logger?.LogDebug(ex, "Backward-compat rename completed or skipped");
+    }
+
     // Generate schema SQL at runtime from C# definitions
     var schemaConfig = new SchemaConfiguration(
       InfrastructurePrefix: "wh_",
