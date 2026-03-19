@@ -1,13 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
-    <img alt="Whizbang" src="assets/logo-light.svg" width="500">
-  </picture>
-</p>
-
-<p align="center">
-  A zero-reflection, AOT-compatible .NET library for building event-driven, CQRS, and event-sourced applications.
+  <img alt="Whizbang — One Runtime. Any Store. Every Message." src="assets/hero-banner.svg" width="100%">
 </p>
 
 <p align="center">
