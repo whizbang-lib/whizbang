@@ -24,7 +24,7 @@ public class SeedProductsWorkflowTests {
     var fixture = await SharedServiceBusFixtureSource.GetFixtureAsync();
     await Task.Delay(500);
     await fixture.CleanupDatabaseAsync();
-    await SeedProductsOnceAsync(fixture);
+    await _seedProductsOnceAsync(fixture);
   }
 
   [Before(Test)]
@@ -42,7 +42,7 @@ public class SeedProductsWorkflowTests {
   /// <summary>
   /// Seeds products once and waits for all perspective processing to complete.
   /// </summary>
-  private static async Task SeedProductsOnceAsync(ServiceBusIntegrationFixture fixture) {
+  private static async Task _seedProductsOnceAsync(ServiceBusIntegrationFixture fixture) {
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
       fixture.BffProductLens,
