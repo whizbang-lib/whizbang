@@ -315,7 +315,7 @@ public class TransportConsumerWorker : BackgroundService {
     CancellationToken cancellationToken
   ) {
     var receiveSw = Stopwatch.StartNew();
-    var messageType = envelopeType?.Split(',')[0].Split('.').LastOrDefault() ?? "Unknown";
+    var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
 
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
@@ -580,12 +580,13 @@ public class TransportConsumerWorker : BackgroundService {
       return true;
     }
 
+    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+
     var perspectives = registry.GetRegisteredPerspectives();
     foreach (var perspective in perspectives) {
       foreach (var eventType in perspective.EventTypes) {
-        if (eventType.EndsWith(messageType, StringComparison.Ordinal)
-            || messageType.EndsWith(eventType, StringComparison.Ordinal)
-            || string.Equals(eventType, messageType, StringComparison.Ordinal)) {
+        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
+        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
           return false; // This event type has at least one perspective
         }
       }
@@ -649,10 +650,7 @@ public class TransportConsumerWorker : BackgroundService {
     }
 
     // Extract simple type name
-    var lastDotIndex = messageTypeName.LastIndexOf('.');
-    var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
-      : messageTypeName.Split(',')[0].Trim();
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);

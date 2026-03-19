@@ -226,10 +226,8 @@ public sealed partial class Tracer : ITracer {
   /// <summary>
   /// Extracts the short name (class name only) from a fully qualified name.
   /// </summary>
-  private static string _extractShortName(string fullName) {
-    var lastDot = fullName.LastIndexOf('.');
-    return lastDot >= 0 ? fullName[(lastDot + 1)..] : fullName;
-  }
+  private static string _extractShortName(string fullName) =>
+    TypeNameFormatter.GetSimpleName(fullName);
 
   private static string _extractShortHandlerName(string fullName) {
     // Extract just the class.method name from fully qualified name
