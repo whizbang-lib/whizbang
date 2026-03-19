@@ -173,29 +173,51 @@ __PHYSICAL_FIELD_CONFIGS__
       services.AddSingleton<global::Whizbang.Core.Messaging.IWorkChannelWriter, global::Whizbang.Core.Messaging.WorkChannelWriter>();
     }
 
-    // Register scoped work coordinator strategy for dispatcher outbox routing
-    // ScopedWorkCoordinatorStrategy batches operations within a scope (e.g., HTTP request)
-    // This enables the dispatcher to route messages to outbox when no local receptor exists
-    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
-      var coordinator = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkCoordinator>();
+    // Register singleton timer-based strategies (shared across scopes)
+    // Interval and Batch strategies use background timers and must be singletons.
+    // They resolve IWorkCoordinator per-flush via IServiceScopeFactory (singleton-safe).
+    services.AddSingleton<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
-      var channelWriter = sp.GetRequiredService<global::Whizbang.Core.Messaging.IWorkChannelWriter>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
-      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
-      var dependencies = new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorDependencies {
-        ScopeFactory = sp.GetService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-        LifecycleMessageDeserializer = sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        TracingOptions = sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
-        SystemEventOptions = sp.GetService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value
-      };
-      return new global::Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
-        coordinator,
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>>();
+      return new global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy(
+        coordinator: null,
         instanceProvider,
-        channelWriter,
         options,
         logger,
-        dependencies
+        scopeFactory,
+        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
       );
+    });
+    services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
+      var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
+      var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>>();
+      return new global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy(
+        coordinator: null,
+        instanceProvider,
+        options,
+        logger,
+        scopeFactory,
+        lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
+      );
+    });
+
+    // Register scoped strategy factory - selects based on WorkCoordinatorOptions.Strategy
+    // Interval/Batch return the shared singleton; Scoped/Immediate create per-scope instances.
+    services.AddScoped<global::Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
+      var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      return options.Strategy switch {
+        global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Interval =>
+          sp.GetRequiredService<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>(),
+        global::Whizbang.Core.Messaging.WorkCoordinatorStrategy.Batch =>
+          sp.GetRequiredService<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(),
+        _ => global::Whizbang.Core.Messaging.WorkCoordinatorStrategyFactory.Create(options.Strategy, sp)
+      };
     });
 
     // Register IEventStoreQuery - scoped (for web APIs, receptors)

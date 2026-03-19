@@ -1,0 +1,771 @@
+using System.Text.Json;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Tests for BatchWorkCoordinatorStrategy - verifies count-based and debounce-based flush behavior.
+/// </summary>
+public class BatchWorkCoordinatorStrategyTests {
+
+  private static MessageEnvelope<JsonElement> _createEnvelope(Guid messageId) {
+    return new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      Hops = []
+    };
+  }
+
+  private static OutboxMessage _createOutboxMessage(Guid? messageId = null, string destination = "test-topic") {
+    var id = messageId ?? Guid.CreateVersion7();
+    return new OutboxMessage {
+      MessageId = id,
+      Destination = destination,
+      Envelope = _createEnvelope(id),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      StreamId = Guid.CreateVersion7(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(id),
+        Hops = []
+      }
+    };
+  }
+
+  private static InboxMessage _createInboxMessage(Guid? messageId = null, string handlerName = "TestHandler") {
+    var id = messageId ?? Guid.CreateVersion7();
+    return new InboxMessage {
+      MessageId = id,
+      HandlerName = handlerName,
+      Envelope = _createEnvelope(id),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      StreamId = Guid.CreateVersion7(),
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
+    };
+  }
+
+  private static WorkCoordinatorOptions _createOptions(int batchSize = 5, int debounceMs = 200) {
+    return new WorkCoordinatorOptions {
+      Strategy = WorkCoordinatorStrategy.Batch,
+      BatchSize = batchSize,
+      IntervalMilliseconds = debounceMs,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+  }
+
+  // ========================================
+  // BATCH SIZE TRIGGER TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 3, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Queue exactly batch size messages
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(_createOutboxMessage()); // Should trigger flush
+
+      // Wait for the Task.Run flush to complete
+      await Task.Delay(300);
+
+      // Assert - Batch size threshold should trigger flush
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Batch size threshold should trigger immediate flush");
+      await Assert.That(fakeCoordinator.TotalOutboxMessagesReceived).IsEqualTo(3)
+        .Because("All 3 messages should be flushed together");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 10, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Queue fewer than batch size
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(_createOutboxMessage());
+
+      // Wait briefly (but less than debounce)
+      await Task.Delay(100);
+
+      // Assert - No flush should have occurred
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+        .Because("Below batch size should not trigger flush");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueInboxMessage_CountsTowardBatchSizeAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 3, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Mix of outbox and inbox messages
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueInboxMessage(_createInboxMessage());
+      sut.QueueOutboxMessage(_createOutboxMessage()); // Total = 3, should trigger flush
+
+      await Task.Delay(300);
+
+      // Assert
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Inbox + outbox messages should both count toward batch size");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // DEBOUNCE TIMER TESTS
+  // ========================================
+
+  [Test]
+  public async Task DebounceTimer_FlushesAfterQuietPeriodAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 150); // Low debounce, high batch size
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Queue 1 message (below batch size)
+      sut.QueueOutboxMessage(_createOutboxMessage());
+
+      // Wait for debounce timer to fire
+      await Task.Delay(500);
+
+      // Assert - Debounce timer should have flushed the partial batch
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Debounce timer should flush after quiet period");
+      await Assert.That(fakeCoordinator.TotalOutboxMessagesReceived).IsEqualTo(1)
+        .Because("The single message should be flushed by debounce");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task DebounceTimer_ResetsOnEachQueueAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 300);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Send messages with gaps shorter than debounce period
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await Task.Delay(100); // < 300ms debounce
+
+      // No flush yet - debounce resets
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+        .Because("Debounce timer should reset on each queue operation");
+
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await Task.Delay(100); // < 300ms debounce, resets again
+
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+        .Because("Continuous queueing should keep resetting the debounce timer");
+
+      // Now wait for full debounce period after last message
+      await Task.Delay(500);
+
+      // Assert - Both messages should be flushed together after quiet period
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Flush should occur after messages stop arriving");
+      await Assert.That(fakeCoordinator.TotalOutboxMessagesReceived).IsEqualTo(2)
+        .Because("Both messages should be batched together");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // PRIORITY TESTS
+  // ========================================
+
+  [Test]
+  public async Task BatchSize_TakesPriorityOverDebounceAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 2, debounceMs: 5000); // Long debounce, low batch size
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act - Queue batch size worth of messages quickly
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(_createOutboxMessage()); // Batch size reached
+
+      // Wait for Task.Run flush (much less than debounce)
+      await Task.Delay(300);
+
+      // Assert - Should flush immediately, not wait for debounce
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
+        .Because("Batch size should trigger immediate flush without waiting for debounce");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // DISPOSE AND MANUAL FLUSH TESTS
+  // ========================================
+
+  [Test]
+  public async Task DisposeAsync_FlushesRemainingMessagesAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+    sut.QueueOutboxMessage(_createOutboxMessage(messageId));
+
+    // Act - Dispose should flush remaining
+    await sut.DisposeAsync();
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("DisposeAsync should flush queued messages");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
+  }
+
+  [Test]
+  public async Task ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+    sut.QueueOutboxMessage(_createOutboxMessage(messageId));
+
+    try {
+      // Act - Manual flush should work immediately
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+
+      // Assert
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+        .Because("Manual FlushAsync should flush immediately");
+      await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+      await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // BEST EFFORT FLUSH MODE
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_BestEffort_DefersToTriggersAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions(batchSize: 100, debounceMs: 5000);
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    try {
+      // Act - BestEffort should return empty and defer
+      var result = await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+
+      // Assert
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
+        .Because("BestEffort should defer flush to batch/debounce triggers");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // EDGE CASE TESTS
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithNoQueuedOperations_ReturnsEmptyAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    try {
+      // Act
+      var result = await sut.FlushAsync(WorkBatchFlags.None);
+
+      // Assert
+      await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueOutboxMessage_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxMessage(_createOutboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DisposeAsync_CalledMultipleTimes_DoesNotThrowAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    // Act - Dispose multiple times
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+
+    // Assert - Should not throw
+  }
+
+  [Test]
+  public async Task Constructor_WithNullCoordinatorAndNullScopeFactory_ThrowsAsync() {
+    // Arrange
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    // Act & Assert
+    await Assert.That(() => new BatchWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider,
+      options,
+      scopeFactory: null
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullInstanceProvider_ThrowsAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var options = _createOptions();
+
+    // Act & Assert
+    await Assert.That(() => new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      null!,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ThrowsAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+
+    // Act & Assert
+    await Assert.That(() => new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      null!
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinatorWithFlags();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+    options.DebugMode = true;
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
+
+    try {
+      // Act
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      // Assert
+      await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // COMPLETION AND FAILURE QUEUE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxCompletion_IncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+
+    try {
+      sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
+      await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_IncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+
+    try {
+      sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
+      await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_IncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+
+    try {
+      sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
+      await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_IncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
+    var instanceProvider = new BatchFakeInstanceProvider();
+    var options = _createOptions();
+
+    var sut = new BatchWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = Guid.CreateVersion7();
+
+    try {
+      sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
+      await sut.FlushAsync(WorkBatchFlags.None);
+
+      await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
+      await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
+    } finally {
+      await sut.DisposeAsync();
+    }
+  }
+
+  // ========================================
+  // DISPOSED STATE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueInboxMessage_AfterDispose_ThrowsAsync() {
+    var sut = new BatchWorkCoordinatorStrategy(
+      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+    await sut.DisposeAsync();
+
+    await Assert.That(() => sut.QueueInboxMessage(_createInboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxCompletion_AfterDispose_ThrowsAsync() {
+    var sut = new BatchWorkCoordinatorStrategy(
+      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+    await sut.DisposeAsync();
+
+    await Assert.That(() => sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_AfterDispose_ThrowsAsync() {
+    var sut = new BatchWorkCoordinatorStrategy(
+      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+    await sut.DisposeAsync();
+
+    await Assert.That(() => sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_AfterDispose_ThrowsAsync() {
+    var sut = new BatchWorkCoordinatorStrategy(
+      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+    await sut.DisposeAsync();
+
+    await Assert.That(() => sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_AfterDispose_ThrowsAsync() {
+    var sut = new BatchWorkCoordinatorStrategy(
+      new BatchFakeWorkCoordinator(), new BatchFakeInstanceProvider(), _createOptions());
+    await sut.DisposeAsync();
+
+    await Assert.That(() => sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "err"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  // ========================================
+  // Test Fakes
+  // ========================================
+
+  private sealed class BatchFakeWorkCoordinator : IWorkCoordinator {
+    public int ProcessWorkBatchCallCount { get; private set; }
+    public int TotalOutboxMessagesReceived { get; private set; }
+    public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
+    public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
+    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
+    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      ProcessWorkBatchCallCount++;
+      TotalOutboxMessagesReceived += request.NewOutboxMessages.Length;
+      LastNewOutboxMessages = request.NewOutboxMessages;
+      LastNewInboxMessages = request.NewInboxMessages;
+      LastOutboxCompletions = request.OutboxCompletions;
+      LastInboxCompletions = request.InboxCompletions;
+      LastOutboxFailures = request.OutboxFailures;
+      LastInboxFailures = request.InboxFailures;
+
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  private sealed class BatchFakeWorkCoordinatorWithFlags : IWorkCoordinator {
+    public WorkBatchFlags LastFlags { get; private set; }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      LastFlags = request.Flags;
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCursorCompletion completion,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCursorFailure failure,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  private sealed class BatchFakeInstanceProvider : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = Guid.CreateVersion7();
+    public string ServiceName => "BatchTestService";
+    public string HostName => "test-host";
+    public int ProcessId => 12345;
+
+    public ServiceInstanceInfo ToInfo() => new() {
+      ServiceName = ServiceName,
+      InstanceId = InstanceId,
+      HostName = HostName,
+      ProcessId = ProcessId
+    };
+  }
+}

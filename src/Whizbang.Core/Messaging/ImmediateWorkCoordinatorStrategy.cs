@@ -18,11 +18,12 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ImmediateStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Immediate strategy - calls process_work_batch immediately for each operation.
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
-public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
+public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -215,6 +216,10 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
 
     return workBatch;
   }
+
+  /// <inheritdoc />
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
 
   // ========================================
   // High-Performance LoggerMessage Delegates
