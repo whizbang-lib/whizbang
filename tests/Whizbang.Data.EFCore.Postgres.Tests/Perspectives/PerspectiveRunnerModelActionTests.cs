@@ -10,7 +10,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 
@@ -20,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
 
-  private async Task<ActionTestPerspectiveRunner> CreateRunnerAsync(
+  private static async Task<IPerspectiveRunner> CreateRunnerAsync(
       InMemoryEventStore eventStore,
       EFCorePostgresPerspectiveStore<ActionTestModel> perspectiveStore) {
 
@@ -31,13 +30,31 @@ public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
 
     await Task.CompletedTask;
 
-    return new ActionTestPerspectiveRunner(
+    // Construct the generated runner via reflection to avoid compile-time dependency
+    // on the source-generated type. dotnet format on CI runs its own compilation pass
+    // where source generators don't produce output, causing CS0246.
+    var runnerType = typeof(PerspectiveRunnerModelActionTests).Assembly.GetTypes()
+        .Single(t => t.Name == "ActionTestPerspectiveRunner");
+
+    // Create ILogger<ActionTestPerspectiveRunner> via the generic CreateLogger<T> method
+    var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+    var createLoggerMethod = typeof(LoggerFactoryExtensions)
+        .GetMethods()
+        .Single(m => m.Name == "CreateLogger" && m.IsGenericMethod)
+        .MakeGenericMethod(runnerType);
+    var logger = createLoggerMethod.Invoke(null, [loggerFactory])!;
+
+    var ctor = runnerType.GetConstructors().Single();
+    return (IPerspectiveRunner)ctor.Invoke([
       sp,
-      sp.GetRequiredService<ILogger<ActionTestPerspectiveRunner>>(),
-      eventStore,
-      perspectiveStore,
-      sp.GetRequiredService<IServiceScopeFactory>()
-    );
+      logger,
+      (IEventStore)eventStore,
+      (IPerspectiveStore<ActionTestModel>)perspectiveStore,
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      null, // tracingOptions
+      null, // snapshotStore
+      null  // snapshotOptions
+    ]);
   }
 
   private static async Task AppendEventAsync<TEvent>(InMemoryEventStore eventStore, Guid streamId, TEvent payload)
