@@ -189,8 +189,36 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Track event type for summary
         appliedEventTypes.Add(eventTypeName);
 
+        // Once purge is set, skip applying further events — the model is null
+        // and calling Apply would cause NullReferenceException.
+        // We still advance the checkpoint so these events aren't reprocessed.
+        if (pendingPurge) {
+          processedEvents.Add(envelope);
+          lastSuccessfulEventId = envelope.MessageId.Value;
+          eventsProcessed++;
+          continue;
+        }
+
         // Apply event to model using perspective's pure Apply method
-        var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        __MODEL_TYPE_NAME__? appliedModel;
+        global::Whizbang.Core.Perspectives.ModelAction action;
+        try {
+          (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+        } catch (Exception applyEx) {
+          _logger.LogError(
+              applyEx,
+              "Error applying {EventType} to {PerspectiveName} stream {StreamId}, skipping event {EventId}",
+              eventTypeName,
+              perspectiveName,
+              streamId,
+              envelope.MessageId.Value
+          );
+          // Advance checkpoint past the failed event so it isn't retried indefinitely
+          processedEvents.Add(envelope);
+          lastSuccessfulEventId = envelope.MessageId.Value;
+          eventsProcessed++;
+          continue;
+        }
 
         // Set span outcome
         eventActivity?.SetTag("whizbang.perspective.action", action.ToString());
@@ -572,8 +600,30 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       var envelopeScope = envelope.GetCurrentScope();
       if (envelopeScope?.Scope != null) lastScope = envelopeScope.Scope;
 
+      // Once purge is set, skip applying further events — the model is null
+      if (pendingPurge) {
+        lastSuccessfulEventId = envelope.MessageId.Value;
+        eventsProcessed++;
+        continue;
+      }
+
       // Apply event to model using perspective's pure Apply method
-      var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+      __MODEL_TYPE_NAME__? appliedModel;
+      global::Whizbang.Core.Perspectives.ModelAction action;
+      try {
+        (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+      } catch (Exception applyEx) {
+        _logger.LogError(
+            applyEx,
+            "Error applying {EventType} to perspective stream {StreamId}, skipping event {EventId}",
+            @event.GetType().Name,
+            streamId,
+            envelope.MessageId.Value
+        );
+        lastSuccessfulEventId = envelope.MessageId.Value;
+        eventsProcessed++;
+        continue;
+      }
 
       switch (action) {
         case global::Whizbang.Core.Perspectives.ModelAction.Delete:
