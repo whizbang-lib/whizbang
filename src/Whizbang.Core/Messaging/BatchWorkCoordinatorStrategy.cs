@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,28 +12,32 @@ using Whizbang.Core.Validation;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:IntervalStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
-/// Interval strategy - batches operations and flushes on a timer.
-/// Provides lowest database load with higher latency.
-/// Best for: Background workers with high throughput, batch processing.
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_ResetsOnEachQueueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:BatchSize_TakesPriorityOverDebounceAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:BatchStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
+/// Batch strategy - flushes when batch size is reached OR after a debounce quiet period.
+/// Combines count-based and time-based triggers for optimal throughput.
+/// Best for: Bulk imports, seeding, high-volume background processing.
 /// </summary>
-public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+/// <docs>data/work-coordinator-strategies</docs>
+public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
-  private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
+  private readonly ILogger<BatchWorkCoordinatorStrategy>? _logger;
   private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
   private readonly WorkCoordinatorMetrics? _metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics;
-  private readonly Timer _flushTimer;
+  private readonly Timer _debounceTimer;
 
-  // Queues for batching operations within the interval
+  // Queues for batching operations
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
   private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
@@ -47,20 +50,18 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private bool _flushing;
 
   /// <summary>
-  /// Constructs an interval-based work coordinator strategy with periodic flushing.
+  /// Constructs a batch work coordinator strategy with count-based and debounce-based flush triggers.
   /// Pass <paramref name="coordinator"/> directly for scoped usage (one strategy per scope).
   /// For singleton usage, pass <c>null</c> for <paramref name="coordinator"/> and provide
   /// <paramref name="scopeFactory"/> — a new scope is created per flush to resolve IWorkCoordinator.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-  public IntervalWorkCoordinatorStrategy(
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
+  public BatchWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
+    ILogger<BatchWorkCoordinatorStrategy>? logger = null,
     IServiceScopeFactory? scopeFactory = null,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptionsMonitor<TracingOptions>? tracingOptions = null,
@@ -80,52 +81,70 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _metrics = metrics;
     _lifecycleMetrics = lifecycleMetrics;
 
-    // Start the timer for periodic flushing
-    _flushTimer = new Timer(
-      _flushTimerCallback,
+    // Debounce timer: fires once after quiet period, not repeating
+    _debounceTimer = new Timer(
+      _debounceTimerCallback,
       state: null,
-      dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
-      period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
+      dueTime: Timeout.Infinite,
+      period: Timeout.Infinite
     );
 
     if (_logger != null) {
-      LogStrategyStarted(_logger, _options.IntervalMilliseconds);
+      LogStrategyStarted(_logger, _options.BatchSize, _options.IntervalMilliseconds);
     }
   }
 
   /// <summary>
   /// Queues an outbox message for batch processing.
+  /// Triggers immediate flush if batch size threshold is reached.
+  /// Resets the debounce timer on each queue operation.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_DoesNotFlushBelowBatchSizeAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueOutbox", message.MessageType);
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "BatchStrategy.QueueOutbox", message.MessageType);
 
+    bool shouldFlush;
     lock (_lock) {
       _queuedOutboxMessages.Add(message);
+      shouldFlush = _totalQueuedCount() >= _options.BatchSize;
     }
 
     if (_logger != null) {
       LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
     }
+
+    if (shouldFlush) {
+      _triggerBatchFlush();
+    } else {
+      _resetDebounceTimer();
+    }
   }
 
   /// <summary>
   /// Queues an inbox message for batch processing.
+  /// Triggers immediate flush if batch size threshold is reached.
+  /// Resets the debounce timer on each queue operation.
   /// </summary>
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "IntervalStrategy.QueueInbox", message.MessageType);
+    StreamIdGuard.ThrowIfNonNullEmpty(message.StreamId, message.MessageId, "BatchStrategy.QueueInbox", message.MessageType);
 
+    bool shouldFlush;
     lock (_lock) {
       _queuedInboxMessages.Add(message);
+      shouldFlush = _totalQueuedCount() >= _options.BatchSize;
     }
 
     if (_logger != null) {
       LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
+    }
+
+    if (shouldFlush) {
+      _triggerBatchFlush();
+    } else {
+      _resetDebounceTimer();
     }
   }
 
@@ -142,9 +161,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
-    }
+    _resetDebounceTimer();
   }
 
   /// <summary>
@@ -160,9 +177,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedInboxCompletion(_logger, messageId, completedStatus);
-    }
+    _resetDebounceTimer();
   }
 
   /// <summary>
@@ -179,9 +194,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedOutboxFailure(_logger, messageId, errorMessage);
-    }
+    _resetDebounceTimer();
   }
 
   /// <summary>
@@ -198,21 +211,19 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       });
     }
 
-    if (_logger != null) {
-      LogQueuedInboxFailure(_logger, messageId, errorMessage);
-    }
+    _resetDebounceTimer();
   }
 
   /// <summary>
   /// Flushes all queued operations to the work coordinator immediately.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
-    // BestEffort: defer flush to timer cycle - items already in queues will be picked up
+    // BestEffort: defer flush to debounce/batch triggers
     if (mode == FlushMode.BestEffort) {
       return new WorkBatch {
         OutboxWork = [],
@@ -267,7 +278,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
             _queuedOutboxFailures.Count == 0 &&
             _queuedInboxCompletions.Count == 0 &&
             _queuedInboxFailures.Count == 0) {
-          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"));
+          _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"));
           if (_logger != null) {
             LogNoQueuedOperations(_logger);
           }
@@ -295,7 +306,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       }
 
       if (_logger != null) {
-        LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
+        LogBatchFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
       }
 
       // Check if lifecycle tracing is enabled
@@ -339,9 +350,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         OutboxFailures = outboxFailures,
         InboxCompletions = inboxCompletions,
         InboxFailures = inboxFailures,
-        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
+        ReceptorCompletions = [],
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
+        PerspectiveCompletions = [],
         PerspectiveEventCompletions = [],
         PerspectiveFailures = [],
         NewOutboxMessages = outboxMessages,
@@ -356,10 +367,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       var flushSw = System.Diagnostics.Stopwatch.StartNew();
       var workBatch = await coordinator.ProcessWorkBatchAsync(request, ct);
       flushSw.Stop();
-      _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "interval"));
+      _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "batch"));
 
       if (_logger != null) {
-        LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
+        LogBatchFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
 
       // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
@@ -390,31 +401,76 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
 
   /// <summary>
-  /// Timer callback that triggers periodic flushing of queued operations.
+  /// Returns total count of queued messages (outbox + inbox). Must be called under lock.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  private void _flushTimerCallback(object? state) {
+  private int _totalQueuedCount() {
+    return _queuedOutboxMessages.Count + _queuedInboxMessages.Count;
+  }
+
+  /// <summary>
+  /// Resets the debounce timer to fire after IntervalMilliseconds of quiet time.
+  /// Each call restarts the countdown (debounce behavior).
+  /// </summary>
+  private void _resetDebounceTimer() {
     if (_disposed) {
       return;
     }
+    _debounceTimer.Change(
+      dueTime: _options.IntervalMilliseconds,
+      period: Timeout.Infinite
+    );
+  }
 
-    // Fire and forget flush on timer
+  /// <summary>
+  /// Triggers an immediate batch flush (batch size threshold was reached).
+  /// Disables the debounce timer since we're flushing now.
+  /// </summary>
+  private void _triggerBatchFlush() {
+    // Disable debounce timer - we're flushing now
+    _debounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
+
+    if (_logger != null) {
+      LogBatchSizeReached(_logger, _options.BatchSize);
+    }
+
     _ = Task.Run(async () => {
       try {
         await FlushAsync(WorkBatchFlags.None);
       } catch (Exception ex) {
         if (_logger != null) {
-          LogErrorDuringIntervalFlush(_logger, ex);
+          LogErrorDuringBatchFlush(_logger, ex);
         }
       }
     });
   }
 
   /// <summary>
-  /// Disposes the strategy, stops the timer, and flushes any remaining queued operations.
+  /// Debounce timer callback - fires when no new messages arrive for IntervalMilliseconds.
   /// </summary>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
+  private void _debounceTimerCallback(object? state) {
+    if (_disposed) {
+      return;
+    }
+
+    if (_logger != null) {
+      LogDebounceTimerFired(_logger, _options.IntervalMilliseconds);
+    }
+
+    _ = Task.Run(async () => {
+      try {
+        await FlushAsync(WorkBatchFlags.None);
+      } catch (Exception ex) {
+        if (_logger != null) {
+          LogErrorDuringDebounceFlush(_logger, ex);
+        }
+      }
+    });
+  }
+
+  /// <summary>
+  /// Disposes the strategy, stops the debounce timer, and flushes any remaining queued operations.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;
@@ -424,8 +480,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       LogStrategyDisposing(_logger);
     }
 
-    // Stop the timer first
-    await _flushTimer.DisposeAsync();
+    // Stop the debounce timer first
+    await _debounceTimer.DisposeAsync();
 
     // Flush any remaining queued operations
     lock (_lock) {
@@ -466,9 +522,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   [LoggerMessage(
     EventId = 1,
     Level = LogLevel.Information,
-    Message = "Interval work coordinator strategy started with {Interval}ms flush interval"
+    Message = "Batch work coordinator strategy started with batch size {BatchSize} and {DebounceMs}ms debounce interval"
   )]
-  static partial void LogStrategyStarted(ILogger logger, int interval);
+  static partial void LogStrategyStarted(ILogger logger, int batchSize, int debounceMs);
 
   [LoggerMessage(
     EventId = 2,
@@ -486,92 +542,85 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   [LoggerMessage(
     EventId = 4,
-    Level = LogLevel.Trace,
-    Message = "Queued outbox completion for {MessageId} with status {Status}"
+    Level = LogLevel.Debug,
+    Message = "Batch size threshold reached ({BatchSize}), triggering immediate flush"
   )]
-  static partial void LogQueuedOutboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+  static partial void LogBatchSizeReached(ILogger logger, int batchSize);
 
   [LoggerMessage(
     EventId = 5,
-    Level = LogLevel.Trace,
-    Message = "Queued inbox completion for {MessageId} with status {Status}"
+    Level = LogLevel.Debug,
+    Message = "Debounce timer fired after {DebounceMs}ms quiet period, flushing partial batch"
   )]
-  static partial void LogQueuedInboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+  static partial void LogDebounceTimerFired(ILogger logger, int debounceMs);
 
   [LoggerMessage(
     EventId = 6,
-    Level = LogLevel.Trace,
-    Message = "Queued outbox failure for {MessageId}: {Error}"
-  )]
-  static partial void LogQueuedOutboxFailure(ILogger logger, Guid messageId, string error);
-
-  [LoggerMessage(
-    EventId = 7,
-    Level = LogLevel.Trace,
-    Message = "Queued inbox failure for {MessageId}: {Error}"
-  )]
-  static partial void LogQueuedInboxFailure(ILogger logger, Guid messageId, string error);
-
-  [LoggerMessage(
-    EventId = 8,
     Level = LogLevel.Warning,
     Message = "Flush already in progress, returning empty batch"
   )]
   static partial void LogFlushAlreadyInProgress(ILogger logger);
 
   [LoggerMessage(
-    EventId = 9,
+    EventId = 7,
     Level = LogLevel.Trace,
-    Message = "Interval flush: No queued operations"
+    Message = "Batch flush: No queued operations"
   )]
   static partial void LogNoQueuedOperations(ILogger logger);
 
   [LoggerMessage(
-    EventId = 10,
+    EventId = 8,
     Level = LogLevel.Debug,
-    Message = "Interval flush: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {OutboxComp} outbox completions, {OutboxFail} outbox failures, {InboxComp} inbox completions, {InboxFail} inbox failures"
+    Message = "Batch flush: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {OutboxComp} outbox completions, {OutboxFail} outbox failures, {InboxComp} inbox completions, {InboxFail} inbox failures"
   )]
-  static partial void LogIntervalFlush(ILogger logger, int outboxMsg, int inboxMsg, int outboxComp, int outboxFail, int inboxComp, int inboxFail);
+  static partial void LogBatchFlush(ILogger logger, int outboxMsg, int inboxMsg, int outboxComp, int outboxFail, int inboxComp, int inboxFail);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Information,
+    Message = "Batch flush completed: {OutboxWork} outbox work, {InboxWork} inbox work returned"
+  )]
+  static partial void LogBatchFlushCompleted(ILogger logger, int outboxWork, int inboxWork);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Error,
+    Message = "Error during batch size flush"
+  )]
+  static partial void LogErrorDuringBatchFlush(ILogger logger, Exception ex);
 
   [LoggerMessage(
     EventId = 11,
-    Level = LogLevel.Information,
-    Message = "Interval flush completed: {OutboxWork} outbox work, {InboxWork} inbox work returned"
+    Level = LogLevel.Error,
+    Message = "Error during debounce flush"
   )]
-  static partial void LogIntervalFlushCompleted(ILogger logger, int outboxWork, int inboxWork);
+  static partial void LogErrorDuringDebounceFlush(ILogger logger, Exception ex);
 
   [LoggerMessage(
     EventId = 12,
-    Level = LogLevel.Error,
-    Message = "Error during interval flush"
-  )]
-  static partial void LogErrorDuringIntervalFlush(ILogger logger, Exception ex);
-
-  [LoggerMessage(
-    EventId = 13,
     Level = LogLevel.Information,
-    Message = "Interval work coordinator strategy disposing"
+    Message = "Batch work coordinator strategy disposing"
   )]
   static partial void LogStrategyDisposing(ILogger logger);
 
   [LoggerMessage(
-    EventId = 14,
+    EventId = 13,
     Level = LogLevel.Warning,
-    Message = "Interval strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures"
+    Message = "Batch strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures"
   )]
   static partial void LogDisposingWithUnflushedOperations(ILogger logger, int outboxMsg, int inboxMsg, int completions, int failures);
 
   [LoggerMessage(
-    EventId = 15,
+    EventId = 14,
     Level = LogLevel.Error,
-    Message = "Error flushing interval strategy on disposal"
+    Message = "Error flushing batch strategy on disposal"
   )]
   static partial void LogErrorFlushingOnDisposal(ILogger logger, Exception ex);
 
   [LoggerMessage(
-    EventId = 16,
+    EventId = 15,
     Level = LogLevel.Information,
-    Message = "Interval work coordinator strategy disposed"
+    Message = "Batch work coordinator strategy disposed"
   )]
   static partial void LogStrategyDisposed(ILogger logger);
 }

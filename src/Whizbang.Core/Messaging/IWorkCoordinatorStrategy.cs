@@ -91,6 +91,7 @@ public enum FlushMode {
 /// <summary>
 /// Strategy types for work coordinator configuration.
 /// </summary>
+/// <docs>data/work-coordinator-strategies</docs>
 public enum WorkCoordinatorStrategy {
   /// <summary>
   /// Immediate strategy - calls process_work_batch immediately for each operation.
@@ -110,12 +111,20 @@ public enum WorkCoordinatorStrategy {
   /// Lowest database load, higher latency.
   /// Useful for background workers with high throughput.
   /// </summary>
-  Interval
+  Interval,
+
+  /// <summary>
+  /// Batch strategy - flushes when batch size is reached OR after a debounce quiet period.
+  /// Combines count-based and time-based triggers for optimal throughput.
+  /// Best for: Bulk imports, seeding, high-volume background processing.
+  /// </summary>
+  Batch
 }
 
 /// <summary>
 /// Configuration options for work coordinator strategies.
 /// </summary>
+/// <docs>data/work-coordinator-strategies</docs>
 public class WorkCoordinatorOptions {
   /// <summary>
   /// Total number of partitions (default 10,000).
@@ -161,4 +170,12 @@ public class WorkCoordinatorOptions {
   /// Default: 0 (no coalescing). Recommended: 50ms for Interval strategy.
   /// </summary>
   public int CoalesceWindowMilliseconds { get; set; }
+
+  /// <summary>
+  /// Number of queued messages that triggers an immediate flush when Strategy = Batch.
+  /// When the total queued message count reaches this threshold, flush fires immediately
+  /// without waiting for the debounce timer.
+  /// Default: 100.
+  /// </summary>
+  public int BatchSize { get; set; } = 100;
 }

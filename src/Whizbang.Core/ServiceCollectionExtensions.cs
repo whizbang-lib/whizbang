@@ -193,6 +193,12 @@ public static class ServiceCollectionExtensions {
     // Events queued here are drained by the work coordinator in the next lifecycle loop
     services.TryAddSingleton<Messaging.IDeferredOutboxChannel, Messaging.DeferredOutboxChannel>();
 
+    // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
+    // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
+    // but the factory lambda resolves at runtime so ordering is fine.
+    services.TryAddScoped<Messaging.IWorkFlusher>(sp =>
+      (Messaging.IWorkFlusher)sp.GetRequiredService<Messaging.IWorkCoordinatorStrategy>());
+
     services.AddSingleton<Messaging.ILifecycleMessageDeserializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
       return new Messaging.JsonLifecycleMessageDeserializer(jsonOptions);

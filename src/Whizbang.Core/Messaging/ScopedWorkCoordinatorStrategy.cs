@@ -32,12 +32,13 @@ public record ScopedWorkCoordinatorDependencies {
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkFlusherTests.cs:ScopedStrategy_FlushAsync_DelegatesToStrategyWithRequiredModeAsync</tests>
 /// Scoped strategy - batches operations within a scope (e.g., HTTP request, message handler).
 /// Flushes on scope disposal (IAsyncDisposable pattern).
 /// Provides a good balance of latency and efficiency.
 /// Best for: Web APIs, message handlers, transactional operations.
 /// </summary>
-public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
+public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkChannelWriter? _workChannelWriter;
@@ -253,6 +254,10 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
 
     return workBatch;
   }
+
+  /// <inheritdoc />
+  Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
+    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
 
   public async ValueTask DisposeAsync() {
     if (_disposed) {
