@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Metrics for perspective processing: worker, checkpoint, event loading.
 /// Meter name: Whizbang.Perspectives
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/PerspectiveMetricsTests.cs</tests>
 public sealed class PerspectiveMetrics {
 #pragma warning disable CA1707

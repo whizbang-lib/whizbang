@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <item><see cref="LocalSyncSignaler"/> - In-process channel-based signaling</item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
 public interface IPerspectiveSyncSignaler : IDisposable {
   /// <summary>

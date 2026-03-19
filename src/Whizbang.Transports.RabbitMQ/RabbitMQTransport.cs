@@ -15,7 +15,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// Provides reliable pub/sub messaging using RabbitMQ exchanges and queues.
 /// RabbitMQ channels are NOT thread-safe, so this transport uses a channel pool.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private readonly IConnection _connection;

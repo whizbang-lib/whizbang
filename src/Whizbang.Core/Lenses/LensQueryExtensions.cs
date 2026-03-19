@@ -25,7 +25,7 @@ namespace Whizbang.Core.Lenses;
 ///     SyncFilter.CurrentScope().Local().Build());
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
 public static class LensQueryExtensions {
   /// <summary>

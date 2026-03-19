@@ -31,7 +31,7 @@ namespace Whizbang.Core.Attributes;
 /// public sealed record OrderCreatedEvent(Guid OrderId, Guid CustomerId);
 /// </code>
 /// </example>
-/// <docs>core-concepts/message-tags</docs>
+/// <docs>fundamentals/messages/message-tags</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = true, Inherited = true)]
 public abstract class MessageTagAttribute : Attribute {
   /// <summary>

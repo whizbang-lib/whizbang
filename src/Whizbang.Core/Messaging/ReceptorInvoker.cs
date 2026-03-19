@@ -39,8 +39,8 @@ namespace Whizbang.Core.Messaging;
 /// these events are cascaded (published) via the optional <see cref="IEventCascader"/>.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-receptors</docs>
-/// <docs>observability/tracing#parent-context</docs>
+/// <docs>fundamentals/receptors/lifecycle-receptors</docs>
+/// <docs>operations/observability/tracing#parent-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ReceptorInvokerTests.cs</tests>
 public sealed partial class ReceptorInvoker : IReceptorInvoker {
   private readonly IReceptorRegistry _registry;
@@ -81,7 +81,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// This enables scoped services (like UserContextManager) to access security information during receptor execution.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/message-security#lifecycle-receptors</docs>
+  /// <docs>fundamentals/security/message-security#lifecycle-receptors</docs>
   public ReceptorInvoker(
     IReceptorRegistry registry,
     IServiceProvider scopedProvider,
@@ -96,7 +96,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   /// <param name="scopedProvider">The scoped service provider (ambient scope from worker).</param>
   /// <param name="eventCascader">Optional cascader for publishing events returned by receptors.</param>
   /// <param name="syncAwaiter">Optional sync awaiter for [AwaitPerspectiveSync] attribute handling.</param>
-  /// <docs>core-concepts/perspectives/perspective-sync</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync</docs>
   public ReceptorInvoker(
     IReceptorRegistry registry,
     IServiceProvider scopedProvider,

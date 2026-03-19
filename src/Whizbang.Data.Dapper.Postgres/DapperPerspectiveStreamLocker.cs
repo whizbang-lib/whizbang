@@ -9,7 +9,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Dapper/Npgsql implementation of <see cref="IPerspectiveStreamLocker"/>.
 /// Manages stream-level locks on wh_perspective_cursors for rewind, bootstrap, and purge operations.
 /// </summary>
-/// <docs>perspectives/stream-locking</docs>
+/// <docs>fundamentals/perspectives/stream-locking</docs>
 public sealed partial class DapperPerspectiveStreamLocker(
   string connectionString,
   IOptions<PerspectiveStreamLockOptions> lockOptions,

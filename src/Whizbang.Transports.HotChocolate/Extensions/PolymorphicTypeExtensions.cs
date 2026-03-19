@@ -9,7 +9,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// Extension methods for registering polymorphic types with HotChocolate GraphQL.
 /// Automatically discovers [JsonPolymorphic] types and registers them as GraphQL interfaces.
 /// </summary>
-/// <docs>graphql/polymorphic-types</docs>
+/// <docs>apis/graphql/polymorphic-types</docs>
 public static class PolymorphicTypeExtensions {
   /// <summary>
   /// Registers a polymorphic type hierarchy with HotChocolate GraphQL.
@@ -41,7 +41,7 @@ public static class PolymorphicTypeExtensions {
   ///         typeof(DateFieldSettings));
   /// </code>
   /// </example>
-  /// <docs>graphql/polymorphic-types</docs>
+  /// <docs>apis/graphql/polymorphic-types</docs>
   public static IRequestExecutorBuilder AddPolymorphicType<TBase>(
       this IRequestExecutorBuilder builder,
       params Type[] derivedTypes) where TBase : class {
@@ -85,7 +85,7 @@ public static class PolymorphicTypeExtensions {
   ///     .AddPolymorphicType&lt;AbstractFieldSettings&gt;();
   /// </code>
   /// </example>
-  /// <docs>graphql/polymorphic-types</docs>
+  /// <docs>apis/graphql/polymorphic-types</docs>
   public static IRequestExecutorBuilder AddPolymorphicType<TBase>(
       this IRequestExecutorBuilder builder) where TBase : class {
 

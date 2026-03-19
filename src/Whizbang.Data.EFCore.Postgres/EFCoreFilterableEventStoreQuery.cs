@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Use <see cref="ScopeFilter.None"/> for global/admin access to all events.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/event-store-query</docs>
+/// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableEventStoreQueryTests.cs</tests>
 public class EFCoreFilterableEventStoreQuery : IFilterableEventStoreQuery {
   private readonly DbContext _context;

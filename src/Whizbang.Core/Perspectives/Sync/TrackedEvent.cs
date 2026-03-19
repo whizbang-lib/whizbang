@@ -6,6 +6,6 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <param name="StreamId">The stream ID the event belongs to.</param>
 /// <param name="EventType">The type of the event.</param>
 /// <param name="EventId">The unique identifier of the event.</param>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 public readonly record struct TrackedEvent(Guid StreamId, Type EventType, Guid EventId);

@@ -27,7 +27,7 @@ namespace Whizbang;
 /// </code>
 /// </example>
 /// </remarks>
-/// <docs>source-generators/json-contexts#serializing-additional-types</docs>
+/// <docs>extending/source-generators/json-contexts#serializing-additional-types</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class WhizbangSerializableAttribute : Attribute {
 }

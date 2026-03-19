@@ -17,7 +17,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// SPECIFIC perspective.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/event-completion</docs>
+/// <docs>fundamentals/perspectives/event-completion</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs</tests>
 public sealed class EventCompletionAwaiter : IEventCompletionAwaiter {
   /// <inheritdoc />

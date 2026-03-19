@@ -13,7 +13,7 @@ namespace Whizbang.Core.Perspectives;
 /// Resolves runners from IPerspectiveRunnerRegistry, queries streams from IEventStoreQuery,
 /// and replays events through IPerspectiveRunner.RunAsync.
 /// </summary>
-/// <docs>perspectives/rebuild</docs>
+/// <docs>fundamentals/perspectives/rebuild</docs>
 public sealed partial class PerspectiveRebuilder(
     IServiceScopeFactory scopeFactory,
     ILogger<PerspectiveRebuilder> logger) : IPerspectiveRebuilder {

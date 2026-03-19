@@ -23,7 +23,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// </code>
 /// </example>
 /// </remarks>
-/// <docs>graphql/sorting</docs>
+/// <docs>apis/graphql/sorting</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/QueryExecutionTests.cs</tests>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Property, AllowMultiple = false)]
 public sealed class UseOrderByStrippingAttribute : ObjectFieldDescriptorAttribute {

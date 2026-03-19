@@ -24,7 +24,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// false positives when events haven't appeared in <c>wh_perspective_events</c> yet.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/sync</docs>
+/// <docs>fundamentals/perspectives/sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
 public sealed record SyncInquiryResult {
   /// <summary>
@@ -60,7 +60,7 @@ public sealed record SyncInquiryResult {
   /// Falls back to <c>PendingCount == 0</c>.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/perspectives/perspective-sync#is-fully-synced</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#is-fully-synced</docs>
   public bool IsFullySynced => ExpectedEventIds is { Length: > 0 }
       ? ProcessedEventIds is not null && ExpectedEventIds.All(id => ProcessedEventIds.Contains(id))
       : PendingCount == 0;
@@ -83,7 +83,7 @@ public sealed record SyncInquiryResult {
   /// have been processed, even if some events haven't reached <c>wh_perspective_events</c> yet.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/perspectives/perspective-sync#explicit-event-tracking</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#explicit-event-tracking</docs>
   public Guid[]? ProcessedEventIds { get; init; }
 
   /// <summary>
@@ -100,6 +100,6 @@ public sealed record SyncInquiryResult {
   /// haven't reached <c>wh_perspective_events</c> yet (still in outbox).
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/perspectives/perspective-sync#explicit-event-tracking</docs>
+  /// <docs>fundamentals/perspectives/perspective-sync#explicit-event-tracking</docs>
   public Guid[]? ExpectedEventIds { get; init; }
 }

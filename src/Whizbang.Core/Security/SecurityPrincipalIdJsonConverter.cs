@@ -14,7 +14,7 @@ namespace Whizbang.Core.Security;
 /// This is important for efficient JSONB array queries using PostgreSQL's
 /// containment operators (@&gt;, ?|, etc.).
 /// </remarks>
-/// <docs>core-concepts/security#security-principals</docs>
+/// <docs>fundamentals/security/security#security-principals</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityPrincipalIdJsonConverterTests.cs</tests>
 public sealed class SecurityPrincipalIdJsonConverter : JsonConverter<SecurityPrincipalId> {
   /// <inheritdoc/>

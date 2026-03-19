@@ -5,7 +5,7 @@ namespace Whizbang.Core.Perspectives.System;
 /// Queryable via Lens for dashboards and operational tooling.
 /// Developers subscribe to system rebuild/migration events which update this model.
 /// </summary>
-/// <docs>core-concepts/perspectives#status-model</docs>
+/// <docs>fundamentals/perspectives/perspectives#status-model</docs>
 public sealed record PerspectiveStatusModel {
   /// <summary>
   /// Deterministic GUID derived from perspective name.

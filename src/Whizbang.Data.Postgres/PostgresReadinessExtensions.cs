@@ -7,7 +7,7 @@ namespace Whizbang.Data.Postgres;
 /// <summary>
 /// Extension methods for registering PostgreSQL database readiness checks.
 /// </summary>
-/// <docs>components/data/postgres#readiness</docs>
+/// <docs>data/postgres#readiness</docs>
 public static class PostgresReadinessExtensions {
   /// <summary>
   /// Registers the PostgreSQL database readiness check.

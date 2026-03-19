@@ -26,7 +26,7 @@ namespace Whizbang.Core.Messaging;
 /// await lifecycleInvoker.InvokeAsync(deserializedMessage, LifecycleStage.PreOutboxAsync, context, ct);
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-stages</docs>
+/// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
 public interface ILifecycleMessageDeserializer {
   /// <summary>
   /// Deserializes a message from a MessageEnvelope containing a JsonElement payload.

@@ -31,7 +31,7 @@ namespace Whizbang.Core.Messaging;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/security-context-propagation</docs>
+/// <docs>fundamentals/security/security-context-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
 public sealed class SecurityContextEventStoreDecorator : IEventStore {
   private readonly IEventStore _inner;

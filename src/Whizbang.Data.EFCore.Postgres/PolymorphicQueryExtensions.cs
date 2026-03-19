@@ -13,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Use [PolymorphicDiscriminator] attribute on a string property that stores the type name.
 /// </para>
 /// </remarks>
-/// <docs>perspectives/polymorphic-types</docs>
+/// <docs>fundamentals/perspectives/polymorphic-types</docs>
 /// <example>
 /// <code>
 /// // Query via discriminator property with type-safe helper

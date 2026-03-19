@@ -138,7 +138,7 @@ public sealed record ProcessWorkBatchRequest {
   /// Results are returned in WorkBatch.SyncInquiryResults.
   /// Null if no sync inquiries.
   /// </summary>
-  /// <docs>perspectives/sync</docs>
+  /// <docs>fundamentals/perspectives/sync</docs>
   public SyncInquiry[]? PerspectiveSyncInquiries { get; init; }
 
   /// <summary>
@@ -273,7 +273,7 @@ public interface IWorkCoordinator {
   /// should be persisted immediately without waiting for the next work batch cycle.
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
-  /// <docs>workers/perspective-worker</docs>
+  /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
   Task ReportPerspectiveCompletionAsync(
@@ -293,7 +293,7 @@ public interface IWorkCoordinator {
   /// should be persisted immediately without waiting for the next work batch cycle.
   /// This calls the complete_perspective_checkpoint_work SQL function directly.
   /// </remarks>
-  /// <docs>workers/perspective-worker</docs>
+  /// <docs>operations/workers/perspective-worker</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
   Task ReportPerspectiveFailureAsync(
@@ -377,7 +377,7 @@ public record WorkBatch {
   /// Contains pending counts for each perspective/stream combination queried.
   /// Null if no sync inquiries were passed in the request.
   /// </summary>
-  /// <docs>perspectives/sync</docs>
+  /// <docs>fundamentals/perspectives/sync</docs>
   public List<SyncInquiryResult>? SyncInquiryResults { get; init; }
 }
 

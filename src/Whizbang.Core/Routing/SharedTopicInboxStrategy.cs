@@ -17,7 +17,7 @@ namespace Whizbang.Core.Routing;
 /// RabbitMQ: Uses routing key pattern matching with wildcards.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#shared-topic-inbox</docs>
+/// <docs>fundamentals/dispatcher/routing#shared-topic-inbox</docs>
 public sealed class SharedTopicInboxStrategy : IInboxRoutingStrategy {
   /// <summary>
   /// The system command namespace that all services automatically subscribe to.

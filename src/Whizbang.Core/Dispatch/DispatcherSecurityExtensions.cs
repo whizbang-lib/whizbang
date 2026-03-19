@@ -44,7 +44,7 @@ namespace Whizbang.Core.Dispatch;
 /// await dispatcher.RunAs("target-user").ForTenant("user-tenant").SendAsync(command);
 /// </code>
 /// </example>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
@@ -80,7 +80,7 @@ public static class DispatcherSecurityExtensions {
   /// // await dispatcher.AsSystem().SendAsync(command);
   /// </code>
   /// </example>
-  /// <docs>core-concepts/scope-propagation#system-operations</docs>
+  /// <docs>fundamentals/security/scope-propagation#system-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs</tests>
   public static SystemDispatcherBuilder AsSystem(this IDispatcher dispatcher) {
     // Capture current context (uses static accessor)
@@ -132,7 +132,7 @@ public static class DispatcherSecurityExtensions {
   /// // await dispatcher.RunAs("user").SendAsync(command);
   /// </code>
   /// </example>
-  /// <docs>core-concepts/scope-propagation#impersonation-operations</docs>
+  /// <docs>fundamentals/security/scope-propagation#impersonation-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
   public static ImpersonationDispatcherBuilder RunAs(this IDispatcher dispatcher, string effectiveIdentity) {
     ArgumentNullException.ThrowIfNull(effectiveIdentity, nameof(effectiveIdentity));

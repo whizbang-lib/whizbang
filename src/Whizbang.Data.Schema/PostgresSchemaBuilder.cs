@@ -8,7 +8,7 @@ namespace Whizbang.Data.Postgres.Schema;
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
 /// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>

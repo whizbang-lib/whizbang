@@ -8,7 +8,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Stores associations between message types and their consumers (perspectives, handlers, receptors).
 /// Populated during startup via reconciliation to enable auto-creation of perspective checkpoints.
 /// </summary>
-/// <docs>core-concepts/message-associations</docs>
+/// <docs>fundamentals/messages/message-associations</docs>
 public static class MessageAssociationsSchema {
   /// <summary>
   /// Column name constants for type-safe access.

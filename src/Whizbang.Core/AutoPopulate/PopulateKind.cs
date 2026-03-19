@@ -14,7 +14,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public enum PopulateKind {
   /// <summary>
   /// Populate from lifecycle timestamps (SentAt, QueuedAt, DeliveredAt).

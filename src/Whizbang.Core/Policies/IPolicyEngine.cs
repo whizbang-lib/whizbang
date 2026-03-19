@@ -4,7 +4,7 @@ namespace Whizbang.Core.Policies;
 /// Policy engine that matches messages to policies and returns configuration.
 /// Evaluates policies in order until a match is found.
 /// </summary>
-/// <docs>infrastructure/policies</docs>
+/// <docs>operations/infrastructure/policies</docs>
 /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldMatchSinglePolicyAsync</tests>
 /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldMatchFirstMatchingPolicyAsync</tests>
 /// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldReturnNullWhenNoPolicyMatchesAsync</tests>

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Security.Exceptions;
 /// This indicates a security policy violation - the message was expected
 /// to carry authentication/authorization information but none was found.
 /// </remarks>
-/// <docs>core-concepts/message-security#exceptions</docs>
+/// <docs>fundamentals/security/message-security#exceptions</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs:EstablishContextAsync_NoExtractors_AllowAnonymousFalse_ThrowsSecurityContextRequiredExceptionAsync</tests>
 public sealed class SecurityContextRequiredException : Exception {
   /// <summary>

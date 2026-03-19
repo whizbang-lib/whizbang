@@ -24,7 +24,7 @@ namespace Whizbang.Core.Security;
 /// <item><description><see cref="EstablishMessageContextForCascade"/>: For cascade paths where no envelope is available</description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/message-security#security-context-helper</docs>
+/// <docs>fundamentals/security/message-security#security-context-helper</docs>
 /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs</tests>
 public static partial class SecurityContextHelper {
   /// <summary>
@@ -248,8 +248,8 @@ public static partial class SecurityContextHelper {
   /// and cannot resolve scoped services.
   /// </para>
   /// </remarks>
-  /// <docs>core-concepts/dispatcher#null-envelope-cascade-paths</docs>
-  /// <docs>core-concepts/message-security#asynclocal-context-flow</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#null-envelope-cascade-paths</docs>
+  /// <docs>fundamentals/security/message-security#asynclocal-context-flow</docs>
   /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeNullEnvelopeTests.cs:Cascade_WithNullEnvelope_*</tests>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_*ElseBranch*</tests>

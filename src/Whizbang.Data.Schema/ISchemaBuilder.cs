@@ -16,7 +16,7 @@ namespace Whizbang.Data.Schema;
 /// - CLI tools (schema generation/validation)
 /// - Tests (schema verification)
 /// </summary>
-/// <docs>data-access/schema-generation-pattern</docs>
+/// <docs>data/schema-generation-pattern</docs>
 public interface ISchemaBuilder {
   /// <summary>
   /// Database engine name (e.g., "Postgres", "SQLite", "MySQL").

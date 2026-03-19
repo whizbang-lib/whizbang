@@ -4,7 +4,7 @@ namespace Whizbang.Core.Perspectives;
 /// Configuration options for perspective snapshot creation and management.
 /// Controls snapshot frequency, retention, and whether snapshots are enabled.
 /// </summary>
-/// <docs>perspectives/snapshots</docs>
+/// <docs>fundamentals/perspectives/snapshots</docs>
 public class PerspectiveSnapshotOptions {
   /// <summary>
   /// Create a snapshot every N events processed.

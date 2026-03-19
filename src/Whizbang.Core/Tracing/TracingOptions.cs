@@ -36,7 +36,7 @@ namespace Whizbang.Core.Tracing;
 /// </code>
 /// </example>
 /// </remarks>
-/// <docs>observability/tracing#configuration</docs>
+/// <docs>operations/observability/tracing#configuration</docs>
 public sealed class TracingOptions {
   /// <summary>
   /// Gets or sets the global verbosity level.

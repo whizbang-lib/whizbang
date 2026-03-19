@@ -11,7 +11,7 @@ namespace Whizbang.Generators;
 /// Roslyn analyzer that detects incorrect Guid usage patterns.
 /// Enforces the use of TrackedGuid or [WhizbangId] types instead of raw Guid generation.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#analyzer</docs>
+/// <docs>fundamentals/identity/whizbang-ids#analyzer</docs>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class GuidUsageAnalyzer : DiagnosticAnalyzer {
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(

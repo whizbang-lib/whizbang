@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </description></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#type-registry</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/TrackedEventTypeRegistryTests.cs</tests>
 public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   private readonly Dictionary<Type, List<string>>? _staticMappings;

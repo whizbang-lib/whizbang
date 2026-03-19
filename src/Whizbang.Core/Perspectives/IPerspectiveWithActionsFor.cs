@@ -41,7 +41,7 @@ namespace Whizbang.Core.Perspectives;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/perspectives-with-actions</docs>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
 public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
   // Marker interface - no methods required
   // Specific event handling enforced by IPerspectiveWithActionsFor<TModel, TEvent> variants
@@ -64,7 +64,7 @@ public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
 /// <item>No change via <c>ApplyResult&lt;TModel&gt;.None()</c></item>
 /// </list>
 /// </remarks>
-/// <docs>core-concepts/perspectives-with-actions</docs>
+/// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
 public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithActionsFor<TModel>
   where TModel : class
   where TEvent1 : IEvent {

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// No hard limit — chains run until the queue is empty.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/lifecycle-stages#immediate-async</docs>
+/// <docs>fundamentals/lifecycle/lifecycle-stages#immediate-async</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateAsyncDrainerTests.cs</tests>
 public sealed partial class ImmediateAsyncDrainer {
   private readonly ConcurrentQueue<(IMessageEnvelope Envelope, ILifecycleContext? Context)> _queue = new();

@@ -25,7 +25,7 @@ namespace Whizbang.Core.Workers;
 /// </description></item>
 /// </list>
 /// </remarks>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs</tests>
 public interface IPerspectiveCompletionStrategy {
   /// <summary>

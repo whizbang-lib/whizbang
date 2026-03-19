@@ -23,7 +23,7 @@ public class WhizbangOptions {
   /// with empty StreamIds, which can cause perspective worker issues.
   /// Default: true
   /// </summary>
-  /// <docs>core-concepts/stream-id#auto-generation</docs>
+  /// <docs>fundamentals/events/stream-id#auto-generation</docs>
   public bool AutoGenerateStreamIds { get; set; } = true;
 }
 

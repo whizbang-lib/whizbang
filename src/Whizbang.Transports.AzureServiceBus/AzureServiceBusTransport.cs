@@ -738,7 +738,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="destination">The transport destination containing metadata.</param>
   /// <param name="topicName">The topic name being subscribed to.</param>
   /// <returns>A valid Azure Service Bus subscription name.</returns>
-  /// <docs>components/transports/azure-service-bus#subscription-naming</docs>
+  /// <docs>messaging/transports/azure-service-bus#subscription-naming</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
   private string _deriveSubscriptionName(TransportDestination destination, string topicName) {
     // Try to get SubscriberName from metadata (set by TransportSubscriptionBuilder)
@@ -803,7 +803,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="topicName">The topic name.</param>
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>components/transports/azure-service-bus#auto-provisioning</docs>
+  /// <docs>messaging/transports/azure-service-bus#auto-provisioning</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs</tests>
   private async Task _ensureInfrastructureExistsAsync(
     string topicName,
@@ -841,7 +841,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <param name="subscriptionName">The subscription name.</param>
   /// <param name="routingPatterns">The routing patterns to filter by.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <docs>components/transports/azure-service-bus#routing-filters</docs>
+  /// <docs>messaging/transports/azure-service-bus#routing-filters</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/SubscriptionNameDerivationTests.cs</tests>
   private async Task _applyRoutingPatternFilterAsync(
     string topicName,
@@ -928,7 +928,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// Ensures a topic exists via the admin client, handling race conditions gracefully.
   /// Shared by both subscribe-path and publish-path auto-provisioning.
   /// </summary>
-  /// <docs>transports/azure-service-bus#publish-auto-provisioning</docs>
+  /// <docs>messaging/transports/azure-service-bus#publish-auto-provisioning</docs>
   private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
       return;

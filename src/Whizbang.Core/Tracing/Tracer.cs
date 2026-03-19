@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tracing;
 /// <item><description><see cref="TracingOptions.EnableStructuredLogging"/> - Whether to emit log messages</description></item>
 /// </list>
 /// </remarks>
-/// <docs>observability/tracing#tracer</docs>
+/// <docs>operations/observability/tracing#tracer</docs>
 /// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
 public sealed partial class Tracer : ITracer {

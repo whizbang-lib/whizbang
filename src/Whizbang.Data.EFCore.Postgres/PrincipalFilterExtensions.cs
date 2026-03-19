@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Extension methods for filtering perspective rows by security principals.
 /// Uses EF Core 10 ComplexProperty().ToJson() with native LINQ support.
 /// </summary>
-/// <docs>core-concepts/security#principal-filtering</docs>
+/// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PrincipalFilterExtensionsTests.cs</tests>
 /// <remarks>
 /// <para>

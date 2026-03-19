@@ -7,7 +7,7 @@ namespace Whizbang.Core.Security;
 /// JSON converter for <see cref="ScopeProp"/> enum that uses 2-character abbreviated names.
 /// Reduces wire size in message hops while maintaining readability.
 /// </summary>
-/// <docs>core-concepts/scope-propagation</docs>
+/// <docs>fundamentals/security/scope-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs:ScopePropJsonConverter</tests>
 /// <remarks>
 /// <para>Abbreviation mapping:</para>

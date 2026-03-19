@@ -18,7 +18,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// has its own tracker instance, providing proper scope isolation.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync#scoped-tracker-accessor</docs>
+/// <docs>fundamentals/perspectives/perspective-sync#scoped-tracker-accessor</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerAccessorTests.cs</tests>
 public static class ScopedEventTrackerAccessor {
   private static readonly AsyncLocal<IScopedEventTracker?> _current = new();

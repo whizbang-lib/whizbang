@@ -22,7 +22,7 @@ namespace Whizbang.Core.SystemEvents;
 /// infinite loops.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/system-events#emitter</docs>
+/// <docs>fundamentals/events/system-events#emitter</docs>
 public sealed class SystemEventEmitter : ISystemEventEmitter {
   private readonly SystemEventOptions _options;
   private readonly IEventStore _systemEventStore;

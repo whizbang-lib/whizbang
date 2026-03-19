@@ -34,7 +34,7 @@ namespace Whizbang.Core.Audit;
 ///     .OrderBy(a => a.StreamPosition));
 /// </code>
 /// </example>
-/// <docs>core-concepts/audit-logging</docs>
+/// <docs>fundamentals/security/audit-logging</docs>
 /// <tests>Whizbang.Core.Tests/Audit/AuditLogEntryTests.cs</tests>
 public sealed record AuditLogEntry {
   /// <summary>

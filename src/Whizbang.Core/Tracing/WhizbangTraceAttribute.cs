@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tracing;
 /// public sealed record ReseedSystemEvent : EventBase&lt;ReseedSystemEvent&gt; { }
 /// </code>
 /// </example>
-/// <docs>tracing/attributes</docs>
+/// <docs>operations/observability/tracing-attributes</docs>
 /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithWhizbangTraceAttribute_GeneratesTracingCodeAsync</tests>
 [AttributeUsage(
   AttributeTargets.Class,  // Receptors, Perspectives, Events, Commands

@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security;
 /// Ambient security context for the current operation.
 /// Populated from HTTP claims, message headers, or explicit injection.
 /// </summary>
-/// <docs>core-concepts/security#scope-context</docs>
+/// <docs>fundamentals/security/security#scope-context</docs>
 /// <tests>Whizbang.Core.Tests/Security/ScopeContextTests.cs</tests>
 /// <example>
 /// // Check permissions

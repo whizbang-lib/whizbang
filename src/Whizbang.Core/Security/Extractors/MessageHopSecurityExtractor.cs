@@ -19,7 +19,7 @@ namespace Whizbang.Core.Security.Extractors;
 /// <see cref="ScopeContext"/> with all security fields (scope, roles, permissions,
 /// principals, claims, actual/effective principal, context type).
 /// </remarks>
-/// <docs>core-concepts/message-security#message-hop-extractor</docs>
+/// <docs>fundamentals/security/message-security#message-hop-extractor</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
 public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtractor {
   private readonly ILogger<MessageHopSecurityExtractor>? _logger;

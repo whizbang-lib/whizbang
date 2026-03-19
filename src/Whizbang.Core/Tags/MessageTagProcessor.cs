@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tags;
 /// Modified payloads are passed to subsequent hooks in the chain.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#processing</docs>
+/// <docs>fundamentals/messages/message-tags#processing</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public sealed class MessageTagProcessor : IMessageTagProcessor {
   private readonly TagOptions _options;

@@ -8,7 +8,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Stores mappings between CLR types and their perspective table names with full schema JSON.
 /// Used for schema drift detection and auto-migration when table names change.
 /// </summary>
-/// <docs>perspectives/registry</docs>
+/// <docs>fundamentals/perspectives/registry</docs>
 public static class PerspectiveRegistrySchema {
   /// <summary>
   /// Column name constants for type-safe access.

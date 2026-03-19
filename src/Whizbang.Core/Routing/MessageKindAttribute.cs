@@ -9,7 +9,7 @@ namespace Whizbang.Core.Routing;
 /// public sealed record CreateOrderMessage : IMessage;
 /// </code>
 /// </example>
-/// <docs>core-concepts/routing#message-kind</docs>
+/// <docs>fundamentals/dispatcher/routing#message-kind</docs>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = false)]
 public sealed class MessageKindAttribute(MessageKind kind) : Attribute {
   /// <summary>

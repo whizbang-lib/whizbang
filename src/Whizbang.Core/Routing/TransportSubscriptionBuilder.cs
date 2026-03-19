@@ -21,7 +21,7 @@ namespace Whizbang.Core.Routing;
 /// appropriate subscriptions for both commands (inbox) and events (namespace topics).
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#transport-subscription-builder</docs>
+/// <docs>fundamentals/dispatcher/routing#transport-subscription-builder</docs>
 public sealed class TransportSubscriptionBuilder {
   private readonly RoutingOptions _routingOptions;
   private readonly EventSubscriptionDiscovery _discovery;

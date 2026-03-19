@@ -19,7 +19,7 @@ namespace Whizbang.Core.Registry;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/delivery-receipts</docs>
+/// <docs>fundamentals/messages/delivery-receipts</docs>
 /// <tests>tests/Whizbang.Core.Tests/Registry/StreamIdExtractorRegistryTests.cs</tests>
 public static class StreamIdExtractorRegistry {
   /// <summary>

@@ -38,7 +38,7 @@ namespace Whizbang.Observability.Hooks;
 /// public record OrderCompletedEvent(Guid OrderId, decimal Amount, string TenantId) : IEvent;
 /// </code>
 /// </example>
-/// <docs>observability/opentelemetry-integration#metrics</docs>
+/// <docs>operations/observability/opentelemetry-integration#metrics</docs>
 /// <tests>Whizbang.Observability.Tests/Hooks/OpenTelemetryMetricHookTests.cs</tests>
 public sealed class OpenTelemetryMetricHook : IMessageTagHook<MetricTagAttribute> {
   /// <summary>

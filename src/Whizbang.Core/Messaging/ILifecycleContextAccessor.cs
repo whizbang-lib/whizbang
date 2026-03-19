@@ -12,7 +12,7 @@ namespace Whizbang.Core.Messaging;
 /// support <see cref="IAcceptsLifecycleContext"/>.
 /// </para>
 /// </remarks>
-/// <docs>testing/lifecycle-synchronization</docs>
+/// <docs>operations/testing/lifecycle-synchronization</docs>
 public interface ILifecycleContextAccessor {
   /// <summary>
   /// Gets or sets the current lifecycle context for the ambient scope.

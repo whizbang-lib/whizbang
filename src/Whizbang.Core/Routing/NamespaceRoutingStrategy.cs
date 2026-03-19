@@ -16,7 +16,7 @@ namespace Whizbang.Core.Routing;
 /// - Events go to namespace-specific topics for pub/sub
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/routing#namespace-routing</docs>
+/// <docs>fundamentals/dispatcher/routing#namespace-routing</docs>
 public sealed class NamespaceRoutingStrategy : ITopicRoutingStrategy {
   private readonly Func<Type, string> _typeToTopic;
 

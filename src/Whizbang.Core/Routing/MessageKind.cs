@@ -4,7 +4,7 @@ namespace Whizbang.Core.Routing;
 /// Classifies a message for routing purposes.
 /// Determined by priority: attribute, interface, namespace convention, type name suffix.
 /// </summary>
-/// <docs>core-concepts/routing#message-kind</docs>
+/// <docs>fundamentals/dispatcher/routing#message-kind</docs>
 public enum MessageKind {
   /// <summary>Could not determine message kind.</summary>
   Unknown = 0,

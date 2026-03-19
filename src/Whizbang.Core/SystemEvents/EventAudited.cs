@@ -40,7 +40,7 @@ namespace Whizbang.Core.SystemEvents;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/system-events#audit</docs>
+/// <docs>fundamentals/events/system-events#audit</docs>
 [AuditEvent(Exclude = true, Reason = "System event - prevents infinite self-auditing loop")]
 public sealed record EventAudited : ISystemEvent {
   /// <summary>

@@ -6,7 +6,7 @@ namespace Whizbang.Core.Perspectives;
 /// this store always INSERTs new rows - it never updates existing rows.
 /// </summary>
 /// <typeparam name="TModel">The log entry model type to store</typeparam>
-/// <docs>perspectives/temporal</docs>
+/// <docs>fundamentals/perspectives/temporal</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ITemporalPerspectiveStoreTests.cs</tests>
 /// <remarks>
 /// <para>

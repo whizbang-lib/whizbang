@@ -83,7 +83,7 @@ public static class ServiceCollectionExtensions {
   /// </code>
   /// </example>
   /// </remarks>
-  /// <docs>core-concepts/dependency-injection#multiple-addwhizbang-calls</docs>
+  /// <docs>operations/configuration/dependency-injection#multiple-addwhizbang-calls</docs>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_PreservesHooksFromFirstCall_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_CalledMultipleTimes_MergesHooksFromBothCalls_Async</tests>
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_ServiceDescriptor_HasImplementationInstance_Async</tests>

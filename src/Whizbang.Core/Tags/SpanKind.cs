@@ -8,7 +8,7 @@ namespace Whizbang.Core.Tags;
 /// SpanKind helps tracing systems understand the relationship between spans
 /// and how to visualize them in trace diagrams.
 /// </remarks>
-/// <docs>core-concepts/message-tags#span-kind</docs>
+/// <docs>fundamentals/messages/message-tags#span-kind</docs>
 public enum SpanKind {
   /// <summary>
   /// Default span kind for internal operations that don't cross service boundaries.

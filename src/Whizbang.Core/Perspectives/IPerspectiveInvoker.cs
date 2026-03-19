@@ -9,7 +9,7 @@ namespace Whizbang.Core.Perspectives;
 /// Implements Unit of Work pattern for perspective materialization.
 /// Registered as Scoped service - one instance per HTTP request or message batch.
 /// </summary>
-/// <docs>core-concepts/perspectives</docs>
+/// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public interface IPerspectiveInvoker : IAsyncDisposable {

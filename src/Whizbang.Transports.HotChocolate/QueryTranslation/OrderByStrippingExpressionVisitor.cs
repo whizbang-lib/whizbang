@@ -25,7 +25,7 @@ namespace Whizbang.Transports.HotChocolate.QueryTranslation;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>graphql/sorting</docs>
+/// <docs>apis/graphql/sorting</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingExpressionVisitorTests.cs</tests>
 public class OrderByStrippingExpressionVisitor : ExpressionVisitor {
   /// <summary>

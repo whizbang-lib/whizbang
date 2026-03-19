@@ -18,7 +18,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// to ensure the ordering is stripped before HotChocolate's sorting middleware processes it.
 /// </para>
 /// </remarks>
-/// <docs>graphql/sorting</docs>
+/// <docs>apis/graphql/sorting</docs>
 /// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/QueryExecutionTests.cs</tests>
 public static class OrderByStrippingMiddleware {
   private static readonly OrderByStrippingExpressionVisitor _visitor = new();

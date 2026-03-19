@@ -7,7 +7,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// <summary>
 /// Extension methods for configuring Whizbang scope middleware.
 /// </summary>
-/// <docs>graphql/scoping#setup</docs>
+/// <docs>apis/graphql/scoping#setup</docs>
 /// <example>
 /// // In Program.cs
 /// builder.Services.AddWhizbangScope();

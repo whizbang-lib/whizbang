@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tags;
 /// for custom attribute types that aren't built-in Whizbang types.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#dispatcher-registry</docs>
+/// <docs>fundamentals/messages/message-tags#dispatcher-registry</docs>
 public static class MessageTagHookDispatcherRegistry {
   /// <summary>
   /// Gets the number of registered dispatchers.

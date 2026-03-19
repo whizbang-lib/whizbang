@@ -3,7 +3,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Configuration options for RabbitMQ transport.
 /// </summary>
-/// <docs>components/transports/rabbitmq</docs>
+/// <docs>messaging/transports/rabbitmq</docs>
 public class RabbitMQOptions {
   /// <summary>
   /// Maximum number of channels in the pool.
@@ -44,14 +44,14 @@ public class RabbitMQOptions {
   /// Set to 0 to skip initial warning phase and go directly to indefinite retry.
   /// Default: 5
   /// </summary>
-  /// <docs>components/transports/rabbitmq#connection-retry</docs>
+  /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
   public int InitialRetryAttempts { get; set; } = 5;
 
   /// <summary>
   /// Initial delay before the first retry attempt.
   /// Default: 1 second
   /// </summary>
-  /// <docs>components/transports/rabbitmq#connection-retry</docs>
+  /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
   public TimeSpan InitialRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
@@ -59,7 +59,7 @@ public class RabbitMQOptions {
   /// Once this delay is reached, retries continue at this interval indefinitely.
   /// Default: 120 seconds
   /// </summary>
-  /// <docs>components/transports/rabbitmq#connection-retry</docs>
+  /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
   public TimeSpan MaxRetryDelay { get; set; } = TimeSpan.FromSeconds(120);
 
   /// <summary>
@@ -67,7 +67,7 @@ public class RabbitMQOptions {
   /// Each retry delay = previous delay * multiplier (capped at MaxRetryDelay).
   /// Default: 2.0
   /// </summary>
-  /// <docs>components/transports/rabbitmq#connection-retry</docs>
+  /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
@@ -75,7 +75,7 @@ public class RabbitMQOptions {
   /// If false, throw after InitialRetryAttempts.
   /// Default: true (critical transport - always retry)
   /// </summary>
-  /// <docs>components/transports/rabbitmq#connection-retry</docs>
+  /// <docs>messaging/transports/rabbitmq#connection-retry</docs>
   public bool RetryIndefinitely { get; set; } = true;
 
   #endregion

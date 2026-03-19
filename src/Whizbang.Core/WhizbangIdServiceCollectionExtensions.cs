@@ -7,7 +7,7 @@ namespace Microsoft.Extensions.DependencyInjection;
 /// <summary>
 /// Extension methods for registering WhizbangId services with dependency injection.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids</docs>
 /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs</tests>
 public static class WhizbangIdServiceCollectionExtensions {
   /// <summary>

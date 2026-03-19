@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tags;
 /// generates an implementation for each assembly that defines custom attributes.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/message-tags#dispatcher-registry</docs>
+/// <docs>fundamentals/messages/message-tags#dispatcher-registry</docs>
 public interface IMessageTagHookDispatcher {
   /// <summary>
   /// Attempts to create a typed TagContext for the given attribute type.

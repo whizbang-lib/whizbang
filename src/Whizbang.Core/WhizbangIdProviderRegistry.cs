@@ -29,7 +29,7 @@ namespace Whizbang.Core;
 /// </code>
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/whizbang-ids</docs>
+/// <docs>fundamentals/identity/whizbang-ids</docs>
 public static class WhizbangIdProviderRegistry {
   private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
   private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];

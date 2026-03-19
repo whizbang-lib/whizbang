@@ -6,7 +6,7 @@ namespace Whizbang.Core;
 /// Whizbang will automatically generate a new StreamId using TrackedGuid.NewMedo().
 /// This prevents events from being stored with empty StreamIds.
 /// </summary>
-/// <docs>core-concepts/stream-id</docs>
+/// <docs>fundamentals/events/stream-id</docs>
 public interface IHasStreamId {
   /// <summary>
   /// The stream identifier for this message.

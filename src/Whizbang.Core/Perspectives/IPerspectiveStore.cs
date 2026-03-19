@@ -8,7 +8,7 @@ namespace Whizbang.Core.Perspectives;
 /// Perspectives use this to update read models without knowing storage details.
 /// </summary>
 /// <typeparam name="TModel">The read model type to store</typeparam>
-/// <docs>core-concepts/perspectives</docs>
+/// <docs>fundamentals/perspectives/perspectives</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>

@@ -34,7 +34,7 @@ public sealed class OutboxRecord {
   /// Used by outbox processor to route messages.
   /// Null indicates event-store-only mode (transport is bypassed).
   /// </summary>
-  /// <docs>core-concepts/dispatcher#event-store-only</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#event-store-only</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteLocal_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_CascadedEvent_StoredToOutboxWithNullDestinationAsync</tests>

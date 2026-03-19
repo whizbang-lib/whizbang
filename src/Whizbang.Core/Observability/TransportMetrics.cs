@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Metrics for inbox receive, outbox publish, transport readiness, and event store.
 /// Meter name: Whizbang.Transport
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/TransportMetricsTests.cs</tests>
 public sealed class TransportMetrics {
 #pragma warning disable CA1707

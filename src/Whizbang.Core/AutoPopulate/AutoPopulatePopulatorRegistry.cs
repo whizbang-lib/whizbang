@@ -20,7 +20,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// zero-reflection, AOT-compatible property population.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public static class AutoPopulatePopulatorRegistry {
   /// <summary>
   /// Register an assembly's auto-populate populator.

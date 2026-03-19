@@ -13,7 +13,7 @@ namespace Whizbang.Core.AutoPopulate;
 /// Implementations self-register via [ModuleInitializer] at assembly load time.
 /// </para>
 /// </remarks>
-/// <docs>attributes/auto-populate</docs>
+/// <docs>extending/attributes/auto-populate</docs>
 public interface IAutoPopulateRegistry {
   /// <summary>
   /// Gets registrations for a specific message type.

@@ -4,7 +4,7 @@ namespace Whizbang.Core.ValueObjects;
 /// Metadata flags for tracking UUID generation provenance.
 /// Tracks both the version (v4 vs v7) and the source of the UUID.
 /// </summary>
-/// <docs>core-concepts/whizbang-ids#guid-metadata</docs>
+/// <docs>fundamentals/identity/whizbang-ids#guid-metadata</docs>
 [Flags]
 public enum GuidMetadata : ushort {
   /// <summary>No metadata set.</summary>

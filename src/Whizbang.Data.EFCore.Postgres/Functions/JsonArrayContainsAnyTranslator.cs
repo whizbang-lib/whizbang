@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// Generates SQL like: <c>scope->'AllowedPrincipals' ?| ARRAY['user:alice', 'group:sales']</c>
 /// This is much more efficient than multiple OR'd @> containment checks for large arrays.
 /// </remarks>
-/// <docs>core-concepts/security#principal-filtering</docs>
+/// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/Functions/JsonArrayContainsAnyTranslatorTests.cs</tests>
 public class JsonArrayContainsAnyTranslator : IMethodCallTranslator {
   private static readonly MethodInfo _allowedPrincipalsContainsAnyMethod =

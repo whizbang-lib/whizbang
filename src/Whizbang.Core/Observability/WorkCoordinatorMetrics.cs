@@ -6,7 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Metrics for the work coordination pipeline: process_work_batch, flush, publisher worker.
 /// Meter name: Whizbang.WorkCoordinator
 /// </summary>
-/// <docs>observability/metrics</docs>
+/// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/WorkCoordinatorMetricsTests.cs</tests>
 public sealed class WorkCoordinatorMetrics {
 #pragma warning disable CA1707

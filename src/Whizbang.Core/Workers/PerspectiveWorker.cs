@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// invokes perspectives, and tracks checkpoint progress per stream.
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
-/// <docs>workers/perspective-worker</docs>
+/// <docs>operations/workers/perspective-worker</docs>
 public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
@@ -1027,7 +1027,7 @@ public partial class PerspectiveWorker(
   /// Sets IScopeContextAccessor.Current and IMessageContextAccessor.Current.
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
-  /// <docs>workers/perspective-worker#security-context</docs>
+  /// <docs>operations/workers/perspective-worker#security-context</docs>
   /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
   private static async ValueTask _establishSecurityContextAsync(
       MessageEnvelope<IEvent> envelope,

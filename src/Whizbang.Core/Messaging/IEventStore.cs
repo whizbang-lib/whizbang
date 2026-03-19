@@ -130,7 +130,7 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_MultipleEvents_ReturnsInUuidV7OrderAsync</tests>
-  /// <docs>core-concepts/lifecycle-receptors</docs>
+  /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
   Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -161,7 +161,7 @@ public interface IEventStore {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync</tests>
-  /// <docs>core-concepts/lifecycle-receptors</docs>
+  /// <docs>fundamentals/receptors/lifecycle-receptors</docs>
   Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -192,7 +192,7 @@ public interface IEventStore {
   /// </param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
-  /// <docs>core-concepts/event-store#append-and-wait</docs>
+  /// <docs>fundamentals/events/event-store#append-and-wait</docs>
   /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
   Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(
       Guid streamId,
@@ -231,7 +231,7 @@ public interface IEventStore {
   /// </param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The result of the sync operation, including outcome and elapsed time.</returns>
-  /// <docs>core-concepts/event-store#append-and-wait-all</docs>
+  /// <docs>fundamentals/events/event-store#append-and-wait-all</docs>
   Task<SyncResult> AppendAndWaitAsync<TMessage>(
       Guid streamId,
       TMessage message,

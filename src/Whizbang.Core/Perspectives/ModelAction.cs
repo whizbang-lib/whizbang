@@ -24,7 +24,7 @@ namespace Whizbang.Core.Perspectives;
 /// Use this only when data retention is not required.
 /// </para>
 /// </remarks>
-/// <docs>core-concepts/model-action</docs>
+/// <docs>fundamentals/perspectives/model-action</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/ModelActionTests.cs</tests>
 /// <example>
 /// <para><strong>Returning ModelAction from Apply:</strong></para>

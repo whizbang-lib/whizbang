@@ -6,7 +6,7 @@ namespace Whizbang.Transports.HotChocolate;
 /// <summary>
 /// Extension methods for registering Whizbang Lens support with HotChocolate GraphQL.
 /// </summary>
-/// <docs>graphql/setup</docs>
+/// <docs>apis/graphql/setup</docs>
 /// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/ServiceRegistrationTests.cs</tests>
 /// <example>
 /// services.AddGraphQLServer()

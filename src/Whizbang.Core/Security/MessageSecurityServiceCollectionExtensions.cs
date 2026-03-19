@@ -8,7 +8,7 @@ namespace Whizbang.Core.Security;
 /// <summary>
 /// Extension methods for registering message security services.
 /// </summary>
-/// <docs>core-concepts/message-security#registration</docs>
+/// <docs>fundamentals/security/message-security#registration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityServiceCollectionExtensionsTests.cs</tests>
 public static class MessageSecurityServiceCollectionExtensions {
   /// <summary>

@@ -26,7 +26,7 @@ namespace Whizbang.Core.Lenses;
 /// var lens = _lensFactory.GetLens&lt;IOrderLens&gt;(ScopeFilter.Tenant, Permission.Read("orders"));
 /// </code>
 /// </example>
-/// <docs>core-concepts/scoped-lenses</docs>
+/// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryTests.cs</tests>
 public interface IScopedLensFactory {
   // === Legacy API (string-based scope names) ===
@@ -154,7 +154,7 @@ public interface IScopedLensFactory {
   /// Note: EventStoreRecord.Scope (PerspectiveScope) supports TenantId, UserId, OrganizationId, and CustomerId filtering.
   /// Principal filters are not applied for event queries.
   /// </remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters);
 
   /// <summary>
@@ -164,7 +164,7 @@ public interface IScopedLensFactory {
   /// <param name="filters">Composable scope filter flags.</param>
   /// <param name="requiredPermission">Permission the caller must have.</param>
   /// <returns>An event store query with the scope filters applied.</returns>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetEventStoreQuery(ScopeFilter filters, Security.Permission requiredPermission);
 
   /// <summary>
@@ -172,7 +172,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <returns>An event store query with no scope filtering applied.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.None)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetGlobalEventStoreQuery();
 
   /// <summary>
@@ -180,7 +180,7 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <returns>An event store query filtered by TenantId.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetTenantEventStoreQuery();
 
   /// <summary>
@@ -188,6 +188,6 @@ public interface IScopedLensFactory {
   /// </summary>
   /// <returns>An event store query filtered by TenantId and UserId.</returns>
   /// <remarks>Equivalent to GetEventStoreQuery(ScopeFilter.Tenant | ScopeFilter.User)</remarks>
-  /// <docs>core-concepts/event-store-query</docs>
+  /// <docs>fundamentals/events/event-store-query</docs>
   Messaging.IEventStoreQuery GetUserEventStoreQuery();
 }

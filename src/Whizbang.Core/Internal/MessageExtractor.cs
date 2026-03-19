@@ -11,7 +11,7 @@ namespace Whizbang.Core.Internal;
 /// Used by Dispatcher to automatically capture messages from receptor return values.
 /// Extracts both IEvent and ICommand instances (anything implementing IMessage).
 /// </summary>
-/// <docs>core-concepts/dispatcher#automatic-message-cascade</docs>
+/// <docs>fundamentals/dispatcher/dispatcher#automatic-message-cascade</docs>
 public static class MessageExtractor {
   /// <summary>
   /// Extracts all IMessage instances (events and commands) from a potentially complex return value.
@@ -20,7 +20,7 @@ public static class MessageExtractor {
   /// </summary>
   /// <param name="result">The result to extract messages from</param>
   /// <returns>Flattened collection of all messages found</returns>
-  /// <docs>core-concepts/dispatcher#automatic-message-cascade</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#automatic-message-cascade</docs>
   /// <tests>tests/Whizbang.Core.Tests/Internal/MessageExtractorTests.cs</tests>
   public static IEnumerable<IMessage> ExtractMessages(object? result, Action<Type>? onNonMessageValue = null) {
     if (result == null) {
@@ -96,7 +96,7 @@ public static class MessageExtractor {
   /// <param name="result">The result to extract messages from</param>
   /// <param name="receptorDefault">Optional default routing from receptor's [DefaultRouting] attribute</param>
   /// <returns>Flattened collection of messages with their resolved dispatch modes</returns>
-  /// <docs>core-concepts/dispatcher#routed-message-cascading</docs>
+  /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Core.Tests/Internal/MessageExtractorRoutingTests.cs</tests>
   public static IEnumerable<(IMessage Message, DispatchMode Mode)> ExtractMessagesWithRouting(
     object? result,

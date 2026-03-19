@@ -31,7 +31,7 @@ namespace Whizbang.Core;
 /// }
 /// </code>
 /// </example>
-/// <docs>core-concepts/whizbang-ids#suppress-interception</docs>
+/// <docs>fundamentals/identity/whizbang-ids#suppress-interception</docs>
 [AttributeUsage(
     AttributeTargets.Method |
     AttributeTargets.Class |

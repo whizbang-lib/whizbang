@@ -8,7 +8,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// <summary>
 /// Emitted when a user's permissions or roles change.
 /// </summary>
-/// <docs>core-concepts/system-events#permission-changed</docs>
+/// <docs>fundamentals/events/system-events#permission-changed</docs>
 /// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 [AuditEvent(Exclude = true, Reason = "System event - security events are not self-audited")]
 public sealed record PermissionChanged : ISystemEvent {

@@ -7,7 +7,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <summary>
 /// Handles Azure Service Bus connection establishment with retry and exponential backoff.
 /// </summary>
-/// <docs>components/transports/azure-service-bus#connection-retry</docs>
+/// <docs>messaging/transports/azure-service-bus#connection-retry</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusConnectionRetryTests.cs</tests>
 public sealed partial class AzureServiceBusConnectionRetry {
   private readonly AzureServiceBusOptions _options;

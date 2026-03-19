@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// var allProcessed = tracker.AreAllProcessed(filter, processedEventIds);
 /// </code>
 /// </remarks>
-/// <docs>core-concepts/perspectives/perspective-sync</docs>
+/// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/ScopedEventTrackerTests.cs</tests>
 public interface IScopedEventTracker {
   /// <summary>

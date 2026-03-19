@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// and generates a MessageTagRegistry for AOT-compatible tag discovery.
 /// Also generates MessageTagHookDispatcher for custom attribute types to enable AOT-compatible hook invocation.
 /// </summary>
-/// <docs>core-concepts/message-tags#registry</docs>
+/// <docs>fundamentals/messages/message-tags#registry</docs>
 /// <tests>Whizbang.Generators.Tests/MessageTagDiscoveryGeneratorTests.cs</tests>
 [Generator]
 public class MessageTagDiscoveryGenerator : IIncrementalGenerator {

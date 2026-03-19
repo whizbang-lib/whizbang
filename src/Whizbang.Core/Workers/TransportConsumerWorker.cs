@@ -37,7 +37,7 @@ namespace Whizbang.Core.Workers;
 /// </list>
 /// </para>
 /// </remarks>
-/// <docs>components/workers/transport-consumer</docs>
+/// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
 public partial class TransportConsumerWorker : BackgroundService {
