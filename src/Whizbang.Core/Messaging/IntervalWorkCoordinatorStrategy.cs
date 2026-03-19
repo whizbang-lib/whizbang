@@ -241,16 +241,6 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       _flushing = true;
     }
 
-    // Resolve coordinator: use direct reference if available, otherwise create a scope
-    IServiceScope? flushScope = null;
-    IWorkCoordinator coordinator;
-    if (_coordinator != null) {
-      coordinator = _coordinator;
-    } else {
-      flushScope = _scopeFactory!.CreateScope();
-      coordinator = flushScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    }
-
     try {
       // Snapshot current queues under lock
       OutboxMessage[] outboxMessages;
@@ -298,87 +288,33 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
       }
 
-      // Check if lifecycle tracing is enabled
-      var enableLifecycleTracing = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-
-      // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PreDistributeAsync,
-        LifecycleStage.PreDistributeInline,
+      var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+        _coordinator,
+        _scopeFactory,
+        _instanceProvider,
+        _options,
+        "interval",
         outboxMessages,
         inboxMessages,
-        _scopeFactory,
+        outboxCompletions,
+        inboxCompletions,
+        outboxFailures,
+        inboxFailures,
+        flags,
         _lifecycleMessageDeserializer,
         _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
+        _tracingOptions,
+        _metrics,
+        _lifecycleMetrics,
+        ct
       );
-
-      // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
-      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-        LifecycleStage.DistributeAsync,
-        outboxMessages,
-        inboxMessages,
-        _scopeFactory,
-        _lifecycleMessageDeserializer,
-        _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
-      );
-
-      // Call process_work_batch with snapshot
-      var request = new ProcessWorkBatchRequest {
-        InstanceId = _instanceProvider.InstanceId,
-        ServiceName = _instanceProvider.ServiceName,
-        HostName = _instanceProvider.HostName,
-        ProcessId = _instanceProvider.ProcessId,
-        Metadata = null,
-        OutboxCompletions = outboxCompletions,
-        OutboxFailures = outboxFailures,
-        InboxCompletions = inboxCompletions,
-        InboxFailures = inboxFailures,
-        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
-        ReceptorFailures = [],
-        PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
-        PerspectiveEventCompletions = [],
-        PerspectiveFailures = [],
-        NewOutboxMessages = outboxMessages,
-        NewInboxMessages = inboxMessages,
-        RenewOutboxLeaseIds = [],
-        RenewInboxLeaseIds = [],
-        Flags = flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-        PartitionCount = _options.PartitionCount,
-        LeaseSeconds = _options.LeaseSeconds,
-        StaleThresholdSeconds = _options.StaleThresholdSeconds
-      };
-      var flushSw = System.Diagnostics.Stopwatch.StartNew();
-      var workBatch = await coordinator.ProcessWorkBatchAsync(request, ct);
-      flushSw.Stop();
-      _metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", "interval"));
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
 
-      // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PostDistributeAsync,
-        LifecycleStage.PostDistributeInline,
-        outboxMessages,
-        inboxMessages,
-        _scopeFactory,
-        _lifecycleMessageDeserializer,
-        _logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: _lifecycleMetrics,
-        ct: ct
-      );
-
       return workBatch;
     } finally {
-      flushScope?.Dispose();
       lock (_lock) {
         _flushing = false;
       }
@@ -514,7 +450,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   [LoggerMessage(
     EventId = 8,
-    Level = LogLevel.Warning,
+    Level = LogLevel.Debug,
     Message = "Flush already in progress, returning empty batch"
   )]
   static partial void LogFlushAlreadyInProgress(ILogger logger);
