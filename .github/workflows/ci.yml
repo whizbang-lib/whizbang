@@ -3,8 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - main
-      - develop
+      - develop        # release.yml handles post-merge to main
   pull_request:
     branches: [main, develop, 'release/**']
   workflow_dispatch:
@@ -29,10 +28,10 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Detect changed paths
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
         id: filter
         with:
           filters: |
@@ -105,6 +104,96 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # ============================================================================
+  # Pack NuGet Packages - validates packability and produces artifacts
+  # ============================================================================
+
+  pack:
+    name: Pack NuGet Packages
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: build-${{ github.run_id }}
+
+      - name: Pack NuGet packages (no rebuild)
+        env:
+          VERSION: ${{ needs.version.outputs.semver }}
+        run: |
+          # NU5017 false positive for analyzer packages in .NET 10 SDK
+          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
+
+      - name: Verify expected packages
+        run: |
+          # NOTE: Internal packages excluded (IsPackable=false):
+          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
+          #   - Whizbang.Testing (empty placeholder)
+          EXPECTED_PACKAGES=(
+            "SoftwareExtravaganza.Whizbang.Core"
+            "SoftwareExtravaganza.Whizbang.Generators"
+            "SoftwareExtravaganza.Whizbang.Data.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.Schema"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
+            "SoftwareExtravaganza.Whizbang.Observability"
+            "SoftwareExtravaganza.Whizbang.SignalR"
+            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
+            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
+            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
+            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
+            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
+            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
+            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
+            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
+            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
+            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
+            "SoftwareExtravaganza.Whizbang.Migrate"
+            "SoftwareExtravaganza.Whizbang.CLI"
+          )
+
+          MISSING=0
+          for pkg in "${EXPECTED_PACKAGES[@]}"; do
+            if [ ! -f ./packages/${pkg}.*.nupkg ]; then
+              echo "ERROR: ${pkg} package not created"
+              MISSING=$((MISSING + 1))
+            else
+              echo "✓ ${pkg}"
+            fi
+          done
+
+          if [ $MISSING -gt 0 ]; then
+            echo ""
+            echo "ERROR: ${MISSING} package(s) missing"
+            exit 1
+          fi
+
+          echo ""
+          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
+
+      - name: List packages
+        run: ls -la ./packages
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nuget-packages-${{ github.run_id }}
+          path: ./packages/*.nupkg
+          retention-days: 3
+
   version-comment:
     name: Comment Version on PR
     needs: version
@@ -147,12 +236,12 @@ jobs:
 
   prerelease-publish:
     name: Publish Prerelease NuGet
-    needs: [version]
+    needs: [version, pack]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    uses: ./.github/workflows/nuget-publish.yml
+    uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.version.outputs.semver }}
-      ref: develop
+      artifact-name: nuget-packages-${{ github.run_id }}
     secrets:
       PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
       PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
