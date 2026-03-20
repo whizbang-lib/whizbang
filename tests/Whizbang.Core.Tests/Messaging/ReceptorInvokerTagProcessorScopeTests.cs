@@ -32,8 +32,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityContextEstablished_PassesScopeToTagProcessorAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-for-tags";
-    var expectedUserId = "test-user-for-tags";
+    const string expectedTenantId = "test-tenant-for-tags";
+    const string expectedUserId = "test-user-for-tags";
 
     // Security context returned by provider
     var testScopeContext = new TestScopeContext(expectedTenantId, expectedUserId);
@@ -78,8 +78,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   [Test]
   public async Task InvokeAsync_WhenScopeInHops_PassesScopeToTagProcessorAsync() {
     // Arrange
-    var expectedTenantId = "hop-tenant-for-tags";
-    var expectedUserId = "hop-user-for-tags";
+    const string expectedTenantId = "hop-tenant-for-tags";
+    const string expectedUserId = "hop-user-for-tags";
 
     // Security provider returns NULL
     var securityProvider = new TestSecurityContextProvider(returns: null);

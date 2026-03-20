@@ -258,7 +258,7 @@ public class ImmediateAsyncDrainerTests {
     // Arrange - Create a chain of depth 5
     var drainer = new ImmediateAsyncDrainer(warningThreshold: 100);
     var chainDepth = 0;
-    var maxDepth = 5;
+    const int maxDepth = 5;
 
     var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
       if (++chainDepth < maxDepth) {

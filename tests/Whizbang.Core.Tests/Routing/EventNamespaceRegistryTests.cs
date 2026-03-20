@@ -103,7 +103,7 @@ public class EventNamespaceRegistryTests {
   [Test]
   public async Task GetAllNamespaces_WithDuplicates_DeduplicatesNamespacesAsync() {
     // Arrange - use unique namespace for this test
-    var uniqueNs = "dedup_test.shared.events";
+    const string uniqueNs = "dedup_test.shared.events";
     var source1 = new TestEventNamespaceSource(perspectiveNamespaces: [uniqueNs]);
     var source2 = new TestEventNamespaceSource(receptorNamespaces: [uniqueNs]);
     EventNamespaceRegistry.Register(source1);

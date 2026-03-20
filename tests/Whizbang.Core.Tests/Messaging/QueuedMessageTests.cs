@@ -17,7 +17,7 @@ public class QueuedMessageTests {
   public async Task QueuedMessage_WithAllProperties_CreatesInstanceAsync() {
     // Arrange
     var messageId = Guid.NewGuid();
-    var eventType = "TestEvent";
+    const string eventType = "TestEvent";
     var eventData = "{\"test\":\"data\"}";
     var metadata = "{\"meta\":\"data\"}";
 
@@ -40,7 +40,7 @@ public class QueuedMessageTests {
   public async Task QueuedMessage_WithoutMetadata_AllowsNullAsync() {
     // Arrange
     var messageId = Guid.NewGuid();
-    var eventType = "TestEvent";
+    const string eventType = "TestEvent";
     var eventData = "{\"test\":\"data\"}";
 
     // Act

@@ -198,7 +198,7 @@ public class AssemblyRegistryTests {
     // Arrange
     AssemblyRegistry<ITestContribution>.ClearForTesting();
     var tasks = new List<Task>();
-    var contributionCount = 100;
+    const int contributionCount = 100;
 
     // Act - Register contributions from multiple threads
     for (int i = 0; i < contributionCount; i++) {

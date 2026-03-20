@@ -12,7 +12,7 @@ public class TopicAttributeTests {
   [Test]
   public async Task Constructor_WithValidTopicName_SetsTopicNameAsync() {
     // Arrange
-    var topicName = "products";
+    const string topicName = "products";
 
     // Act
     var attribute = new TopicAttribute(topicName);

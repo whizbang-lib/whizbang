@@ -154,7 +154,7 @@ public class TypeFormatterTests {
   [Test]
   public async Task ParseAssemblyName_WithVersion_StripsVersionInfoAsync() {
     // Arrange
-    var fullTypeName = "MyNamespace.MyType, MyAssembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullTypeName = "MyNamespace.MyType, MyAssembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
     // Act
     var result = TypeFormatter.ParseAssemblyName(fullTypeName, stripVersion: true);
@@ -166,7 +166,7 @@ public class TypeFormatterTests {
   [Test]
   public async Task ParseAssemblyName_WithoutVersion_ReturnsFullAssemblyStringAsync() {
     // Arrange
-    var fullTypeName = "MyNamespace.MyType, MyAssembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullTypeName = "MyNamespace.MyType, MyAssembly, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
     // Act
     var result = TypeFormatter.ParseAssemblyName(fullTypeName, stripVersion: false);
@@ -178,7 +178,7 @@ public class TypeFormatterTests {
   [Test]
   public async Task ParseAssemblyName_NoAssemblyInfo_ReturnsEmptyStringAsync() {
     // Arrange
-    var fullTypeName = "MyNamespace.MyType";
+    const string fullTypeName = "MyNamespace.MyType";
 
     // Act
     var result = TypeFormatter.ParseAssemblyName(fullTypeName, stripVersion: true);

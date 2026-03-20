@@ -77,7 +77,7 @@ public class DispatcherIntegrationSyncTests {
     // Arrange - clear any existing registrations and add a test one
     SyncEventTypeRegistrations.Clear();
     var testEventType = typeof(IntegrationTestEventB);
-    var testPerspectiveName = "Test.Perspective.Name";
+    const string testPerspectiveName = "Test.Perspective.Name";
 
     SyncEventTypeRegistrations.Register(testEventType, testPerspectiveName);
 

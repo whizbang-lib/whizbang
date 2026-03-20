@@ -283,7 +283,7 @@ public class DispatcherCoverageVoidInvokeTests {
   public async Task LocalInvokeAsync_VoidUnknown_ThrowsReceptorNotFoundExceptionAsync() {
     var provider = _buildProvider();
     var dispatcher = new VoidAsyncDispatcher(provider);
-    var unknown = "unknown-message";
+    const string unknown = "unknown-message";
     await Assert.That(async () => await dispatcher.LocalInvokeAsync(unknown))
         .ThrowsExactly<ReceptorNotFoundException>();
   }
@@ -293,7 +293,7 @@ public class DispatcherCoverageVoidInvokeTests {
   public async Task LocalInvokeAsync_GenericTyped_Unknown_ThrowsReceptorNotFoundExceptionAsync() {
     var provider = _buildProvider();
     var dispatcher = new VoidAsyncDispatcher(provider);
-    var unknown = "unknown-message";
+    const string unknown = "unknown-message";
     await Assert.That(async () => await dispatcher.LocalInvokeAsync<string>(unknown))
         .ThrowsExactly<ReceptorNotFoundException>();
   }
@@ -327,7 +327,7 @@ public class DispatcherCoverageVoidInvokeTests {
   public async Task LocalInvokeAsync_VoidWithOptions_Unknown_ThrowsAsync() {
     var provider = _buildProvider();
     var dispatcher = new VoidAsyncDispatcher(provider);
-    var unknown = "unknown-message";
+    const string unknown = "unknown-message";
     var options = new DispatchOptions();
     await Assert.That(async () => await dispatcher.LocalInvokeAsync(unknown, options))
         .ThrowsExactly<ReceptorNotFoundException>();

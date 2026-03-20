@@ -28,8 +28,8 @@ public class LifecycleStageScopePropagationTests {
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task InvokeAsync_WithScopeDeltaOnHop_EstablishesScopeContext_AtStageAsync(LifecycleStage stage) {
     // Arrange
-    var expectedTenantId = "test-tenant-456";
-    var expectedUserId = "user@example.com";
+    const string expectedTenantId = "test-tenant-456";
+    const string expectedUserId = "user@example.com";
 
     IScopeContext? capturedScope = null;
     var registry = new StageTestReceptorRegistry();
@@ -100,8 +100,8 @@ public class LifecycleStageScopePropagationTests {
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task InvokeAsync_WithScopeDeltaOnHop_SetsMessageContext_AtStageAsync(LifecycleStage stage) {
     // Arrange - verify IMessageContextAccessor also gets TenantId/UserId from the hop scope
-    var expectedTenantId = "msg-context-tenant";
-    var expectedUserId = "msg-context-user";
+    const string expectedTenantId = "msg-context-tenant";
+    const string expectedUserId = "msg-context-user";
     IMessageContext? capturedMessageContext = null;
 
     var registry = new StageTestReceptorRegistry();

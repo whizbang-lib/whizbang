@@ -30,7 +30,7 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task PrePerspectiveAsync_WithSecurityProvider_EstablishesSecurityContextAsync() {
     // Arrange
-    var expectedUserId = "user-123";
+    const string expectedUserId = "user-123";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -283,7 +283,7 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task PostPerspectiveInline_WithSecurityProvider_EstablishesSecurityContextAsync() {
     // Arrange
-    var expectedUserId = "user-456";
+    const string expectedUserId = "user-456";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -381,8 +381,8 @@ public class PerspectiveWorkerSecurityContextTests {
     var streamId = Guid.CreateVersion7();
     var eventId1 = Guid.CreateVersion7();
     var eventId2 = Guid.CreateVersion7();
-    var userId1 = "user-1";
-    var userId2 = "user-2";
+    const string userId1 = "user-1";
+    const string userId2 = "user-2";
 
     var capturedUserIds = new List<string?>();
 
@@ -560,8 +560,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync() {
     // Arrange: Event envelope with NO scope in hops (GetCurrentScope() returns null)
-    var expectedTenantId = "tenant-123";
-    var expectedUserId = "user-456";
+    const string expectedTenantId = "tenant-123";
+    const string expectedUserId = "user-456";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -661,8 +661,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync() {
     // Arrange: Envelope WITH scope in hops (so GetCurrentScope returns valid data)
-    var expectedTenantId = "hop-tenant";
-    var expectedUserId = "hop-user";
+    const string expectedTenantId = "hop-tenant";
+    const string expectedUserId = "hop-user";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -755,8 +755,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_SetsInitiatingContextOnScopeContextAccessorAsync() {
     // Arrange
-    var expectedTenantId = "tenant-from-initiating";
-    var expectedUserId = "user-from-initiating";
+    const string expectedTenantId = "tenant-from-initiating";
+    const string expectedUserId = "user-from-initiating";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -867,8 +867,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenExtractorFailsButEnvelopeHasScope_InvokesCallbacksWithEnvelopeScopeAsync() {
     // Arrange: Envelope WITH scope in hops (GetCurrentScope returns valid data)
-    var expectedTenantId = "hop-tenant-callback";
-    var expectedUserId = "hop-user-callback";
+    const string expectedTenantId = "hop-tenant-callback";
+    const string expectedUserId = "hop-user-callback";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -1014,8 +1014,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task FakeEventStore_GetEventsBetweenPolymorphic_ReturnsEnvelopesWithScopeInHopsAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-from-hops";
-    var expectedUserId = "test-user-from-hops";
+    const string expectedTenantId = "test-tenant-from-hops";
+    const string expectedUserId = "test-user-from-hops";
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
 
@@ -1057,8 +1057,8 @@ public class PerspectiveWorkerSecurityContextTests {
   [Test]
   public async Task EstablishSecurityContext_WhenEnvelopeHasScope_WrapsInImmutableScopeContextWithPropagationAsync() {
     // Arrange: Create envelope with scope in hops (like real events in database)
-    var expectedTenantId = "propagation-test-tenant";
-    var expectedUserId = "propagation-test-user";
+    const string expectedTenantId = "propagation-test-tenant";
+    const string expectedUserId = "propagation-test-user";
 
     var scopeDelta = ScopeDelta.FromSecurityContext(new Whizbang.Core.Observability.SecurityContext {
       TenantId = expectedTenantId,

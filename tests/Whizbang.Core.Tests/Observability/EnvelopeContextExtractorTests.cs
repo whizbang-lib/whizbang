@@ -43,7 +43,7 @@ public class EnvelopeContextExtractorTests {
   [Test]
   public async Task ExtractTraceContext_WhenTraceParentExists_ReturnsActivityContextAsync() {
     // Arrange - Valid W3C traceparent format
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var hops = new List<MessageHop> {
       new() {
         Type = HopType.Current,
@@ -82,8 +82,8 @@ public class EnvelopeContextExtractorTests {
   [Test]
   public async Task ExtractTraceContext_WhenMultipleHops_UsesLastTraceParentAsync() {
     // Arrange
-    var firstTraceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1-bbbbbbbbbbbbbb01-01";
-    var lastTraceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2-bbbbbbbbbbbbbb02-01";
+    const string firstTraceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1-bbbbbbbbbbbbbb01-01";
+    const string lastTraceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2-bbbbbbbbbbbbbb02-01";
 
     var hops = new List<MessageHop> {
       new() {
@@ -202,7 +202,7 @@ public class EnvelopeContextExtractorTests {
   [Test]
   public async Task ExtractFromHops_ExtractsBothTraceAndScopeAsync() {
     // Arrange - Hop with both TraceParent and ScopeDelta
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var scopeDelta = ScopeDelta.FromSecurityContext(
       new SecurityContext { TenantId = "combined-tenant", UserId = "combined-user" });
 
@@ -229,7 +229,7 @@ public class EnvelopeContextExtractorTests {
   [Test]
   public async Task ExtractFromEnvelope_DelegatesToExtractFromHopsAsync() {
     // Arrange
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var scopeDelta = ScopeDelta.FromSecurityContext(
       new SecurityContext { TenantId = "envelope-tenant" });
 

@@ -97,7 +97,7 @@ public class ScopePropJsonConverterTests {
   [Test]
   public async Task Read_NullValue_ThrowsJsonExceptionAsync() {
     // Arrange
-    var json = "null";
+    const string json = "null";
 
     // Act & Assert
     await Assert.That(() => JsonSerializer.Deserialize<ScopeProp>(json, _options))

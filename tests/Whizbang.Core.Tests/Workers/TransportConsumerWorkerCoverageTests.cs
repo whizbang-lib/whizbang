@@ -337,7 +337,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     // Build a proper envelope with the envelope type format expected
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - simulate message received
     try {
@@ -391,7 +391,7 @@ public class TransportConsumerWorkerCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - should not throw; duplicate is handled gracefully
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -531,7 +531,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
     // Invalid format - no [[ ]] delimiters
-    var invalidEnvelopeType = "SomeType.Without.Brackets";
+    const string invalidEnvelopeType = "SomeType.Without.Brackets";
 
     // Act & Assert
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -578,9 +578,9 @@ public class TransportConsumerWorkerCoverageTests {
     await Task.Delay(200);
 
     // Create envelope WITH a valid traceparent
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, traceParent);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - should not throw
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -631,7 +631,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     // Create envelope with AggregateId in metadata
     var envelope = _createJsonEnvelopeWithAggregateId(messageId, streamId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -681,7 +681,7 @@ public class TransportConsumerWorkerCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -805,7 +805,7 @@ public class TransportConsumerWorkerCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act & Assert - exception should propagate
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -853,7 +853,7 @@ public class TransportConsumerWorkerCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - exercise the non-duplicate InboxWork processing path
     try {
@@ -996,7 +996,7 @@ public class TransportConsumerWorkerCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - the _populateDeliveredAtTimestamp path is exercised
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);

@@ -23,7 +23,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var tracker = new SyncEventTracker();
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), eventId, streamId, perspectiveName);
 
@@ -58,7 +58,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var tracker = new SyncEventTracker();
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), eventId, streamId, perspectiveName);
 
@@ -96,7 +96,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var event2 = Guid.NewGuid();
     var event3 = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), event1, streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventA), event2, streamId, perspectiveName);
@@ -155,7 +155,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var tracker = new SyncEventTracker();
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), eventId, streamId, perspectiveName);
 
@@ -192,7 +192,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var tracker = new SyncEventTracker();
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), eventId, streamId, perspectiveName);
 

@@ -36,7 +36,7 @@ public class MessagePublishStrategyTests {
     // Arrange
     var messageId = Guid.NewGuid();
     var completedStatus = MessageProcessingStatus.Stored; // Partially completed
-    var errorMessage = "Transport publish failed";
+    const string errorMessage = "Transport publish failed";
 
     // Act
     var result = new MessagePublishResult {

@@ -207,8 +207,8 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   [Test]
   public async Task EstablishContextAsync_WithJsonElementPayload_AndSecurityInHops_ExtractsContextAsync() {
     // Arrange - JsonElement payload WITH security in hops
-    var testUserId = "test-user";
-    var testTenantId = "test-tenant";
+    const string testUserId = "test-user";
+    const string testTenantId = "test-tenant";
 
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestScopeExtractor(testUserId, testTenantId)],

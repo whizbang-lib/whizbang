@@ -114,7 +114,7 @@ public class ImpersonationDispatcherBuilderTests {
   [Test]
   public async Task RunAs_KeepTenant_PreservesAmbientTenantIdAsync() {
     // Arrange
-    var ambientTenantId = "ambient-tenant-456";
+    const string ambientTenantId = "ambient-tenant-456";
     var mockDispatcher = new MockDispatcher();
     var builder = new ImpersonationDispatcherBuilder(
         mockDispatcher,

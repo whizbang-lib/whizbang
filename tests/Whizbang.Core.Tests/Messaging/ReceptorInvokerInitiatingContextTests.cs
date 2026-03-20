@@ -39,8 +39,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ShouldSetInitiatingContextFromEnvelopeAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -79,8 +79,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_InitiatingContext_ShouldBeSameAsMessageContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -117,8 +117,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_WhenReceptorCascades_ChildShouldInheritInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     IMessageContext? capturedInitiating = null;
@@ -169,8 +169,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_InitiatingContext_ShouldContainCorrelationIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
     var testCorrelationId = CorrelationId.New();
 
@@ -246,8 +246,8 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ScopedMessageContext_ShouldReadFromInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     string? capturedUserId = null;
@@ -307,10 +307,10 @@ public class ReceptorInvokerInitiatingContextTests {
   [Test]
   public async Task InvokeAsync_ScopedMessageContext_ShouldPrioritizeInitiatingContextOverScopeContextAsync() {
     // Arrange
-    var initiatingUserId = "initiating-user@example.com";
-    var initiatingTenantId = "initiating-tenant-123";
-    var scopeUserId = "scope-user@example.com";
-    var scopeTenantId = "scope-tenant-456";
+    const string initiatingUserId = "initiating-user@example.com";
+    const string initiatingTenantId = "initiating-tenant-123";
+    const string scopeUserId = "scope-user@example.com";
+    const string scopeTenantId = "scope-tenant-456";
     var testMessageId = MessageId.New();
 
     string? capturedUserId = null;

@@ -100,7 +100,7 @@ public class TransportConsumerWorkerNullHopsTests {
   [Test]
   public async Task Hops_WithTraceParent_ReturnsTraceParentAsync() {
     // Arrange - Create an envelope with a hop containing TraceParent
-    var expectedTraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string expectedTraceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,

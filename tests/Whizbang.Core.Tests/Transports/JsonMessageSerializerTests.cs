@@ -737,7 +737,7 @@ public class JsonMessageSerializerTests {
   public async Task CorrelationIdConverter_Read_WithNullValue_ShouldThrowJsonExceptionAsync() {
     // Arrange
     var converter = new CorrelationIdConverter();
-    var json = "null";
+    const string json = "null";
     var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
     reader.Read();
 

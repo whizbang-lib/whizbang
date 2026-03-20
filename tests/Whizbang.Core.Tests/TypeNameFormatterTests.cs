@@ -79,7 +79,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithShortForm_ReturnsSameFormatAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -91,7 +91,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithLongForm_ExtractsShortFormAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -103,7 +103,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithExtraWhitespace_TrimsProperlyAsync() {
     // Arrange
-    var input = "  Whizbang.Core.Tests.TypeNameFormatterTests  ,  Whizbang.Core.Tests  ";
+    const string input = "  Whizbang.Core.Tests.TypeNameFormatterTests  ,  Whizbang.Core.Tests  ";
 
     // Act
     var result = TypeNameFormatter.Parse(input);
@@ -115,7 +115,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task Parse_WithTypeNameOnly_ThrowsInvalidOperationExceptionAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests";
 
     // Act & Assert
     await Assert.That(() => TypeNameFormatter.Parse(input))
@@ -145,7 +145,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithValidInput_ReturnsTrueAndParsedResultAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);
@@ -158,7 +158,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithLongForm_ReturnsTrueAndShortFormAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests, Whizbang.Core.Tests, Version=1.0.0.0";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);
@@ -201,7 +201,7 @@ public class TypeNameFormatterTests {
   [Test]
   public async Task TryParse_WithTypeNameOnly_ReturnsFalseAsync() {
     // Arrange
-    var input = "Whizbang.Core.Tests.TypeNameFormatterTests";
+    const string input = "Whizbang.Core.Tests.TypeNameFormatterTests";
 
     // Act
     var success = TypeNameFormatter.TryParse(input, out var result);

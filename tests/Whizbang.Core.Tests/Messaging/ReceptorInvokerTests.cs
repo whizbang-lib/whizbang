@@ -1683,8 +1683,8 @@ public class ReceptorInvokerTests {
 
     var invoker = new ReceptorInvoker(registry, provider);
 
-    var expectedUserId = "user-scope-test";
-    var expectedTenantId = "tenant-scope-test";
+    const string expectedUserId = "user-scope-test";
+    const string expectedTenantId = "tenant-scope-test";
 
     // Create envelope with scope information in hops
     var envelope = new MessageEnvelope<TestMessage> {

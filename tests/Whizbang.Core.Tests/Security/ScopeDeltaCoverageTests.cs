@@ -29,7 +29,7 @@ public class ScopeDeltaCoverageTests {
   [Test]
   public async Task ScopePropJsonConverter_Read_NullOrEmpty_ThrowsJsonExceptionAsync() {
     // Arrange - JSON with null value for enum
-    var json = "null";
+    const string json = "null";
 
     // Act & Assert
     await Assert.That(() => JsonSerializer.Deserialize<ScopeProp>(json, _converterOptions))

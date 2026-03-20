@@ -80,7 +80,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_DeserializesString_CorrectlyAsync() {
     // Arrange
-    var expectedValue = "user-123";
+    const string expectedValue = "user-123";
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}CreatedBy"] =
           JsonSerializer.SerializeToElement(expectedValue)
@@ -114,7 +114,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_DeserializesInt_CorrectlyAsync() {
     // Arrange
-    var expectedValue = 12345;
+    const int expectedValue = 12345;
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}ProcessId"] =
           JsonSerializer.SerializeToElement(expectedValue)
@@ -150,7 +150,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task TryGetAutoPopulated_ReturnsTrue_WhenPropertyExistsAsync() {
     // Arrange
-    var expectedValue = "tenant-abc";
+    const string expectedValue = "tenant-abc";
     var metadata = new Dictionary<string, JsonElement> {
       [$"{AutoPopulateProcessor.METADATA_PREFIX}TenantId"] =
           JsonSerializer.SerializeToElement(expectedValue)

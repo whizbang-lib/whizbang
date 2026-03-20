@@ -39,7 +39,7 @@ public class EventAuditedTests {
   [Test]
   public async Task EventAudited_CapturesStreamInfo_ForEventLocationAsync() {
     // Arrange
-    var streamId = "Order-abc123";
+    const string streamId = "Order-abc123";
     var position = 42L;
 
     var audited = new EventAudited {
