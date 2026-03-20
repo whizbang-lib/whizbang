@@ -3716,6 +3716,34 @@ public abstract partial class Dispatcher(
     return receipts;
   }
 
+  /// <summary>
+  /// Flushes outbox batch and adds Accepted receipts only for messages without a local receptor.
+  /// Silently skips outbox if no strategy is registered and all messages were handled locally.
+  /// </summary>
+  private async Task _flushOutboxBatchAndCollectReceiptsAsync(
+    List<(object message, Type messageType, IMessageContext context)> outboxMessages,
+    List<bool> hasLocalReceptor,
+    List<IDeliveryReceipt> receipts
+  ) {
+    if (outboxMessages.Count == 0) {
+      return;
+    }
+
+    try {
+      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
+      // Only add Accepted receipts for messages without a local receptor
+      // (locally-handled messages already have Delivered receipts)
+      for (var i = 0; i < outboxReceipts.Count; i++) {
+        if (!hasLocalReceptor[i]) {
+          receipts.Add(outboxReceipts[i]);
+        }
+      }
+    } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
+      // No outbox strategy available but all messages handled locally - acceptable.
+      // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
+    }
+  }
+
   // ========================================
   // LOCAL INVOKE AND SYNC - Wait for All Perspectives
   // ========================================
@@ -4048,22 +4076,8 @@ public abstract partial class Dispatcher(
         outboxMessages.Add((message, messageType, MessageContext.Create(outboxCascade)));
       }
 
-      // Process all messages via outbox in a single batch (optimized)
-      if (outboxMessages.Count > 0) {
-        try {
-          var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-          // Only add Accepted receipts for messages without a local receptor
-          // (locally-handled messages already have Delivered receipts)
-          for (var i = 0; i < outboxReceipts.Count; i++) {
-            if (!hasLocalReceptor[i]) {
-              receipts.Add(outboxReceipts[i]);
-            }
-          }
-        } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
-          // No outbox strategy available but all messages handled locally - acceptable.
-          // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
-        }
-      }
+      // Flush outbox batch and collect receipts for non-local messages
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
 
       return receipts;
     } finally {
@@ -4112,22 +4126,8 @@ public abstract partial class Dispatcher(
         outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
 
-      // Process all messages via outbox in a single batch (optimized)
-      if (outboxMessages.Count > 0) {
-        try {
-          var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-          // Only add Accepted receipts for messages without a local receptor
-          // (locally-handled messages already have Delivered receipts)
-          for (var i = 0; i < outboxReceipts.Count; i++) {
-            if (!hasLocalReceptor[i]) {
-              receipts.Add(outboxReceipts[i]);
-            }
-          }
-        } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
-          // No outbox strategy available but all messages handled locally - acceptable.
-          // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
-        }
-      }
+      // Flush outbox batch and collect receipts for non-local messages
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
 
       return receipts;
     } finally {
@@ -4156,13 +4156,7 @@ public abstract partial class Dispatcher(
     var messageType = typeof(TMessage);
 
     foreach (var message in messageList) {
-      // Verify local receptor exists (throws if not)
-      var invoker = GetReceptorInvoker<object>(message, messageType);
-      if (invoker == null) {
-        throw new ReceptorNotFoundException(messageType);
-      }
-
-      // Process locally only - no outbox delivery
+      _ensureReceptorExists(message, messageType);
       var cascade = _cascadeContextFactory.NewRoot();
       var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
       receipts.Add(receipt);
@@ -4190,21 +4184,19 @@ public abstract partial class Dispatcher(
     var receipts = new List<IDeliveryReceipt>();
 
     foreach (var message in messageList) {
-      var messageType = message.GetType();
-
-      // Verify local receptor exists (throws if not)
-      var invoker = GetReceptorInvoker<object>(message, messageType);
-      if (invoker == null) {
-        throw new ReceptorNotFoundException(messageType);
-      }
-
-      // Process locally only - no outbox delivery
-      // Uses SendAsync which routes to local receptor (no outbox when receptor exists)
+      _ensureReceptorExists(message, message.GetType());
       var receipt = await SendAsync(message);
       receipts.Add(receipt);
     }
 
     return receipts;
+  }
+
+  private void _ensureReceptorExists(object message, Type messageType) {
+    var invoker = GetReceptorInvoker<object>(message, messageType);
+    if (invoker == null) {
+      throw new ReceptorNotFoundException(messageType);
+    }
   }
 
   /// <summary>
