@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -308,6 +309,10 @@ public class FactoryOwnedLensQueryTests {
       LastCancellationToken = cancellationToken;
       return Task.FromResult(_models.FirstOrDefault());
     }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
   }
 
   #endregion

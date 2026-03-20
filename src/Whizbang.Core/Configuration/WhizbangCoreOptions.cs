@@ -1,3 +1,4 @@
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tracing;
 
@@ -96,6 +97,19 @@ public sealed class WhizbangCoreOptions {
   /// </para>
   /// </remarks>
   public TagProcessingMode TagProcessingMode { get; set; } = TagProcessingMode.AfterReceptorCompletion;
+
+  /// <summary>
+  /// Gets or sets the default query scope used by <see cref="ILensQuery{TModel}.DefaultScope"/>.
+  /// Controls the default level of scope filtering applied to lens queries.
+  /// Default: <see cref="QueryScope.Tenant"/>.
+  /// </summary>
+  /// <remarks>
+  /// This setting determines how lens queries filter data when the caller uses
+  /// <c>.DefaultScope.Query</c> or <c>.DefaultScope.GetByIdAsync()</c> without
+  /// explicitly choosing a scope level.
+  /// </remarks>
+  /// <docs>fundamentals/lenses/scoped-queries#default-scope</docs>
+  public QueryScope DefaultQueryScope { get; set; } = QueryScope.Tenant;
 
   /// <summary>
   /// Warning threshold for ImmediateAsync chain depth. Logs a warning when exceeded.

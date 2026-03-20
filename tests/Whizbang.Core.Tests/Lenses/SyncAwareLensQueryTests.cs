@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Diagnostics;
@@ -197,5 +198,9 @@ public class SyncAwareLensQueryTests {
       GetByIdAsyncCallCount++;
       return Task.FromResult(ModelToReturn);
     }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
   }
 }

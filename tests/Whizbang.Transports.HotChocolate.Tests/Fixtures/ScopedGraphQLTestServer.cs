@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Execution;
@@ -117,6 +118,10 @@ public class ScopedTestOrderLens(IScopeContextAccessor scopeContextAccessor) : I
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>

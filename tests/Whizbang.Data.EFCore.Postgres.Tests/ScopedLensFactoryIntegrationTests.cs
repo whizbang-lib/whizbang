@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -439,6 +440,10 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       return _inner.GetByIdAsync(id, cancellationToken);
     }
+
+    public IScopedLensAccess<Order> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> DefaultScope => throw new NotImplementedException();
   }
 
   // === Mock Test Types ===

@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -371,5 +372,9 @@ public class ScopedLensQueryTests {
       await Task.CompletedTask;
       return _models.FirstOrDefault();
     }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
   }
 }

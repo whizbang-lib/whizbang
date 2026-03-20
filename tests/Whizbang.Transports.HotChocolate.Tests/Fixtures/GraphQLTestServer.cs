@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Execution;

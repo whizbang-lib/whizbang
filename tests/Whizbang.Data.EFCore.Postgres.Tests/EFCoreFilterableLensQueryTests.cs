@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
