@@ -197,60 +197,60 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
         : mutation.CommandTypeNameShort;
     var usesCustomRequest = mutation.RequestTypeName is not null;
 
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Generated REST mutation endpoint for {mutation.CommandTypeNameShort}.");
     sb.AppendLine($"/// Route: POST {mutation.RestRoute}");
-    sb.AppendLine($"/// </summary>");
+    sb.AppendLine("/// </summary>");
     sb.AppendLine($"public partial class {mutation.EndpointClassName}");
     sb.AppendLine($"    : RestMutationEndpointBase<{mutation.CommandTypeName}, {mutation.ResultTypeName}>,");
-    sb.AppendLine($"      IEndpoint {{");
-    sb.AppendLine($"  private readonly IDispatcher _dispatcher;");
+    sb.AppendLine("      IEndpoint {");
+    sb.AppendLine("  private readonly IDispatcher _dispatcher;");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Creates a new instance of {mutation.EndpointClassName}.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  public {mutation.EndpointClassName}(IDispatcher dispatcher) {{");
-    sb.AppendLine($"    _dispatcher = dispatcher;");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    _dispatcher = dispatcher;");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
-    sb.AppendLine($"  /// Configures the endpoint route and HTTP method.");
-    sb.AppendLine($"  /// </summary>");
-    sb.AppendLine($"  public void Configure(IEndpointRouteBuilder routeBuilder) {{");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Configures the endpoint route and HTTP method.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public void Configure(IEndpointRouteBuilder routeBuilder) {");
     sb.AppendLine($"    routeBuilder.MapPost(\"{mutation.RestRoute}\", HandleAsync);");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
-    sb.AppendLine($"  /// Dispatches the command to the handler via IDispatcher.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Dispatches the command to the handler via IDispatcher.");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  protected override async ValueTask<{mutation.ResultTypeName}> DispatchCommandAsync(");
     sb.AppendLine($"      {mutation.CommandTypeName} command,");
-    sb.AppendLine($"      CancellationToken ct) {{");
+    sb.AppendLine("      CancellationToken ct) {");
     sb.AppendLine($"    return await _dispatcher.LocalInvokeAsync<{mutation.CommandTypeName}, {mutation.ResultTypeName}>(command, ct);");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
     if (usesCustomRequest) {
-      sb.AppendLine($"  /// <summary>");
-      sb.AppendLine($"  /// Handles the incoming HTTP request with custom request type.");
-      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine("  /// <summary>");
+      sb.AppendLine("  /// Handles the incoming HTTP request with custom request type.");
+      sb.AppendLine("  /// </summary>");
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {requestType} request,");
-      sb.AppendLine($"      CancellationToken ct) {{");
-      sb.AppendLine($"    return await ExecuteWithRequestAsync(request, ct);");
-      sb.AppendLine($"  }}");
+      sb.AppendLine("      CancellationToken ct) {");
+      sb.AppendLine("    return await ExecuteWithRequestAsync(request, ct);");
+      sb.AppendLine("  }");
     } else {
-      sb.AppendLine($"  /// <summary>");
-      sb.AppendLine($"  /// Handles the incoming HTTP request where command is the request.");
-      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine("  /// <summary>");
+      sb.AppendLine("  /// Handles the incoming HTTP request where command is the request.");
+      sb.AppendLine("  /// </summary>");
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {mutation.CommandTypeName} command,");
-      sb.AppendLine($"      CancellationToken ct) {{");
-      sb.AppendLine($"    return await ExecuteAsync(command, ct);");
-      sb.AppendLine($"  }}");
+      sb.AppendLine("      CancellationToken ct) {");
+      sb.AppendLine("    return await ExecuteAsync(command, ct);");
+      sb.AppendLine("  }");
     }
 
-    sb.AppendLine($"}}");
+    sb.AppendLine("}");
 
     return sb.ToString();
   }
@@ -272,10 +272,12 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   /// Generate a mutation info property for diagnostics.
   /// </summary>
   private static string _generateMutationInfoProperty(RestMutationInfo mutation) {
-    return $@"  /// <summary>
+    return $"""
+  /// <summary>
   /// Information about the {mutation.EndpointClassName} mutation endpoint.
   /// </summary>
   public static (string Route, string CommandType, string ResultType) {mutation.EndpointClassName}Info =>
-      (""{mutation.RestRoute}"", ""{mutation.CommandTypeName}"", ""{mutation.ResultTypeName}"");";
+      ("{mutation.RestRoute}", "{mutation.CommandTypeName}", "{mutation.ResultTypeName}");
+""";
   }
 }

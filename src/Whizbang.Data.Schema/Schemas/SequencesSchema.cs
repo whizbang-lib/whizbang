@@ -25,10 +25,10 @@ public static class SequencesSchema {
       new ColumnDefinition(
         Name: "sequence_name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 200,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true,
+        MaxLength: 200),
       new ColumnDefinition(
         Name: "current_value",
         DataType: WhizbangDataType.BIG_INT,

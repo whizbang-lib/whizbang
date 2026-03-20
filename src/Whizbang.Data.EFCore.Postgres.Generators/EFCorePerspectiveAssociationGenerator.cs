@@ -159,7 +159,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       isFirstAssociation = false;
 
       // Generate C# code that appends JSON object
-      associations.AppendLine($"    json.Append(\"    {{\");");
+      associations.AppendLine("    json.Append(\"    {\");");
       associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{perspective.MessageTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
       associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClrTypeName}\\\", \");");

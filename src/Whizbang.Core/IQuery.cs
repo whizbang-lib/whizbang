@@ -6,5 +6,4 @@ namespace Whizbang.Core;
 /// </summary>
 /// <docs>messaging/commands-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/MessageKindTests.cs:Detect_ImplementsIQuery_ReturnsQueryAsync</tests>
-public interface IQuery : IMessage {
-}
+public interface IQuery : IMessage;

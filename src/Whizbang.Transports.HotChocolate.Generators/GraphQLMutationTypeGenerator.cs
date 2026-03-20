@@ -200,38 +200,38 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
     var methodName = char.ToUpperInvariant(mutation.GraphQLMutationName[0])
         + mutation.GraphQLMutationName.Substring(1) + "Async";
 
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Generated GraphQL mutation for {mutation.CommandTypeNameShort}.");
     sb.AppendLine($"/// GraphQL Field: {mutation.GraphQLMutationName}");
-    sb.AppendLine($"/// </summary>");
-    sb.AppendLine($"[ExtendObjectType(HotChocolate.Language.OperationTypeNames.Mutation)]");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("[ExtendObjectType(HotChocolate.Language.OperationTypeNames.Mutation)]");
     sb.AppendLine($"public partial class {mutation.MutationClassName}");
     sb.AppendLine($"    : GraphQLMutationBase<{mutation.CommandTypeName}, {mutation.ResultTypeName}> {{");
-    sb.AppendLine($"  private readonly IDispatcher _dispatcher;");
+    sb.AppendLine("  private readonly IDispatcher _dispatcher;");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Creates a new instance of {mutation.MutationClassName}.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  public {mutation.MutationClassName}(IDispatcher dispatcher) {{");
-    sb.AppendLine($"    _dispatcher = dispatcher;");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    _dispatcher = dispatcher;");
+    sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine($"  /// <summary>");
-    sb.AppendLine($"  /// Dispatches the command to the handler via IDispatcher.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Dispatches the command to the handler via IDispatcher.");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  protected override async ValueTask<{mutation.ResultTypeName}> DispatchCommandAsync(");
     sb.AppendLine($"      {mutation.CommandTypeName} command,");
-    sb.AppendLine($"      CancellationToken ct) {{");
+    sb.AppendLine("      CancellationToken ct) {");
     sb.AppendLine($"    return await _dispatcher.LocalInvokeAsync<{mutation.CommandTypeName}, {mutation.ResultTypeName}>(command, ct);");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// GraphQL mutation field: {mutation.GraphQLMutationName}");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> {methodName}(");
     sb.AppendLine($"      {parameterType} {parameterName},");
-    sb.AppendLine($"      CancellationToken ct) {{");
+    sb.AppendLine("      CancellationToken ct) {");
 
     if (usesCustomRequest) {
       sb.AppendLine($"    return await ExecuteWithRequestAsync({parameterName}, ct);");
@@ -239,8 +239,8 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
       sb.AppendLine($"    return await ExecuteAsync({parameterName}, ct);");
     }
 
-    sb.AppendLine($"  }}");
-    sb.AppendLine($"}}");
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
 
     return sb.ToString();
   }
@@ -249,10 +249,12 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
   /// Generate a mutation info property for diagnostics.
   /// </summary>
   private static string _generateMutationInfoProperty(GraphQLMutationInfo mutation) {
-    return $@"  /// <summary>
+    return $"""
+  /// <summary>
   /// Information about the {mutation.MutationClassName} GraphQL mutation.
   /// </summary>
   public static (string MutationName, string CommandType, string ResultType) {mutation.MutationClassName}Info =>
-      (""{mutation.GraphQLMutationName}"", ""{mutation.CommandTypeName}"", ""{mutation.ResultTypeName}"");";
+      ("{mutation.GraphQLMutationName}", "{mutation.CommandTypeName}", "{mutation.ResultTypeName}");
+""";
   }
 }

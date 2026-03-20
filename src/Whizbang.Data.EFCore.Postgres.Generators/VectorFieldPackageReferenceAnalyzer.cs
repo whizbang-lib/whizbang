@@ -56,9 +56,7 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
     var hasVectorField = new ThreadSafeFlag();
 
     // Analyze each named type symbol
-    context.RegisterSymbolAction(symbolContext => {
-      _analyzeType(symbolContext, hasVectorField);
-    }, SymbolKind.NamedType);
+    context.RegisterSymbolAction(symbolContext => _analyzeType(symbolContext, hasVectorField), SymbolKind.NamedType);
 
     // At the end of compilation, report missing packages if vector fields were found
     context.RegisterCompilationEndAction(endContext => {

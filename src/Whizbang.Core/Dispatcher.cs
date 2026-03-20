@@ -4407,12 +4407,12 @@ public abstract partial class Dispatcher(
     // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
     if (typeof(TMessage) == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
+        "BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {envelope.GetType().FullName}. " +
         $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
         $"PayloadType parameter: {payloadType.FullName}. " +
-        $"This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
+        "This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
     }
 
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
@@ -4441,7 +4441,7 @@ public abstract partial class Dispatcher(
         $"TMessage type parameter: {typeof(TMessage).FullName}. " +
         $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
         $"PayloadType parameter: {payloadType.FullName}. " +
-        $"The serializer defensive checks should have caught this!");
+        "The serializer defensive checks should have caught this!");
     }
 
     var outboxMessage = new OutboxMessage {
@@ -4463,16 +4463,16 @@ public abstract partial class Dispatcher(
     if (outboxMessage.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase) ||
         outboxMessage.EnvelopeType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
       throw new InvalidOperationException(
-        $"FINAL CHECK FAILED: OutboxMessage contains JsonElement in type metadata. " +
+        "FINAL CHECK FAILED: OutboxMessage contains JsonElement in type metadata. " +
         $"MessageId={outboxMessage.MessageId}, " +
         $"MessageType={outboxMessage.MessageType}, " +
         $"EnvelopeType={outboxMessage.EnvelopeType}, " +
         $"TMessage={typeof(TMessage).FullName}, " +
         $"PayloadType={payloadType.FullName}, " +
         $"Payload runtime type={payload?.GetType().FullName ?? "null"}. " +
-        $"This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
-        $"(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
-        $"All these cases should have been caught by earlier checks!");
+        "This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
+        "(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
+        "All these cases should have been caught by earlier checks!");
     }
 
     return outboxMessage;

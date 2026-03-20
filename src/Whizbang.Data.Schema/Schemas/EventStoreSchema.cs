@@ -45,9 +45,9 @@ public static class EventStoreSchema {
       new ColumnDefinition(
         Name: "event_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
@@ -61,15 +61,15 @@ public static class EventStoreSchema {
       new ColumnDefinition(
         Name: "aggregate_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,

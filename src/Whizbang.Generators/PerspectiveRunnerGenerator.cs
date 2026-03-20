@@ -250,8 +250,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       applyCases.AppendLine($"        case {eventType} typedEvent:");
       if (isMustExist) {
-        applyCases.AppendLine($"          if (currentModel == null)");
-        applyCases.AppendLine($"            throw new global::System.InvalidOperationException(");
+        applyCases.AppendLine("          if (currentModel == null)");
+        applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
         applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
       }
 
@@ -263,25 +263,25 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         case ApplyReturnType.Model:
           // Standard return: TModel - wrap with None action
           // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.NullableModel:
           // Nullable return: TModel? - null means no change, wrap with None action
           // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.Action:
           // Action return: ModelAction - keep current model, return the action
           // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
-          applyCases.AppendLine($"          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
+          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
           break;
 
         case ApplyReturnType.Tuple:
           // Tuple return: (TModel?, ModelAction) - return as-is
           // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine($"          return perspective.Apply(currentModel!, typedEvent);");
+          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
           break;
 
         case ApplyReturnType.ApplyResult:
@@ -309,12 +309,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var extractStreamIdMethods = new StringBuilder();
     if (perspective.EventStreamIds != null) {
       foreach (var eventStreamId in perspective.EventStreamIds) {
-        extractStreamIdMethods.AppendLine($"  /// <summary>");
+        extractStreamIdMethods.AppendLine("  /// <summary>");
         extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
-        extractStreamIdMethods.AppendLine($"  /// </summary>");
+        extractStreamIdMethods.AppendLine("  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
-        extractStreamIdMethods.AppendLine($"  }}");
+        extractStreamIdMethods.AppendLine("  }");
         extractStreamIdMethods.AppendLine();
       }
     }

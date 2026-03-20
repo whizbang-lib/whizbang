@@ -53,7 +53,7 @@ public static class TemplateUtilities {
     // Use simple string search instead of regex to avoid catastrophic backtracking
     // This is more efficient for large templates (migration scripts can be 50KB+)
     var regionStart = $"#region {regionName}";
-    var regionEnd = "#endregion";
+    const string regionEnd = "#endregion";
 
     var startIdx = template.IndexOf(regionStart, StringComparison.Ordinal);
     if (startIdx < 0) {

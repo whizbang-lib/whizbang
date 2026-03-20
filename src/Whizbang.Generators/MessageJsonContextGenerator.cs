@@ -1260,7 +1260,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine("      ),");
         sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
         sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine($"  }};");
+        sb.AppendLine("  };");
       } else {
         // Type has no parameterized constructor but has init-only properties
         // Create JsonObjectInfoValues with DEFERRED property initialization
@@ -1274,18 +1274,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine("      },");
         sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
         sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine($"  }};");
+        sb.AppendLine("  };");
       }
       sb.AppendLine();
 
       // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
       // This is critical for self-referencing types - the cache must be populated
       // before the deferred PropertyMetadataInitializer runs
-      sb.AppendLine($"  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
+      sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
       sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
-      sb.AppendLine($"  jsonTypeInfo.OriginatingResolver = this;");
-      sb.AppendLine($"  return jsonTypeInfo;");
-      sb.AppendLine($"}}");
+      sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
+      sb.AppendLine("  return jsonTypeInfo;");
+      sb.AppendLine("}");
       sb.AppendLine();
 
       // Generate the deferred property creation method
@@ -1311,8 +1311,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine(propertyCode);
         sb.AppendLine();
       }
-      sb.AppendLine($"  return properties;");
-      sb.AppendLine($"}}");
+      sb.AppendLine("  return properties;");
+      sb.AppendLine("}");
       sb.AppendLine();
 
       // Generate the deferred constructor params creation method
@@ -1327,8 +1327,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         sb.AppendLine(parameterCode);
       }
-      sb.AppendLine($"  return ctorParams;");
-      sb.AppendLine($"}}");
+      sb.AppendLine("  return ctorParams;");
+      sb.AppendLine("}");
       sb.AppendLine();
     }
 
@@ -1423,7 +1423,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine();
 
       // Create JsonTypeInfo
-      sb.AppendLine($"  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
+      sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
       sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
       sb.AppendLine("  return jsonTypeInfo;");
       sb.AppendLine("}");
@@ -2820,10 +2820,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var assemblyQualifiedName = $"{message.ClrTypeName}, {actualAssemblyName}";
 
-      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{assemblyQualifiedName}\",\n" +
              $"    typeof({message.FullyQualifiedName}),\n" +
-             $"    MessageJsonContext.Default);";
+             "    MessageJsonContext.Default);";
     });
     sb.AppendLine(string.Join("\n", typeRegistrations));
   }
@@ -2847,10 +2847,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Use CLR type name format (uses + for nested types) for runtime type resolution
       var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{message.ClrTypeName}, {actualAssemblyName}]], Whizbang.Core";
 
-      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+      return "  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
              $"    \"{envelopeTypeName}\",\n" +
              $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),\n" +
-             $"    MessageJsonContext.Default);";
+             "    MessageJsonContext.Default);";
     });
     sb.AppendLine(string.Join("\n", envelopeRegistrations));
   }

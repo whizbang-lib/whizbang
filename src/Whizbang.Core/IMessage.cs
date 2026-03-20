@@ -13,5 +13,4 @@ namespace Whizbang.Core;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/messages/messages</docs>
-public interface IMessage {
-}
+public interface IMessage;

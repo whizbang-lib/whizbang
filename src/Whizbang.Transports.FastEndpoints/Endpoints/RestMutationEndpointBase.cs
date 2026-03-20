@@ -39,5 +39,4 @@ namespace Whizbang.Transports.FastEndpoints;
 /// </example>
 public abstract class RestMutationEndpointBase<TCommand, TResult>
     : MutationEndpointBase<TCommand, TResult>
-    where TCommand : ICommand {
-}
+    where TCommand : ICommand;

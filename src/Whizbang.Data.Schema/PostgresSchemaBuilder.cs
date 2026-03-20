@@ -74,7 +74,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     // Add composite primary key constraint after columns
     if (hasCompositePrimaryKey) {
       var pkColumns = string.Join(", ", primaryKeyColumns);
-      sb.AppendLine($",");
+      sb.AppendLine(",");
       sb.AppendLine($"  CONSTRAINT pk_{table.Name} PRIMARY KEY ({pkColumns})");
     }
 
@@ -82,7 +82,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     if (table.UniqueConstraints.Length > 0) {
       foreach (var constraint in table.UniqueConstraints) {
         var columns = string.Join(", ", constraint.Columns);
-        sb.AppendLine($",");
+        sb.AppendLine(",");
         sb.AppendLine($"  CONSTRAINT {constraint.Name} UNIQUE ({columns})");
       }
     }
@@ -189,7 +189,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     // Create schema if not using default "public" schema
     // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user")
     if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != "public") {
-      sb.AppendLine($"-- Create schema for service isolation");
+      sb.AppendLine("-- Create schema for service isolation");
       sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {_quoteIdentifier(config.SchemaName)};");
       sb.AppendLine();
     }

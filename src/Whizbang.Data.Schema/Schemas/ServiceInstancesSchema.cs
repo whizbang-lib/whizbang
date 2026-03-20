@@ -41,21 +41,21 @@ public static class ServiceInstancesSchema {
       new ColumnDefinition(
         Name: "instance_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "service_name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 200,
         Nullable: false
-      ),
+,
+        MaxLength: 200),
       new ColumnDefinition(
         Name: "host_name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 200,
         Nullable: false
-      ),
+,
+        MaxLength: 200),
       new ColumnDefinition(
         Name: "process_id",
         DataType: WhizbangDataType.INTEGER,

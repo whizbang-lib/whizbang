@@ -83,9 +83,7 @@ public partial class OrderedStreamProcessor {
 
     if (_parallelizeStreams) {
       // Process different streams in parallel
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       // Process streams sequentially (safer default)
       foreach (var streamBatch in streamGroups) {
@@ -138,9 +136,7 @@ public partial class OrderedStreamProcessor {
     }
 
     if (_parallelizeStreams) {
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       foreach (var streamBatch in streamGroups) {
         if (ct.IsCancellationRequested) {

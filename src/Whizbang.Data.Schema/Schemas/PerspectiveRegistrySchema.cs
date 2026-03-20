@@ -33,22 +33,22 @@ public static class PerspectiveRegistrySchema {
       new ColumnDefinition(
         Name: Columns.ID,
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false,
+        PrimaryKey: true,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
         Name: Columns.CLR_TYPE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.TABLE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 255,
         Nullable: false
-      ),
+,
+        MaxLength: 255),
       new ColumnDefinition(
         Name: Columns.SCHEMA_JSON,
         DataType: WhizbangDataType.JSON,
@@ -57,15 +57,15 @@ public static class PerspectiveRegistrySchema {
       new ColumnDefinition(
         Name: Columns.SCHEMA_HASH,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 64,
         Nullable: false
-      ),
+,
+        MaxLength: 64),
       new ColumnDefinition(
         Name: Columns.SERVICE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 255,
         Nullable: false
-      ),
+,
+        MaxLength: 255),
       new ColumnDefinition(
         Name: Columns.CREATED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,

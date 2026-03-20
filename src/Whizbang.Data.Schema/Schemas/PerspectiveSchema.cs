@@ -47,9 +47,9 @@ public static class PerspectiveSchema {
     var idColumn = new ColumnDefinition(
       Name: "id",
       DataType: WhizbangDataType.UUID,
-      PrimaryKey: true,
       Nullable: false
-    );
+,
+      PrimaryKey: true);
 
     var allColumns = ImmutableArray.Create(idColumn).AddRange(additionalColumns);
 
@@ -72,9 +72,9 @@ public static class PerspectiveSchema {
     public static readonly ColumnDefinition Id = new(
       Name: "id",
       DataType: WhizbangDataType.UUID,
-      PrimaryKey: true,
       Nullable: false
-    );
+,
+      PrimaryKey: true);
 
     /// <summary>
     /// Timestamp column for when the record was created.
