@@ -558,6 +558,175 @@ public class DispatcherOutboxTests {
   }
 
   // ========================================
+  // SENDMANYASYNC ROUTING FIX TESTS
+  // ========================================
+
+  // Test command that has a local result-returning receptor (source-generated, AOT-safe).
+  // Used to verify SendManyAsync sends to BOTH local receptor AND outbox.
+  public record LocallyHandledCommand(string Name);
+
+  // Result type for the receptor
+  public record LocallyHandledResult(bool Success);
+
+  // Receptor for LocallyHandledCommand - registered via source generator at build time.
+  // Having this receptor means GetReceptorInvoker will return non-null for LocallyHandledCommand.
+  public class LocallyHandledCommandReceptor : IReceptor<LocallyHandledCommand, LocallyHandledResult> {
+    public ValueTask<LocallyHandledResult> HandleAsync(LocallyHandledCommand message, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult(new LocallyHandledResult(true));
+    }
+  }
+
+  /// <summary>
+  /// SendManyAsync (generic) with a local receptor should ALSO publish to outbox.
+  /// This tests the fix for the either/or routing bug where local receptor
+  /// presence caused messages to skip outbox entirely.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:SendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#sendmanyasync</docs>
+  [Test]
+  public async Task SendManyAsync_Generic_WithLocalReceptor_AlsoPublishesToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.SendManyAsync<LocallyHandledCommand>(events);
+
+    // Assert - All messages should reach outbox even though they have local receptors
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// SendManyAsync (non-generic) with a local receptor should ALSO publish to outbox.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:SendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#sendmanyasync</docs>
+  [Test]
+  public async Task SendManyAsync_NonGeneric_WithLocalReceptor_AlsoPublishesToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.SendManyAsync(events);
+
+    // Assert - All messages should reach outbox even though they have local receptors
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  // ========================================
+  // LOCALSENDMANYASYNC TESTS
+  // ========================================
+
+  /// <summary>
+  /// LocalSendManyAsync (generic) should NOT publish to outbox - local only.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events);
+
+    // Assert - No outbox messages (local only)
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (non-generic) should NOT publish to outbox - local only.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.LocalSendManyAsync(events);
+
+    // Assert - No outbox messages (local only)
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (generic) processes all messages locally and returns Delivered receipts.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = (await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events)).ToList();
+
+    // Assert - All messages processed locally with Delivered status
+    await Assert.That(receipts).Count().IsEqualTo(2);
+    await Assert.That(receipts[0].Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(receipts[1].Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  /// <summary>
+  /// LocalSendManyAsync (non-generic) processes all messages locally and returns Delivered receipts.
+  /// </summary>
+  /// <tests>src/Whizbang.Core/Dispatcher.cs:LocalSendManyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  [Test]
+  public async Task LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = (await dispatcher.LocalSendManyAsync(events)).ToList();
+
+    // Assert - All messages processed locally with Delivered status
+    await Assert.That(receipts).Count().IsEqualTo(2);
+    await Assert.That(receipts[0].Status).IsEqualTo(DeliveryStatus.Delivered);
+    await Assert.That(receipts[1].Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  // ========================================
   // STUB IMPLEMENTATIONS
   // ========================================
 
