@@ -176,6 +176,11 @@ __PHYSICAL_FIELD_CONFIGS__
     // Register singleton timer-based strategies (shared across scopes)
     // Interval and Batch strategies use background timers and must be singletons.
     // They resolve IWorkCoordinator per-flush via IServiceScopeFactory (singleton-safe).
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+    // <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_MetricsAreNull_FlushRecordsNothingAsync</tests>
+    // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:IntervalStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
+    // <tests>tests/Whizbang.Core.Integration.Tests/WorkCoordinatorStrategyChannelIntegrationTests.cs:BatchStrategy_EndToEnd_OutboxWorkReachesChannelAsync</tests>
     services.AddSingleton<global::Whizbang.Core.Messaging.IntervalWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<global::Whizbang.Core.Observability.IServiceInstanceProvider>();
       var options = sp.GetRequiredService<global::Whizbang.Core.Messaging.WorkCoordinatorOptions>();
@@ -188,7 +193,10 @@ __PHYSICAL_FIELD_CONFIGS__
         logger,
         scopeFactory,
         lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
+        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
       );
     });
     services.AddSingleton<global::Whizbang.Core.Messaging.BatchWorkCoordinatorStrategy>(sp => {
@@ -203,7 +211,10 @@ __PHYSICAL_FIELD_CONFIGS__
         logger,
         scopeFactory,
         lifecycleMessageDeserializer: sp.GetService<global::Whizbang.Core.Messaging.ILifecycleMessageDeserializer>(),
-        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>()
+        tracingOptions: sp.GetService<Microsoft.Extensions.Options.IOptionsMonitor<global::Whizbang.Core.Tracing.TracingOptions>>(),
+        metrics: sp.GetService<global::Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        lifecycleMetrics: sp.GetService<global::Whizbang.Core.Observability.LifecycleMetrics>(),
+        workChannelWriter: sp.GetService<global::Whizbang.Core.Messaging.IWorkChannelWriter>()
       );
     });
 

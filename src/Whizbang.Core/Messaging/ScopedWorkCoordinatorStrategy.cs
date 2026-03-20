@@ -215,7 +215,11 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       return;
     }
 
-    // Flush any remaining queued operations on disposal
+    // Safety net: persist any remaining queued data WITHOUT lifecycle stages.
+    // In normal operation, the middleware (or explicit FlushAsync) has already flushed
+    // with full lifecycle while the scope was alive. By the time DisposeAsync runs,
+    // ambient resources like HttpContext may be disposed — so skip lifecycle to avoid
+    // ObjectDisposedException.
     if (!_queues.IsEmpty) {
       if (_logger != null) {
         LogDisposingWithUnflushedOperations(
@@ -228,7 +232,42 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       }
 
       try {
-        await FlushAsync(WorkBatchFlags.None);
+        // Snapshot arrays from queues + pending audit messages
+        var outboxMessages = _queues.OutboxMessages.ToArray();
+        var inboxMessages = _queues.InboxMessages.ToArray();
+        var outboxCompletions = _queues.OutboxCompletions.ToArray();
+        var inboxCompletions = _queues.InboxCompletions.ToArray();
+        var outboxFailures = _queues.OutboxFailures.ToArray();
+        var inboxFailures = _queues.InboxFailures.ToArray();
+        var pendingAuditMessages = _queues.PendingAuditMessages.Count > 0
+          ? _queues.PendingAuditMessages.ToArray()
+          : null;
+
+        await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+          _coordinator,
+          _dependencies.ScopeFactory,
+          _instanceProvider,
+          _options,
+          "scoped",
+          outboxMessages,
+          inboxMessages,
+          outboxCompletions,
+          inboxCompletions,
+          outboxFailures,
+          inboxFailures,
+          WorkBatchFlags.None,
+          _dependencies.LifecycleMessageDeserializer,
+          _logger,
+          _dependencies.TracingOptions,
+          _metrics,
+          _lifecycleMetrics,
+          workChannelWriter: _workChannelWriter,
+          pendingAuditMessages: pendingAuditMessages,
+          ct: default,
+          skipLifecycle: true
+        );
+
+        _queues.Clear();
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorFlushingOnDisposal(_logger, ex);

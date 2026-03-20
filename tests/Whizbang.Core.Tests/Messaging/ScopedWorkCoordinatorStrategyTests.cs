@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -419,6 +420,130 @@ public class ScopedWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
       .Because("DisposeAsync should not flush — nothing left in queues");
+  }
+
+  // ========================================
+  // DISPOSE SKIPS LIFECYCLE — data-only safety net
+  // ========================================
+
+  /// <summary>
+  /// Verifies that DisposeAsync persists data (calls ProcessWorkBatchAsync) but does NOT
+  /// invoke lifecycle stages, preventing ObjectDisposedException when ambient resources
+  /// like HttpContext are already disposed during scope teardown.
+  /// </summary>
+  [Test]
+  public async Task DisposeAsync_SkipsLifecycle_StillPersistsDataAsync() {
+    // Arrange — use a scope factory that tracks whether lifecycle scopes were created
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var trackingScopeFactory = new TrackingScopeFactory();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      null,
+      options,
+      dependencies: new ScopedWorkCoordinatorDependencies {
+        ScopeFactory = trackingScopeFactory
+      }
+    );
+
+    _queueTestOutboxMessage(sut);
+
+    // Act — dispose triggers data-only flush (skipLifecycle: true)
+    await sut.DisposeAsync();
+
+    // Assert — data was persisted
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("DisposeAsync should still persist data via ProcessWorkBatchAsync");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+
+    // Assert — no lifecycle scopes were created (lifecycle was skipped)
+    await Assert.That(trackingScopeFactory.ScopeCreationCount).IsEqualTo(0)
+      .Because("DisposeAsync should skip lifecycle stages to avoid ObjectDisposedException");
+  }
+
+  /// <summary>
+  /// Verifies that DisposeAsync with queued messages calls ProcessWorkBatchAsync
+  /// without creating lifecycle scopes, while explicit FlushAsync with no unflushed
+  /// data in DisposeAsync correctly avoids double-flush.
+  /// </summary>
+  [Test]
+  public async Task DisposeAsync_WithUnflushedData_PersistsWithoutLifecycleScopesAsync() {
+    // Arrange — coordinator that tracks all calls
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var trackingScopeFactory = new TrackingScopeFactory();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      null,
+      options,
+      dependencies: new ScopedWorkCoordinatorDependencies {
+        ScopeFactory = trackingScopeFactory
+      }
+    );
+
+    // Queue messages but don't flush manually — let DisposeAsync handle it
+    _queueTestOutboxMessage(sut);
+    _queueTestOutboxMessage(sut);
+
+    // Act — DisposeAsync should persist data but skip lifecycle
+    await sut.DisposeAsync();
+
+    // Assert — data was persisted
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("DisposeAsync should persist queued data");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(2);
+
+    // Assert — no lifecycle scopes created
+    await Assert.That(trackingScopeFactory.ScopeCreationCount).IsEqualTo(0)
+      .Because("DisposeAsync should skip lifecycle to avoid ObjectDisposedException");
+  }
+
+  // ========================================
+  // PENDING AUDIT MESSAGES — accumulation bug fix
+  // ========================================
+
+  /// <summary>
+  /// Regression test: PendingAuditMessages were not cleared after flush,
+  /// causing stale audit messages to accumulate across multiple flushes.
+  /// </summary>
+  [Test]
+  public async Task FlushAsync_PendingAuditMessages_ClearedAfterFlushAsync() {
+    // Arrange — enable audit so PendingAuditMessages gets populated
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+    var systemEventOptions = new Whizbang.Core.SystemEvents.SystemEventOptions();
+    systemEventOptions.EnableEventAudit();
+
+    var sut = new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator, instanceProvider, null, options,
+      dependencies: new ScopedWorkCoordinatorDependencies {
+        SystemEventOptions = systemEventOptions
+      }
+    );
+
+    // First flush: queue an event message (generates audit message)
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchFlags.None);
+    var firstFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
+
+    // Second flush: queue another event message
+    _queueTestOutboxMessage(sut);
+    await sut.FlushAsync(WorkBatchFlags.None);
+    var secondFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
+
+    // Assert — same count both times (no accumulation of stale audit messages)
+    await Assert.That(secondFlushOutboxCount).IsEqualTo(firstFlushOutboxCount)
+      .Because("PendingAuditMessages should be cleared after each flush, not accumulate");
+
+    // Cleanup
+    await sut.DisposeAsync();
   }
 
   // ========================================
@@ -917,6 +1042,28 @@ public class ScopedWorkCoordinatorStrategyTests {
       => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// Tracks how many scopes are created — lifecycle stages create scopes to resolve invokers.
+  /// When skipLifecycle is true, no scopes should be created.
+  /// </summary>
+  private sealed class TrackingScopeFactory : IServiceScopeFactory {
+    public int ScopeCreationCount { get; private set; }
+
+    public IServiceScope CreateScope() {
+      ScopeCreationCount++;
+      return new FakeServiceScope();
+    }
+
+    private sealed class FakeServiceScope : IServiceScope {
+      public IServiceProvider ServiceProvider { get; } = new FakeServiceProvider();
+      public void Dispose() { }
+    }
+
+    private sealed class FakeServiceProvider : IServiceProvider {
+      public object? GetService(Type serviceType) => null;
+    }
   }
 
   private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
