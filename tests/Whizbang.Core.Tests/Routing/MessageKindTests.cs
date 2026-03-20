@@ -1,3 +1,4 @@
+#pragma warning disable TUnitAssertions0005
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
