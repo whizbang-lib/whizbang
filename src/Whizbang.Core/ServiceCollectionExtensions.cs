@@ -1,5 +1,3 @@
-#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
-
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;

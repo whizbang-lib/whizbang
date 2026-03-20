@@ -1,5 +1,3 @@
-#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
-
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -426,6 +424,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           MessageType = r.MessageType,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
+          Attempts = r.Attempts ?? 0,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
           Metadata = metadata

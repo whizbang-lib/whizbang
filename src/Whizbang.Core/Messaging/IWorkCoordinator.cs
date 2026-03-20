@@ -683,6 +683,12 @@ public record InboxWork {
   public int? PartitionNumber { get; init; }
 
   /// <summary>
+  /// Number of previous processing attempts.
+  /// Used for retry logic, poison message detection, and MaxInboxAttempts purge.
+  /// </summary>
+  public int Attempts { get; init; }
+
+  /// <summary>
   /// Current processing status flags.
   /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// </summary>

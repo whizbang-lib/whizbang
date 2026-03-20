@@ -1,5 +1,3 @@
-#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
-
 using System.Data;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -237,6 +235,7 @@ public partial class DapperWorkCoordinator(
               MessageType = r.message_type,
               StreamId = r.work_stream_id,
               PartitionNumber = r.partition_number,
+              Attempts = r.attempts,
               Status = (MessageProcessingStatus)r.status,
               Flags = flags
             });
