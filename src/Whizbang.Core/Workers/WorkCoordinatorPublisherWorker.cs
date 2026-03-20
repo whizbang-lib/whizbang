@@ -1,5 +1,3 @@
-#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
-
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -65,6 +63,11 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerSecurityContextTests.cs:PublisherLoop_WithNoSecurity_StillSetsMessageContextAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportNotReady_MessageRequeuedToChannelAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TransportException_MessageRequeuedToChannelAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerInboxIntegrationTests.cs:OrphanedInboxFailure_SentAsOutboxFailures_NeverReachesInboxTableAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerInboxIntegrationTests.cs:OrphanedInboxFailure_SentAsInboxFailures_UpdatesInboxTableAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerInboxIntegrationTests.cs:OrphanedInboxCompletion_SentAsInboxCompletions_UpdatesInboxTableAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerInboxIntegrationTests.cs:InboxPurge_MessagesExceedingMaxAttempts_RemovedFromInboxAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerInboxIntegrationTests.cs:InboxPurge_Disabled_MessagesRetainedRegardlessOfAttemptsAsync</tests>
 /// <remarks>
 /// <para>
 /// <strong>IReceptorInvoker is scoped:</strong> The receptor invoker is resolved from a per-work-item scope
@@ -114,6 +117,29 @@ public partial class WorkCoordinatorPublisherWorker(
     maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
   private readonly CompletionTracker<Guid> _leaseRenewals = new(
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
+    backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
+      ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
+      : 1.0,
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
+  );
+
+  // Inbox completion trackers (separate from outbox to route to correct SQL parameters)
+  private readonly CompletionTracker<MessageCompletion> _inboxCompletions = new(
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
+    backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
+      ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
+      : 1.0,
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
+  );
+  private readonly CompletionTracker<MessageFailure> _inboxFailures = new(
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
+    backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
+      ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
+      : 1.0,
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
+  );
+  private readonly CompletionTracker<Guid> _inboxLeaseRenewals = new(
     baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
       ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
@@ -524,17 +550,26 @@ public partial class WorkCoordinatorPublisherWorker(
     var pendingCompletions = _completions.GetPending();
     var pendingFailures = _failures.GetPending();
     var pendingLeaseRenewals = _leaseRenewals.GetPending();
+    var pendingInboxCompletions = _inboxCompletions.GetPending();
+    var pendingInboxFailures = _inboxFailures.GetPending();
+    var pendingInboxLeaseRenewals = _inboxLeaseRenewals.GetPending();
 
     // 2. Extract actual completion data for ProcessWorkBatchAsync
     var completionsToSend = pendingCompletions.Select(tc => tc.Completion).ToArray();
     var failuresToSend = pendingFailures.Select(tc => tc.Completion).ToArray();
     var leaseRenewalsToSend = pendingLeaseRenewals.Select(tc => tc.Completion).ToArray();
+    var inboxCompletionsToSend = pendingInboxCompletions.Select(tc => tc.Completion).ToArray();
+    var inboxFailuresToSend = pendingInboxFailures.Select(tc => tc.Completion).ToArray();
+    var inboxLeaseRenewalsToSend = pendingInboxLeaseRenewals.Select(tc => tc.Completion).ToArray();
 
     // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
     var sentAt = DateTimeOffset.UtcNow;
     _completions.MarkAsSent(pendingCompletions, sentAt);
     _failures.MarkAsSent(pendingFailures, sentAt);
     _leaseRenewals.MarkAsSent(pendingLeaseRenewals, sentAt);
+    _inboxCompletions.MarkAsSent(pendingInboxCompletions, sentAt);
+    _inboxFailures.MarkAsSent(pendingInboxFailures, sentAt);
+    _inboxLeaseRenewals.MarkAsSent(pendingInboxLeaseRenewals, sentAt);
 
     // 4. Call ProcessWorkBatchAsync (may throw or return partial acknowledgement)
     WorkBatch workBatch;
@@ -555,8 +590,8 @@ public partial class WorkCoordinatorPublisherWorker(
         Metadata = _options.InstanceMetadata,
         OutboxCompletions = completionsToSend,
         OutboxFailures = failuresToSend,
-        InboxCompletions = [],
-        InboxFailures = [],
+        InboxCompletions = inboxCompletionsToSend,
+        InboxFailures = inboxFailuresToSend,
         ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
         PerspectiveCompletions = [],  // FUTURE: Add perspective cursor support
@@ -565,7 +600,7 @@ public partial class WorkCoordinatorPublisherWorker(
         NewOutboxMessages = [],  // Not used in publisher worker (dispatcher handles new messages)
         NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)
         RenewOutboxLeaseIds = leaseRenewalsToSend,
-        RenewInboxLeaseIds = [],
+        RenewInboxLeaseIds = inboxLeaseRenewalsToSend,
         Flags = _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
@@ -583,46 +618,45 @@ public partial class WorkCoordinatorPublisherWorker(
     var completionsProcessed = 0;
     var failuresProcessed = 0;
     var leaseRenewalsProcessed = 0;
+    var inboxCompletionsProcessed = 0;
+    var inboxFailuresProcessed = 0;
+    var inboxLeaseRenewalsProcessed = 0;
 
-    // Check outbox work first (priority for publisher worker)
+    // Extract ack counts from the first available metadata row (outbox → inbox → perspective)
+    Dictionary<string, JsonElement>? metadataRow = null;
     var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
     if (outboxFirstRow?.Metadata != null) {
-      if (outboxFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
-        completionsProcessed = compCount.GetInt32();
-      }
-      if (outboxFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
-        failuresProcessed = failCount.GetInt32();
-      }
-      if (outboxFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
-        leaseRenewalsProcessed = renewCount.GetInt32();
-      }
+      metadataRow = outboxFirstRow.Metadata;
     } else {
-      // Check inbox work if no outbox work
       var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
       if (inboxFirstRow?.Metadata != null) {
-        if (inboxFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
-          completionsProcessed = compCount.GetInt32();
-        }
-        if (inboxFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
-          failuresProcessed = failCount.GetInt32();
-        }
-        if (inboxFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
-          leaseRenewalsProcessed = renewCount.GetInt32();
-        }
+        metadataRow = inboxFirstRow.Metadata;
       } else {
-        // Check perspective work if no outbox/inbox work
         var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
         if (perspectiveFirstRow?.Metadata != null) {
-          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
-            completionsProcessed = compCount.GetInt32();
-          }
-          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
-            failuresProcessed = failCount.GetInt32();
-          }
-          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
-            leaseRenewalsProcessed = renewCount.GetInt32();
-          }
+          metadataRow = perspectiveFirstRow.Metadata;
         }
+      }
+    }
+
+    if (metadataRow != null) {
+      if (metadataRow.TryGetValue("outbox_completions_processed", out var compCount)) {
+        completionsProcessed = compCount.GetInt32();
+      }
+      if (metadataRow.TryGetValue("outbox_failures_processed", out var failCount)) {
+        failuresProcessed = failCount.GetInt32();
+      }
+      if (metadataRow.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
+        leaseRenewalsProcessed = renewCount.GetInt32();
+      }
+      if (metadataRow.TryGetValue("inbox_completions_processed", out var inboxCompCount)) {
+        inboxCompletionsProcessed = inboxCompCount.GetInt32();
+      }
+      if (metadataRow.TryGetValue("inbox_failures_processed", out var inboxFailCount)) {
+        inboxFailuresProcessed = inboxFailCount.GetInt32();
+      }
+      if (metadataRow.TryGetValue("inbox_lease_renewals_processed", out var inboxRenewCount)) {
+        inboxLeaseRenewalsProcessed = inboxRenewCount.GetInt32();
       }
     }
 
@@ -630,19 +664,30 @@ public partial class WorkCoordinatorPublisherWorker(
     _completions.MarkAsAcknowledged(completionsProcessed);
     _failures.MarkAsAcknowledged(failuresProcessed);
     _leaseRenewals.MarkAsAcknowledged(leaseRenewalsProcessed);
+    _inboxCompletions.MarkAsAcknowledged(inboxCompletionsProcessed);
+    _inboxFailures.MarkAsAcknowledged(inboxFailuresProcessed);
+    _inboxLeaseRenewals.MarkAsAcknowledged(inboxLeaseRenewalsProcessed);
 
     // 7. Clear only Acknowledged items
     _completions.ClearAcknowledged();
     _failures.ClearAcknowledged();
     _leaseRenewals.ClearAcknowledged();
+    _inboxCompletions.ClearAcknowledged();
+    _inboxFailures.ClearAcknowledged();
+    _inboxLeaseRenewals.ClearAcknowledged();
 
     // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
     _completions.ResetStale(DateTimeOffset.UtcNow);
     _failures.ResetStale(DateTimeOffset.UtcNow);
     _leaseRenewals.ResetStale(DateTimeOffset.UtcNow);
+    _inboxCompletions.ResetStale(DateTimeOffset.UtcNow);
+    _inboxFailures.ResetStale(DateTimeOffset.UtcNow);
+    _inboxLeaseRenewals.ResetStale(DateTimeOffset.UtcNow);
 
     // Log a summary of message processing activity
-    int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
+    int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length
+      + inboxCompletionsToSend.Length + inboxFailuresToSend.Length
+      + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
     if (totalActivity > 0) {
       LogMessageBatchSummary(
         _logger,
@@ -651,7 +696,7 @@ public partial class WorkCoordinatorPublisherWorker(
         leaseRenewalsToSend.Length,
         workBatch.OutboxWork.Count,
         workBatch.InboxWork.Count,
-        workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
+        inboxFailuresToSend.Length
       );
     } else {
       LogNoWorkClaimed(_logger);
@@ -667,18 +712,9 @@ public partial class WorkCoordinatorPublisherWorker(
       }
     }
 
-    // Process inbox work
-    // FUTURE: Implement inbox processing - requires deserializing to typed messages and invoking receptors
-    // For now, mark as failed to prevent infinite retry loops
+    // Process inbox work (orphaned messages recovered via claim_orphaned_inbox)
     if (workBatch.InboxWork.Count > 0) {
-      foreach (var inboxMessage in workBatch.InboxWork) {
-        _failures.Add(new MessageFailure {
-          MessageId = inboxMessage.MessageId,
-          CompletedStatus = inboxMessage.Status,  // Preserve what was already completed
-          Error = "Inbox processing not yet implemented",
-          Reason = MessageFailureReason.Unknown
-        });
-      }
+      await _processInboxWorkAsync(workBatch.InboxWork, cancellationToken);
     }
 
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
@@ -703,6 +739,135 @@ public partial class WorkCoordinatorPublisherWorker(
         _isIdle = true;
         OnWorkProcessingIdle?.Invoke();
         LogWorkProcessingIdle(_logger, _consecutiveEmptyPolls);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Processes orphaned inbox messages recovered via claim_orphaned_inbox.
+  /// Deserializes, invokes lifecycle receptors, processes via OrderedStreamProcessor,
+  /// and queues completions/failures to inbox trackers.
+  /// </summary>
+  /// <docs>messaging/work-coordination</docs>
+  private async Task _processInboxWorkAsync(List<InboxWork> inboxWork, CancellationToken cancellationToken) {
+    LogProcessingInboxWork(_logger, inboxWork.Count);
+
+    // Check for MaxInboxAttempts purge — skip messages that have exceeded the threshold
+    var maxAttempts = _options.MaxInboxAttempts;
+    List<InboxWork> workToProcess;
+    if (maxAttempts.HasValue) {
+      workToProcess = [];
+      foreach (var work in inboxWork) {
+        if (work.Attempts >= maxAttempts.Value) {
+          // Purge: mark as completed to remove from inbox (dead-letter)
+          LogInboxMessagePurged(_logger, work.MessageId, work.Attempts, maxAttempts.Value);
+          _inboxCompletions.Add(new MessageCompletion {
+            MessageId = work.MessageId,
+            Status = work.Status | MessageProcessingStatus.Published  // Terminal status
+          });
+        } else {
+          workToProcess.Add(work);
+        }
+      }
+    } else {
+      workToProcess = inboxWork;
+    }
+
+    if (workToProcess.Count == 0) {
+      return;
+    }
+
+    // Create scope for scoped services
+    await using var inboxScope = _scopeFactory.CreateAsyncScope();
+    var receptorInvoker = inboxScope.ServiceProvider.GetService<IReceptorInvoker>();
+
+    // Establish security context from first work item's envelope
+    var firstWork = workToProcess[0];
+    await SecurityContextHelper.EstablishFullContextAsync(
+      firstWork.Envelope,
+      inboxScope.ServiceProvider,
+      cancellationToken);
+
+    // PreInbox lifecycle stages
+    foreach (var work in workToProcess) {
+      if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
+        try {
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PreInboxAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Inbox,
+            AttemptNumber = work.Attempts
+          };
+
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+        } catch (Exception ex) {
+          LogInboxLifecycleError(_logger, work.MessageId, "PreInbox", ex);
+        }
+      }
+    }
+
+    // Process via OrderedStreamProcessor (maintains stream ordering)
+    var orderedProcessor = new OrderedStreamProcessor();
+    await orderedProcessor.ProcessInboxWorkAsync(
+      workToProcess,
+      processor: (work) => {
+        // For orphaned recovery, mark as EventStored (same as TransportConsumerWorker)
+        return Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (msgId, status) => {
+        _inboxCompletions.Add(new MessageCompletion {
+          MessageId = msgId,
+          Status = status
+        });
+      },
+      failureHandler: (msgId, status, error) => {
+        _inboxFailures.Add(new MessageFailure {
+          MessageId = msgId,
+          CompletedStatus = status,
+          Error = error,
+          Reason = MessageFailureReason.Unknown
+        });
+      },
+      cancellationToken
+    );
+
+    // PostInbox lifecycle stages
+    foreach (var work in workToProcess) {
+      if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
+        try {
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PostInboxAsync,
+            EventId = null,
+            StreamId = null,
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Inbox,
+            AttemptNumber = work.Attempts
+          };
+
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+        } catch (Exception ex) {
+          LogInboxLifecycleError(_logger, work.MessageId, "PostInbox", ex);
+        }
       }
     }
   }
@@ -887,6 +1052,27 @@ public partial class WorkCoordinatorPublisherWorker(
   )]
   static partial void LogWorkProcessingIdle(ILogger logger, int emptyPolls);
 
+  [LoggerMessage(
+    EventId = 24,
+    Level = LogLevel.Information,
+    Message = "Processing {Count} orphaned inbox messages"
+  )]
+  static partial void LogProcessingInboxWork(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Warning,
+    Message = "Purging inbox message {MessageId}: attempts ({Attempts}) exceeded max ({MaxAttempts})"
+  )]
+  static partial void LogInboxMessagePurged(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(
+    EventId = 26,
+    Level = LogLevel.Error,
+    Message = "Error in {Stage} lifecycle for inbox message {MessageId}"
+  )]
+  static partial void LogInboxLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
   /// <summary>
   /// Populates QueuedAt timestamp properties on the message payload using JSON manipulation.
   /// AOT-safe: uses JsonNode, no reflection or Type.GetType().
@@ -968,6 +1154,14 @@ public class WorkCoordinatorPublisherOptions {
   /// Default: 2
   /// </summary>
   public int IdleThresholdPolls { get; set; } = 2;
+
+  /// <summary>
+  /// Maximum number of processing attempts for inbox messages before purging.
+  /// When set, inbox messages that have been retried more than this many times
+  /// are marked as completed (dead-lettered) to prevent infinite retry loops.
+  /// Default: null (disabled — messages retry indefinitely).
+  /// </summary>
+  public int? MaxInboxAttempts { get; set; }
 
   /// <summary>
   /// Retry configuration for completion acknowledgement.

@@ -1,5 +1,3 @@
-#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
-
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;

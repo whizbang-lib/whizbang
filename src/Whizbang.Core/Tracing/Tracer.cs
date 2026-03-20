@@ -1,5 +1,3 @@
-#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
-
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;

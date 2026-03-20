@@ -103,7 +103,7 @@ public class EventStorageFailureHandlingTests {
   [Test]
   public async Task MessageFailureReason_HasEventStorageFailureValueAsync() {
     // Arrange & Act
-    const MessageFailureReason reason = MessageFailureReason.EventStorageFailure;
+    var reason = MessageFailureReason.EventStorageFailure;
 
     // Assert
     await Assert.That((int)reason).IsEqualTo(7);

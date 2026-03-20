@@ -1,5 +1,3 @@
-#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
-
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;

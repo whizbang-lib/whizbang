@@ -1,5 +1,3 @@
-#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
-
 using Dapper;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Whizbang.Core.Data;
