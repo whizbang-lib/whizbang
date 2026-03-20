@@ -47,7 +47,8 @@ internal static class WorkCoordinatorFlushHelper {
     LifecycleMetrics? lifecycleMetrics,
     IWorkChannelWriter? workChannelWriter,
     OutboxMessage[]? pendingAuditMessages,
-    CancellationToken ct
+    CancellationToken ct,
+    bool skipLifecycle = false
   ) {
 #pragma warning restore S107
     // Resolve coordinator: use direct reference if available, otherwise create a scope
@@ -61,35 +62,37 @@ internal static class WorkCoordinatorFlushHelper {
     }
 
     try {
-      // Check if lifecycle tracing is enabled
-      var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+      if (!skipLifecycle) {
+        // Check if lifecycle tracing is enabled
+        var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
-      // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PreDistributeAsync,
-        LifecycleStage.PreDistributeInline,
-        outboxMessages,
-        inboxMessages,
-        scopeFactory,
-        lifecycleMessageDeserializer,
-        logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: lifecycleMetrics,
-        ct: ct
-      );
+        // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PreDistributeAsync,
+          LifecycleStage.PreDistributeInline,
+          outboxMessages,
+          inboxMessages,
+          scopeFactory,
+          lifecycleMessageDeserializer,
+          logger,
+          enableLifecycleTracing: enableLifecycleTracing,
+          metrics: lifecycleMetrics,
+          ct: ct
+        );
 
-      // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
-      LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
-        LifecycleStage.DistributeAsync,
-        outboxMessages,
-        inboxMessages,
-        scopeFactory,
-        lifecycleMessageDeserializer,
-        logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: lifecycleMetrics,
-        ct: ct
-      );
+        // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
+        LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+          LifecycleStage.DistributeAsync,
+          outboxMessages,
+          inboxMessages,
+          scopeFactory,
+          lifecycleMessageDeserializer,
+          logger,
+          enableLifecycleTracing: enableLifecycleTracing,
+          metrics: lifecycleMetrics,
+          ct: ct
+        );
+      }
 
       // Merge pending audit messages (after lifecycle stages, before request build)
       var finalOutboxMessages = outboxMessages;
@@ -128,18 +131,21 @@ internal static class WorkCoordinatorFlushHelper {
       metrics?.FlushDuration.Record(flushSw.Elapsed.TotalMilliseconds, new KeyValuePair<string, object?>("strategy", strategyName));
 
       // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-      await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
-        LifecycleStage.PostDistributeAsync,
-        LifecycleStage.PostDistributeInline,
-        outboxMessages,
-        inboxMessages,
-        scopeFactory,
-        lifecycleMessageDeserializer,
-        logger,
-        enableLifecycleTracing: enableLifecycleTracing,
-        metrics: lifecycleMetrics,
-        ct: ct
-      );
+      if (!skipLifecycle) {
+        var enableLifecycleTracingPost = tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+        await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+          LifecycleStage.PostDistributeAsync,
+          LifecycleStage.PostDistributeInline,
+          outboxMessages,
+          inboxMessages,
+          scopeFactory,
+          lifecycleMessageDeserializer,
+          logger,
+          enableLifecycleTracing: enableLifecycleTracingPost,
+          metrics: lifecycleMetrics,
+          ct: ct
+        );
+      }
 
       // Write returned work to channel for publishing
       if (workChannelWriter != null && workBatch.OutboxWork.Count > 0) {

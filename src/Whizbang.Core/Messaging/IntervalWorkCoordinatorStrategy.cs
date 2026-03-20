@@ -213,7 +213,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
+  }
+
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchFlags flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
@@ -313,7 +317,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         _lifecycleMetrics,
         workChannelWriter: _workChannelWriter,
         pendingAuditMessages: null,
-        ct
+        ct,
+        skipLifecycle: skipLifecycle
       );
 
       if (_logger != null) {
@@ -342,10 +347,10 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       return;
     }
 
-    // Fire and forget flush on timer
+    // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
     _ = Task.Run(async () => {
       try {
-        await FlushAsync(WorkBatchFlags.None);
+        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);
@@ -390,7 +395,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      await FlushAsync(WorkBatchFlags.None);
+      await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);
