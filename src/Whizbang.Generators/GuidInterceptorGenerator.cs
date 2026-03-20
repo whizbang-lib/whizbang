@@ -372,9 +372,9 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     foreach (var info in intercepted) {
       sb.AppendLine();
-      sb.AppendLine($"    /// <summary>");
+      sb.AppendLine("    /// <summary>");
       sb.AppendLine($"    /// Intercepts {info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}() at {info.FilePath}:{info.LineNumber}");
-      sb.AppendLine($"    /// </summary>");
+      sb.AppendLine("    /// </summary>");
       sb.AppendLine($"    [global::System.Runtime.CompilerServices.InterceptsLocation(\"{_escapeString(info.FilePath)}\", {info.LineNumber}, {info.ColumnNumber})]");
       sb.AppendLine($"    internal static global::Whizbang.Core.ValueObjects.TrackedGuid {info.InterceptorMethodName}() {{");
 
@@ -389,10 +389,10 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         _ => $"{info.FullyQualifiedTypeName}.{info.OriginalMethod}()"
       };
 
-      sb.AppendLine($"      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
+      sb.AppendLine("      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
       sb.AppendLine($"          {originalCall},");
       sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidSource});");
-      sb.AppendLine($"    }}");
+      sb.AppendLine("    }");
     }
 
     sb.AppendLine("  }");

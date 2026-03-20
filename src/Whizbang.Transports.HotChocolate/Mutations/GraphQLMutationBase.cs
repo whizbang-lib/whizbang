@@ -34,5 +34,4 @@ namespace Whizbang.Transports.HotChocolate;
 /// </example>
 public abstract class GraphQLMutationBase<TCommand, TResult>
     : MutationEndpointBase<TCommand, TResult>
-    where TCommand : ICommand {
-}
+    where TCommand : ICommand;

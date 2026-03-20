@@ -263,8 +263,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var subscriberName = _getSubscriberName(destination);
     if (_options.DefaultQueueName is null && subscriberName is null) {
       throw new InvalidOperationException(
-        $"SubscriberName is required in destination metadata for deterministic queue naming. " +
-        $"Configure SubscriberName when building TransportDestination, or set RabbitMQOptions.DefaultQueueName. " +
+        "SubscriberName is required in destination metadata for deterministic queue naming. " +
+        "Configure SubscriberName when building TransportDestination, or set RabbitMQOptions.DefaultQueueName. " +
         $"Exchange: '{exchangeName}'");
     }
 

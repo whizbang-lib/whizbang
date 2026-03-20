@@ -32,8 +32,8 @@ public static class StreamIdGuard {
     if (streamId == Guid.Empty) {
       throw new InvalidStreamIdException(
           $"StreamId is Guid.Empty for {eventType} (MessageId={messageId}) at {context}. " +
-          $"Events with [StreamId] must have a non-empty StreamId. " +
-          $"Either apply [GenerateStreamId] to auto-generate, or provide a StreamId before dispatch.") {
+          "Events with [StreamId] must have a non-empty StreamId. " +
+          "Either apply [GenerateStreamId] to auto-generate, or provide a StreamId before dispatch.") {
         StreamId = streamId,
         MessageId = messageId,
         Context = context,
@@ -67,8 +67,8 @@ public static class StreamIdGuard {
     if (streamId.HasValue && streamId.Value == Guid.Empty) {
       throw new InvalidStreamIdException(
           $"StreamId is Guid.Empty (non-null) for {eventType} (MessageId={messageId}) at {context}. " +
-          $"A null StreamId is valid (no stream concept), but Guid.Empty indicates a bug. " +
-          $"Either apply [GenerateStreamId] to auto-generate, or provide a StreamId before dispatch.") {
+          "A null StreamId is valid (no stream concept), but Guid.Empty indicates a bug. " +
+          "Either apply [GenerateStreamId] to auto-generate, or provide a StreamId before dispatch.") {
         StreamId = streamId.Value,
         MessageId = messageId,
         Context = context,

@@ -12,7 +12,7 @@ namespace Whizbang.Core.Lenses;
 /// Used by <see cref="IScopedLensFactory"/> to constrain generic type parameters.
 /// </summary>
 /// <docs>fundamentals/lenses/lenses</docs>
-public interface ILensQuery { }
+public interface ILensQuery;
 
 /// <summary>
 /// Read-only LINQ abstraction for querying perspective data (scoped lifetime).

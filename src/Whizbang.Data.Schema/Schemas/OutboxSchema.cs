@@ -23,27 +23,27 @@ public static class OutboxSchema {
       new ColumnDefinition(
         Name: "message_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "destination",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true  // Events don't have destinations, only outbound commands/messages do
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "message_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "envelope_type",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,

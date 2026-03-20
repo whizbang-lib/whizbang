@@ -49,7 +49,7 @@ public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
     if (!_tableNames.TryGetValue(typeof(TModel), out var tableName)) {
       throw new KeyNotFoundException(
           $"No table name registered for model type '{typeof(TModel).Name}'. " +
-          $"Ensure the model is registered in the ILensQueryFactory's table name dictionary.");
+          "Ensure the model is registered in the ILensQueryFactory's table name dictionary.");
     }
 
     return new EFCorePostgresLensQuery<TModel>(_context, tableName);

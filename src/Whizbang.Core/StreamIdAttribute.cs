@@ -39,5 +39,4 @@ namespace Whizbang.Core;
 /// <docs>extending/attributes/streamid</docs>
 /// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
-public sealed class StreamIdAttribute : Attribute {
-}
+public sealed class StreamIdAttribute : Attribute;

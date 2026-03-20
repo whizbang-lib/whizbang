@@ -32,34 +32,34 @@ public static class MessageAssociationsSchema {
       new ColumnDefinition(
         Name: "id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false,
+        PrimaryKey: true,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
         Name: Columns.MESSAGE_TYPE,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.ASSOCIATION_TYPE,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 50,
         Nullable: false
-      ),
+,
+        MaxLength: 50),
       new ColumnDefinition(
         Name: Columns.TARGET_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.SERVICE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "created_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,

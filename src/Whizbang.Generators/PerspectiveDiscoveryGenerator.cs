@@ -405,21 +405,21 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
         // Generate type-check condition for model and event types
         sb.AppendLine($"    if (typeof(TModel) == typeof({modelType}) && typeof(TEvent) == typeof({eventType})) {{");
-        sb.AppendLine($"      return new[] {{");
-        sb.AppendLine($"        new PerspectiveAssociationInfo<TModel, TEvent>(");
+        sb.AppendLine("      return new[] {");
+        sb.AppendLine("        new PerspectiveAssociationInfo<TModel, TEvent>(");
         sb.AppendLine($"          \"{cleanEventType}\",");
         sb.AppendLine($"          \"{perspective.ClassName.Split('.')[^1]}\",");
         sb.AppendLine($"          \"{serviceName}\",");
-        sb.AppendLine($"          (model, evt) => {{");
+        sb.AppendLine("          (model, evt) => {");
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
         sb.AppendLine($"            var typedModel = ({modelType})((object)model!);");
         sb.AppendLine($"            var typedEvent = ({eventType})((object)evt!);");
-        sb.AppendLine($"            var result = perspective.Apply(typedModel, typedEvent);");
-        sb.AppendLine($"            return (TModel)((object)result!);");
-        sb.AppendLine($"          }}");
-        sb.AppendLine($"        )");
-        sb.AppendLine($"      }};");
-        sb.AppendLine($"    }}");
+        sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
+        sb.AppendLine("            return (TModel)((object)result!);");
+        sb.AppendLine("          }");
+        sb.AppendLine("        )");
+        sb.AppendLine("      };");
+        sb.AppendLine("    }");
         sb.AppendLine();
       }
     }

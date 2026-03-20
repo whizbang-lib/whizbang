@@ -66,7 +66,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'"
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'"
       );
     }
 
@@ -108,7 +108,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (jsonElement.ValueKind == JsonValueKind.Undefined) {
       throw new InvalidOperationException(
         $"Cannot deserialize message type '{messageTypeName}': JsonElement is Undefined. " +
-        $"This may indicate the payload was never set or was disposed.");
+        "This may indicate the payload was never set or was disposed.");
     }
 
     // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
@@ -117,7 +117,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (jsonTypeInfo is null) {
       throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
-        $"Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
+        "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
       );
     }
 
@@ -128,7 +128,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
       if (message is null) {
         throw new InvalidOperationException(
           $"Deserialization of type '{messageTypeName}' returned null. " +
-          $"This may indicate invalid JSON or a serialization configuration issue."
+          "This may indicate invalid JSON or a serialization configuration issue."
         );
       }
 

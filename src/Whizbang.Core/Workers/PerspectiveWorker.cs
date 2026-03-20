@@ -985,8 +985,8 @@ public partial class PerspectiveWorker(
     var scopedReceptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
     if (scopedReceptorInvoker is null) {
       throw new InvalidOperationException(
-        $"IReceptorInvoker is required for lifecycle stage invocation but was not registered. " +
-        $"Ensure AddWhizbangReceptorInvoker() is called during DI setup.");
+        "IReceptorInvoker is required for lifecycle stage invocation but was not registered. " +
+        "Ensure AddWhizbangReceptorInvoker() is called during DI setup.");
     }
 
     try {

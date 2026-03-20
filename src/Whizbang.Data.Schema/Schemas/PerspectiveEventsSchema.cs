@@ -20,9 +20,9 @@ public static class PerspectiveEventsSchema {
       new ColumnDefinition(
         Name: "event_work_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: Columns.STREAM_ID,
         DataType: WhizbangDataType.UUID,

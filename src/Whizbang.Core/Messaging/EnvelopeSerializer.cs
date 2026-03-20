@@ -28,23 +28,23 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
     // This indicates the envelope was already serialized and is being double-serialized
     if (payloadType == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"DOUBLE SERIALIZATION DETECTED: Payload is JsonElement, which means the envelope was already serialized. " +
+        "DOUBLE SERIALIZATION DETECTED: Payload is JsonElement, which means the envelope was already serialized. " +
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {envelope.GetType().FullName}. " +
         $"TMessage type parameter: {typeof(TMessage).FullName}. " +
         $"Payload runtime type: {payloadType.FullName}. " +
-        $"This is a bug - envelopes should only be serialized once before storage. " +
-        $"Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message.");
+        "This is a bug - envelopes should only be serialized once before storage. " +
+        "Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message.");
     }
 
     // DEFENSIVE: Detect if TMessage is JsonElement (should never happen!)
     if (typeof(TMessage) == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"WRONG TYPE PARAMETER: TMessage is JsonElement. " +
+        "WRONG TYPE PARAMETER: TMessage is JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {envelope.GetType().FullName}. " +
-        $"This indicates SerializeEnvelope was called with wrong type parameter. " +
-        $"The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
+        "This indicates SerializeEnvelope was called with wrong type parameter. " +
+        "The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
     }
 
     // CRITICAL: Construct envelope type from PAYLOAD runtime type, not TMessage
@@ -97,7 +97,7 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
     if (jsonTypeInfo == null) {
       throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
-        $"Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
+        "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
       );
     }
 
@@ -105,7 +105,7 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
     if (message == null) {
       throw new InvalidOperationException(
         $"Deserialization of type '{messageTypeName}' returned null. " +
-        $"This may indicate invalid JSON or a serialization configuration issue."
+        "This may indicate invalid JSON or a serialization configuration issue."
       );
     }
 

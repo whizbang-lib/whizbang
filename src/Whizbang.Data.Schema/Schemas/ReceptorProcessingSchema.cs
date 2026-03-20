@@ -32,9 +32,9 @@ public static class ReceptorProcessingSchema {
       new ColumnDefinition(
         Name: "id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "event_id",
         DataType: WhizbangDataType.UUID,

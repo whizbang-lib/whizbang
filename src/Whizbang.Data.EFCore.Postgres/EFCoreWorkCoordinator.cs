@@ -388,8 +388,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         if (string.IsNullOrWhiteSpace(r.MessageType)) {
           throw new InvalidOperationException(
             $"Inbox message {r.WorkId} has null/empty message_type. " +
-            $"This indicates the message was not properly serialized by the transport consumer. " +
-            $"Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
+            "This indicates the message was not properly serialized by the transport consumer. " +
+            "Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
         }
 
         var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
@@ -457,8 +457,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
         return new PerspectiveWork {
           WorkId = r.WorkId,
-          StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+          StreamId = r.StreamId ?? throw new InvalidOperationException("Perspective work must have StreamId"),
+          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
           LastProcessedEventId = null,  // No longer returned by process_work_batch
           Status = (PerspectiveProcessingStatus)r.Status,
           PartitionNumber = r.PartitionNumber,
@@ -954,7 +954,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);

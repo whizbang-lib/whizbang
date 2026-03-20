@@ -530,7 +530,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var propertyName = property.Name;
 
     // Polymorphic discriminators are always strings (type name discriminator)
-    var typeName = "global::System.String";
+    const string typeName = "global::System.String";
 
     // Extract named arguments
     string? columnName = null;
@@ -733,7 +733,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         if (field.IsUnique) {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-          sb.AppendLine($"        .IsUnique();");
+          sb.AppendLine("        .IsUnique();");
         } else {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");

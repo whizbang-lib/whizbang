@@ -57,7 +57,7 @@ public class TransportManager(
     if (!_transports.TryGetValue(type, out var transport)) {
       throw new InvalidOperationException(
         $"Transport type '{type}' is not registered. " +
-        $"Please register it using AddTransport() before use."
+        "Please register it using AddTransport() before use."
       );
     }
     return transport;

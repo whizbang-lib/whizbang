@@ -50,7 +50,7 @@ public static class WhizbangDiagnostics {
     var filteredEntries = _entries.Where(e => (e.Category & categories) != 0).ToList();
 
     if (filteredEntries.Count == 0) {
-      var emptyMessage = "No diagnostic information available for the specified categories.";
+      const string emptyMessage = "No diagnostic information available for the specified categories.";
       return emptyMessage;
     }
 

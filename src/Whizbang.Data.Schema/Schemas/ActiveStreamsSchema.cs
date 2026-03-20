@@ -19,9 +19,9 @@ public static class ActiveStreamsSchema {
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "partition_number",
         DataType: WhizbangDataType.INTEGER,

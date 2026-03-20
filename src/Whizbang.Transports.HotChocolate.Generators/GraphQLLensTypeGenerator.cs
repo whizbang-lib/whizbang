@@ -169,29 +169,29 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
     var methodName = "Get" + char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName.Substring(1);
 
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Query field for {lens.QueryName}.");
     sb.AppendLine($"  /// Returns results from the {lens.InterfaceName} lens.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
 
     // Add attributes based on configuration
     if (lens.EnablePaging) {
       sb.AppendLine($"  [UsePaging(DefaultPageSize = {lens.DefaultPageSize}, MaxPageSize = {lens.MaxPageSize})]");
     }
     if (lens.EnableProjection) {
-      sb.AppendLine($"  [UseProjection]");
+      sb.AppendLine("  [UseProjection]");
     }
     if (lens.EnableFiltering) {
-      sb.AppendLine($"  [UseFiltering]");
+      sb.AppendLine("  [UseFiltering]");
     }
     if (lens.EnableSorting) {
-      sb.AppendLine($"  [UseSorting]");
+      sb.AppendLine("  [UseSorting]");
     }
 
     sb.AppendLine($"  public IQueryable<PerspectiveRow<{lens.ModelTypeName}>> {methodName}(");
     sb.AppendLine($"      [Service] {lens.InterfaceName} lens) {{");
-    sb.AppendLine($"    return lens.Query;");
-    sb.AppendLine($"  }}");
+    sb.AppendLine("    return lens.Query;");
+    sb.AppendLine("  }");
 
     return sb.ToString();
   }
@@ -201,10 +201,12 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateLensInfoProperty(GraphQLLensInfo lens) {
     var propName = char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName.Substring(1);
-    return $@"  /// <summary>
+    return $"""
+  /// <summary>
   /// Information about the {lens.QueryName} lens.
   /// </summary>
   public static (string QueryName, string InterfaceName, string ModelType) {propName}Info =>
-      (""{lens.QueryName}"", ""{lens.InterfaceName}"", ""{lens.ModelTypeName}"");";
+      ("{lens.QueryName}", "{lens.InterfaceName}", "{lens.ModelTypeName}");
+""";
   }
 }

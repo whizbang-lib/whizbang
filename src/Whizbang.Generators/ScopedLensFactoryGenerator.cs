@@ -187,7 +187,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   }
 
   private static void _generateRegistration(StringBuilder sb, LensInfo lens) {
-    sb.AppendLine($"    new LensRegistration {{");
+    sb.AppendLine("    new LensRegistration {");
     sb.AppendLine($"      LensType = typeof({lens.LensTypeName}),");
     sb.AppendLine($"      ModelType = typeof({lens.ModelTypeName}),");
     sb.AppendLine($"      IsInterface = {(lens.IsInterface ? "true" : "false")},");
@@ -200,7 +200,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
 
     sb.AppendLine($"      ImplementsTenantScoped = {(lens.ImplementsTenantScoped ? "true" : "false")},");
     sb.AppendLine($"      ImplementsUserScoped = {(lens.ImplementsUserScoped ? "true" : "false")}");
-    sb.AppendLine($"    }},");
+    sb.AppendLine("    },");
   }
 }
 

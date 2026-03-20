@@ -53,4 +53,4 @@ namespace Whizbang.Core.Perspectives;
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = true)]
-public sealed class MustExistAttribute : Attribute { }
+public sealed class MustExistAttribute : Attribute;

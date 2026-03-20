@@ -27,9 +27,9 @@ public static class MessageDeduplicationSchema {
       new ColumnDefinition(
         Name: "message_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "first_seen_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,

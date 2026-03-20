@@ -39,5 +39,4 @@ namespace Whizbang.Core;
     AttributeTargets.Assembly,
     AllowMultiple = false,
     Inherited = false)]
-public sealed class SuppressGuidInterceptionAttribute : Attribute {
-}
+public sealed class SuppressGuidInterceptionAttribute : Attribute;

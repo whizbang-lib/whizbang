@@ -167,8 +167,8 @@ public partial class TransportPublishStrategy : IMessagePublishStrategy {
     // Null check should never trigger due to early return in PublishAsync, but be defensive
     if (string.IsNullOrEmpty(work.Destination)) {
       throw new InvalidOperationException(
-        $"Event destination cannot be null or empty at this point. " +
-        $"Event-store-only messages should be handled by early return in PublishAsync. " +
+        "Event destination cannot be null or empty at this point. " +
+        "Event-store-only messages should be handled by early return in PublishAsync. " +
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
 
