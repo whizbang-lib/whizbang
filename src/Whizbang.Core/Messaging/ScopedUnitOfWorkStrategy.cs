@@ -61,7 +61,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
     if (_currentUnit?.UnitId == unitId) {
       return _currentUnit.Messages.AsReadOnly();
     }
-    return Array.Empty<object>();
+    return [];
   }
 
   /// <inheritdoc />

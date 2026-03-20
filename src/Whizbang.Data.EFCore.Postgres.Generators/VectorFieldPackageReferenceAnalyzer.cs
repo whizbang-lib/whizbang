@@ -97,8 +97,7 @@ public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {
       }
 
       // TModel is the first type argument
-      var modelType = iface.TypeArguments[0] as INamedTypeSymbol;
-      if (modelType == null) {
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
         continue;
       }
 

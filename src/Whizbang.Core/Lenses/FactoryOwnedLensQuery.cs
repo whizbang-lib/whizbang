@@ -7,21 +7,16 @@ namespace Whizbang.Core.Lenses;
 /// <typeparam name="TModel">The perspective model type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/FactoryOwnedLensQueryTests.cs</tests>
-public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDisposable, IDisposable
+/// <remarks>
+/// Creates a new FactoryOwnedLensQuery that wraps the specified factory.
+/// </remarks>
+/// <param name="factory">The factory to own and dispose. Must not be null.</param>
+/// <exception cref="ArgumentNullException">Thrown when factory is null.</exception>
+public sealed class FactoryOwnedLensQuery<TModel>(ILensQueryFactory factory) : ILensQuery<TModel>, IAsyncDisposable, IDisposable
     where TModel : class {
-  private readonly ILensQueryFactory _factory;
-  private readonly ILensQuery<TModel> _inner;
+  private readonly ILensQueryFactory _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+  private readonly ILensQuery<TModel> _inner = factory.GetQuery<TModel>();
   private bool _disposed;
-
-  /// <summary>
-  /// Creates a new FactoryOwnedLensQuery that wraps the specified factory.
-  /// </summary>
-  /// <param name="factory">The factory to own and dispose. Must not be null.</param>
-  /// <exception cref="ArgumentNullException">Thrown when factory is null.</exception>
-  public FactoryOwnedLensQuery(ILensQueryFactory factory) {
-    _factory = factory ?? throw new ArgumentNullException(nameof(factory));
-    _inner = factory.GetQuery<TModel>();
-  }
 
   /// <inheritdoc />
   public IQueryable<PerspectiveRow<TModel>> Query => _inner.Query;

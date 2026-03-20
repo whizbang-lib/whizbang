@@ -23,48 +23,33 @@ namespace Whizbang.Core.Messaging;
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
-public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher {
-  private readonly IWorkCoordinator _coordinator;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly WorkCoordinatorOptions _options;
-  private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger;
-  private readonly IServiceScopeFactory? _scopeFactory;
-  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
-  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
-  private readonly IDeferredOutboxChannel? _deferredChannel;
-  private readonly IWorkChannelWriter? _workChannelWriter;
-  private readonly WorkCoordinatorMetrics? _metrics;
-  private readonly LifecycleMetrics? _lifecycleMetrics;
-  private readonly SystemEventOptions? _systemEventOptions;
+public partial class ImmediateWorkCoordinatorStrategy(
+  IWorkCoordinator coordinator,
+  IServiceInstanceProvider instanceProvider,
+  WorkCoordinatorOptions options,
+  ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
+  IServiceScopeFactory? scopeFactory = null,
+  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+  IOptionsMonitor<TracingOptions>? tracingOptions = null,
+  IDeferredOutboxChannel? deferredChannel = null,
+  WorkCoordinatorMetrics? metrics = null,
+  LifecycleMetrics? lifecycleMetrics = null,
+  IOptions<SystemEventOptions>? systemEventOptions = null,
+  IWorkChannelWriter? workChannelWriter = null
+  ) : IWorkCoordinatorStrategy, IWorkFlusher {
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger = logger;
+  private readonly IServiceScopeFactory? _scopeFactory = scopeFactory;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
+  private readonly IDeferredOutboxChannel? _deferredChannel = deferredChannel;
+  private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
+  private readonly WorkCoordinatorMetrics? _metrics = metrics;
+  private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
+  private readonly SystemEventOptions? _systemEventOptions = systemEventOptions?.Value;
   private readonly WorkCoordinatorQueues _queues = new();
-
-  public ImmediateWorkCoordinatorStrategy(
-    IWorkCoordinator coordinator,
-    IServiceInstanceProvider instanceProvider,
-    WorkCoordinatorOptions options,
-    ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
-    IServiceScopeFactory? scopeFactory = null,
-    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
-    IOptionsMonitor<TracingOptions>? tracingOptions = null,
-    IDeferredOutboxChannel? deferredChannel = null,
-    WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null,
-    IOptions<SystemEventOptions>? systemEventOptions = null,
-    IWorkChannelWriter? workChannelWriter = null
-  ) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger;
-    _scopeFactory = scopeFactory;
-    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
-    _tracingOptions = tracingOptions;
-    _deferredChannel = deferredChannel;
-    _workChannelWriter = workChannelWriter;
-    _metrics = metrics;
-    _lifecycleMetrics = lifecycleMetrics;
-    _systemEventOptions = systemEventOptions?.Value;
-  }
 
   /// <summary>
   /// Queues an outbox message for immediate flush.

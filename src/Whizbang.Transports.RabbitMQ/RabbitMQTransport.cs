@@ -550,7 +550,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     // Fallback: Check if RoutingKey contains comma-separated patterns
     if (!string.IsNullOrEmpty(destination.RoutingKey) && destination.RoutingKey.Contains(',')) {
-      return destination.RoutingKey.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+      return [.. destination.RoutingKey.Split(',', StringSplitOptions.RemoveEmptyEntries)];
     }
 
     // Default: match all

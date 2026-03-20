@@ -86,7 +86,7 @@ public sealed class TransportSubscriptionBuilder {
     var metadata = _buildMetadata(subscription);
 
     // Add SubscriberName for deterministic queue naming (critical for competing consumers)
-    metadata ??= new Dictionary<string, System.Text.Json.JsonElement>();
+    metadata ??= [];
     metadata["SubscriberName"] = JsonElementHelper.FromString(_serviceName);
 
     return new TransportDestination(

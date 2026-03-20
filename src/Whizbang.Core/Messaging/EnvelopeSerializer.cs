@@ -10,12 +10,8 @@ namespace Whizbang.Core.Messaging;
 /// Ensures envelope type metadata is correctly captured before serialization.
 /// </summary>
 /// <docs>fundamentals/messages/envelope-serialization</docs>
-public sealed class EnvelopeSerializer : IEnvelopeSerializer {
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  public EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null) {
-    _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
-  }
+public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null) : IEnvelopeSerializer {
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
 
   /// <inheritdoc />
   public SerializedEnvelope SerializeEnvelope<TMessage>(IMessageEnvelope<TMessage> envelope) {

@@ -70,7 +70,7 @@ public static class PartitionAssignmentsSchema {
       // idx_partition_assignments_instance ON (instance_id, last_heartbeat)
       new IndexDefinition(
         Name: IDX_INSTANCE,
-        Columns: ImmutableArray.Create(INSTANCE_ID, LAST_HEARTBEAT),
+        Columns: [INSTANCE_ID, LAST_HEARTBEAT],
         Unique: false,
         WhereClause: null
       )

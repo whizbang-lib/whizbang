@@ -21,29 +21,22 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/message-security#default-provider</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageSecurityContextProviderTests.cs</tests>
-public sealed class DefaultMessageSecurityContextProvider : IMessageSecurityContextProvider {
-  private readonly IReadOnlyList<ISecurityContextExtractor> _extractors;
-  private readonly IReadOnlyList<ISecurityContextCallback> _callbacks;
-  private readonly MessageSecurityOptions _options;
-  private readonly Action<ScopeContextEstablished>? _onAuditEvent;
-
-  /// <summary>
-  /// Creates a new DefaultMessageSecurityContextProvider.
-  /// </summary>
-  /// <param name="extractors">Security context extractors (will be sorted by priority)</param>
-  /// <param name="callbacks">Callbacks to invoke after context establishment</param>
-  /// <param name="options">Security options</param>
-  /// <param name="onAuditEvent">Optional callback for audit events (for testing/custom audit)</param>
-  public DefaultMessageSecurityContextProvider(
-    IEnumerable<ISecurityContextExtractor> extractors,
-    IEnumerable<ISecurityContextCallback> callbacks,
-    MessageSecurityOptions options,
-    Action<ScopeContextEstablished>? onAuditEvent = null) {
-    _extractors = extractors.OrderBy(e => e.Priority).ToList();
-    _callbacks = callbacks.ToList();
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _onAuditEvent = onAuditEvent;
-  }
+/// <remarks>
+/// Creates a new DefaultMessageSecurityContextProvider.
+/// </remarks>
+/// <param name="extractors">Security context extractors (will be sorted by priority)</param>
+/// <param name="callbacks">Callbacks to invoke after context establishment</param>
+/// <param name="options">Security options</param>
+/// <param name="onAuditEvent">Optional callback for audit events (for testing/custom audit)</param>
+public sealed class DefaultMessageSecurityContextProvider(
+  IEnumerable<ISecurityContextExtractor> extractors,
+  IEnumerable<ISecurityContextCallback> callbacks,
+  MessageSecurityOptions options,
+  Action<ScopeContextEstablished>? onAuditEvent = null) : IMessageSecurityContextProvider {
+  private readonly IReadOnlyList<ISecurityContextExtractor> _extractors = [.. extractors.OrderBy(e => e.Priority)];
+  private readonly IReadOnlyList<ISecurityContextCallback> _callbacks = [.. callbacks];
+  private readonly MessageSecurityOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly Action<ScopeContextEstablished>? _onAuditEvent = onAuditEvent;
 
   /// <inheritdoc />
   public async ValueTask<IScopeContext?> EstablishContextAsync(

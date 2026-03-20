@@ -19,7 +19,12 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#shared-topic-outbox</docs>
-public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
+/// <remarks>
+/// Creates a shared topic outbox strategy with custom inbox topic and resolver.
+/// </remarks>
+/// <param name="inboxTopic">The shared inbox topic name for commands.</param>
+/// <param name="topicResolver">Strategy for resolving namespace from message type.</param>
+public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingStrategy topicResolver) : IOutboxRoutingStrategy {
   /// <summary>
   /// The default inbox topic name for commands.
   /// </summary>
@@ -30,13 +35,13 @@ public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
   /// </summary>
   public static string DefaultInboxTopic => DEFAULT_INBOX_TOPIC;
 
-  private readonly string _inboxTopic;
+  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
 
   /// <summary>
   /// Gets the configured inbox topic name for this strategy instance.
   /// </summary>
   public string InboxTopic => _inboxTopic;
-  private readonly ITopicRoutingStrategy _topicResolver;
+  private readonly ITopicRoutingStrategy _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
 
   /// <summary>
   /// Creates a shared topic outbox strategy with defaults.
@@ -50,16 +55,6 @@ public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
   /// <param name="inboxTopic">The shared inbox topic name for commands.</param>
   public SharedTopicOutboxStrategy(string inboxTopic)
       : this(inboxTopic, new NamespaceRoutingStrategy()) { }
-
-  /// <summary>
-  /// Creates a shared topic outbox strategy with custom inbox topic and resolver.
-  /// </summary>
-  /// <param name="inboxTopic">The shared inbox topic name for commands.</param>
-  /// <param name="topicResolver">Strategy for resolving namespace from message type.</param>
-  public SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingStrategy topicResolver) {
-    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-    _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
-  }
 
   /// <inheritdoc />
   public TransportDestination GetDestination(

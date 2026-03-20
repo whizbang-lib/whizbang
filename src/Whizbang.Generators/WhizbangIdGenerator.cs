@@ -407,7 +407,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Emit collision warnings
     foreach (var collisionGroup in collisionGroups) {
-      _reportCollisionWarnings(context, collisionGroup.ToList());
+      _reportCollisionWarnings(context, [.. collisionGroup]);
     }
 
     return (deduplicated, collidingTypeNames);

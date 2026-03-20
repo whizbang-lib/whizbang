@@ -101,12 +101,11 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   private static string[] _detectScopeProperties(ITypeSymbol modelType) {
     var scopePropertyNames = new[] { "TenantId", "UserId", "OrganizationId", "ScopeId" };
 
-    return modelType.GetMembers()
+    return [.. modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
         .Where(p => scopePropertyNames.Contains(p.Name))
-        .Select(p => p.Name)
-        .ToArray();
+        .Select(p => p.Name)];
   }
 
   private static void _generateRegistry(

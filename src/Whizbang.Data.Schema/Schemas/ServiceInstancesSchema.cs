@@ -79,15 +79,17 @@ public static class ServiceInstancesSchema {
         Nullable: true
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_service_instances_service_name",
-        Columns: ImmutableArray.Create(Columns.SERVICE_NAME, Columns.LAST_HEARTBEAT_AT)
-      ),
+            Name: "idx_service_instances_service_name",
+            Columns: [Columns.SERVICE_NAME, Columns.LAST_HEARTBEAT_AT]
+          ),
       new IndexDefinition(
         Name: "idx_service_instances_heartbeat",
-        Columns: ImmutableArray.Create(Columns.LAST_HEARTBEAT_AT)
+        Columns: [Columns.LAST_HEARTBEAT_AT                                           ]
       )
-    )
-  );
+,
+    ]);
 }

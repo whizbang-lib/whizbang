@@ -53,7 +53,7 @@ public static class SyncEventTypeRegistrations {
     var result = new Dictionary<Type, string[]>();
     foreach (var kvp in _mappings) {
       lock (_lock) {
-        result[kvp.Key] = kvp.Value.ToArray();
+        result[kvp.Key] = [.. kvp.Value];
       }
     }
 

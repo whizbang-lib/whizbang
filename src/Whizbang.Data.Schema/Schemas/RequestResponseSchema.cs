@@ -81,22 +81,24 @@ public static class RequestResponseSchema {
         Nullable: true
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_request_response_correlation",
-        Columns: ImmutableArray.Create("correlation_id"),
-        Unique: true  // Required for ON CONFLICT(correlation_id) in Dapper code
-      ),
+            Name: "idx_request_response_correlation",
+            Columns: ["correlation_id"                                      ],
+            Unique: true  // Required for ON CONFLICT(correlation_id) in Dapper code
+          ),
       new IndexDefinition(
         Name: "idx_request_response_status_created",
-        Columns: ImmutableArray.Create("status", "created_at")
+        Columns: ["status", "created_at"]
       ),
       new IndexDefinition(
         Name: "idx_request_response_expires",
-        Columns: ImmutableArray.Create("expires_at")
+        Columns: ["expires_at"                              ]
       )
-    )
-  );
+,
+    ]);
 
   /// <summary>
   /// Column name constants for type-safe access.

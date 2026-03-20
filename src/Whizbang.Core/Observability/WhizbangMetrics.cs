@@ -8,12 +8,10 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <docs>operations/observability/metrics</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/WorkCoordinatorMetricsTests.cs</tests>
-public sealed class WhizbangMetrics {
+/// <remarks>
+/// Initializes WhizbangMetrics with an optional meter factory.
+/// </remarks>
+public sealed class WhizbangMetrics(IMeterFactory? meterFactory = null) {
   /// <summary>The meter factory for creating meters.</summary>
-  public IMeterFactory? MeterFactory { get; }
-
-  /// <summary>
-  /// Initializes WhizbangMetrics with an optional meter factory.
-  /// </summary>
-  public WhizbangMetrics(IMeterFactory? meterFactory = null) => MeterFactory = meterFactory;
+  public IMeterFactory? MeterFactory { get; } = meterFactory;
 }

@@ -235,11 +235,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static DbContextInfo? _extractDbContextInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -269,7 +267,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Extract keys from attribute
     var keys = _extractKeysFromAttribute(attribute);
     if (keys.Length == 0) {
-      keys = new[] { "" };  // Default to unnamed key
+      keys = [""];  // Default to unnamed key
     }
 
     // Extract schema from attribute's Schema property, or derive from namespace if not specified
@@ -387,11 +385,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static PerspectiveModelCandidate? _extractPerspectiveModelCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -423,7 +419,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       keys = _extractKeysFromAttribute(perspectiveAttribute);
     } else {
       // No attribute - matches default DbContext only
-      keys = Array.Empty<string>();
+      keys = [];
     }
 
     return new PerspectiveModelCandidate(
@@ -473,20 +469,19 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   private static string[] _extractKeysFromAttribute(AttributeData attribute) {
     if (attribute.ConstructorArguments.Length == 0) {
-      return Array.Empty<string>();
+      return [];
     }
 
     var arg = attribute.ConstructorArguments[0];
 
     // Handle params array argument
     if (arg.Kind == TypedConstantKind.Array) {
-      return arg.Values
+      return [.. arg.Values
           .Where(v => v.Value is string)
-          .Select(v => (string)v.Value!)
-          .ToArray();
+          .Select(v => (string)v.Value!)];
     }
 
-    return Array.Empty<string>();
+    return [];
   }
 
   /// <summary>
@@ -495,7 +490,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
     if (modelType is null) {
-      return ImmutableArray<PhysicalFieldInfo>.Empty;
+      return [];
     }
 
     var physicalFields = new System.Collections.Generic.List<PhysicalFieldInfo>();
@@ -522,7 +517,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToImmutableArray();
+    return [.. physicalFields];
   }
 
   /// <summary>
@@ -642,7 +637,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static MultiLensQueryInfo? _extractMultiLensQueryInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var parameterSyntax = (ParameterSyntax)context.Node;
     if (parameterSyntax.Type is not GenericNameSyntax genericName) {
       return null;
@@ -650,8 +644,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Get the semantic type info for the parameter type
     var typeInfo = context.SemanticModel.GetTypeInfo(genericName, ct);
-    var type = typeInfo.Type as INamedTypeSymbol;
-    if (type == null) {
+    if (typeInfo.Type is not INamedTypeSymbol type) {
       return null;
     }
 
@@ -1271,9 +1264,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Check if any perspective models for this DbContext have vector fields
       var matchingPerspectives = perspectives.IsEmpty
           ? ImmutableArray<PerspectiveModelInfo>.Empty
-          : perspectives
-              .Where(p => _matchesDbContext(p, dbContext))
-              .ToImmutableArray();
+          : [.. perspectives.Where(p => _matchesDbContext(p, dbContext))];
 
       var hasVectorFields = matchingPerspectives.Any(m => m.PhysicalFields.Any(f => f.IsVector));
 
@@ -1688,7 +1679,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
-    var resourceList = string.Join(", ", migrationResources.Take(5).Select(r => r.Substring(resourcePrefix.Length)));
+    var resourceList = string.Join(", ", migrationResources.Take(5).Select(r => r[resourcePrefix.Length..]));
     if (migrationResources.Length > 5) {
       resourceList += $", ... and {migrationResources.Length - 5} more";
     }
@@ -1706,7 +1697,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Extract filename from resource name
       // From "Whizbang.Data.Postgres.Migrations.001_Name.sql" -> "001_Name.sql"
       // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
-      var fileName = resourceName.Substring(resourcePrefix.Length);
+      var fileName = resourceName[resourcePrefix.Length..];
 
       // Read content from embedded resource
       using var stream = assembly.GetManifestResourceStream(resourceName);

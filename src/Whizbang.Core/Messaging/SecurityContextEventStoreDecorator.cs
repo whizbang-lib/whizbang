@@ -33,17 +33,13 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/security/security-context-propagation</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
-public sealed class SecurityContextEventStoreDecorator : IEventStore {
-  private readonly IEventStore _inner;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
-  /// </summary>
-  /// <param name="inner">The underlying event store implementation.</param>
-  /// <exception cref="ArgumentNullException">Thrown when <paramref name="inner"/> is null.</exception>
-  public SecurityContextEventStoreDecorator(IEventStore inner) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
+/// </remarks>
+/// <param name="inner">The underlying event store implementation.</param>
+/// <exception cref="ArgumentNullException">Thrown when <paramref name="inner"/> is null.</exception>
+public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : IEventStore {
+  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
 
   /// <inheritdoc />
   /// <remarks>

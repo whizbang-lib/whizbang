@@ -30,7 +30,16 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#event-auditing</docs>
-public sealed class AuditingEventStoreDecorator : IEventStore {
+/// <remarks>
+/// Creates a new auditing event store decorator.
+/// </remarks>
+/// <param name="inner">The inner event store to wrap.</param>
+/// <param name="outboxChannel">The deferred outbox channel for queuing audit events.</param>
+/// <param name="options">System event configuration options.</param>
+public sealed class AuditingEventStoreDecorator(
+    IEventStore inner,
+    IDeferredOutboxChannel outboxChannel,
+    IOptions<SystemEventOptions> options) : IEventStore {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -38,26 +47,10 @@ public sealed class AuditingEventStoreDecorator : IEventStore {
   public const string AUDIT_TOPIC_DESTINATION = "whizbang.core.auditevents";
 #pragma warning restore CA1707
 
-  private readonly IEventStore _inner;
-  private readonly IDeferredOutboxChannel _outboxChannel;
-  private readonly SystemEventOptions _options;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  /// <summary>
-  /// Creates a new auditing event store decorator.
-  /// </summary>
-  /// <param name="inner">The inner event store to wrap.</param>
-  /// <param name="outboxChannel">The deferred outbox channel for queuing audit events.</param>
-  /// <param name="options">System event configuration options.</param>
-  public AuditingEventStoreDecorator(
-      IEventStore inner,
-      IDeferredOutboxChannel outboxChannel,
-      IOptions<SystemEventOptions> options) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-    _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-  }
+  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+  private readonly IDeferredOutboxChannel _outboxChannel = outboxChannel ?? throw new ArgumentNullException(nameof(outboxChannel));
+  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
   /// <inheritdoc />
   public async Task AppendAsync<TMessage>(

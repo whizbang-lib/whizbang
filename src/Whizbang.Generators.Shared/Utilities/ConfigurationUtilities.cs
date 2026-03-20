@@ -65,7 +65,7 @@ public static class ConfigurationUtilities {
   /// <returns>Array of trimmed, non-empty suffixes</returns>
   public static string[] ParseSuffixList(string suffixList) {
     if (string.IsNullOrWhiteSpace(suffixList)) {
-      return Array.Empty<string>();
+      return [];
     }
 
     var parts = suffixList.Split(',');
@@ -78,7 +78,7 @@ public static class ConfigurationUtilities {
       }
     }
 
-    return result.ToArray();
+    return [.. result];
   }
 
   /// <summary>

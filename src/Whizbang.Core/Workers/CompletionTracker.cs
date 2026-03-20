@@ -8,27 +8,21 @@ namespace Whizbang.Core.Workers;
 /// Implements exponential backoff retry for stale items.
 /// </summary>
 /// <typeparam name="T">Type of completion being tracked</typeparam>
-public sealed class CompletionTracker<T> where T : notnull {
+/// <remarks>
+/// Create a new completion tracker with configurable retry behavior.
+/// </remarks>
+/// <param name="baseTimeout">Initial retry timeout (default: 5 minutes)</param>
+/// <param name="backoffMultiplier">Exponential backoff multiplier (default: 2.0)</param>
+/// <param name="maxTimeout">Maximum retry timeout (default: 60 minutes)</param>
+public sealed class CompletionTracker<T>(
+  TimeSpan? baseTimeout = null,
+  double backoffMultiplier = 2.0,
+  TimeSpan? maxTimeout = null
+  ) where T : notnull {
   private readonly ConcurrentDictionary<Guid, TrackedCompletion<T>> _items = new();
-  private readonly TimeSpan _baseTimeout;
-  private readonly double _backoffMultiplier;
-  private readonly TimeSpan _maxTimeout;
-
-  /// <summary>
-  /// Create a new completion tracker with configurable retry behavior.
-  /// </summary>
-  /// <param name="baseTimeout">Initial retry timeout (default: 5 minutes)</param>
-  /// <param name="backoffMultiplier">Exponential backoff multiplier (default: 2.0)</param>
-  /// <param name="maxTimeout">Maximum retry timeout (default: 60 minutes)</param>
-  public CompletionTracker(
-    TimeSpan? baseTimeout = null,
-    double backoffMultiplier = 2.0,
-    TimeSpan? maxTimeout = null
-  ) {
-    _baseTimeout = baseTimeout ?? TimeSpan.FromMinutes(5);
-    _backoffMultiplier = backoffMultiplier;
-    _maxTimeout = maxTimeout ?? TimeSpan.FromMinutes(60);
-  }
+  private readonly TimeSpan _baseTimeout = baseTimeout ?? TimeSpan.FromMinutes(5);
+  private readonly double _backoffMultiplier = backoffMultiplier;
+  private readonly TimeSpan _maxTimeout = maxTimeout ?? TimeSpan.FromMinutes(60);
 
   /// <summary>
   /// Add a new completion to track.
@@ -44,10 +38,9 @@ public sealed class CompletionTracker<T> where T : notnull {
   /// Returns items ordered by SentAt timestamp.
   /// </summary>
   public TrackedCompletion<T>[] GetPending() {
-    return _items.Values
+    return [.. _items.Values
       .Where(tc => tc.Status == CompletionStatus.Pending)
-      .OrderBy(tc => tc.SentAt)
-      .ToArray();
+      .OrderBy(tc => tc.SentAt)];
   }
 
   /// <summary>

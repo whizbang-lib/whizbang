@@ -40,7 +40,7 @@ public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   public TrackedEventTypeRegistry(IReadOnlyDictionary<Type, string> mappings) {
     ArgumentNullException.ThrowIfNull(mappings);
 
-    _staticMappings = new Dictionary<Type, List<string>>();
+    _staticMappings = [];
     foreach (var (eventType, perspectiveName) in mappings) {
       if (!_staticMappings.TryGetValue(eventType, out var list)) {
         list = [];
@@ -58,7 +58,7 @@ public sealed class TrackedEventTypeRegistry : ITrackedEventTypeRegistry {
   public TrackedEventTypeRegistry(IReadOnlyDictionary<Type, string[]> mappings) {
     ArgumentNullException.ThrowIfNull(mappings);
 
-    _staticMappings = new Dictionary<Type, List<string>>();
+    _staticMappings = [];
     foreach (var (eventType, perspectiveNames) in mappings) {
       _staticMappings[eventType] = [.. perspectiveNames];
     }

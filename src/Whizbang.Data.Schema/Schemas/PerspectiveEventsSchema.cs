@@ -97,22 +97,24 @@ public static class PerspectiveEventsSchema {
         Nullable: true
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_perspective_event_claim",
-        Columns: ImmutableArray.Create("instance_id", "lease_expiry", "scheduled_for"),
-        WhereClause: "processed_at IS NULL"
-      ),
+            Name: "idx_perspective_event_claim",
+            Columns: ["instance_id", "lease_expiry", "scheduled_for"],
+            WhereClause: "processed_at IS NULL"
+          ),
       new IndexDefinition(
         Name: "idx_perspective_event_order",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SEQUENCE_NUMBER)
+        Columns: [Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SEQUENCE_NUMBER]
       ),
       new IndexDefinition(
         Name: "idx_perspective_event_stream",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID)
+        Columns: [Columns.STREAM_ID                                   ]
       )
-    )
-  );
+,
+    ]);
 
   /// <summary>
   /// Column name constants for type-safe access.

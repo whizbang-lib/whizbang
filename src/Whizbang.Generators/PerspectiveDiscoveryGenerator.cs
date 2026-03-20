@@ -131,8 +131,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
           StreamIdPropertyName: streamKeyPropertyName,
-          EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
-          EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
+          EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
+          EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null
       );
     }).ToArray();
 

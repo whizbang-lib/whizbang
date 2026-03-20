@@ -123,7 +123,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         return prop.Type;
       } else {
         // Nullable reference type: typeof(string?) is invalid - strip the '?'
-        return prop.Type.Substring(0, prop.Type.Length - 1);
+        return prop.Type[..^1];
       }
     }
 
@@ -1573,7 +1573,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
               discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
                   BaseTypeName: typeNameToProcess,
                   BaseSimpleName: simpleName,
-                  DerivedTypes: derivedTypeNames.ToImmutableArray(),
+                  DerivedTypes: [.. derivedTypeNames],
                   IsInterface: isInterface
               );
             }
@@ -1689,7 +1689,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return discoveredEnums.Values.ToImmutableArray();
+    return [.. discoveredEnums.Values];
   }
 
   /// <summary>
@@ -2047,7 +2047,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return arrayTypes.Values.ToImmutableArray();
+    return [.. arrayTypes.Values];
   }
 
   /// <summary>
@@ -2094,7 +2094,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return listTypes.Values.ToImmutableArray();
+    return [.. listTypes.Values];
   }
 
   /// <summary>
@@ -2178,7 +2178,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return iReadOnlyListTypes.Values.ToImmutableArray();
+    return [.. iReadOnlyListTypes.Values];
   }
 
   /// <summary>
@@ -2351,7 +2351,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    return dictionaryTypes.Values.ToImmutableArray();
+    return [.. dictionaryTypes.Values];
   }
 
   /// <summary>
@@ -2715,15 +2715,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Extracts property information from a type symbol, including inherited properties.
   /// </summary>
   private static PropertyInfo[] _extractPropertiesFromType(INamedTypeSymbol typeSymbol) {
-    return _getAllPropertiesIncludingInherited(typeSymbol)
+    return [.. _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
-        ))
-        .ToArray();
+        ))];
   }
 
   /// <summary>
@@ -2920,7 +2919,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
-    return inheritanceList.ToArray();
+    return [.. inheritanceList];
   }
 
   /// <summary>
@@ -3005,7 +3004,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
-    return registry.ToImmutableArray();
+    return [.. registry];
   }
 
   /// <summary>
@@ -3015,7 +3014,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static string _extractSimpleName(string fullyQualifiedName) {
     var name = fullyQualifiedName.Replace("global::", "");
     var lastDot = name.LastIndexOf('.');
-    return lastDot >= 0 ? name.Substring(lastDot + 1) : name;
+    return lastDot >= 0 ? name[(lastDot + 1)..] : name;
   }
 
   /// <summary>
@@ -3128,6 +3127,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       allInheritance.AddRange(inheritanceInfo);
     }
 
-    return allInheritance.ToImmutableArray();
+    return [.. allInheritance];
   }
 }

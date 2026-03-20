@@ -91,13 +91,12 @@ public sealed record CapturedSpan {
       Duration = activity.Duration,
       Status = activity.Status,
       Tags = activity.TagObjects.ToDictionary(kvp => kvp.Key, kvp => kvp.Value),
-      Events = activity.Events
+      Events = [.. activity.Events
         .Select(e => new CapturedSpanEvent {
           Name = e.Name,
           Timestamp = e.Timestamp,
           Tags = e.Tags.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
-        })
-        .ToList(),
+        })],
       SourceName = activity.Source.Name,
       StartTime = activity.StartTimeUtc
     };

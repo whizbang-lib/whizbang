@@ -128,12 +128,12 @@ public static class TraceSnapshotComparer {
     var actualTags = actual.Span?.Tags
       .Where(kvp => !_isVolatileTag(kvp.Key))
       .ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString())
-      ?? new Dictionary<string, string?>();
+      ?? [];
 
     var expectedTags = expected.Span?.Tags
       .Where(kvp => !_isVolatileTag(kvp.Key))
       .ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString())
-      ?? new Dictionary<string, string?>();
+      ?? [];
 
     // Check for missing or different tags
     foreach (var (key, expectedValue) in expectedTags) {

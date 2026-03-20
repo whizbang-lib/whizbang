@@ -264,7 +264,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var baseSymbol = compilation.GetTypeByMetadataName(
         baseTypeFQN.Replace("global::", ""));
     if (baseSymbol is null) {
-      return new System.Collections.Generic.List<string>();
+      return [];
     }
 
     var result = new System.Collections.Generic.List<string>();
@@ -352,7 +352,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    return stages.ToArray();
+    return [.. stages];
   }
 
   /// <summary>
@@ -393,7 +393,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           }
         }
         if (eventTypesList.Count > 0) {
-          eventTypes = eventTypesList.ToArray();
+          eventTypes = [.. eventTypesList];
         }
       }
 
@@ -419,7 +419,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ));
     }
 
-    return syncAttributes.Count > 0 ? syncAttributes.ToArray() : null;
+    return syncAttributes.Count > 0 ? [.. syncAttributes] : null;
   }
 
   /// <summary>
@@ -657,7 +657,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <returns>The type name without the trailing '?'.</returns>
   private static string _stripNullableAnnotation(string typeName) {
     return typeName.EndsWith("?", StringComparison.Ordinal)
-      ? typeName.Substring(0, typeName.Length - 1)
+      ? typeName[..^1]
       : typeName;
   }
 
@@ -685,7 +685,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <returns>The element type if it's a recognized collection, or null if not a collection.</returns>
   private static string? _extractCollectionElementType(string typeName) {
     // Collection type prefixes to check (fully qualified and simple names)
-    string[] collectionPrefixes = {
+    string[] collectionPrefixes = [
       "global::System.Collections.Generic.List<",
       "global::System.Collections.Generic.IList<",
       "global::System.Collections.Generic.IEnumerable<",
@@ -704,7 +704,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       "ICollection<",
       "IReadOnlyList<",
       "IReadOnlyCollection<"
-    };
+    ];
 
     foreach (var prefix in collectionPrefixes) {
       if (typeName.StartsWith(prefix, StringComparison.Ordinal) && typeName.EndsWith(">", StringComparison.Ordinal)) {
@@ -752,7 +752,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           // Elements may be arrays, collections, or simple types - extract element type appropriately
           if (unwrappedElement.EndsWith("[]", StringComparison.Ordinal)) {
             // Array type: Type[] - extract element type
-            var elementType = unwrappedElement.Substring(0, unwrappedElement.Length - 2);
+            var elementType = unwrappedElement[..^2];
             // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
             eventTypes.Add(_stripNullableAnnotation(elementType));
           } else {
@@ -772,7 +772,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
       // Handle array types: Type[] - extract element type
       else if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
-        var elementType = responseType.Substring(0, responseType.Length - 2);
+        var elementType = responseType[..^2];
         // Unwrap Routed<T> if present
         var unwrappedElementType = _unwrapRoutedTypeString(elementType);
         if (unwrappedElementType is not null) {
@@ -817,7 +817,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var elements = new List<string>();
 
     // Remove outer parentheses
-    var inner = tupleType.Substring(1, tupleType.Length - 2);
+    var inner = tupleType[1..^1];
 
     var current = new StringBuilder();
     var depth = 0;
@@ -1580,7 +1580,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    var entryTemplate = snippet.Substring(entryStart, entryEnd - entryStart);
+    var entryTemplate = snippet[entryStart..entryEnd];
 
     // Apply replacements
     var result = entryTemplate

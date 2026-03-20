@@ -46,11 +46,9 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   private static RestMutationInfo? _extractMutationInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -262,10 +260,10 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     // Handle "global::Namespace.TypeName" format
     var name = fullyQualifiedName;
     if (name.StartsWith("global::", StringComparison.Ordinal)) {
-      name = name.Substring(8);
+      name = name[8..];
     }
     var lastDot = name.LastIndexOf('.');
-    return lastDot >= 0 ? name.Substring(lastDot + 1) : name;
+    return lastDot >= 0 ? name[(lastDot + 1)..] : name;
   }
 
   /// <summary>

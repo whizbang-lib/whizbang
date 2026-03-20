@@ -20,17 +20,13 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <docs>fundamentals/events/event-store-query</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableEventStoreQueryTests.cs</tests>
-public class EFCoreFilterableEventStoreQuery : IFilterableEventStoreQuery {
-  private readonly DbContext _context;
+/// <remarks>
+/// Initializes a new instance of <see cref="EFCoreFilterableEventStoreQuery"/>.
+/// </remarks>
+/// <param name="context">The EF Core DbContext.</param>
+public class EFCoreFilterableEventStoreQuery(DbContext context) : IFilterableEventStoreQuery {
+  private readonly DbContext _context = context ?? throw new ArgumentNullException(nameof(context));
   private ScopeFilterInfo _filterInfo;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="EFCoreFilterableEventStoreQuery"/>.
-  /// </summary>
-  /// <param name="context">The EF Core DbContext.</param>
-  public EFCoreFilterableEventStoreQuery(DbContext context) {
-    _context = context ?? throw new ArgumentNullException(nameof(context));
-  }
 
   /// <inheritdoc/>
   public void ApplyFilter(ScopeFilterInfo filterInfo) {

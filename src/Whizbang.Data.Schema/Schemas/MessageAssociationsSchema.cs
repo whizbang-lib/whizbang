@@ -76,30 +76,28 @@ public static class MessageAssociationsSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_message_associations_message_type",
-        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE)
+        Columns: [Columns.MESSAGE_TYPE]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_association_type",
-        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE)
+        Columns: [Columns.ASSOCIATION_TYPE]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_name",
-        Columns: ImmutableArray.Create(Columns.TARGET_NAME)
+        Columns: [Columns.TARGET_NAME]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_service_name",
-        Columns: ImmutableArray.Create(Columns.SERVICE_NAME)
+        Columns: [Columns.SERVICE_NAME]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_lookup",
-        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
+        Columns: [Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME]
       )
     ),
-    UniqueConstraints: ImmutableArray.Create(
-      new UniqueConstraintDefinition(
+    UniqueConstraints: [new UniqueConstraintDefinition(
         Name: "uq_message_association",
-        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE, Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
-      )
-    )
+        Columns: [Columns.MESSAGE_TYPE, Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME]
+      )]
   );
 }

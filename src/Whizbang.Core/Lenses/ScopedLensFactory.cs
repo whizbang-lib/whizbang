@@ -12,29 +12,22 @@ namespace Whizbang.Core.Lenses;
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-lenses</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
-public sealed class ScopedLensFactory : IScopedLensFactory {
-  private readonly IServiceProvider _serviceProvider;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-  private readonly LensOptions _lensOptions;
-  private readonly ISystemEventEmitter _eventEmitter;
-
-  /// <summary>
-  /// Creates a new ScopedLensFactory.
-  /// </summary>
-  /// <param name="serviceProvider">Service provider for resolving lens instances.</param>
-  /// <param name="scopeContextAccessor">Accessor for current scope context.</param>
-  /// <param name="lensOptions">Lens configuration options.</param>
-  /// <param name="eventEmitter">System event emitter for security events.</param>
-  public ScopedLensFactory(
-      IServiceProvider serviceProvider,
-      IScopeContextAccessor scopeContextAccessor,
-      LensOptions lensOptions,
-      ISystemEventEmitter eventEmitter) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
-    _lensOptions = lensOptions ?? throw new ArgumentNullException(nameof(lensOptions));
-    _eventEmitter = eventEmitter ?? throw new ArgumentNullException(nameof(eventEmitter));
-  }
+/// <remarks>
+/// Creates a new ScopedLensFactory.
+/// </remarks>
+/// <param name="serviceProvider">Service provider for resolving lens instances.</param>
+/// <param name="scopeContextAccessor">Accessor for current scope context.</param>
+/// <param name="lensOptions">Lens configuration options.</param>
+/// <param name="eventEmitter">System event emitter for security events.</param>
+public sealed class ScopedLensFactory(
+    IServiceProvider serviceProvider,
+    IScopeContextAccessor scopeContextAccessor,
+    LensOptions lensOptions,
+    ISystemEventEmitter eventEmitter) : IScopedLensFactory {
+  private readonly IServiceProvider _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor ?? throw new ArgumentNullException(nameof(scopeContextAccessor));
+  private readonly LensOptions _lensOptions = lensOptions ?? throw new ArgumentNullException(nameof(lensOptions));
+  private readonly ISystemEventEmitter _eventEmitter = eventEmitter ?? throw new ArgumentNullException(nameof(eventEmitter));
 
   // === Legacy API (string-based scope names) ===
 

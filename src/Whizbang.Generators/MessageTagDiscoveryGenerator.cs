@@ -23,12 +23,12 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
   // Built-in attribute types that are handled directly by MessageTagProcessor
   // Custom attributes (those not in this set) require generated dispatchers
-  private static readonly HashSet<string> _builtInAttributeTypes = new() {
+  private static readonly HashSet<string> _builtInAttributeTypes = [
     "global::Whizbang.Core.Attributes.MessageTagAttribute",
     "global::Whizbang.Core.Attributes.SignalTagAttribute",
     "global::Whizbang.Core.Attributes.TelemetryTagAttribute",
     "global::Whizbang.Core.Attributes.MetricTagAttribute",
-  };
+  ];
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with [MessageTag] or derived attributes

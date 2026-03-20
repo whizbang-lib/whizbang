@@ -12,26 +12,21 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithCustomDerivedAttribute_RecognizesFilterAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
+/// <remarks>
+/// Creates a new topic filter attribute with the specified enum value.
+/// The actual filter string is extracted by the source generator at compile-time.
+/// </remarks>
+/// <param name="value">The enum value (source generator extracts Description or uses symbol name)</param>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilter_ExtractsDescriptionAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithCustomDerivedAttribute_RecognizesFilterAsync</tests>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = true)]
-public class TopicFilterAttribute<TEnum> : TopicFilterAttribute where TEnum : Enum {
+public class TopicFilterAttribute<TEnum>(TEnum value) : TopicFilterAttribute(value.ToString()) where TEnum : Enum {
   /// <summary>
   /// The enum value representing the topic filter.
   /// The source generator will extract the Description attribute or use the symbol name.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilter_ExtractsDescriptionAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync</tests>
-  public TEnum EnumValue { get; }
-
-  /// <summary>
-  /// Creates a new topic filter attribute with the specified enum value.
-  /// The actual filter string is extracted by the source generator at compile-time.
-  /// </summary>
-  /// <param name="value">The enum value (source generator extracts Description or uses symbol name)</param>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilter_ExtractsDescriptionAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithCustomDerivedAttribute_RecognizesFilterAsync</tests>
-  public TopicFilterAttribute(TEnum value)
-      : base(value.ToString()) {  // Temporary - generator extracts actual value
-    EnumValue = value;
-  }
+  public TEnum EnumValue { get; } = value;
 }

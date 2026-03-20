@@ -99,7 +99,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
       }
     }
 
-    return mappings.Count > 0 ? mappings.ToArray() : null;
+    return mappings.Count > 0 ? [.. mappings] : null;
   }
 
   /// <summary>

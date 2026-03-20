@@ -26,27 +26,23 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <typeparam name="TContext">The DbContext type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
+/// <remarks>
+/// Creates a new ScopedDbContextFactory.
+/// </remarks>
+/// <param name="scopeFactory">The service scope factory for creating scopes</param>
 public sealed class ScopedDbContextFactory<[DynamicallyAccessedMembers(
     DynamicallyAccessedMemberTypes.PublicConstructors |
     DynamicallyAccessedMemberTypes.NonPublicConstructors |
-    DynamicallyAccessedMemberTypes.PublicProperties)] TContext> : IDbContextFactory<TContext>
+    DynamicallyAccessedMemberTypes.PublicProperties)] TContext>(IServiceScopeFactory scopeFactory) : IDbContextFactory<TContext>
     where TContext : DbContext {
 
-  private readonly IServiceScopeFactory _scopeFactory;
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
 
   /// <summary>
   /// Tracks scopes associated with DbContext instances.
   /// When the DbContext is GC'd, the scope will be disposed via the weak reference cleanup.
   /// </summary>
-  private readonly ConditionalWeakTable<TContext, IServiceScope> _scopes = new();
-
-  /// <summary>
-  /// Creates a new ScopedDbContextFactory.
-  /// </summary>
-  /// <param name="scopeFactory">The service scope factory for creating scopes</param>
-  public ScopedDbContextFactory(IServiceScopeFactory scopeFactory) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  }
+  private readonly ConditionalWeakTable<TContext, IServiceScope> _scopes = [];
 
   /// <summary>
   /// Creates a new DbContext instance within a new service scope.

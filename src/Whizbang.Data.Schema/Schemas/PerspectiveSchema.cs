@@ -26,7 +26,7 @@ public static class PerspectiveSchema {
     return new TableDefinition(
       Name: name,
       Columns: columns,
-      Indexes: indexes ?? ImmutableArray<IndexDefinition>.Empty
+      Indexes: indexes ?? []
     );
   }
 
@@ -56,7 +56,7 @@ public static class PerspectiveSchema {
     return new TableDefinition(
       Name: name,
       Columns: allColumns,
-      Indexes: indexes ?? ImmutableArray<IndexDefinition>.Empty
+      Indexes: indexes ?? []
     );
   }
 

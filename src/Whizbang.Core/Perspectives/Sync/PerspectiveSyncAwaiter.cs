@@ -22,46 +22,38 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <docs>operations/observability/tracing#perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
-public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
+/// <remarks>
+/// Initializes a new instance of <see cref="PerspectiveSyncAwaiter"/>.
+/// </remarks>
+/// <remarks>
+/// <para>
+/// When <paramref name="tracker"/> is provided, events are tracked within the same scope for
+/// explicit event ID tracking (scope-based sync with <see cref="WaitAsync"/>).
+/// </para>
+/// <para>
+/// The <paramref name="syncEventTracker"/> is required and enables event-driven waiting
+/// for both <see cref="WaitAsync"/> and <see cref="WaitForStreamAsync"/>.
+/// </para>
+/// </remarks>
+/// <param name="coordinator">The work coordinator for database queries.</param>
+/// <param name="clock">The debugger-aware clock.</param>
+/// <param name="logger">The logger for sync operations.</param>
+/// <param name="syncEventTracker">The singleton event tracker for event-driven sync.</param>
+/// <param name="tracker">Optional scoped event tracker for capturing emitted events.</param>
+public sealed partial class PerspectiveSyncAwaiter(
+    IWorkCoordinator coordinator,
+    IDebuggerAwareClock clock,
+    ILogger<PerspectiveSyncAwaiter> logger,
+    ISyncEventTracker syncEventTracker,
+    IScopedEventTracker? tracker = null) : IPerspectiveSyncAwaiter {
   /// <inheritdoc />
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly IScopedEventTracker? _tracker;
-  private readonly ISyncEventTracker _syncEventTracker;
-  private readonly IWorkCoordinator _coordinator;
-  private readonly IDebuggerAwareClock _clock;
-  private readonly ILogger<PerspectiveSyncAwaiter> _logger;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="PerspectiveSyncAwaiter"/>.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// When <paramref name="tracker"/> is provided, events are tracked within the same scope for
-  /// explicit event ID tracking (scope-based sync with <see cref="WaitAsync"/>).
-  /// </para>
-  /// <para>
-  /// The <paramref name="syncEventTracker"/> is required and enables event-driven waiting
-  /// for both <see cref="WaitAsync"/> and <see cref="WaitForStreamAsync"/>.
-  /// </para>
-  /// </remarks>
-  /// <param name="coordinator">The work coordinator for database queries.</param>
-  /// <param name="clock">The debugger-aware clock.</param>
-  /// <param name="logger">The logger for sync operations.</param>
-  /// <param name="syncEventTracker">The singleton event tracker for event-driven sync.</param>
-  /// <param name="tracker">Optional scoped event tracker for capturing emitted events.</param>
-  public PerspectiveSyncAwaiter(
-      IWorkCoordinator coordinator,
-      IDebuggerAwareClock clock,
-      ILogger<PerspectiveSyncAwaiter> logger,
-      ISyncEventTracker syncEventTracker,
-      IScopedEventTracker? tracker = null) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
-    _tracker = tracker;
-  }
+  private readonly IScopedEventTracker? _tracker = tracker;
+  private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly IDebuggerAwareClock _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+  private readonly ILogger<PerspectiveSyncAwaiter> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
 
   /// <inheritdoc />
@@ -240,7 +232,7 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
 #pragma warning restore CA1848
 
       if (trackedSyncEvents.Count > 0) {
-        expectedEventIds = trackedSyncEvents.Select(e => e.EventId).ToArray();
+        expectedEventIds = [.. trackedSyncEvents.Select(e => e.EventId)];
       }
     }
 
@@ -295,15 +287,14 @@ public sealed partial class PerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
   private static SyncInquiry[] _buildSyncInquiries(
       IReadOnlyList<TrackedEvent> events,
       string perspectiveName) {
-    return events
+    return [.. events
       .GroupBy(e => e.StreamId)
       .Select(g => new SyncInquiry {
         StreamId = g.Key,
         PerspectiveName = perspectiveName,
-        EventIds = g.Select(e => e.EventId).ToArray(),
+        EventIds = [.. g.Select(e => e.EventId)],
         IncludeProcessedEventIds = true // Request processed IDs for explicit comparison
-      })
-      .ToArray();
+      })];
   }
 
   /// <summary>
