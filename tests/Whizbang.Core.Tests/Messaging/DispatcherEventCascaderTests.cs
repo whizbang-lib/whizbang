@@ -210,6 +210,12 @@ public class DispatcherEventCascaderTests {
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
       throw new NotImplementedException();
 
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+      throw new NotImplementedException();
+
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+      throw new NotImplementedException();
+
     public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) {
       CascadedMessages.Add(message);
       return Task.CompletedTask;

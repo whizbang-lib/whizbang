@@ -358,6 +358,12 @@ public class ImpersonationDispatcherBuilderTests {
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
         ValueTask.FromResult(Enumerable.Empty<TResult>());
 
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+        throw new NotImplementedException();
+
+    public ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) =>
+        throw new NotImplementedException();
+
     // LocalInvokeWithReceiptAsync overloads
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message) => throw new NotImplementedException();
