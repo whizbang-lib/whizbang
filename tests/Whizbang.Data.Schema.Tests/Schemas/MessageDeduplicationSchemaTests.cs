@@ -116,8 +116,8 @@ public class MessageDeduplicationSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideTypeConstantsAsync() {
     // Arrange & Act
-    const string messageId = MessageDeduplicationSchema.Columns.MESSAGE_ID;
-    const string firstSeenAt = MessageDeduplicationSchema.Columns.FIRST_SEEN_AT;
+    var messageId = MessageDeduplicationSchema.Columns.MESSAGE_ID;
+    var firstSeenAt = MessageDeduplicationSchema.Columns.FIRST_SEEN_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");

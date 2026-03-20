@@ -179,7 +179,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task STRIP_TABLE_NAME_SUFFIXES_PROPERTY_HasCorrectValueAsync() {
     // Arrange - store constant in variable to satisfy TUnit assertion rules
-    const string value = ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY;
+    var value = ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY;
 
     // Assert
     await Assert.That(value).IsEqualTo("build_property.WhizbangStripTableNameSuffixes");
@@ -188,7 +188,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY_HasCorrectValueAsync() {
     // Arrange - store constant in variable to satisfy TUnit assertion rules
-    const string value = ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY;
+    var value = ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY;
 
     // Assert
     await Assert.That(value).IsEqualTo("build_property.WhizbangTableNameSuffixesToStrip");
@@ -197,7 +197,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task MAX_IDENTIFIER_LENGTH_PROPERTY_HasCorrectValueAsync() {
     // Arrange - store constant in variable to satisfy TUnit assertion rules
-    const string value = ConfigurationUtilities.MAX_IDENTIFIER_LENGTH_PROPERTY;
+    var value = ConfigurationUtilities.MAX_IDENTIFIER_LENGTH_PROPERTY;
 
     // Assert
     await Assert.That(value).IsEqualTo("build_property.WhizbangMaxIdentifierLength");

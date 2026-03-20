@@ -201,16 +201,16 @@ public class RequestResponseSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideTypeConstantsAsync() {
     // Arrange & Act - Access all column constants
-    const string requestId = RequestResponseSchema.Columns.REQUEST_ID;
-    const string correlationId = RequestResponseSchema.Columns.CORRELATION_ID;
-    const string requestType = RequestResponseSchema.Columns.REQUEST_TYPE;
-    const string requestData = RequestResponseSchema.Columns.REQUEST_DATA;
-    const string responseType = RequestResponseSchema.Columns.RESPONSE_TYPE;
-    const string responseData = RequestResponseSchema.Columns.RESPONSE_DATA;
-    const string status = RequestResponseSchema.Columns.STATUS;
-    const string createdAt = RequestResponseSchema.Columns.CREATED_AT;
-    const string completedAt = RequestResponseSchema.Columns.COMPLETED_AT;
-    const string expiresAt = RequestResponseSchema.Columns.EXPIRES_AT;
+    var requestId = RequestResponseSchema.Columns.REQUEST_ID;
+    var correlationId = RequestResponseSchema.Columns.CORRELATION_ID;
+    var requestType = RequestResponseSchema.Columns.REQUEST_TYPE;
+    var requestData = RequestResponseSchema.Columns.REQUEST_DATA;
+    var responseType = RequestResponseSchema.Columns.RESPONSE_TYPE;
+    var responseData = RequestResponseSchema.Columns.RESPONSE_DATA;
+    var status = RequestResponseSchema.Columns.STATUS;
+    var createdAt = RequestResponseSchema.Columns.CREATED_AT;
+    var completedAt = RequestResponseSchema.Columns.COMPLETED_AT;
+    var expiresAt = RequestResponseSchema.Columns.EXPIRES_AT;
 
     // Assert - Verify constants match actual column names
     await Assert.That(requestId).IsEqualTo("request_id");
