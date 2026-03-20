@@ -115,11 +115,11 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
     // Extract simple name for display (last part after last + or .)
     var className = clrTypeName.Contains('+')
-        ? clrTypeName.Substring(clrTypeName.LastIndexOf('+') + 1)
-        : clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1);
+        ? clrTypeName[(clrTypeName.LastIndexOf('+') + 1)..]
+        : clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..];
     // Extract table base name from CLR name (remove + to merge nested names)
     // This ensures nested classes get unique table names: Activity+Projection → ActivityProjection
-    var tableBaseName = clrTypeName.Substring(clrTypeName.LastIndexOf('.') + 1).Replace("+", "");
+    var tableBaseName = clrTypeName[(clrTypeName.LastIndexOf('.') + 1)..].Replace("+", "");
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
@@ -128,7 +128,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Use shared utility to include inherited properties from base model classes
     var modelProperties = modelType is INamedTypeSymbol namedModelType
         ? namedModelType.GetAllProperties().ToList()
-        : modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic).ToList();
+        : [.. modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)];
 
     var propertyCount = modelProperties.Count;
     var estimatedSize = _estimateJsonSize(propertyCount);
@@ -219,7 +219,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToArray();
+    return [.. physicalFields];
   }
 
   /// <summary>
@@ -416,7 +416,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         var insertPos = tableCode.LastIndexOf(");", StringComparison.Ordinal);
         if (insertPos > 0) {
           // Add physical columns with proper comma separation
-          tableCode = tableCode.Substring(0, insertPos) + ",\n" + physicalColumnsSql + "\n" + tableCode.Substring(insertPos);
+          tableCode = tableCode[..insertPos] + ",\n" + physicalColumnsSql + "\n" + tableCode[insertPos..];
         }
       }
 

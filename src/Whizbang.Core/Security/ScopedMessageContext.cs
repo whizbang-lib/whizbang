@@ -8,16 +8,11 @@ namespace Whizbang.Core.Security;
 /// Enables DI injection of IMessageContext in receptors.
 /// </summary>
 /// <docs>fundamentals/security/message-security#scoped-message-context</docs>
-internal sealed class ScopedMessageContext : IMessageContext {
-  private readonly IMessageContextAccessor _messageContextAccessor;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-
-  public ScopedMessageContext(
-    IMessageContextAccessor messageContextAccessor,
-    IScopeContextAccessor scopeContextAccessor) {
-    _messageContextAccessor = messageContextAccessor;
-    _scopeContextAccessor = scopeContextAccessor;
-  }
+internal sealed class ScopedMessageContext(
+  IMessageContextAccessor messageContextAccessor,
+  IScopeContextAccessor scopeContextAccessor) : IMessageContext {
+  private readonly IMessageContextAccessor _messageContextAccessor = messageContextAccessor;
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   /// <inheritdoc />
   public MessageId MessageId =>

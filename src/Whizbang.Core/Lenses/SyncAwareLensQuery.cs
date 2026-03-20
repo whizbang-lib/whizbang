@@ -26,29 +26,22 @@ namespace Whizbang.Core.Lenses;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Lenses/SyncAwareLensQueryTests.cs</tests>
-public sealed class SyncAwareLensQuery<TModel> : ISyncAwareLensQuery<TModel> where TModel : class {
-  private readonly ILensQuery<TModel> _innerQuery;
-  private readonly IPerspectiveSyncAwaiter _awaiter;
-  private readonly Type _perspectiveType;
-  private readonly PerspectiveSyncOptions _options;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="SyncAwareLensQuery{TModel}"/>.
-  /// </summary>
-  /// <param name="innerQuery">The underlying lens query.</param>
-  /// <param name="awaiter">The sync awaiter service.</param>
-  /// <param name="perspectiveType">The type of the perspective to synchronize.</param>
-  /// <param name="options">The synchronization options.</param>
-  public SyncAwareLensQuery(
-      ILensQuery<TModel> innerQuery,
-      IPerspectiveSyncAwaiter awaiter,
-      Type perspectiveType,
-      PerspectiveSyncOptions options) {
-    _innerQuery = innerQuery ?? throw new ArgumentNullException(nameof(innerQuery));
-    _awaiter = awaiter ?? throw new ArgumentNullException(nameof(awaiter));
-    _perspectiveType = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SyncAwareLensQuery{TModel}"/>.
+/// </remarks>
+/// <param name="innerQuery">The underlying lens query.</param>
+/// <param name="awaiter">The sync awaiter service.</param>
+/// <param name="perspectiveType">The type of the perspective to synchronize.</param>
+/// <param name="options">The synchronization options.</param>
+public sealed class SyncAwareLensQuery<TModel>(
+    ILensQuery<TModel> innerQuery,
+    IPerspectiveSyncAwaiter awaiter,
+    Type perspectiveType,
+    PerspectiveSyncOptions options) : ISyncAwareLensQuery<TModel> where TModel : class {
+  private readonly ILensQuery<TModel> _innerQuery = innerQuery ?? throw new ArgumentNullException(nameof(innerQuery));
+  private readonly IPerspectiveSyncAwaiter _awaiter = awaiter ?? throw new ArgumentNullException(nameof(awaiter));
+  private readonly Type _perspectiveType = perspectiveType ?? throw new ArgumentNullException(nameof(perspectiveType));
+  private readonly PerspectiveSyncOptions _options = options ?? throw new ArgumentNullException(nameof(options));
 
   /// <inheritdoc />
   public IQueryable<PerspectiveRow<TModel>> Query => _innerQuery.Query;

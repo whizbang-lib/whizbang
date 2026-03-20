@@ -567,7 +567,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         var hopsCount = firstMessage.Envelope.Hops?.Count ?? 0;
         _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
           messageId, destination, envelopeType, hopsCount);
-        var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+        var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
         _logger.LogDebug("First outbox message JSON (first 500 chars): {Json}", jsonPreview);
       }
     }
@@ -707,7 +707,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ids.Add(id);
         }
       }
-      return ids.Count > 0 ? ids.ToArray() : [];
+      return ids.Count > 0 ? [.. ids] : [];
     } catch {
       return null;
     }
@@ -723,7 +723,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
   private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var dataPreview = envelopeDataJson.Length > 500 ? envelopeDataJson.Substring(0, 500) + "..." : envelopeDataJson;
+      var dataPreview = envelopeDataJson.Length > 500 ? envelopeDataJson[..500] + "..." : envelopeDataJson;
       _logger.LogDebug("Deserializing envelope: Type={EnvelopeType}, Data (first 500 chars)={EnvelopeData}",
         envelopeTypeName, dataPreview);
     }

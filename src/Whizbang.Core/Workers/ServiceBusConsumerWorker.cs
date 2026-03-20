@@ -362,7 +362,7 @@ public partial class ServiceBusConsumerWorker(
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
       var boundMethod = genericEnvelopeMethod!.MakeGenericMethod(payloadType);
-      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, [envelope])!;
       jsonEnvelope = serialized.JsonEnvelope;
 
       // NOTE: We use envelopeTypeFromTransport instead of serialized.EnvelopeType

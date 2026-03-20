@@ -23,31 +23,24 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/events/event-store#append-and-wait</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
-public sealed class AppendAndWaitEventStoreDecorator : IEventStore {
+/// <remarks>
+/// Initializes a new instance of <see cref="AppendAndWaitEventStoreDecorator"/>.
+/// </remarks>
+/// <param name="inner">The underlying event store implementation.</param>
+/// <param name="syncAwaiter">The perspective sync awaiter for waiting on perspective processing.</param>
+/// <param name="eventCompletionAwaiter">Optional event completion awaiter for waiting on all perspectives.</param>
+/// <param name="scopedEventTracker">Optional scoped event tracker for tracking emitted events.</param>
+public sealed class AppendAndWaitEventStoreDecorator(
+    IEventStore inner,
+    IPerspectiveSyncAwaiter syncAwaiter,
+    IEventCompletionAwaiter? eventCompletionAwaiter = null,
+    IScopedEventTracker? scopedEventTracker = null) : IEventStore {
   private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(30);
 
-  private readonly IEventStore _inner;
-  private readonly IPerspectiveSyncAwaiter _syncAwaiter;
-  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter;
-  private readonly IScopedEventTracker? _scopedEventTracker;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="AppendAndWaitEventStoreDecorator"/>.
-  /// </summary>
-  /// <param name="inner">The underlying event store implementation.</param>
-  /// <param name="syncAwaiter">The perspective sync awaiter for waiting on perspective processing.</param>
-  /// <param name="eventCompletionAwaiter">Optional event completion awaiter for waiting on all perspectives.</param>
-  /// <param name="scopedEventTracker">Optional scoped event tracker for tracking emitted events.</param>
-  public AppendAndWaitEventStoreDecorator(
-      IEventStore inner,
-      IPerspectiveSyncAwaiter syncAwaiter,
-      IEventCompletionAwaiter? eventCompletionAwaiter = null,
-      IScopedEventTracker? scopedEventTracker = null) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-    _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
-    _eventCompletionAwaiter = eventCompletionAwaiter;
-    _scopedEventTracker = scopedEventTracker;
-  }
+  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+  private readonly IPerspectiveSyncAwaiter _syncAwaiter = syncAwaiter ?? throw new ArgumentNullException(nameof(syncAwaiter));
+  private readonly IEventCompletionAwaiter? _eventCompletionAwaiter = eventCompletionAwaiter;
+  private readonly IScopedEventTracker? _scopedEventTracker = scopedEventTracker;
 
   /// <inheritdoc />
   public async Task<SyncResult> AppendAndWaitAsync<TMessage, TPerspective>(

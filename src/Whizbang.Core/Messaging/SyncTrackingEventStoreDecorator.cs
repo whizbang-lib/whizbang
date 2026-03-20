@@ -26,33 +26,25 @@ namespace Whizbang.Core.Messaging;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Messaging/SyncTrackingEventStoreDecoratorTests.cs</tests>
-public sealed class SyncTrackingEventStoreDecorator : IEventStore {
-  private readonly IEventStore _inner;
-  private readonly IScopedEventTracker? _tracker;
-  private readonly ISyncEventTracker? _syncEventTracker;
-  private readonly ITrackedEventTypeRegistry? _typeRegistry;
-  private readonly IEnvelopeRegistry? _envelopeRegistry;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="SyncTrackingEventStoreDecorator"/>.
-  /// </summary>
-  /// <param name="inner">The underlying event store implementation.</param>
-  /// <param name="tracker">The scoped event tracker (optional - tracking is skipped if null).</param>
-  /// <param name="envelopeRegistry">The envelope registry for looking up message IDs (optional).</param>
-  /// <param name="syncEventTracker">The singleton event tracker for cross-scope sync (optional).</param>
-  /// <param name="typeRegistry">The registry of event types to track (optional).</param>
-  public SyncTrackingEventStoreDecorator(
-      IEventStore inner,
-      IScopedEventTracker? tracker = null,
-      IEnvelopeRegistry? envelopeRegistry = null,
-      ISyncEventTracker? syncEventTracker = null,
-      ITrackedEventTypeRegistry? typeRegistry = null) {
-    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-    _tracker = tracker;
-    _envelopeRegistry = envelopeRegistry;
-    _syncEventTracker = syncEventTracker;
-    _typeRegistry = typeRegistry;
-  }
+/// <remarks>
+/// Initializes a new instance of <see cref="SyncTrackingEventStoreDecorator"/>.
+/// </remarks>
+/// <param name="inner">The underlying event store implementation.</param>
+/// <param name="tracker">The scoped event tracker (optional - tracking is skipped if null).</param>
+/// <param name="envelopeRegistry">The envelope registry for looking up message IDs (optional).</param>
+/// <param name="syncEventTracker">The singleton event tracker for cross-scope sync (optional).</param>
+/// <param name="typeRegistry">The registry of event types to track (optional).</param>
+public sealed class SyncTrackingEventStoreDecorator(
+    IEventStore inner,
+    IScopedEventTracker? tracker = null,
+    IEnvelopeRegistry? envelopeRegistry = null,
+    ISyncEventTracker? syncEventTracker = null,
+    ITrackedEventTypeRegistry? typeRegistry = null) : IEventStore {
+  private readonly IEventStore _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+  private readonly IScopedEventTracker? _tracker = tracker;
+  private readonly ISyncEventTracker? _syncEventTracker = syncEventTracker;
+  private readonly ITrackedEventTypeRegistry? _typeRegistry = typeRegistry;
+  private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry;
 
   /// <inheritdoc />
   public async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {

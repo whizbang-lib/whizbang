@@ -102,7 +102,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
       return unit.Messages.AsReadOnly();
     }
 
-    return Array.Empty<object>();
+    return [];
   }
 
   /// <inheritdoc />

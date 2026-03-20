@@ -15,25 +15,18 @@ namespace Whizbang.Hosting.Azure.ServiceBus;
 /// Implements caching to avoid excessive health checks.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Simple health check logging - LoggerMessage delegates would be overkill for infrequent health checks")]
-public sealed class ServiceBusReadinessCheck : ITransportReadinessCheck, IDisposable {
-  private readonly ITransport _transport;
-  private readonly ServiceBusClient _client;
-  private readonly ILogger<ServiceBusReadinessCheck> _logger;
-  private readonly TimeSpan _cacheDuration;
+public sealed class ServiceBusReadinessCheck(
+  ITransport transport,
+  ServiceBusClient client,
+  ILogger<ServiceBusReadinessCheck> logger,
+  TimeSpan? cacheDuration = null) : ITransportReadinessCheck, IDisposable {
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ServiceBusClient _client = client ?? throw new ArgumentNullException(nameof(client));
+  private readonly ILogger<ServiceBusReadinessCheck> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly TimeSpan _cacheDuration = cacheDuration ?? TimeSpan.FromSeconds(30);
   private DateTimeOffset? _lastSuccessfulCheck;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;
-
-  public ServiceBusReadinessCheck(
-    ITransport transport,
-    ServiceBusClient client,
-    ILogger<ServiceBusReadinessCheck> logger,
-    TimeSpan? cacheDuration = null) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _client = client ?? throw new ArgumentNullException(nameof(client));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _cacheDuration = cacheDuration ?? TimeSpan.FromSeconds(30);
-  }
 
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     // CRITICAL: Check if transport is initialized first

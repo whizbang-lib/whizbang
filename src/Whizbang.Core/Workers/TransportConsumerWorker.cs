@@ -638,7 +638,7 @@ public partial class TransportConsumerWorker : BackgroundService {
       // Call generic SerializeEnvelope method via reflection
       var genericMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
       var boundMethod = genericMethod!.MakeGenericMethod(payloadType);
-      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, [envelope])!;
       jsonEnvelope = serialized.JsonEnvelope;
     }
 

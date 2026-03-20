@@ -22,14 +22,9 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 ///     options.TenantIdHeaderName = "X-Tenant-Id";
 /// });
 /// </example>
-public class WhizbangScopeMiddleware {
-  private readonly RequestDelegate _next;
-  private readonly WhizbangScopeOptions _options;
-
-  public WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
-    _next = next;
-    _options = options ?? new WhizbangScopeOptions();
-  }
+public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions? options = null) {
+  private readonly RequestDelegate _next = next;
+  private readonly WhizbangScopeOptions _options = options ?? new WhizbangScopeOptions();
 
   public async Task InvokeAsync(HttpContext context, IScopeContextAccessor scopeContextAccessor) {
     // Build scope from claims and headers

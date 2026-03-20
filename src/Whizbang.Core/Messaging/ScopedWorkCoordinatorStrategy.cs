@@ -37,41 +37,30 @@ public record ScopedWorkCoordinatorDependencies {
 /// Provides a good balance of latency and efficiency.
 /// Best for: Web APIs, message handlers, transactional operations.
 /// </summary>
-public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
-  private readonly IWorkCoordinator _coordinator;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly IWorkChannelWriter? _workChannelWriter;
-  private readonly WorkCoordinatorOptions _options;
-  private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
-  private readonly ScopedWorkCoordinatorDependencies _dependencies;
-  private readonly WorkCoordinatorMetrics? _metrics;
-  private readonly LifecycleMetrics? _lifecycleMetrics;
+/// <remarks>
+/// Initializes a new instance of <see cref="ScopedWorkCoordinatorStrategy"/>.
+/// </remarks>
+public partial class ScopedWorkCoordinatorStrategy(
+  IWorkCoordinator coordinator,
+  IServiceInstanceProvider instanceProvider,
+  IWorkChannelWriter? workChannelWriter,
+  WorkCoordinatorOptions options,
+  ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
+  ScopedWorkCoordinatorDependencies? dependencies = null,
+  WorkCoordinatorMetrics? metrics = null,
+  LifecycleMetrics? lifecycleMetrics = null
+  ) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
+  private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger = logger;
+  private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
+  private readonly WorkCoordinatorMetrics? _metrics = metrics;
+  private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
   private readonly WorkCoordinatorQueues _queues = new();
 
   private bool _disposed;
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="ScopedWorkCoordinatorStrategy"/>.
-  /// </summary>
-  public ScopedWorkCoordinatorStrategy(
-    IWorkCoordinator coordinator,
-    IServiceInstanceProvider instanceProvider,
-    IWorkChannelWriter? workChannelWriter,
-    WorkCoordinatorOptions options,
-    ILogger<ScopedWorkCoordinatorStrategy>? logger = null,
-    ScopedWorkCoordinatorDependencies? dependencies = null,
-    WorkCoordinatorMetrics? metrics = null,
-    LifecycleMetrics? lifecycleMetrics = null
-  ) {
-    _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _workChannelWriter = workChannelWriter;
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger;
-    _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
-    _metrics = metrics;
-    _lifecycleMetrics = lifecycleMetrics;
-  }
 
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);

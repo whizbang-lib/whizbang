@@ -126,10 +126,9 @@ public static class AttributeUtilities {
         .FirstOrDefault(a => a.Key == propertyName);
 
     if (namedArg.Key is not null && namedArg.Value.Kind == TypedConstantKind.Array) {
-      return namedArg.Value.Values
+      return [.. namedArg.Value.Values
           .Select(v => v.Value?.ToString() ?? "")
-          .Where(s => !string.IsNullOrEmpty(s))
-          .ToArray();
+          .Where(s => !string.IsNullOrEmpty(s))];
     }
 
     // 2. Check constructor arguments
@@ -140,10 +139,9 @@ public static class AttributeUtilities {
         if (string.Equals(param.Name, propertyName, StringComparison.OrdinalIgnoreCase)) {
           var arg = attribute.ConstructorArguments[i];
           if (arg.Kind == TypedConstantKind.Array) {
-            return arg.Values
+            return [.. arg.Values
                 .Select(v => v.Value?.ToString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToArray();
+                .Where(s => !string.IsNullOrEmpty(s))];
           }
         }
       }

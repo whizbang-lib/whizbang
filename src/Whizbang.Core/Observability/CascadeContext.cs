@@ -144,7 +144,7 @@ public sealed record CascadeContext {
 
     var newMetadata = Metadata is not null
       ? new Dictionary<string, object>(Metadata)
-      : new Dictionary<string, object>();
+      : [];
 
     foreach (var kvp in additional) {
       newMetadata[kvp.Key] = kvp.Value;

@@ -327,8 +327,7 @@ public class DapperPostgresEventStore(
       if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0 && hops[0].Scope == null) {
         var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
                                 ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
-        var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
-        if (scopeDict != null) {
+        if (JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
           string? tenantId = null;
           string? userId = null;
           string? customerId = null;

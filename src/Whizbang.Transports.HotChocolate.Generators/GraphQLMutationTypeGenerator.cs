@@ -47,11 +47,9 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
   private static GraphQLMutationInfo? _extractMutationInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -198,7 +196,7 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
 
     // Generate method name from GraphQL mutation name (capitalize first letter, add Async)
     var methodName = char.ToUpperInvariant(mutation.GraphQLMutationName[0])
-        + mutation.GraphQLMutationName.Substring(1) + "Async";
+        + mutation.GraphQLMutationName[1..] + "Async";
 
     sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Generated GraphQL mutation for {mutation.CommandTypeNameShort}.");

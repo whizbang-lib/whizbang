@@ -37,7 +37,7 @@ public static class AuditOutboxMessageBuilder {
     // Build scope dictionary from the event's scope
     Dictionary<string, string?>? scope = null;
     if (eventMessage.Scope != null) {
-      scope = new Dictionary<string, string?>();
+      scope = [];
       if (eventMessage.Scope.TenantId != null) {
         scope["TenantId"] = eventMessage.Scope.TenantId;
       }

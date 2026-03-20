@@ -21,7 +21,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
   private const string PGVECTOR_ASSEMBLY_NAME = "Pgvector.EntityFrameworkCore";
 
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      ImmutableArray.Create(DiagnosticDescriptors.VectorFieldMissingPackage);
+      [DiagnosticDescriptors.VectorFieldMissingPackage];
 
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);

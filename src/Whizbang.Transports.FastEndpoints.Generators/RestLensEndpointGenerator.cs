@@ -51,11 +51,9 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private static RestLensInfo? _extractLensInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -110,7 +108,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
   private static string _getEndpointClassName(string interfaceName) {
     // Remove 'I' prefix if present
     var baseName = interfaceName.StartsWith("I", StringComparison.Ordinal)
-        ? interfaceName.Substring(1)
+        ? interfaceName[1..]
         : interfaceName;
 
     // Ensure it ends with "Endpoint"

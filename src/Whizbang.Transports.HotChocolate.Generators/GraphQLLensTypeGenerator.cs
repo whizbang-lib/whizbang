@@ -51,11 +51,9 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   private static GraphQLLensInfo? _extractLensInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(typeDeclaration, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -167,7 +165,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateQueryMethod(GraphQLLensInfo lens) {
     var sb = new StringBuilder();
-    var methodName = "Get" + char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName.Substring(1);
+    var methodName = "Get" + char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName[1..];
 
     sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Query field for {lens.QueryName}.");
@@ -200,7 +198,7 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
   /// Generate a lens info property for diagnostics.
   /// </summary>
   private static string _generateLensInfoProperty(GraphQLLensInfo lens) {
-    var propName = char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName.Substring(1);
+    var propName = char.ToUpperInvariant(lens.QueryName[0]) + lens.QueryName[1..];
     return $"""
   /// <summary>
   /// Information about the {lens.QueryName} lens.

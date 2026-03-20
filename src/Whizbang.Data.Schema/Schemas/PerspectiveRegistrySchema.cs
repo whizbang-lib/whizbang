@@ -79,25 +79,25 @@ public static class PerspectiveRegistrySchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+    [
       new IndexDefinition(
-        Name: "idx_perspective_registry_table_name",
-        Columns: ImmutableArray.Create(Columns.TABLE_NAME)
-      ),
+            Name: "idx_perspective_registry_table_name",
+            Columns: [Columns.TABLE_NAME                                        ]
+          ),
       new IndexDefinition(
         Name: "idx_perspective_registry_schema_hash",
-        Columns: ImmutableArray.Create(Columns.SCHEMA_HASH)
+        Columns: [Columns.SCHEMA_HASH                                     ]
       ),
       new IndexDefinition(
         Name: "idx_perspective_registry_service_name",
-        Columns: ImmutableArray.Create(Columns.SERVICE_NAME)
+        Columns: [Columns.SERVICE_NAME                                      ]
       )
-    ),
-    UniqueConstraints: ImmutableArray.Create(
-      new UniqueConstraintDefinition(
+,
+    ],
+    UniqueConstraints: [new UniqueConstraintDefinition(
         Name: "uq_perspective_registry_type_service",
-        Columns: ImmutableArray.Create(Columns.CLR_TYPE_NAME, Columns.SERVICE_NAME)
-      )
-    )
+        Columns: [Columns.CLR_TYPE_NAME, Columns.SERVICE_NAME]
+      )]
   );
 }

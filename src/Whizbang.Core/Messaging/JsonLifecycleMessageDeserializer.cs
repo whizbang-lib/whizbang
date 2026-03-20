@@ -10,16 +10,12 @@ namespace Whizbang.Core.Messaging;
 /// Uses JsonContextRegistry for AOT-safe deserialization with zero reflection.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
-public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  /// <summary>
-  /// Creates a new JSON lifecycle message deserializer.
-  /// </summary>
-  /// <param name="jsonOptions">JSON serializer options for deserialization. If null, uses default options.</param>
-  public JsonLifecycleMessageDeserializer(JsonSerializerOptions? jsonOptions = null) {
-    _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
-  }
+/// <remarks>
+/// Creates a new JSON lifecycle message deserializer.
+/// </remarks>
+/// <param name="jsonOptions">JSON serializer options for deserialization. If null, uses default options.</param>
+public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? jsonOptions = null) : ILifecycleMessageDeserializer {
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
 
   /// <summary>
   /// Deserializes a message from an OutboxMessage or InboxMessage envelope.

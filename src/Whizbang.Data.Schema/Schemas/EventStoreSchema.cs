@@ -97,21 +97,23 @@ public static class EventStoreSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_event_store_stream",
-        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.VERSION),
-        Unique: true
-      ),
+            Name: "idx_event_store_stream",
+            Columns: [Columns.STREAM_ID, Columns.VERSION],
+            Unique: true
+          ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate",
-        Columns: ImmutableArray.Create(Columns.AGGREGATE_ID, Columns.VERSION),
+        Columns: [Columns.AGGREGATE_ID, Columns.VERSION],
         Unique: true
       ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate_type",
-        Columns: ImmutableArray.Create(Columns.AGGREGATE_TYPE, Columns.CREATED_AT)
+        Columns: [Columns.AGGREGATE_TYPE, Columns.CREATED_AT]
       )
-    )
-  );
+,
+    ]);
 }

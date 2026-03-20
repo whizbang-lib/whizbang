@@ -322,7 +322,7 @@ public partial class DapperWorkCoordinator(
     // Log the first message for debugging
     if (messages.Length > 0 && _logger is not null) {
       var firstMessage = messages[0];
-      var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
       LogSerializingOutboxMessage(_logger, firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType, firstMessage.Envelope.Hops?.Count ?? 0);
       LogOutboxMessageJson(_logger, jsonPreview);
     }
@@ -591,7 +591,7 @@ public partial class DapperWorkCoordinator(
           ids.Add(id);
         }
       }
-      return ids.Count > 0 ? ids.ToArray() : [];
+      return ids.Count > 0 ? [.. ids] : [];
     } catch {
       return null;
     }

@@ -118,7 +118,7 @@ public static class WhizbangIdProviderRegistry {
   /// <returns>Collection of all registered ID types</returns>
   public static IEnumerable<Type> GetRegisteredIdTypes() {
     lock (_lock) {
-      return _factories.Keys.ToArray();
+      return [.. _factories.Keys];
     }
   }
 

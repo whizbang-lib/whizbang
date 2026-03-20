@@ -58,7 +58,7 @@ public static class TypeSymbolExtensions {
   /// <param name="typeSymbol">The type to analyze</param>
   /// <returns>Array of property names</returns>
   public static string[] GetAllPublicPropertyNames(this INamedTypeSymbol typeSymbol) {
-    return typeSymbol.GetAllProperties().Select(p => p.Name).ToArray();
+    return [.. typeSymbol.GetAllProperties().Select(p => p.Name)];
   }
 
   /// <summary>

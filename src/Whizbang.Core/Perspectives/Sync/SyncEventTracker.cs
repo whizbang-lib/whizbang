@@ -63,7 +63,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
       query = query.Where(e => typeSet.Contains(e.EventType));
     }
 
-    return query.ToList();
+    return [.. query];
   }
 
   /// <inheritdoc />
@@ -86,7 +86,7 @@ public sealed class SyncEventTracker : ISyncEventTracker {
 
   /// <inheritdoc />
   public IReadOnlyList<Guid> GetAllTrackedEventIds() {
-    return _trackedEvents.Keys.Select(k => k.EventId).Distinct().ToList();
+    return [.. _trackedEvents.Keys.Select(k => k.EventId).Distinct()];
   }
 
   /// <inheritdoc />

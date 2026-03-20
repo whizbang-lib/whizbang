@@ -21,14 +21,15 @@ public static class SequencesSchema {
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_LastUpdatedAt_HasDefaultNowAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "sequences",
-    Columns: ImmutableArray.Create(
+    Columns:
+    [
       new ColumnDefinition(
-        Name: "sequence_name",
-        DataType: WhizbangDataType.STRING,
-        Nullable: false
+            Name: "sequence_name",
+            DataType: WhizbangDataType.STRING,
+            Nullable: false
 ,
-        PrimaryKey: true,
-        MaxLength: 200),
+            PrimaryKey: true,
+            MaxLength: 200),
       new ColumnDefinition(
         Name: "current_value",
         DataType: WhizbangDataType.BIG_INT,
@@ -47,8 +48,9 @@ public static class SequencesSchema {
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
-    ),
-    Indexes: ImmutableArray.Create<IndexDefinition>() // Primary key only, no additional indexes
+,
+    ],
+    Indexes: [] // Primary key only, no additional indexes
   );
 
   /// <summary>

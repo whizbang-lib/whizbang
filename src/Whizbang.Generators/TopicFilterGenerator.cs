@@ -71,13 +71,11 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
     // Get class symbol
-    var classSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;  // Early exit - Roslyn returned null or not a named type
     }
 

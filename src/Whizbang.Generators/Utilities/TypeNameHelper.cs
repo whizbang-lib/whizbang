@@ -68,9 +68,7 @@ internal static class TypeNameHelper {
   /// <param name="type">The type to inspect.</param>
   /// <returns>Array of fully qualified interface names.</returns>
   public static string[] GetImplementedInterfaces(ITypeSymbol type) {
-    return type.AllInterfaces
-      .Select(GetFullyQualifiedName)
-      .ToArray();
+    return [.. type.AllInterfaces.Select(GetFullyQualifiedName)];
   }
 
   /// <summary>

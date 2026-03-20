@@ -42,7 +42,7 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
     ArgumentNullException.ThrowIfNull(perspectiveType);
     ArgumentNullException.ThrowIfNull(onSignal);
 
-    var handlers = _subscribers.GetOrAdd(perspectiveType, _ => new ConcurrentBag<Action<PerspectiveCursorSignal>>());
+    var handlers = _subscribers.GetOrAdd(perspectiveType, _ => []);
     handlers.Add(onSignal);
 
     return new Subscription(this, perspectiveType, onSignal);
@@ -71,20 +71,14 @@ public sealed class LocalSyncSignaler : IPerspectiveSyncSignaler {
     }
   }
 
-  private sealed class Subscription : IDisposable {
-    private readonly LocalSyncSignaler _signaler;
-    private readonly Type _perspectiveType;
-    private readonly Action<PerspectiveCursorSignal> _handler;
+  private sealed class Subscription(
+      LocalSyncSignaler signaler,
+      Type perspectiveType,
+      Action<PerspectiveCursorSignal> handler) : IDisposable {
+    private readonly LocalSyncSignaler _signaler = signaler;
+    private readonly Type _perspectiveType = perspectiveType;
+    private readonly Action<PerspectiveCursorSignal> _handler = handler;
     private bool _disposed;
-
-    public Subscription(
-        LocalSyncSignaler signaler,
-        Type perspectiveType,
-        Action<PerspectiveCursorSignal> handler) {
-      _signaler = signaler;
-      _perspectiveType = perspectiveType;
-      _handler = handler;
-    }
 
     public void Dispose() {
       if (_disposed) {
