@@ -760,7 +760,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
 
       sb.AppendLine("          };");
-      sb.AppendLine($"          return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<{typeArgs}>(context, tableNames);");
+      sb.AppendLine("          var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();");
+      sb.AppendLine("          var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();");
+      sb.AppendLine($"          return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<{typeArgs}>(context, tableNames, scopeContextAccessor, whizbangOptions);");
       sb.AppendLine("        });");
       sb.AppendLine();
     }
