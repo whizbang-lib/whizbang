@@ -35,7 +35,9 @@ on:
       PUSHOVER_USER_KEY_10:
         required: false
 
-permissions: read-all
+permissions:
+  contents: read
+  id-token: write    # Required for NuGet OIDC trusted publishing
 
 jobs:
   push:

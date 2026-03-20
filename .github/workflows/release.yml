@@ -33,8 +33,10 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-# Minimal top-level permissions; write permissions are declared at job level
-permissions: read-all
+# Grant permissions needed across jobs; jobs restrict further as needed
+permissions:
+  contents: write    # Required for tag creation and GitHub releases
+  id-token: write    # Required for NuGet OIDC trusted publishing
 
 concurrency:
   group: release
