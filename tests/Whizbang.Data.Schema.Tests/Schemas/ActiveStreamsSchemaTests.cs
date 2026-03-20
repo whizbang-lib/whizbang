@@ -162,12 +162,12 @@ public class ActiveStreamsSchemaTests {
   [Category("Schema")]
   public async Task Columns_HasAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    const string streamId = ActiveStreamsSchema.Columns.STREAM_ID;
-    const string partitionNumber = ActiveStreamsSchema.Columns.PARTITION_NUMBER;
-    const string assignedInstanceId = ActiveStreamsSchema.Columns.ASSIGNED_INSTANCE_ID;
-    const string leaseExpiry = ActiveStreamsSchema.Columns.LEASE_EXPIRY;
-    const string createdAt = ActiveStreamsSchema.Columns.CREATED_AT;
-    const string lastActivityAt = ActiveStreamsSchema.Columns.LAST_ACTIVITY_AT;
+    var streamId = ActiveStreamsSchema.Columns.STREAM_ID;
+    var partitionNumber = ActiveStreamsSchema.Columns.PARTITION_NUMBER;
+    var assignedInstanceId = ActiveStreamsSchema.Columns.ASSIGNED_INSTANCE_ID;
+    var leaseExpiry = ActiveStreamsSchema.Columns.LEASE_EXPIRY;
+    var createdAt = ActiveStreamsSchema.Columns.CREATED_AT;
+    var lastActivityAt = ActiveStreamsSchema.Columns.LAST_ACTIVITY_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(streamId).IsEqualTo("stream_id");

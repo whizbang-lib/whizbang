@@ -127,16 +127,16 @@ public class OutboxSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    const string messageId = OutboxSchema.Columns.MESSAGE_ID;
-    const string destination = OutboxSchema.Columns.DESTINATION;
-    const string messageType = OutboxSchema.Columns.MESSAGE_TYPE;
-    const string eventData = OutboxSchema.Columns.EVENT_DATA;
-    const string metadata = OutboxSchema.Columns.METADATA;
-    const string scope = OutboxSchema.Columns.SCOPE;
-    const string status = OutboxSchema.Columns.STATUS;
-    const string attempts = OutboxSchema.Columns.ATTEMPTS;
-    const string createdAt = OutboxSchema.Columns.CREATED_AT;
-    const string publishedAt = OutboxSchema.Columns.PUBLISHED_AT;
+    var messageId = OutboxSchema.Columns.MESSAGE_ID;
+    var destination = OutboxSchema.Columns.DESTINATION;
+    var messageType = OutboxSchema.Columns.MESSAGE_TYPE;
+    var eventData = OutboxSchema.Columns.EVENT_DATA;
+    var metadata = OutboxSchema.Columns.METADATA;
+    var scope = OutboxSchema.Columns.SCOPE;
+    var status = OutboxSchema.Columns.STATUS;
+    var attempts = OutboxSchema.Columns.ATTEMPTS;
+    var createdAt = OutboxSchema.Columns.CREATED_AT;
+    var publishedAt = OutboxSchema.Columns.PUBLISHED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");

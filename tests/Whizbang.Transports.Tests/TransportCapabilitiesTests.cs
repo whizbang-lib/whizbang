@@ -13,7 +13,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasNoneValueAsync() {
     // Arrange & Act
-    const TransportCapabilities none = TransportCapabilities.None;
+    var none = TransportCapabilities.None;
 
     // Assert
     await Assert.That((int)none).IsEqualTo(0);
@@ -22,7 +22,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasRequestResponseAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.RequestResponse;
+    var capability = TransportCapabilities.RequestResponse;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -31,7 +31,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasPublishSubscribeAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.PublishSubscribe;
+    var capability = TransportCapabilities.PublishSubscribe;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -40,7 +40,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasStreamingAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.Streaming;
+    var capability = TransportCapabilities.Streaming;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -49,7 +49,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasReliableAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.Reliable;
+    var capability = TransportCapabilities.Reliable;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -58,7 +58,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasOrderedAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.Ordered;
+    var capability = TransportCapabilities.Ordered;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -67,7 +67,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_HasExactlyOnceAsync() {
     // Arrange & Act
-    const TransportCapabilities capability = TransportCapabilities.ExactlyOnce;
+    var capability = TransportCapabilities.ExactlyOnce;
 
     // Assert
     await Assert.That((int)capability).IsNotEqualTo(0);
@@ -76,7 +76,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_CanCombineFlagsAsync() {
     // Arrange & Act
-    const TransportCapabilities combined = TransportCapabilities.RequestResponse | TransportCapabilities.Reliable;
+    var combined = TransportCapabilities.RequestResponse | TransportCapabilities.Reliable;
 
     // Assert
     await Assert.That(combined.HasFlag(TransportCapabilities.RequestResponse)).IsTrue();
@@ -87,7 +87,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_AllFlag_ContainsAllCapabilitiesAsync() {
     // Arrange & Act
-    const TransportCapabilities all = TransportCapabilities.All;
+    var all = TransportCapabilities.All;
 
     // Assert
     await Assert.That(all.HasFlag(TransportCapabilities.RequestResponse)).IsTrue();

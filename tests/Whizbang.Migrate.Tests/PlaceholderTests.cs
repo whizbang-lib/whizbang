@@ -10,7 +10,7 @@ public class PlaceholderTests {
   [Test]
   public async Task ProjectStructure_Compiles_SuccessfullyAsync() {
     // This test just verifies the project structure compiles
-    const JournalStatus status = JournalStatus.NotStarted;
+    var status = JournalStatus.NotStarted;
     await Assert.That(status).IsEqualTo(JournalStatus.NotStarted);
   }
 }

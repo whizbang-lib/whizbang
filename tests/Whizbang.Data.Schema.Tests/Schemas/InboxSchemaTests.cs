@@ -112,23 +112,23 @@ public class InboxSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    const string messageId = InboxSchema.Columns.MESSAGE_ID;
-    const string handlerName = InboxSchema.Columns.HANDLER_NAME;
-    const string messageType = InboxSchema.Columns.MESSAGE_TYPE;
-    const string eventData = InboxSchema.Columns.EVENT_DATA;
-    const string metadata = InboxSchema.Columns.METADATA;
-    const string scope = InboxSchema.Columns.SCOPE;
-    const string streamId = InboxSchema.Columns.STREAM_ID;
-    const string partitionNumber = InboxSchema.Columns.PARTITION_NUMBER;
-    const string status = InboxSchema.Columns.STATUS;
-    const string attempts = InboxSchema.Columns.ATTEMPTS;
-    const string error = InboxSchema.Columns.ERROR;
-    const string instanceId = InboxSchema.Columns.INSTANCE_ID;
-    const string leaseExpiry = InboxSchema.Columns.LEASE_EXPIRY;
-    const string failureReason = InboxSchema.Columns.FAILURE_REASON;
-    const string scheduledFor = InboxSchema.Columns.SCHEDULED_FOR;
-    const string processedAt = InboxSchema.Columns.PROCESSED_AT;
-    const string receivedAt = InboxSchema.Columns.RECEIVED_AT;
+    var messageId = InboxSchema.Columns.MESSAGE_ID;
+    var handlerName = InboxSchema.Columns.HANDLER_NAME;
+    var messageType = InboxSchema.Columns.MESSAGE_TYPE;
+    var eventData = InboxSchema.Columns.EVENT_DATA;
+    var metadata = InboxSchema.Columns.METADATA;
+    var scope = InboxSchema.Columns.SCOPE;
+    var streamId = InboxSchema.Columns.STREAM_ID;
+    var partitionNumber = InboxSchema.Columns.PARTITION_NUMBER;
+    var status = InboxSchema.Columns.STATUS;
+    var attempts = InboxSchema.Columns.ATTEMPTS;
+    var error = InboxSchema.Columns.ERROR;
+    var instanceId = InboxSchema.Columns.INSTANCE_ID;
+    var leaseExpiry = InboxSchema.Columns.LEASE_EXPIRY;
+    var failureReason = InboxSchema.Columns.FAILURE_REASON;
+    var scheduledFor = InboxSchema.Columns.SCHEDULED_FOR;
+    var processedAt = InboxSchema.Columns.PROCESSED_AT;
+    var receivedAt = InboxSchema.Columns.RECEIVED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");

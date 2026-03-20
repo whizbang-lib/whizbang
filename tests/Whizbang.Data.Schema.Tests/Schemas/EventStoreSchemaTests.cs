@@ -149,16 +149,16 @@ public class EventStoreSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    const string eventId = EventStoreSchema.Columns.EVENT_ID;
-    const string streamId = EventStoreSchema.Columns.STREAM_ID;
-    const string aggregateId = EventStoreSchema.Columns.AGGREGATE_ID;
-    const string aggregateType = EventStoreSchema.Columns.AGGREGATE_TYPE;
-    const string eventType = EventStoreSchema.Columns.EVENT_TYPE;
-    const string eventData = EventStoreSchema.Columns.EVENT_DATA;
-    const string metadata = EventStoreSchema.Columns.METADATA;
-    const string scope = EventStoreSchema.Columns.SCOPE;
-    const string version = EventStoreSchema.Columns.VERSION;
-    const string createdAt = EventStoreSchema.Columns.CREATED_AT;
+    var eventId = EventStoreSchema.Columns.EVENT_ID;
+    var streamId = EventStoreSchema.Columns.STREAM_ID;
+    var aggregateId = EventStoreSchema.Columns.AGGREGATE_ID;
+    var aggregateType = EventStoreSchema.Columns.AGGREGATE_TYPE;
+    var eventType = EventStoreSchema.Columns.EVENT_TYPE;
+    var eventData = EventStoreSchema.Columns.EVENT_DATA;
+    var metadata = EventStoreSchema.Columns.METADATA;
+    var scope = EventStoreSchema.Columns.SCOPE;
+    var version = EventStoreSchema.Columns.VERSION;
+    var createdAt = EventStoreSchema.Columns.CREATED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(eventId).IsEqualTo("event_id");
