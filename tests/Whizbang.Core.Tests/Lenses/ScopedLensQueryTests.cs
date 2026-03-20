@@ -373,8 +373,16 @@ public class ScopedLensQueryTests {
       return _models.FirstOrDefault();
     }
 
-    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
-    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
-    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> DefaultScope => new MockScopedAccess(this);
+
+    private sealed class MockScopedAccess(MockLensQuery<TModel> inner) : IScopedLensAccess<TModel> {
+      public IQueryable<PerspectiveRow<TModel>> Query => inner.Query;
+      public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
+        await Task.CompletedTask;
+        return inner._models.FirstOrDefault();
+      }
+    }
   }
 }
