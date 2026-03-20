@@ -606,6 +606,31 @@ public interface IDispatcher {
   Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages);
 
   /// <summary>
+  /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
+  /// Messages are processed in-process via strongly-typed delegates (AOT-compatible).
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <param name="messages">The messages to send locally</param>
+  /// <returns>All delivery receipts (Delivered status)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
+
+  /// <summary>
+  /// Sends multiple messages to local receptors ONLY (no outbox delivery).
+  /// For AOT compatibility, use the generic overload LocalSendManyAsync&lt;TMessage&gt;.
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <param name="messages">The messages to send locally</param>
+  /// <returns>All delivery receipts (Delivered status)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+  ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
+
+  /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.
   /// RESTRICTION: In-process only - throws InvalidOperationException if used with remote transport.
   /// </summary>

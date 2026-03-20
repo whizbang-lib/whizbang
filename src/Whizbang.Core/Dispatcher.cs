@@ -4024,35 +4024,39 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       var receipts = new List<IDeliveryReceipt>();
 
-      // Separate messages into local and outbox-bound
-      var localMessages = new List<TMessage>();
+      // All messages go to outbox (matching PublishAsync semantics: local + outbox).
+      // Messages with local receptors are ALSO processed locally.
       var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+      var hasLocalReceptor = new List<bool>();
 
       var messageType = typeof(TMessage);
       foreach (var message in messageList) {
         var invoker = GetReceptorInvoker<TMessage>(message, messageType);
+        var isLocal = invoker != null;
+        hasLocalReceptor.Add(isLocal);
 
-        if (invoker != null) {
-          // Has local receptor
-          localMessages.Add(message);
-        } else {
-          // No local receptor - route to outbox
+        if (isLocal) {
+          // Has local receptor - process locally (Delivered receipt)
           var cascade = _cascadeContextFactory.NewRoot();
-          outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
+          var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
+          receipts.Add(receipt);
         }
+
+        // ALWAYS queue for outbox delivery (cross-service propagation)
+        var outboxCascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(outboxCascade)));
       }
 
-      // Process local messages individually (fast path)
-      foreach (var message in localMessages) {
-        var cascade = _cascadeContextFactory.NewRoot();
-        var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
-        receipts.Add(receipt);
-      }
-
-      // Process outbox messages in a single batch (optimized)
+      // Process all messages via outbox in a single batch (optimized)
       if (outboxMessages.Count > 0) {
         var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-        receipts.AddRange(outboxReceipts);
+        // Only add Accepted receipts for messages without a local receptor
+        // (locally-handled messages already have Delivered receipts)
+        for (var i = 0; i < outboxReceipts.Count; i++) {
+          if (!hasLocalReceptor[i]) {
+            receipts.Add(outboxReceipts[i]);
+          }
+        }
       }
 
       return receipts;
@@ -4080,34 +4084,38 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       var receipts = new List<IDeliveryReceipt>();
 
-      // Separate messages into local and outbox-bound
-      var localMessages = new List<(object message, Type messageType)>();
+      // All messages go to outbox (matching PublishAsync semantics: local + outbox).
+      // Messages with local receptors are ALSO processed locally.
       var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+      var hasLocalReceptor = new List<bool>();
 
       foreach (var message in messageList) {
         var messageType = message.GetType();
         var invoker = GetReceptorInvoker<object>(message, messageType);
+        var isLocal = invoker != null;
+        hasLocalReceptor.Add(isLocal);
 
-        if (invoker != null) {
-          // Has local receptor
-          localMessages.Add((message, messageType));
-        } else {
-          // No local receptor - route to outbox
-          var cascade = _cascadeContextFactory.NewRoot();
-          outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
+        if (isLocal) {
+          // Has local receptor - process locally (Delivered receipt)
+          var receipt = await SendAsync(message);
+          receipts.Add(receipt);
         }
+
+        // ALWAYS queue for outbox delivery (cross-service propagation)
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
       }
 
-      // Process local messages individually (fast path)
-      foreach (var (message, _) in localMessages) {
-        var receipt = await SendAsync(message);
-        receipts.Add(receipt);
-      }
-
-      // Process outbox messages in a single batch (optimized)
+      // Process all messages via outbox in a single batch (optimized)
       if (outboxMessages.Count > 0) {
         var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-        receipts.AddRange(outboxReceipts);
+        // Only add Accepted receipts for messages without a local receptor
+        // (locally-handled messages already have Delivered receipts)
+        for (var i = 0; i < outboxReceipts.Count; i++) {
+          if (!hasLocalReceptor[i]) {
+            receipts.Add(outboxReceipts[i]);
+          }
+        }
       }
 
       return receipts;
@@ -4115,6 +4123,77 @@ public abstract partial class Dispatcher(
       sw.Stop();
       _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
     }
+  }
+
+  /// <summary>
+  /// Sends multiple typed messages to local receptors ONLY (no outbox delivery).
+  /// Messages are processed in-process via strongly-typed delegates (AOT-compatible).
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_Generic_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(messages);
+
+    var messageList = messages.ToList();
+    var receipts = new List<IDeliveryReceipt>();
+    var messageType = typeof(TMessage);
+
+    foreach (var message in messageList) {
+      // Verify local receptor exists (throws if not)
+      var invoker = GetReceptorInvoker<object>(message, messageType);
+      if (invoker == null) {
+        throw new ReceptorNotFoundException(messageType);
+      }
+
+      // Process locally only - no outbox delivery
+      var cascade = _cascadeContextFactory.NewRoot();
+      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.Create(cascade));
+      receipts.Add(receipt);
+    }
+
+    return receipts;
+  }
+
+  /// <summary>
+  /// Sends multiple messages to local receptors ONLY (no outbox delivery).
+  /// For AOT compatibility, use the generic overload LocalSendManyAsync&lt;TMessage&gt;.
+  /// Throws <see cref="ReceptorNotFoundException"/> if any message has no local receptor.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_WithLocalReceptor_DoesNotPublishToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:LocalSendManyAsync_NonGeneric_ProcessesAllMessagesLocallyAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#localsendmanyasync</docs>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages) {
+    ArgumentNullException.ThrowIfNull(messages);
+
+    var messageList = messages.ToList();
+    var receipts = new List<IDeliveryReceipt>();
+
+    foreach (var message in messageList) {
+      var messageType = message.GetType();
+
+      // Verify local receptor exists (throws if not)
+      var invoker = GetReceptorInvoker<object>(message, messageType);
+      if (invoker == null) {
+        throw new ReceptorNotFoundException(messageType);
+      }
+
+      // Process locally only - no outbox delivery
+      // Uses SendAsync which routes to local receptor (no outbox when receptor exists)
+      var receipt = await SendAsync(message);
+      receipts.Add(receipt);
+    }
+
+    return receipts;
   }
 
   /// <summary>
