@@ -37,9 +37,7 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "test_table",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
-      )
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
     );
     var prefix = "wh_";
 
@@ -58,12 +56,14 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "users",
-      Columns: ImmutableArray.Create(
+      Columns:
+
+      [
         new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
         new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
-      )
-    );
+,
+      ]);
     var prefix = "wh_";
 
     // Act
@@ -81,11 +81,13 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var table = new TableDefinition(
       Name: "test",
-      Columns: ImmutableArray.Create(
+      Columns:
+
+      [
         new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition("optional_field", WhizbangDataType.STRING, Nullable: true)
-      )
-    );
+,
+      ]);
     var prefix = "wh_";
 
     // Act
@@ -101,7 +103,7 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var index = new IndexDefinition(
       Name: "idx_users_email",
-      Columns: ImmutableArray.Create("email")
+      Columns: ["email"]
     );
     var tableName = "users";
     var prefix = "wh_";
@@ -121,7 +123,7 @@ public abstract class ISchemaBuilderContractTests {
     var builder = CreateBuilder();
     var index = new IndexDefinition(
       Name: "idx_events_type_created",
-      Columns: ImmutableArray.Create("event_type", "created_at")
+      Columns: ["event_type", "created_at"]
     );
     var tableName = "events";
     var prefix = "wh_";

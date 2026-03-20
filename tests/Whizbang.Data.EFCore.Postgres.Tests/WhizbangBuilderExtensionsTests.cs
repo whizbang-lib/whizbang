@@ -12,9 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for WhizbangBuilderExtensions tests.
 /// </summary>
-public class WhizbangBuilderExtensionsTestDbContext : DbContext {
-  public WhizbangBuilderExtensionsTestDbContext(DbContextOptions<WhizbangBuilderExtensionsTestDbContext> options) : base(options) { }
-
+public class WhizbangBuilderExtensionsTestDbContext(DbContextOptions<WhizbangBuilderExtensionsTestDbContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveRow<WhizbangBuilderExtensionsTestModel>>(entity => {
       entity.HasKey(e => e.Id);

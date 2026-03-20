@@ -115,7 +115,7 @@ public class PureServiceAttributeTests {
     var type = typeof(TestPureServiceImpl);
 
     // Act - Check if attribute is inherited
-    var attr = type.GetCustomAttribute<PureServiceAttribute>(inherit: true);
+    _ = type.GetCustomAttribute<PureServiceAttribute>(inherit: true);
 
     // Assert - Should find the attribute via inheritance from interface
     // Note: Interface attributes don't inherit to implementing classes in .NET

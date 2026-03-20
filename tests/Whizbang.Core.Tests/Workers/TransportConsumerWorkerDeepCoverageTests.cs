@@ -1163,18 +1163,14 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public void Dispose() { IsDisposed = true; }
   }
 
-  private sealed class DeepCoverageRecoveringTransport : ITransport, ITransportWithRecovery {
+  private sealed class DeepCoverageRecoveringTransport(bool failFirstSubscription) : ITransport, ITransportWithRecovery {
     private Func<CancellationToken, Task>? _recoveryHandler;
-    private bool _shouldFail;
+    private bool _shouldFail = failFirstSubscription;
 
     public int SubscribeCallCount { get; private set; }
     public int RecoveryCount { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
-
-    public DeepCoverageRecoveringTransport(bool failFirstSubscription) {
-      _shouldFail = failFirstSubscription;
-    }
 
     public void SetRecoveryHandler(Func<CancellationToken, Task>? onRecovered) {
       _recoveryHandler = onRecovered;
@@ -1217,14 +1213,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class DeepCoverageSelectiveFailTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
+  private sealed class DeepCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
     private int _subscribeCallCount;
     private volatile bool _isFailing = true;
-
-    public DeepCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
 
     public int SubscribeCallCount => Volatile.Read(ref _subscribeCallCount);
     public bool IsInitialized => true;
@@ -1260,9 +1252,9 @@ public class TransportConsumerWorkerDeepCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class DeepCoverageWorkStrategy : IWorkCoordinatorStrategy {
-    private readonly Guid _expectedMessageId;
-    private readonly bool _returnEmptyInboxWork;
+  private sealed class DeepCoverageWorkStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) : IWorkCoordinatorStrategy {
+    private readonly Guid _expectedMessageId = expectedMessageId;
+    private readonly bool _returnEmptyInboxWork = returnEmptyInboxWork;
 
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }
@@ -1271,11 +1263,6 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public Guid? LastQueuedStreamId { get; private set; }
     public string? LastQueuedHandlerName { get; private set; }
     public bool? LastQueuedIsEvent { get; private set; }
-
-    public DeepCoverageWorkStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) {
-      _expectedMessageId = expectedMessageId;
-      _returnEmptyInboxWork = returnEmptyInboxWork;
-    }
 
     public void QueueInboxMessage(InboxMessage message) {
       QueuedInboxCount++;

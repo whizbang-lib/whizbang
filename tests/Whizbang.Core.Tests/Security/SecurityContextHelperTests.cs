@@ -857,12 +857,8 @@ public class SecurityContextHelperTests {
   }
 
   // Mock implementation for IScopeContextAccessor used in explicit context tests
-  private sealed class MockScopeContextAccessor : IScopeContextAccessor {
-    private readonly IScopeContext? _explicitContext;
-
-    public MockScopeContextAccessor(IScopeContext? explicitContext) {
-      _explicitContext = explicitContext;
-    }
+  private sealed class MockScopeContextAccessor(IScopeContext? explicitContext) : IScopeContextAccessor {
+    private readonly IScopeContext? _explicitContext = explicitContext;
 
     public IScopeContext? Current {
       get => _explicitContext;
@@ -1127,12 +1123,8 @@ public class SecurityContextHelperTests {
   /// <summary>
   /// Inline callback for testing callback invocation.
   /// </summary>
-  private sealed class InlineSecurityCallback : ISecurityContextCallback {
-    private readonly Func<IScopeContext, ValueTask> _callback;
-
-    public InlineSecurityCallback(Func<IScopeContext, ValueTask> callback) {
-      _callback = callback;
-    }
+  private sealed class InlineSecurityCallback(Func<IScopeContext, ValueTask> callback) : ISecurityContextCallback {
+    private readonly Func<IScopeContext, ValueTask> _callback = callback;
 
     public ValueTask OnContextEstablishedAsync(
       IScopeContext context,
@@ -1439,14 +1431,9 @@ public class SecurityContextHelperTests {
   private sealed record TestSecurityMessage(string Value);
 
   // Test extractor for mocking security extraction
-  private sealed class TestExtractor : ISecurityContextExtractor {
-    private readonly int _priority;
-    private readonly SecurityExtraction? _extraction;
-
-    public TestExtractor(int priority, SecurityExtraction? extraction) {
-      _priority = priority;
-      _extraction = extraction;
-    }
+  private sealed class TestExtractor(int priority, SecurityExtraction? extraction) : ISecurityContextExtractor {
+    private readonly int _priority = priority;
+    private readonly SecurityExtraction? _extraction = extraction;
 
     public int Priority => _priority;
 

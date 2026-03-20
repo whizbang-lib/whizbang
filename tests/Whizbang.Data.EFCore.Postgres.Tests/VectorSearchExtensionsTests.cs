@@ -34,10 +34,7 @@ public class VectorSearchExtensionsTests {
     public float[]? TitleEmbedding { get; init; }
   }
 
-  private sealed class VectorTestDbContext : DbContext {
-    public VectorTestDbContext(DbContextOptions<VectorTestDbContext> options)
-        : base(options) { }
-
+  private sealed class VectorTestDbContext(DbContextOptions<VectorSearchExtensionsTests.VectorTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 
@@ -72,7 +69,7 @@ public class VectorSearchExtensionsTests {
   [Test]
   public async Task VectorSearchResult_Construction_SetsAllPropertiesAsync() {
     // Arrange
-    var context = _createInMemoryDbContext();
+    _ = _createInMemoryDbContext();
     var testId = _idProvider.NewGuid();
     var model = new EmbeddingTestModel { Name = "Test" };
     var row = new PerspectiveRow<EmbeddingTestModel> {

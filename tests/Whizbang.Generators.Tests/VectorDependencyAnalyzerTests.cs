@@ -440,7 +440,7 @@ public static class VectorAnalyzerTestHelper {
 
     // Create compilation with analyzers
     var compilationWithAnalyzers = compilation.WithAnalyzers(
-        ImmutableArray.Create<DiagnosticAnalyzer>(analyzer));
+        [analyzer]);
 
     // Get analyzer diagnostics only (exclude compiler diagnostics)
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();

@@ -135,8 +135,9 @@ public class ScopedMessageContextTests {
   public async Task UserId_WithoutScopeContext_FallsBackToMessageContextAsync() {
     // Arrange
     var scopeAccessor = new ScopeContextAccessor { Current = null };
-    var messageAccessor = new MessageContextAccessor();
-    messageAccessor.Current = new TestMessageContext { UserId = "message-user" };
+    var messageAccessor = new MessageContextAccessor {
+      Current = new TestMessageContext { UserId = "message-user" }
+    };
 
     var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
 
@@ -187,8 +188,9 @@ public class ScopedMessageContextTests {
   public async Task TenantId_WithoutScopeContext_FallsBackToMessageContextAsync() {
     // Arrange
     var scopeAccessor = new ScopeContextAccessor { Current = null };
-    var messageAccessor = new MessageContextAccessor();
-    messageAccessor.Current = new TestMessageContext { TenantId = "message-tenant" };
+    var messageAccessor = new MessageContextAccessor {
+      Current = new TestMessageContext { TenantId = "message-tenant" }
+    };
 
     var scopedContext = new ScopedMessageContext(messageAccessor, scopeAccessor);
 

@@ -27,15 +27,14 @@ public class DispatcherCoverageScopeTests {
 
   private static readonly List<object> _localInvocations = [];
   private static readonly List<object> _outboxInvocations = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   private static void _trackLocal(object evt) { lock (_lock) { _localInvocations.Add(evt); } }
   private static void _trackOutbox(object evt) { lock (_lock) { _outboxInvocations.Add(evt); } }
   private static void _reset() { lock (_lock) { _localInvocations.Clear(); _outboxInvocations.Clear(); } }
   private static (int LocalCount, int OutboxCount) _snapshotCounts() { lock (_lock) { return (_localInvocations.Count, _outboxInvocations.Count); } }
 
-  private sealed class ScopeTestDispatcher : Core.Dispatcher {
-    public ScopeTestDispatcher(IServiceProvider sp) : base(sp, new ServiceInstanceProvider(configuration: null)) { }
+  private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand) && typeof(TResult) == typeof(ScopeTestResult)) {
         return msg => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));
@@ -74,8 +73,8 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Local);
-    var counts = _snapshotCounts();
-    await Assert.That(counts.LocalCount).IsGreaterThanOrEqualTo(1);
+    var (LocalCount, OutboxCount) = _snapshotCounts();
+    await Assert.That(LocalCount).IsGreaterThanOrEqualTo(1);
   }
 
   [Test]
@@ -84,8 +83,8 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Outbox);
-    var counts = _snapshotCounts();
-    await Assert.That(counts.OutboxCount).IsEqualTo(1);
+    var (LocalCount, OutboxCount) = _snapshotCounts();
+    await Assert.That(OutboxCount).IsEqualTo(1);
   }
 
   [Test]
@@ -94,9 +93,9 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Both);
-    var counts = _snapshotCounts();
-    await Assert.That(counts.LocalCount).IsGreaterThanOrEqualTo(1);
-    await Assert.That(counts.OutboxCount).IsEqualTo(1);
+    var (LocalCount, OutboxCount) = _snapshotCounts();
+    await Assert.That(LocalCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(OutboxCount).IsEqualTo(1);
   }
 
   [Test]
@@ -121,8 +120,8 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.EventStoreOnly);
-    var counts = _snapshotCounts();
-    await Assert.That(counts.OutboxCount).IsEqualTo(1);
+    var (LocalCount, OutboxCount) = _snapshotCounts();
+    await Assert.That(OutboxCount).IsEqualTo(1);
   }
 
   [Test]

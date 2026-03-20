@@ -1,3 +1,5 @@
+#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
+
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;

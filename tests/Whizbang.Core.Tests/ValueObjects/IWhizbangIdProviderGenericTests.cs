@@ -63,12 +63,8 @@ public class IWhizbangIdProviderGenericTests {
   }
 
   // Test helper class
-  private sealed class TestWhizbangIdProvider : IWhizbangIdProvider {
-    private readonly Guid _guid;
-
-    public TestWhizbangIdProvider(Guid guid) {
-      _guid = guid;
-    }
+  private sealed class TestWhizbangIdProvider(Guid guid) : IWhizbangIdProvider {
+    private readonly Guid _guid = guid;
 
     public TrackedGuid NewGuid() =>
         TrackedGuid.FromIntercepted(_guid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);

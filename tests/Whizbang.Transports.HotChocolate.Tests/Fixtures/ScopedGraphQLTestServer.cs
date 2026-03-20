@@ -63,14 +63,9 @@ public interface IScopedOrderLens : ILensQuery<OrderReadModel> { }
 /// <summary>
 /// Scoped lens implementation that filters by the current scope context.
 /// </summary>
-public class ScopedTestOrderLens : IScopedOrderLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-  private readonly IScopeContextAccessor _scopeContextAccessor;
-
-  public ScopedTestOrderLens(IScopeContextAccessor scopeContextAccessor) {
-    _data = [];
-    _scopeContextAccessor = scopeContextAccessor;
-  }
+public class ScopedTestOrderLens(IScopeContextAccessor scopeContextAccessor) : IScopedOrderLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = [];
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query {
     get {

@@ -22,10 +22,10 @@ public class LensRequestTests {
   [Test]
   public async Task Page_ShouldBeSettableAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act
-    request.Page = 5;
+    var request = new LensRequest {
+      // Act
+      Page = 5
+    };
 
     // Assert
     await Assert.That(request.Page).IsEqualTo(5);
@@ -34,10 +34,10 @@ public class LensRequestTests {
   [Test]
   public async Task PageSize_ShouldBeSettableAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act
-    request.PageSize = 25;
+    var request = new LensRequest {
+      // Act
+      PageSize = 25
+    };
 
     // Assert
     await Assert.That(request.PageSize).IsEqualTo(25);
@@ -46,10 +46,10 @@ public class LensRequestTests {
   [Test]
   public async Task Sort_ShouldBeSettableAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act
-    request.Sort = "-createdAt";
+    var request = new LensRequest {
+      // Act
+      Sort = "-createdAt"
+    };
 
     // Assert
     await Assert.That(request.Sort).IsEqualTo("-createdAt");
@@ -58,10 +58,10 @@ public class LensRequestTests {
   [Test]
   public async Task Filter_ShouldBeSettableAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act
-    request.Filter = new Dictionary<string, string> { ["name"] = "John" };
+    var request = new LensRequest {
+      // Act
+      Filter = new Dictionary<string, string> { ["name"] = "John" }
+    };
 
     // Assert
     await Assert.That(request.Filter).IsNotNull();
@@ -89,10 +89,10 @@ public class LensRequestTests {
   [Test]
   public async Task Sort_WithMultipleFields_ShouldRetainOrderAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act - multiple sort fields in OData style
-    request.Sort = "-createdAt,name,+status";
+    var request = new LensRequest {
+      // Act - multiple sort fields in OData style
+      Sort = "-createdAt,name,+status"
+    };
 
     // Assert
     await Assert.That(request.Sort).IsEqualTo("-createdAt,name,+status");
@@ -101,10 +101,10 @@ public class LensRequestTests {
   [Test]
   public async Task Page_Zero_ShouldBeAllowedAsync() {
     // Arrange - validation is done at runtime, not in the model
-    var request = new LensRequest();
-
-    // Act
-    request.Page = 0;
+    var request = new LensRequest {
+      // Act
+      Page = 0
+    };
 
     // Assert
     await Assert.That(request.Page).IsEqualTo(0);
@@ -113,10 +113,10 @@ public class LensRequestTests {
   [Test]
   public async Task PageSize_Zero_ShouldBeAllowedAsync() {
     // Arrange
-    var request = new LensRequest();
-
-    // Act
-    request.PageSize = 0;
+    var request = new LensRequest {
+      // Act
+      PageSize = 0
+    };
 
     // Assert
     await Assert.That(request.PageSize).IsEqualTo(0);

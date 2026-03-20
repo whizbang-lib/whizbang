@@ -87,11 +87,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["stringValue"].GetString()).IsEqualTo("test");
     await Assert.That(hopMetadata["intValue"].GetInt32()).IsEqualTo(42);
@@ -353,11 +349,7 @@ public class JsonMessageSerializerTests {
 
     // Assert - Array values are now supported via JsonElement
     // Defensive null check before assertion
-    var hopMetadata = deserialized.Hops[0].Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = deserialized.Hops[0].Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["key"].ValueKind).IsEqualTo(JsonValueKind.Array);
   }
@@ -397,11 +389,7 @@ public class JsonMessageSerializerTests {
 
     // Assert
     // Defensive null check before assertion
-    var hopMetadata = deserialized.Hops[0].Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = deserialized.Hops[0].Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["dateTime"].ValueKind).IsEqualTo(JsonValueKind.String);
   }
@@ -474,11 +462,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["pi"].GetDouble()).IsEqualTo(3.14159265359);
     await Assert.That(hopMetadata["negativeFloat"].GetDouble()).IsEqualTo(-42.5);
@@ -523,11 +507,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["largeNumber"].GetInt64()).IsEqualTo(largeValue);
   }

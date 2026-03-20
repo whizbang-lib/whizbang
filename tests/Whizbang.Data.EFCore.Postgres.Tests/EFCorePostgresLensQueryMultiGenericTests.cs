@@ -42,9 +42,7 @@ public class EFCorePostgresLensQueryMultiGenericTests {
 
   #region Test DbContext
 
-  private sealed class MultiModelDbContext : DbContext {
-    public MultiModelDbContext(DbContextOptions<MultiModelDbContext> options) : base(options) { }
-
+  private sealed class MultiModelDbContext(DbContextOptions<EFCorePostgresLensQueryMultiGenericTests.MultiModelDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<OrderModel>> Orders => Set<PerspectiveRow<OrderModel>>();
     public DbSet<PerspectiveRow<CustomerModel>> Customers => Set<PerspectiveRow<CustomerModel>>();
     public DbSet<PerspectiveRow<ProductModel>> Products => Set<PerspectiveRow<ProductModel>>();

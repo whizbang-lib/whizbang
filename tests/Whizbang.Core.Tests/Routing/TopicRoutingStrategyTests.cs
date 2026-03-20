@@ -128,7 +128,7 @@ public class TopicRoutingStrategyTests {
   public async Task CompositeTopicRoutingStrategy_WithEmptyStrategies_ThrowsAsync() {
     // Assert
     await Assert.ThrowsAsync<ArgumentException>(async () => {
-      var composite = new CompositeTopicRoutingStrategy(Array.Empty<ITopicRoutingStrategy>());
+      var composite = new CompositeTopicRoutingStrategy([]);
       await Task.CompletedTask;
     });
   }
@@ -146,12 +146,8 @@ public class TopicRoutingStrategyTests {
   /// Test helper strategy that adds tenant prefix.
   /// Example: "products" → "tenant-A-products"
   /// </summary>
-  private sealed class TenantPrefixStrategy : ITopicRoutingStrategy {
-    private readonly string _tenantId;
-
-    public TenantPrefixStrategy(string tenantId) {
-      _tenantId = tenantId;
-    }
+  private sealed class TenantPrefixStrategy(string tenantId) : ITopicRoutingStrategy {
+    private readonly string _tenantId = tenantId;
 
     public string ResolveTopic(Type messageType, string baseTopic, IReadOnlyDictionary<string, object>? context = null) {
       return $"{_tenantId}-{baseTopic}";

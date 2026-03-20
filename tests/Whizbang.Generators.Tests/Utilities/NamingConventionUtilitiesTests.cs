@@ -19,27 +19,27 @@ public class NamingConventionUtilitiesTests {
   private static readonly TableNameConfig _disabledConfig = TableNameConfig.NoStripping;
   private static readonly TableNameConfig _readModelFirstConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ReadModel", "Model", "Projection", "Dto", "View" }
+      SuffixesToStrip: ["ReadModel", "Model", "Projection", "Dto", "View"]
   );
   private static readonly TableNameConfig _minimalConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Model", "Projection" }
+      SuffixesToStrip: ["Model", "Projection"]
   );
   private static readonly TableNameConfig _customSuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Aggregate", "State" }
+      SuffixesToStrip: ["Aggregate", "State"]
   );
   private static readonly TableNameConfig _singleSuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Model" }
+      SuffixesToStrip: ["Model"]
   );
   private static readonly TableNameConfig _modelViewConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ModelView", "Model", "View" }
+      SuffixesToStrip: ["ModelView", "Model", "View"]
   );
   private static readonly TableNameConfig _emptySuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: Array.Empty<string>()
+      SuffixesToStrip: []
   );
 
   #region ToSnakeCase Tests

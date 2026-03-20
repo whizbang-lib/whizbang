@@ -1134,12 +1134,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class AdditionalCoverageSelectiveFailTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
-
-    public AdditionalCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
+  private sealed class AdditionalCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -1173,9 +1169,9 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class AdditionalCoverageWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    private readonly Guid _expectedMessageId;
-    private readonly bool _returnEmptyInboxWork;
+  private sealed class AdditionalCoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) : IWorkCoordinatorStrategy {
+    private readonly Guid _expectedMessageId = expectedMessageId;
+    private readonly bool _returnEmptyInboxWork = returnEmptyInboxWork;
 
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }
@@ -1184,11 +1180,6 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     public Guid? LastQueuedStreamId { get; private set; }
     public string? LastQueuedHandlerName { get; private set; }
     public bool? LastQueuedIsEvent { get; private set; }
-
-    public AdditionalCoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) {
-      _expectedMessageId = expectedMessageId;
-      _returnEmptyInboxWork = returnEmptyInboxWork;
-    }
 
     public void QueueInboxMessage(InboxMessage message) {
       QueuedInboxCount++;

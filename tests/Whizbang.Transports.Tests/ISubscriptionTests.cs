@@ -14,7 +14,7 @@ public class ISubscriptionTests {
   public async Task ISubscription_Dispose_UnsubscribesAsync() {
     // Arrange
     var subscription = _createTestSubscription();
-    var isActive = subscription.IsActive;
+    _ = subscription.IsActive;
 
     // Act
     subscription.Dispose();

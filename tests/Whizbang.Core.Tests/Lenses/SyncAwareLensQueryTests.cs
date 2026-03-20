@@ -86,7 +86,7 @@ public class SyncAwareLensQueryTests {
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
 
     // With no pending events, should return immediately
-    var result = await syncQuery.GetByIdAsync(Guid.NewGuid());
+    _ = await syncQuery.GetByIdAsync(Guid.NewGuid());
 
     await Assert.That(mockQuery.GetByIdAsyncCallCount).IsEqualTo(1);
   }

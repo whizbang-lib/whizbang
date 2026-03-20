@@ -211,14 +211,10 @@ public class RabbitMQTransportNullPayloadTests {
   /// <summary>
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullPayload : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullPayload(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

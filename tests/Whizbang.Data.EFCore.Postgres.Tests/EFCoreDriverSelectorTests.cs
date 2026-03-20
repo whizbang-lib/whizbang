@@ -11,8 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for EFCoreDriverSelector tests.
 /// </summary>
-public class DriverSelectorTestDbContext : DbContext {
-  public DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbContext> options) : base(options) { }
+public class DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbContext> options) : DbContext(options) {
 }
 
 /// <summary>

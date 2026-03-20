@@ -356,7 +356,7 @@ public class LifecycleStageScopePropagationTests {
   /// Test receptor registry that supports adding receptors at specific lifecycle stages.
   /// </summary>
   private sealed class StageTestReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(LifecycleStage stage, ReceptorInfo receptor) {
       var key = (receptor.MessageType, stage);

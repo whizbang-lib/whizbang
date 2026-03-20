@@ -22,10 +22,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task RestRoute_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.RestRoute = "/api/orders";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      RestRoute = "/api/orders"
+    };
 
     // Assert
     await Assert.That(attribute.RestRoute).IsEqualTo("/api/orders");
@@ -34,10 +34,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task GraphQLMutation_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.GraphQLMutation = "createOrder";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      GraphQLMutation = "createOrder"
+    };
 
     // Assert
     await Assert.That(attribute.GraphQLMutation).IsEqualTo("createOrder");
@@ -46,10 +46,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task RequestType_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.RequestType = typeof(TestRequest);
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      RequestType = typeof(TestRequest)
+    };
 
     // Assert
     await Assert.That(attribute.RequestType).IsEqualTo(typeof(TestRequest));
@@ -73,10 +73,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task RestRoute_EmptyString_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.RestRoute = "";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      RestRoute = ""
+    };
 
     // Assert
     await Assert.That(attribute.RestRoute).IsEqualTo("");
@@ -85,10 +85,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task GraphQLMutation_EmptyString_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.GraphQLMutation = "";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      GraphQLMutation = ""
+    };
 
     // Assert
     await Assert.That(attribute.GraphQLMutation).IsEqualTo("");
@@ -187,10 +187,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task RestRoute_WithSlash_ShouldRetainSlashAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.RestRoute = "/api/v1/orders/{id}";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      RestRoute = "/api/v1/orders/{id}"
+    };
 
     // Assert - path parameters preserved
     await Assert.That(attribute.RestRoute).IsEqualTo("/api/v1/orders/{id}");
@@ -199,10 +199,10 @@ public class CommandEndpointAttributeTests {
   [Test]
   public async Task GraphQLMutation_WithCamelCase_ShouldRetainCasingAsync() {
     // Arrange
-    var attribute = new CommandEndpointAttribute<TestCommand, TestResult>();
-
-    // Act
-    attribute.GraphQLMutation = "createOrderWithItems";
+    var attribute = new CommandEndpointAttribute<TestCommand, TestResult> {
+      // Act
+      GraphQLMutation = "createOrderWithItems"
+    };
 
     // Assert
     await Assert.That(attribute.GraphQLMutation).IsEqualTo("createOrderWithItems");

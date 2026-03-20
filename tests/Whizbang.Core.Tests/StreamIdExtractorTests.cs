@@ -299,12 +299,8 @@ public class StreamIdExtractorTests {
   /// This is needed because the test project generates its own StreamIdExtractors
   /// in Whizbang.Core.Tests.Generated, separate from Whizbang.Core.Generated.
   /// </summary>
-  private sealed class TestStreamIdExtractor : IStreamIdExtractor {
-    private readonly IStreamIdExtractor? _aggregateIdExtractor;
-
-    public TestStreamIdExtractor(IStreamIdExtractor? aggregateIdExtractor = null) {
-      _aggregateIdExtractor = aggregateIdExtractor;
-    }
+  private sealed class TestStreamIdExtractor(IStreamIdExtractor? aggregateIdExtractor = null) : IStreamIdExtractor {
+    private readonly IStreamIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
 
     public Guid? ExtractStreamId(object message, Type messageType) {
       if (message is null) {
@@ -328,7 +324,7 @@ public class StreamIdExtractorTests {
   /// Simple mock for IStreamIdExtractor.
   /// </summary>
   private sealed class StreamIdExtractorMock : IStreamIdExtractor {
-    private readonly Dictionary<(object, Type), Guid?> _results = new();
+    private readonly Dictionary<(object, Type), Guid?> _results = [];
 
     public void SetupExtractStreamId(object message, Type messageType, Guid? result) {
       _results[(message, messageType)] = result;

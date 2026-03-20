@@ -20,7 +20,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithNonMessageType_InvokesCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act - int is not IMessage, should invoke callback
     // IMPORTANT: ExtractMessages is an iterator method (yield return).
@@ -37,7 +37,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithStringNonMessageType_InvokesCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act - string is not IMessage (and is excluded from IEnumerable processing)
     var messages = MessageExtractor.ExtractMessages("hello", callback).ToList();
@@ -52,7 +52,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithNull_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act - null should not trigger callback
     var messages = MessageExtractor.ExtractMessages(null, callback).ToList();
@@ -66,7 +66,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithIMessage_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
     var testEvent = new TestEvent("Event1");
 
     // Act - IMessage should be extracted, not trigger callback
@@ -82,7 +82,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithTupleContainingNonMessage_DoesNotInvokeCallbackForNestedItemsAsync() {
     // Arrange
     var callbackTypes = new List<Type>();
-    Action<Type> callback = t => callbackTypes.Add(t);
+    void callback(Type t) => callbackTypes.Add(t);
     var testEvent = new TestEvent("Event1");
 
     // Act - tuple with an event and a non-message int
@@ -102,7 +102,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessages_WithCommand_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
     var testCommand = new TestCommand("Cmd1");
 
     // Act - ICommand implements IMessage, should not trigger callback
@@ -121,7 +121,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithNonMessageType_InvokesCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act - int is not IMessage
     var messages = MessageExtractor.ExtractMessagesWithRouting(42, onNonMessageValue: callback).ToList();
@@ -136,7 +136,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithRoutedNone_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act - Route.None() should be skipped entirely via IRouted with Mode==None
     var routedNone = Route.None();
@@ -151,7 +151,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithNull_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
 
     // Act
     var messages = MessageExtractor.ExtractMessagesWithRouting(null, onNonMessageValue: callback).ToList();
@@ -165,7 +165,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithIMessage_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
     var testEvent = new TestEvent("Event1");
 
     // Act
@@ -180,7 +180,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithTupleContainingNonMessage_InvokesCallbackForNonMessageItemAsync() {
     // Arrange
     var callbackTypes = new List<Type>();
-    Action<Type> callback = t => callbackTypes.Add(t);
+    void callback(Type t) => callbackTypes.Add(t);
     var testEvent = new TestEvent("Event1");
 
     // Act - tuple with event and non-message int
@@ -197,7 +197,7 @@ public class MessageExtractorNonMessageLoggingTests {
   public async Task ExtractMessagesWithRouting_WithRoutedEvent_DoesNotInvokeCallbackAsync() {
     // Arrange
     Type? callbackType = null;
-    Action<Type> callback = t => callbackType = t;
+    void callback(Type t) => callbackType = t;
     var testEvent = new TestEvent("Event1");
 
     // Act - Routed<IEvent> wrapping a valid message

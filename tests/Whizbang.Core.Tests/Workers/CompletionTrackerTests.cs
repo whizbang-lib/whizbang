@@ -97,7 +97,7 @@ public class CompletionTrackerTests {
     }
     var pending = tracker.GetPending();
     for (var i = 0; i < pending.Length; i++) {
-      tracker.MarkAsSent(new[] { pending[i] }, baseTime.AddSeconds(i));
+      tracker.MarkAsSent([pending[i]], baseTime.AddSeconds(i));
     }
 
     // Act: Acknowledge oldest 3
@@ -134,7 +134,7 @@ public class CompletionTrackerTests {
     tracker.Add(new TestCompletion { Id = Guid.NewGuid(), Data = "ToAck" });
 
     var pending = tracker.GetPending();
-    tracker.MarkAsSent(new[] { pending[1], pending[2] }, DateTimeOffset.UtcNow);
+    tracker.MarkAsSent([pending[1], pending[2]], DateTimeOffset.UtcNow);
     tracker.MarkAsAcknowledged(1);
 
     // Act
@@ -299,7 +299,7 @@ public class CompletionTrackerTests {
 
     // Mark 2 as sent
     var pending = tracker.GetPending();
-    tracker.MarkAsSent(new[] { pending[2], pending[3] }, DateTimeOffset.UtcNow);
+    tracker.MarkAsSent([pending[2], pending[3]], DateTimeOffset.UtcNow);
     await Assert.That(tracker.PendingCount).IsEqualTo(2);
     await Assert.That(tracker.SentCount).IsEqualTo(2);
 

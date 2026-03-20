@@ -109,7 +109,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_VeryShortTimeout_ThrowsOnSlowQueryAsync() {
     // Arrange - use impossibly short 1-second timeout with pg_sleep to force timeout
-    var sut = new DapperWorkCoordinator(ConnectionString, _jsonOptions, commandTimeoutSeconds: 1);
+    _ = new DapperWorkCoordinator(ConnectionString, _jsonOptions, commandTimeoutSeconds: 1);
 
     // Create a function that wraps process_work_batch with a pg_sleep to simulate slow execution
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -228,7 +228,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
     await _insertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
     // Act - first call succeeds, proving the data is correct
-    var result = await sut.ProcessWorkBatchAsync(
+    _ = await sut.ProcessWorkBatchAsync(
       new ProcessWorkBatchRequest {
         InstanceId = _instanceId,
         ServiceName = "TestService",

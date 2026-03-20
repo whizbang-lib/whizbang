@@ -193,7 +193,7 @@ public class DispatcherIntegrationSyncTests {
   [Test]
   public async Task NoRegistryMapping_EventNotTracked_FallsBackToDbAsync() {
     // Arrange
-    var streamId = Guid.NewGuid();
+    _ = Guid.NewGuid();
     var singletonTracker = new SyncEventTracker();
 
     // Empty registry - no mappings

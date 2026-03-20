@@ -217,8 +217,9 @@ public class ScopeMiddlewareExtensionsTests {
   [Test]
   public async Task ScopeContextAccessor_ShouldAllowSettingToNullAsync() {
     // Arrange
-    var accessor = new ScopeContextAccessor();
-    accessor.Current = _createSimpleScopeContext();
+    var accessor = new ScopeContextAccessor {
+      Current = _createSimpleScopeContext()
+    };
 
     // Act
     accessor.Current = null;

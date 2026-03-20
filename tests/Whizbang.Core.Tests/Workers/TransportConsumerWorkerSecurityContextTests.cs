@@ -209,7 +209,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -224,7 +224,7 @@ public class TransportConsumerWorkerSecurityContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ]
     };
   }
 
@@ -232,7 +232,7 @@ public class TransportConsumerWorkerSecurityContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = System.DateTimeOffset.UtcNow,
@@ -244,7 +244,7 @@ public class TransportConsumerWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ]
     };
   }
 

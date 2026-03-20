@@ -293,7 +293,7 @@ public class TransportConsumerWorkerResilienceTests {
     var serviceProvider = serviceCollection.BuildServiceProvider();
 
     // Act - create worker (should register recovery handler)
-    var worker = _createWorkerWithResilience(transport, options, resilienceOptions, serviceProvider);
+    _ = _createWorkerWithResilience(transport, options, resilienceOptions, serviceProvider);
 
     // Assert
     await Assert.That(transport.HasRecoveryHandler).IsTrue()
@@ -414,18 +414,13 @@ public class TransportConsumerWorkerResilienceTests {
 
   #region Test Doubles
 
-  private sealed class FailingTransport : ITransport {
-    private readonly int _failureCount;
-    private readonly Exception _exceptionToThrow;
+  private sealed class FailingTransport(int failureCount, Exception? exceptionToThrow = null) : ITransport {
+    private readonly int _failureCount = failureCount;
+    private readonly Exception _exceptionToThrow = exceptionToThrow ?? new InvalidOperationException("Subscription failed");
     private int _currentFailureCount;
 
     public int SubscribeCallCount { get; private set; }
     public Action? OnSubscribeAttempt { get; set; }
-
-    public FailingTransport(int failureCount, Exception? exceptionToThrow = null) {
-      _failureCount = failureCount;
-      _exceptionToThrow = exceptionToThrow ?? new InvalidOperationException("Subscription failed");
-    }
 
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -507,13 +502,9 @@ public class TransportConsumerWorkerResilienceTests {
       throw new NotSupportedException();
   }
 
-  private sealed class SelectiveFailingTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
+  private sealed class SelectiveFailingTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
     private readonly List<TransportDestination> _successfulSubscriptions = [];
-
-    public SelectiveFailingTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
 
     public IReadOnlyList<TransportDestination> SuccessfulSubscriptions => _successfulSubscriptions;
     public bool IsInitialized => true;

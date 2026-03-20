@@ -196,12 +196,8 @@ public class DispatcherLocalInvokeSecurityTests {
   /// <summary>
   /// Test receptor that cascades to another receptor using LocalInvokeAsync.
   /// </summary>
-  public sealed class TestCascadingReceptor : IReceptor<TestCascadingCommand> {
-    private readonly IDispatcher _dispatcher;
-
-    public TestCascadingReceptor(IDispatcher dispatcher) {
-      _dispatcher = dispatcher;
-    }
+  public sealed class TestCascadingReceptor(IDispatcher dispatcher) : IReceptor<TestCascadingCommand> {
+    private readonly IDispatcher _dispatcher = dispatcher;
 
     public async ValueTask HandleAsync(TestCascadingCommand message, CancellationToken cancellationToken) {
       // Cascade to another command

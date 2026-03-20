@@ -92,7 +92,7 @@ public class DispatcherNewCodeCoverageTests {
 
   public static class PropagationEventTracker {
     private static readonly List<IEvent> _publishedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) { _publishedEvents.Clear(); }
@@ -103,7 +103,7 @@ public class DispatcherNewCodeCoverageTests {
     }
 
     public static IReadOnlyList<IEvent> GetPublishedEvents() {
-      lock (_lock) { return _publishedEvents.ToList(); }
+      lock (_lock) { return [.. _publishedEvents]; }
     }
 
     public static int Count {
@@ -141,10 +141,10 @@ public class DispatcherNewCodeCoverageTests {
 
   public static class VoidOptionsEventTracker {
     private static readonly List<IEvent> _publishedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
     public static void Reset() { lock (_lock) { _publishedEvents.Clear(); } }
     public static void Track(IEvent evt) { lock (_lock) { _publishedEvents.Add(evt); } }
-    public static IReadOnlyList<IEvent> GetPublishedEvents() { lock (_lock) { return _publishedEvents.ToList(); } }
+    public static IReadOnlyList<IEvent> GetPublishedEvents() { lock (_lock) { return [.. _publishedEvents]; } }
     public static int Count { get { lock (_lock) { return _publishedEvents.Count; } } }
   }
 

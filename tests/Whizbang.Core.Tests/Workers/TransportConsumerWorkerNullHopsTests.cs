@@ -188,17 +188,13 @@ public class TransportConsumerWorkerNullHopsTests {
   /// <summary>
   /// Test envelope that has null Hops to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullHops : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullHops(MessageId messageId) : IMessageEnvelope {
+    public MessageId MessageId { get; } = messageId;
     public object Payload => new { };
 
     // Hops is List<MessageHop> per interface, but we want to test null scenario
     // Return empty list and separately test with null IReadOnlyList
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullHops(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

@@ -51,45 +51,35 @@ public class DispatcherComprehensiveCoverageTests {
   // TEST DISPATCHER (concrete subclass pattern)
   // ========================================
 
-  private sealed class TestDispatcher : Core.Dispatcher {
-    private readonly ReceptorInvoker<object>? _invoker;
-    private readonly VoidReceptorInvoker? _voidInvoker;
-    private readonly SyncReceptorInvoker<object>? _syncInvoker;
-    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker;
-    private readonly Func<object, ValueTask<object?>>? _anyInvoker;
-    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher;
-    private readonly DispatchMode? _defaultRouting;
-
-    public TestDispatcher(
-      IServiceProvider sp,
-      ITraceStore? traceStore = null,
-      IEnvelopeSerializer? envelopeSerializer = null,
-      IEnvelopeRegistry? envelopeRegistry = null,
-      IOutboxRoutingStrategy? outboxRoutingStrategy = null,
-      IStreamIdExtractor? streamIdExtractor = null,
-      IScopedEventTracker? scopedEventTracker = null,
-      ReceptorInvoker<object>? invoker = null,
-      VoidReceptorInvoker? voidInvoker = null,
-      SyncReceptorInvoker<object>? syncInvoker = null,
-      VoidSyncReceptorInvoker? voidSyncInvoker = null,
-      Func<object, ValueTask<object?>>? anyInvoker = null,
-      Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
-      DispatchMode? defaultRouting = null
-    ) : base(sp, new ServiceInstanceProvider(configuration: null),
-        traceStore: traceStore,
-        envelopeSerializer: envelopeSerializer,
-        envelopeRegistry: envelopeRegistry,
-        outboxRoutingStrategy: outboxRoutingStrategy,
-        streamIdExtractor: streamIdExtractor,
-        scopedEventTracker: scopedEventTracker) {
-      _invoker = invoker;
-      _voidInvoker = voidInvoker;
-      _syncInvoker = syncInvoker;
-      _voidSyncInvoker = voidSyncInvoker;
-      _anyInvoker = anyInvoker;
-      _untypedPublisher = untypedPublisher;
-      _defaultRouting = defaultRouting;
-    }
+  private sealed class TestDispatcher(
+    IServiceProvider sp,
+    ITraceStore? traceStore = null,
+    IEnvelopeSerializer? envelopeSerializer = null,
+    IEnvelopeRegistry? envelopeRegistry = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null,
+    IStreamIdExtractor? streamIdExtractor = null,
+    IScopedEventTracker? scopedEventTracker = null,
+    ReceptorInvoker<object>? invoker = null,
+    VoidReceptorInvoker? voidInvoker = null,
+    SyncReceptorInvoker<object>? syncInvoker = null,
+    VoidSyncReceptorInvoker? voidSyncInvoker = null,
+    Func<object, ValueTask<object?>>? anyInvoker = null,
+    Func<object, IMessageEnvelope?, CancellationToken, Task>? untypedPublisher = null,
+    DispatchMode? defaultRouting = null
+    ) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+      traceStore: traceStore,
+      envelopeSerializer: envelopeSerializer,
+      envelopeRegistry: envelopeRegistry,
+      outboxRoutingStrategy: outboxRoutingStrategy,
+      streamIdExtractor: streamIdExtractor,
+      scopedEventTracker: scopedEventTracker) {
+    private readonly ReceptorInvoker<object>? _invoker = invoker;
+    private readonly VoidReceptorInvoker? _voidInvoker = voidInvoker;
+    private readonly SyncReceptorInvoker<object>? _syncInvoker = syncInvoker;
+    private readonly VoidSyncReceptorInvoker? _voidSyncInvoker = voidSyncInvoker;
+    private readonly Func<object, ValueTask<object?>>? _anyInvoker = anyInvoker;
+    private readonly Func<object, IMessageEnvelope?, CancellationToken, Task>? _untypedPublisher = untypedPublisher;
+    private readonly DispatchMode? _defaultRouting = defaultRouting;
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (_invoker != null && messageType == typeof(TestCommand)) {
@@ -189,7 +179,7 @@ public class DispatcherComprehensiveCoverageTests {
       return new SerializedEnvelope(jsonEnvelope, envelopeType, messageType);
     }
 
-    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => new object();
+    public object DeserializeMessage(MessageEnvelope<JsonElement> jsonEnvelope, string messageTypeName) => new();
   }
 
   private sealed class StubWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
@@ -485,7 +475,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_WithoutTraceStore_FastPathAsync() {
     // Arrange - no trace store, so fast path (direct invoker call)
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new TestCommand("void-fast-path");
 
@@ -504,7 +494,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_WithOptions_AsyncInvoker_NoTraceStore_CompletesAsync() {
     // Arrange - covers non-tracing path in _localInvokeVoidWithOptionsAsync
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new TestCommand("void-options-no-trace");
     var options = new DispatchOptions();
@@ -535,7 +525,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_WithOptions_SyncInvoker_CompletesAsync() {
     // Arrange - covers sync invoker fallback in _localInvokeVoidWithOptionsAsync
     var invoked = false;
-    VoidSyncReceptorInvoker syncInvoker = msg => { invoked = true; };
+    void syncInvoker(object msg) { invoked = true; }
     var dispatcher = _createDispatcher(voidSyncInvoker: syncInvoker);
     var command = new TestCommand("void-options-sync");
     var options = new DispatchOptions();
@@ -550,7 +540,7 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeAsync_Void_WithOptions_AnyInvoker_CompletesAsync() {
     // Arrange - covers anyInvoker fallback in _localInvokeVoidWithOptionsAsync
-    Func<object, ValueTask<object?>> anyInvoker = msg => new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+    ValueTask<object?> anyInvoker(object msg) => new(new TestResult(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new TestCommand("void-options-any");
     var options = new DispatchOptions();
@@ -606,7 +596,7 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeAsync_Typed_WithOptions_SyncInvoker_ReturnsResultAsync() {
     // Arrange - covers sync fallback in _localInvokeWithOptionsAsync
-    SyncReceptorInvoker<object> syncInvoker = msg => new TestResult(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new TestResult(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new TestCommand("typed-options-sync");
     var options = new DispatchOptions();
@@ -681,7 +671,7 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeWithReceiptAsync_SyncFallback_ReturnsResultAndReceiptAsync() {
     // Arrange - covers sync invoker fallback in LocalInvokeWithReceiptAsync
-    SyncReceptorInvoker<object> syncInvoker = msg => new TestResult(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new TestResult(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new TestCommand("receipt-sync-fallback");
 
@@ -722,7 +712,7 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeWithReceiptAsync_WithOptions_SyncFallback_ReturnsResultAsync() {
     // Arrange - covers sync invoker fallback in options overload
-    SyncReceptorInvoker<object> syncInvoker = msg => new TestResult(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new TestResult(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new TestCommand("receipt-options-sync");
     var options = new DispatchOptions();
@@ -769,7 +759,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_AnyInvokerFallback_WithTraceStore_CascadesAsync() {
     // Arrange - covers _localInvokeVoidWithAnyInvokerAndTracingAsync path
     var traceStore = new StubTraceStore();
-    Func<object, ValueTask<object?>> anyInvoker = msg => new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+    ValueTask<object?> anyInvoker(object msg) => new(new TestResult(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(traceStore: traceStore, anyInvoker: anyInvoker);
     var command = new TestCommand("void-any-trace");
 
@@ -784,7 +774,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_AnyInvokerReturnsNull_DoesNotCascadeAsync() {
     // Arrange - covers null result path in _localInvokeVoidWithAnyInvokerAndTracingAsync
     var traceStore = new StubTraceStore();
-    Func<object, ValueTask<object?>> anyInvoker = msg => new ValueTask<object?>((object?)null);
+    ValueTask<object?> anyInvoker(object msg) => new((object?)null);
     var dispatcher = _createDispatcher(traceStore: traceStore, anyInvoker: anyInvoker);
     var command = new TestCommand("void-any-null");
 
@@ -802,7 +792,7 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeAsync_Typed_SyncFallback_ReturnsResultAsync() {
     // Arrange - covers sync invoker wrapping in LocalInvokeAsync<TResult>
-    SyncReceptorInvoker<object> syncInvoker = msg => new TestResult(Guid.NewGuid(), true);
+    object syncInvoker(object msg) => new TestResult(Guid.NewGuid(), true);
     var dispatcher = _createDispatcher(syncInvoker: syncInvoker);
     var command = new TestCommand("sync-fallback");
 
@@ -818,7 +808,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_VoidSyncFallback_CompletesAsync() {
     // Arrange - covers void sync invoker fallback in void LocalInvokeAsync
     var invoked = false;
-    VoidSyncReceptorInvoker syncInvoker = msg => { invoked = true; };
+    void syncInvoker(object msg) { invoked = true; }
     var dispatcher = _createDispatcher(voidSyncInvoker: syncInvoker);
     var command = new TestCommand("void-sync-fallback");
 
@@ -837,7 +827,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Typed_AnyInvokerFallback_ReturnsExtractedResultAsync() {
     // Arrange - covers GetReceptorInvokerAny fallback in LocalInvokeAsync<TResult>
     // when both async and sync invokers are null
-    Func<object, ValueTask<object?>> anyInvoker = msg => new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+    ValueTask<object?> anyInvoker(object msg) => new(new TestResult(Guid.NewGuid(), true));
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new TestCommand("rpc-extraction");
 
@@ -964,10 +954,10 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task CascadeMessageAsync_LocalMode_InvokesLocalPublisherAsync() {
     // Arrange
     var published = false;
-    Func<object, IMessageEnvelope?, CancellationToken, Task> publisher = (msg, env, ct) => {
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
       published = true;
       return Task.CompletedTask;
-    };
+    }
     var dispatcher = _createDispatcher(untypedPublisher: publisher);
     var evt = new TestEvent(Guid.NewGuid());
 
@@ -1138,7 +1128,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_Void_AutoContext_CompletesAsync() {
     // Arrange - covers LocalInvokeAsync(object) auto-context overload
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new TestCommand("void-auto-context");
 
@@ -1304,7 +1294,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_GenericTMessage_Void_AutoContext_CompletesAsync() {
     // Arrange - covers void LocalInvokeAsync<TMessage>(message) overload
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new TestCommand("generic-void-auto");
 
@@ -1319,7 +1309,7 @@ public class DispatcherComprehensiveCoverageTests {
   public async Task LocalInvokeAsync_GenericTMessage_Void_WithContext_CompletesAsync() {
     // Arrange - covers void LocalInvokeAsync<TMessage>(message, context) overload
     var invoked = false;
-    VoidReceptorInvoker voidInvoker = msg => { invoked = true; return ValueTask.CompletedTask; };
+    ValueTask voidInvoker(object msg) { invoked = true; return ValueTask.CompletedTask; }
     var dispatcher = _createDispatcher(voidInvoker: voidInvoker);
     var command = new TestCommand("generic-void-ctx");
     var context = MessageContext.New();
@@ -1484,7 +1474,7 @@ public class DispatcherComprehensiveCoverageTests {
     var options = new DispatchOptions();
 
     // Act
-    var invokeResult = await dispatcher.LocalInvokeWithReceiptAsync<object>(command, options);
+    _ = await dispatcher.LocalInvokeWithReceiptAsync<object>(command, options);
 
     // Assert
     await Assert.That(traceStore.StoreCallCount).IsEqualTo(1);

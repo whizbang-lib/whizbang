@@ -75,27 +75,22 @@ public class DispatcherCascadeTrackingTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that cascades events with tracking support.
   /// </summary>
-  private sealed class CascadeTrackingTestDispatcher : Core.Dispatcher {
-    private readonly Func<object, (object message, DispatchMode mode)>? _cascadeResult;
+  private sealed class CascadeTrackingTestDispatcher(
+    IServiceProvider serviceProvider,
+    IScopedEventTracker? tracker = null,
+    IStreamIdExtractor? streamIdExtractor = null,
+    Func<object, (object message, DispatchMode mode)>? cascadeResult = null) : Core.Dispatcher(
+        serviceProvider,
+        new ServiceInstanceProvider(configuration: null),
+        scopedEventTracker: tracker,
+        streamIdExtractor: streamIdExtractor) {
+    private readonly Func<object, (object message, DispatchMode mode)>? _cascadeResult = cascadeResult;
     private readonly List<object> _localInvocations = [];
-    private readonly object _lock = new();
-
-    public CascadeTrackingTestDispatcher(
-      IServiceProvider serviceProvider,
-      IScopedEventTracker? tracker = null,
-      IStreamIdExtractor? streamIdExtractor = null,
-      Func<object, (object message, DispatchMode mode)>? cascadeResult = null)
-        : base(
-          serviceProvider,
-          new ServiceInstanceProvider(configuration: null),
-          scopedEventTracker: tracker,
-          streamIdExtractor: streamIdExtractor) {
-      _cascadeResult = cascadeResult;
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetLocalInvocations() {
       lock (_lock) {
-        return _localInvocations.ToList();
+        return [.. _localInvocations];
       }
     }
 

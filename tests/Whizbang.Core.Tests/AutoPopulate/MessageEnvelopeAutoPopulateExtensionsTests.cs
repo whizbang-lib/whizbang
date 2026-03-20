@@ -56,7 +56,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_ReturnsDefault_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.GetAutoPopulated<DateTimeOffset>("NonExistent");
@@ -68,7 +68,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task GetAutoPopulated_ReturnsNull_ForNullableWhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.GetAutoPopulated<string>("NonExistent");
@@ -168,7 +168,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task TryGetAutoPopulated_ReturnsFalse_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var found = envelope.TryGetAutoPopulated<string>("NonExistent", out var result);
@@ -201,7 +201,7 @@ public class MessageEnvelopeAutoPopulateExtensionsTests {
   [Test]
   public async Task HasAutoPopulated_ReturnsFalse_WhenPropertyDoesNotExistAsync() {
     // Arrange
-    var envelope = _createEnvelopeWithAutoPopulatedMetadata(new Dictionary<string, JsonElement>());
+    var envelope = _createEnvelopeWithAutoPopulatedMetadata([]);
 
     // Act
     var result = envelope.HasAutoPopulated("NonExistent");

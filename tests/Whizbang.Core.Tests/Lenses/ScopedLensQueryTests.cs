@@ -326,12 +326,8 @@ public class ScopedLensQueryTests {
   /// <summary>
   /// Tracks scope disposal for testing
   /// </summary>
-  private sealed class ScopeTracker : IDisposable {
-    private readonly Action _onDispose;
-
-    public ScopeTracker(Action onDispose) {
-      _onDispose = onDispose;
-    }
+  private sealed class ScopeTracker(Action onDispose) : IDisposable {
+    private readonly Action _onDispose = onDispose;
 
     public void Dispose() {
       _onDispose();

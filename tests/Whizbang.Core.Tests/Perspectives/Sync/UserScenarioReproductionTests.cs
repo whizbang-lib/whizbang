@@ -242,14 +242,9 @@ internal sealed class UserScenarioPerspectiveC { }
 /// Mock work coordinator that integrates with the singleton tracker.
 /// Returns synced when all tracked events have been marked as processed.
 /// </summary>
-internal sealed class MockWorkCoordinatorWithTracker : IWorkCoordinator {
-  private readonly ISyncEventTracker _tracker;
-  private readonly string _perspectiveName;
-
-  public MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) {
-    _tracker = tracker;
-    _perspectiveName = perspectiveName;
-  }
+internal sealed class MockWorkCoordinatorWithTracker(ISyncEventTracker tracker, string perspectiveName) : IWorkCoordinator {
+  private readonly ISyncEventTracker _tracker = tracker;
+  private readonly string _perspectiveName = perspectiveName;
 
   public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken ct = default) {
     // Check if there are any pending events for any of the sync inquiries

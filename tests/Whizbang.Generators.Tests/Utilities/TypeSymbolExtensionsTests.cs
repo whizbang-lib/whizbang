@@ -452,16 +452,12 @@ public class TypeSymbolExtensionsTests {
   private static INamedTypeSymbol _getTypeSymbol(string source, string typeName) {
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName(typeName);
-    if (typeSymbol is null) {
-      // Try without namespace
-      typeSymbol = compilation.Assembly.GetTypeByMetadataName(typeName);
-    }
-    if (typeSymbol is null) {
-      // Search all types
-      typeSymbol = compilation.GetSymbolsWithName(typeName, SymbolFilter.Type)
-          .OfType<INamedTypeSymbol>()
-          .FirstOrDefault();
-    }
+    // Try without namespace
+    typeSymbol ??= compilation.Assembly.GetTypeByMetadataName(typeName);
+    // Search all types
+    typeSymbol ??= compilation.GetSymbolsWithName(typeName, SymbolFilter.Type)
+        .OfType<INamedTypeSymbol>()
+        .FirstOrDefault();
     return typeSymbol ?? throw new InvalidOperationException($"Type '{typeName}' not found in compilation");
   }
 

@@ -381,7 +381,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -398,7 +398,7 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ]
     };
   }
 
@@ -410,7 +410,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -427,7 +427,7 @@ public class ReceptorInvokerInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ]
     };
   }
 
@@ -436,7 +436,7 @@ public class ReceptorInvokerInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -450,7 +450,7 @@ public class ReceptorInvokerInitiatingContextTests {
           },
           Scope = null
         }
-      }
+      ]
     };
   }
 
@@ -501,12 +501,12 @@ public class ReceptorInvokerInitiatingContextTests {
   /// Simple test receptor registry for testing.
   /// </summary>
   private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(ReceptorInfo receptor, LifecycleStage stage) {
       var key = (receptor.MessageType, stage);
       if (!_receptors.TryGetValue(key, out var list)) {
-        list = new List<ReceptorInfo>();
+        list = [];
         _receptors[key] = list;
       }
       list.Add(receptor);

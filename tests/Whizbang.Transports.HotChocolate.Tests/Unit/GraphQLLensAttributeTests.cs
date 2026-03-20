@@ -26,10 +26,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task QueryName_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.QueryName = "orders";
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      QueryName = "orders"
+    };
 
     // Assert
     await Assert.That(attribute.QueryName).IsEqualTo("orders");
@@ -38,10 +38,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task Scope_ShouldBeSettableToDataOnlyAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.Scope = GraphQLLensScope.DataOnly;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      Scope = GraphQLLensScope.DataOnly
+    };
 
     // Assert
     await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.DataOnly);
@@ -50,10 +50,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task Scope_ShouldBeSettableToAllAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.Scope = GraphQLLensScope.All;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      Scope = GraphQLLensScope.All
+    };
 
     // Assert
     await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.All);
@@ -62,10 +62,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task Scope_ShouldBeSettableToComposedFlagsAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.Scope = GraphQLLensScope.Data | GraphQLLensScope.Metadata | GraphQLLensScope.SystemFields;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      Scope = GraphQLLensScope.Data | GraphQLLensScope.Metadata | GraphQLLensScope.SystemFields
+    };
     var hasData = attribute.Scope.HasFlag(GraphQLLensScope.Data);
     var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScope.Metadata);
     var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScope.SystemFields);
@@ -81,10 +81,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task EnableFiltering_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.EnableFiltering = false;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      EnableFiltering = false
+    };
 
     // Assert
     await Assert.That(attribute.EnableFiltering).IsFalse();
@@ -93,10 +93,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task EnableSorting_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.EnableSorting = false;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      EnableSorting = false
+    };
 
     // Assert
     await Assert.That(attribute.EnableSorting).IsFalse();
@@ -105,10 +105,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task EnablePaging_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.EnablePaging = false;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      EnablePaging = false
+    };
 
     // Assert
     await Assert.That(attribute.EnablePaging).IsFalse();
@@ -117,10 +117,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task EnableProjection_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.EnableProjection = false;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      EnableProjection = false
+    };
 
     // Assert
     await Assert.That(attribute.EnableProjection).IsFalse();
@@ -129,10 +129,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task DefaultPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 25;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      DefaultPageSize = 25
+    };
 
     // Assert
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(25);
@@ -141,10 +141,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task MaxPageSize_ShouldBeSettableAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.MaxPageSize = 500;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      MaxPageSize = 500
+    };
 
     // Assert
     await Assert.That(attribute.MaxPageSize).IsEqualTo(500);
@@ -169,10 +169,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task Scope_ShouldBeSettableToNoDataAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.Scope = GraphQLLensScope.NoData;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      Scope = GraphQLLensScope.NoData
+    };
     var hasMetadata = attribute.Scope.HasFlag(GraphQLLensScope.Metadata);
     var hasScope = attribute.Scope.HasFlag(GraphQLLensScope.Scope);
     var hasSystemFields = attribute.Scope.HasFlag(GraphQLLensScope.SystemFields);
@@ -214,10 +214,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task QueryName_EmptyString_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.QueryName = "";
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      QueryName = ""
+    };
 
     // Assert
     await Assert.That(attribute.QueryName).IsEqualTo("");
@@ -226,10 +226,10 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task DefaultPageSize_Zero_ShouldBeAllowedAsync() {
     // Arrange
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 0;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      DefaultPageSize = 0
+    };
 
     // Assert
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(0);
@@ -238,11 +238,11 @@ public class GraphQLLensAttributeTests {
   [Test]
   public async Task MaxPageSize_LessThanDefault_ShouldBeAllowedAsync() {
     // Arrange - attribute doesn't enforce validation, that's done at runtime
-    var attribute = new GraphQLLensAttribute();
-
-    // Act
-    attribute.DefaultPageSize = 100;
-    attribute.MaxPageSize = 50;
+    var attribute = new GraphQLLensAttribute {
+      // Act
+      DefaultPageSize = 100,
+      MaxPageSize = 50
+    };
 
     // Assert - values are stored as-is (validation at runtime)
     await Assert.That(attribute.DefaultPageSize).IsEqualTo(100);

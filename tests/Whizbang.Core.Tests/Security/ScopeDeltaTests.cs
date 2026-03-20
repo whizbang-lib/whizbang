@@ -814,7 +814,7 @@ public class ScopeDeltaTests {
       Roles = roles.ToHashSet(),
       Permissions = permissions.ToHashSet(),
       SecurityPrincipals = principals.ToHashSet(),
-      Claims = claims ?? new Dictionary<string, string>(),
+      Claims = claims ?? [],
       ActualPrincipal = actualPrincipal,
       EffectivePrincipal = effectivePrincipal,
       ContextType = contextType

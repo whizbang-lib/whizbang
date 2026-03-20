@@ -1,3 +1,5 @@
+#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
+
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Lenses;

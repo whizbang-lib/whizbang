@@ -206,10 +206,8 @@ public class TransportConsumerBuilderExtensionsServiceNameTests {
   // Test Helpers
   // ========================================
 
-  private sealed class TestProvider : IServiceInstanceProvider {
-    public TestProvider(string serviceName) { ServiceName = serviceName; }
-    public string ServiceName { get; }
-    public Guid InstanceId => Guid.NewGuid();
+  private sealed class TestProvider(string serviceName) : IServiceInstanceProvider {
+    public string ServiceName { get; } = serviceName; public Guid InstanceId => Guid.NewGuid();
     public string HostName => "test-host";
     public int ProcessId => Environment.ProcessId;
 

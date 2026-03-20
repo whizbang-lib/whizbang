@@ -502,17 +502,12 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   /// <summary>
   /// Work coordinator strategy that captures inbox messages and returns them as work items.
   /// </summary>
-  private sealed class CapturingWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    private readonly List<InboxMessage> _capturedMessages;
-    private readonly Action<IServiceProvider?>? _onFlush;
+  private sealed class CapturingWorkCoordinatorStrategy(
+      List<InboxMessage> capturedMessages,
+      Action<IServiceProvider?>? onFlush = null) : IWorkCoordinatorStrategy {
+    private readonly List<InboxMessage> _capturedMessages = capturedMessages;
+    private readonly Action<IServiceProvider?>? _onFlush = onFlush;
     private InboxMessage? _pendingMessage;
-
-    public CapturingWorkCoordinatorStrategy(
-        List<InboxMessage> capturedMessages,
-        Action<IServiceProvider?>? onFlush = null) {
-      _capturedMessages = capturedMessages;
-      _onFlush = onFlush;
-    }
 
     public void QueueOutboxMessage(OutboxMessage message) { }
 
@@ -559,15 +554,10 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
   /// <summary>
   /// Strategy that tracks processed message IDs and returns empty for duplicates.
   /// </summary>
-  private sealed class DuplicateDetectingStrategy : IWorkCoordinatorStrategy {
-    private readonly List<Guid> _processedIds;
-    private readonly Action _onFlush;
+  private sealed class DuplicateDetectingStrategy(List<Guid> processedIds, Action onFlush) : IWorkCoordinatorStrategy {
+    private readonly List<Guid> _processedIds = processedIds;
+    private readonly Action _onFlush = onFlush;
     private InboxMessage? _pendingMessage;
-
-    public DuplicateDetectingStrategy(List<Guid> processedIds, Action onFlush) {
-      _processedIds = processedIds;
-      _onFlush = onFlush;
-    }
 
     public void QueueOutboxMessage(OutboxMessage message) { }
 

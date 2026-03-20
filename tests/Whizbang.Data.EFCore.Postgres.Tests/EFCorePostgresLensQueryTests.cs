@@ -111,7 +111,7 @@ public class EFCorePostgresLensQueryTests {
 
     // Assert
     await Assert.That(query).IsNotNull();
-    await Assert.That(query is IQueryable<PerspectiveRow<TestModel>>).IsTrue();
+    await Assert.That(query is not null).IsTrue();
   }
 
   [Test]
@@ -219,9 +219,9 @@ public class EFCorePostgresLensQueryTests {
     // Act - Project fields from data, metadata, and scope
     var results = await lensQuery.Query
         .Select(row => new {
-          Name = row.Data.Name,
-          EventType = row.Metadata.EventType,
-          TenantId = row.Scope.TenantId
+          row.Data.Name,
+          row.Metadata.EventType,
+          row.Scope.TenantId
         })
         .ToListAsync();
 
@@ -374,9 +374,7 @@ public class TestModel {
 /// Note: Uses owned types instead of JSON for InMemory compatibility.
 /// The actual PostgreSQL implementation will use JSON columns.
 /// </summary>
-public class TestDbContext : DbContext {
-  public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
-
+public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     // Configure PerspectiveRow<TestModel> as entity
     ConfigurePerspectiveRow<TestModel>(modelBuilder);

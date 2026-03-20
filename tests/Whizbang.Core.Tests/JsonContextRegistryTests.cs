@@ -37,7 +37,7 @@ public partial class JsonContextRegistryTests {
   public async Task RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync() {
     // Arrange
     var converter = new TestIdJsonConverter();
-    var initialCount = JsonContextRegistry.RegisteredCount;
+    _ = JsonContextRegistry.RegisteredCount;
 
     // Act
     JsonContextRegistry.RegisterConverter(converter);
@@ -1258,7 +1258,7 @@ public partial class JsonContextRegistryTests {
     var eventId = Guid.NewGuid();
     var messageId = MessageId.New();
     var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
-    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+    _ = new MessageEnvelope<IEvent>(messageId, payload, []);
 
     // BROKEN: Serialize using CONCRETE type info (no $type discriminator)
     var concreteTypeInfo = options.GetTypeInfo(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>));
