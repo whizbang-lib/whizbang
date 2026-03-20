@@ -16,6 +16,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithImmediateOption_ReturnsImmediateStrategyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithIntervalOption_ReturnsIntervalStrategyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:CreateStrategy_WithBatchOption_ReturnsBatchStrategyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_IntervalSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_BatchSingleton_WorkChannelWriterIsNull_WorkNotWrittenAsync</tests>
 public static class WorkCoordinatorStrategyFactory {
   /// <summary>
   /// Creates a new work coordinator strategy instance based on the specified strategy type.
@@ -93,6 +95,8 @@ public static class WorkCoordinatorStrategyFactory {
       scopeFactory: sp.GetService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
       tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      metrics: sp.GetService<WorkCoordinatorMetrics>(),
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
       workChannelWriter: channelWriter
     );
   }
@@ -111,6 +115,8 @@ public static class WorkCoordinatorStrategyFactory {
       scopeFactory: sp.GetService<IServiceScopeFactory>(),
       lifecycleMessageDeserializer: sp.GetService<ILifecycleMessageDeserializer>(),
       tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
+      metrics: sp.GetService<WorkCoordinatorMetrics>(),
+      lifecycleMetrics: sp.GetService<LifecycleMetrics>(),
       workChannelWriter: channelWriter
     );
   }

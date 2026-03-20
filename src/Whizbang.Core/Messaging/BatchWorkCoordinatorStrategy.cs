@@ -224,7 +224,11 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
+  }
+
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchFlags flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
@@ -324,7 +328,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
         _lifecycleMetrics,
         workChannelWriter: _workChannelWriter,
         pendingAuditMessages: null,
-        ct
+        ct,
+        skipLifecycle: skipLifecycle
       );
 
       if (_logger != null) {
@@ -376,9 +381,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       LogBatchSizeReached(_logger, _options.BatchSize);
     }
 
+    // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await FlushAsync(WorkBatchFlags.None);
+        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringBatchFlush(_logger, ex);
@@ -399,9 +405,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       LogDebounceTimerFired(_logger, _options.IntervalMilliseconds);
     }
 
+    // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await FlushAsync(WorkBatchFlags.None);
+        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringDebounceFlush(_logger, ex);
@@ -446,7 +453,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
-      await FlushAsync(WorkBatchFlags.None);
+      await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

@@ -146,7 +146,8 @@ internal sealed class WorkCoordinatorQueues {
   }
 
   /// <summary>
-  /// Clears all queues after a successful flush.
+  /// Clears all queues after a successful flush,
+  /// including pending audit messages to prevent stale accumulation across flushes.
   /// </summary>
   internal void Clear() {
     OutboxMessages.Clear();
@@ -155,5 +156,6 @@ internal sealed class WorkCoordinatorQueues {
     OutboxFailures.Clear();
     InboxCompletions.Clear();
     InboxFailures.Clear();
+    PendingAuditMessages.Clear();
   }
 }
