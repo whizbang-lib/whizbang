@@ -8,7 +8,10 @@ on:
     branches: [main, develop, 'release/**']
   workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read
+  pull-requests: write   # Required for version comment on PRs
+  id-token: write        # Required for NuGet OIDC trusted publishing
 
 concurrency:
   # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
@@ -235,9 +238,6 @@ jobs:
     name: Publish Prerelease NuGet
     needs: [version, pack]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    permissions:
-      contents: read
-      id-token: write
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.version.outputs.semver }}
