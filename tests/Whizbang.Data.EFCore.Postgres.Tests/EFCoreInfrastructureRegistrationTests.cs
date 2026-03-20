@@ -1,11 +1,14 @@
 #pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -31,10 +34,19 @@ public class InfraTestDbContext(DbContextOptions<InfraTestDbContext> options) : 
 /// Target: 100% branch coverage.
 /// </summary>
 public class EFCoreInfrastructureRegistrationTests {
+  /// <summary>
+  /// Registers the scope dependencies required by EFCorePostgresLensQuery constructors.
+  /// </summary>
+  private static void _registerScopeDeps(IServiceCollection services) {
+    services.AddSingleton<IScopeContextAccessor>(NullScopeContextAccessor.Instance);
+    services.AddSingleton<IOptions<WhizbangCoreOptions>>(GlobalScopeOptions.Instance);
+  }
+
   [Test]
   public async Task RegisterPerspectiveModel_RegistersIPerspectiveStoreAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContext<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -58,6 +70,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterPerspectiveModel_RegistersILensQueryAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContext<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -81,6 +94,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterPerspectiveModel_WithMultipleModels_RegistersBothAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContext<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -114,6 +128,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterPerspectiveModel_CreatesCorrectStoreTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContext<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -138,6 +153,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterPerspectiveModel_CreatesCorrectQueryTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContext<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -181,6 +197,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_RegistersILensQueryAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -204,6 +221,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -230,6 +248,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_CreatesCorrectTypeAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -253,6 +272,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_ThreeGeneric_RegistersILensQueryAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -277,6 +297,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_ThreeGeneric_IsTransient_ReturnsDifferentInstancesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -304,6 +325,7 @@ public class EFCoreInfrastructureRegistrationTests {
   public async Task RegisterMultiLensQuery_TwoGeneric_EachInstanceGetsDifferentDbContextAsync() {
     // Arrange
     var services = new ServiceCollection();
+    _registerScopeDeps(services);
     services.AddDbContextFactory<InfraTestDbContext>(options =>
       options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
 
@@ -362,6 +384,133 @@ public class EFCoreInfrastructureRegistrationTests {
           services,
           null!))
         .Throws<ArgumentNullException>();
+  }
+
+  #endregion
+
+  #region Scope API DI Resolution Tests
+
+  [Test]
+  public async Task RegisterPerspectiveModel_ResolvedQuery_HasScopeMethodAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerScopeDeps(services);
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var upsertStrategy = new InMemoryUpsertStrategy();
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(InfraTestDbContext), typeof(SamplePerspectiveModel), "sample_perspective", upsertStrategy);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel>>();
+    var scopedAccess = query.Scope(QueryScope.Global);
+
+    // Assert — Global scope returns without throwing
+    await Assert.That(scopedAccess).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterPerspectiveModel_ResolvedQuery_DefaultScope_WorksAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerScopeDeps(services);
+    services.AddDbContext<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var upsertStrategy = new InMemoryUpsertStrategy();
+    EFCoreInfrastructureRegistration.RegisterPerspectiveModel(
+      services, typeof(InfraTestDbContext), typeof(SamplePerspectiveModel), "sample_perspective", upsertStrategy);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act — DefaultScope uses Global (from NullScopeContextAccessor defaults)
+    var query = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel>>();
+    var defaultAccess = query.DefaultScope;
+
+    // Assert
+    await Assert.That(defaultAccess).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_ResolvedQuery_HasScopeMethodAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerScopeDeps(services);
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
+      services, tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+    var scopedAccess = query.Scope(QueryScope.Global);
+
+    // Assert
+    await Assert.That(scopedAccess).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_ResolvedQuery_DefaultScope_WorksAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerScopeDeps(services);
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel>(
+      services, tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel>>();
+    var defaultAccess = query.DefaultScope;
+
+    // Assert
+    await Assert.That(defaultAccess).IsNotNull();
+  }
+
+  [Test]
+  public async Task RegisterMultiLensQuery_ThreeGeneric_ResolvedQuery_HasScopeMethodAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _registerScopeDeps(services);
+    services.AddDbContextFactory<InfraTestDbContext>(options =>
+      options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
+
+    var tableNames = new Dictionary<Type, string> {
+      { typeof(SamplePerspectiveModel), "sample_perspective" },
+      { typeof(CustomerModel), "customer_perspective" },
+      { typeof(ProductModel), "product_perspective" }
+    };
+
+    EFCoreInfrastructureRegistration.RegisterMultiLensQuery<InfraTestDbContext, SamplePerspectiveModel, CustomerModel, ProductModel>(
+      services, tableNames);
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    // Act
+    var query = serviceProvider.GetRequiredService<ILensQuery<SamplePerspectiveModel, CustomerModel, ProductModel>>();
+    var scopedAccess = query.Scope(QueryScope.Global);
+
+    // Assert
+    await Assert.That(scopedAccess).IsNotNull();
   }
 
   #endregion
