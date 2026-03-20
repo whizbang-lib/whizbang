@@ -11,7 +11,7 @@ public class DecisionFileTests {
   [Test]
   public async Task Create_ReturnsNewDecisionFileWithDefaults_Async() {
     // Arrange
-    var projectPath = "/src/MyProject";
+    const string projectPath = "/src/MyProject";
 
     // Act
     var decisionFile = DecisionFile.Create(projectPath);
@@ -44,7 +44,7 @@ public class DecisionFileTests {
   [Test]
   public async Task DeserializeFromJson_RestoresDecisionFile_Async() {
     // Arrange - using snake_case property names to match JSON serialization policy
-    var json = """
+    const string json = """
       {
         "version": "1.0",
         "project_path": "/src/MyProject",
@@ -115,7 +115,7 @@ public class DecisionFileTests {
   public async Task LoadFromFile_ReadsJsonFromPath_Async() {
     // Arrange
     var tempPath = Path.Combine(Path.GetTempPath(), $"test-decisions-{Guid.NewGuid()}.json");
-    var json = """
+    const string json = """
       {
         "version": "1.0",
         "project_path": "/src/TestProject",
@@ -145,7 +145,7 @@ public class DecisionFileTests {
   [Test]
   public async Task GetDefaultPath_ReturnsUserProfilePath_Async() {
     // Arrange
-    var projectName = "MyProject";
+    const string projectName = "MyProject";
 
     // Act
     var defaultPath = DecisionFile.GetDefaultPath(projectName);

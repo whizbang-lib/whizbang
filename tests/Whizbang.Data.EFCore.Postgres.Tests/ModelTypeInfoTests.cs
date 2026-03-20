@@ -16,7 +16,7 @@ public class ModelTypeInfoTests {
   public async Task ModelTypeInfo_Constructor_StoresTypeAndTableNameAsync() {
     // Arrange
     var modelType = typeof(TestModel);
-    var tableName = "test_model";
+    const string tableName = "test_model";
 
     // Act
     var info = new ModelTypeInfo(modelType, tableName);
@@ -34,7 +34,7 @@ public class ModelTypeInfoTests {
   public async Task ModelTypeInfo_Equality_TwoInstancesWithSameValues_AreEqualAsync() {
     // Arrange
     var modelType = typeof(TestModel);
-    var tableName = "test_model";
+    const string tableName = "test_model";
 
     var info1 = new ModelTypeInfo(modelType, tableName);
     var info2 = new ModelTypeInfo(modelType, tableName);
@@ -66,7 +66,7 @@ public class ModelTypeInfoTests {
   public async Task ModelTypeInfo_Deconstruction_ExtractsTypeAndTableNameAsync() {
     // Arrange
     var modelType = typeof(TestModel);
-    var tableName = "test_model";
+    const string tableName = "test_model";
     var info = new ModelTypeInfo(modelType, tableName);
 
     // Act

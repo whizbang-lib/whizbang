@@ -17,17 +17,18 @@ public class EFCorePerspectiveAssociationGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesEFCoreRegistrationMethodAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderModel {
-    public string OrderId { get; set; } = """";
+    public string OrderId { get; set; } = "";
   }
 
   public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
@@ -35,7 +36,8 @@ namespace TestNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -45,20 +47,20 @@ namespace TestNamespace {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have EF Core usings
-    await Assert.That(generatedSource!).Contains("using Microsoft.EntityFrameworkCore;");
-    await Assert.That(generatedSource!).Contains("using Microsoft.Extensions.Logging;");
+    await Assert.That(generatedSource).Contains("using Microsoft.EntityFrameworkCore;");
+    await Assert.That(generatedSource).Contains("using Microsoft.Extensions.Logging;");
 
     // Should have RegisterPerspectiveAssociationsAsync method
-    await Assert.That(generatedSource!).Contains("RegisterPerspectiveAssociationsAsync");
-    await Assert.That(generatedSource!).Contains("DbContext");
-    await Assert.That(generatedSource!).Contains("ExecuteSqlRawAsync");
+    await Assert.That(generatedSource).Contains("RegisterPerspectiveAssociationsAsync");
+    await Assert.That(generatedSource).Contains("DbContext");
+    await Assert.That(generatedSource).Contains("ExecuteSqlRawAsync");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_EmptyCompilation_GeneratesNothingAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 namespace TestNamespace {
@@ -79,25 +81,26 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultiplePerspectives_GeneratesAllAssociationsAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record PaymentProcessedEvent : IEvent {
-    public string PaymentId { get; init; } = """";
+    public string PaymentId { get; init; } = "";
   }
 
   public record OrderModel {
-    public string OrderId { get; set; } = """";
+    public string OrderId { get; set; } = "";
   }
 
   public record PaymentModel {
-    public string PaymentId { get; set; } = """";
+    public string PaymentId { get; set; } = "";
   }
 
   public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
@@ -111,7 +114,8 @@ namespace TestNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -119,27 +123,28 @@ namespace TestNamespace {
     // Assert - Should generate associations for both perspectives
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("OrderPerspective");
-    await Assert.That(generatedSource!).Contains("PaymentPerspective");
-    await Assert.That(generatedSource!).Contains("OrderCreatedEvent");
-    await Assert.That(generatedSource!).Contains("PaymentProcessedEvent");
+    await Assert.That(generatedSource).Contains("OrderPerspective");
+    await Assert.That(generatedSource).Contains("PaymentPerspective");
+    await Assert.That(generatedSource).Contains("OrderCreatedEvent");
+    await Assert.That(generatedSource).Contains("PaymentProcessedEvent");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesJsonFormatForDatabaseAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record ProductCreatedEvent : IEvent {
-    public string ProductId { get; init; } = """";
+    public string ProductId { get; init; } = "";
   }
 
   public record ProductModel {
-    public string ProductId { get; set; } = """";
+    public string ProductId { get; set; } = "";
   }
 
   public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
@@ -147,7 +152,8 @@ namespace TestNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -155,28 +161,29 @@ namespace TestNamespace {
     // Assert - Should generate JSON format for database registration
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("MessageType");
-    await Assert.That(generatedSource!).Contains("AssociationType");
-    await Assert.That(generatedSource!).Contains("TargetName");
-    await Assert.That(generatedSource!).Contains("ServiceName");
-    await Assert.That(generatedSource!).Contains("perspective");
+    await Assert.That(generatedSource).Contains("MessageType");
+    await Assert.That(generatedSource).Contains("AssociationType");
+    await Assert.That(generatedSource).Contains("TargetName");
+    await Assert.That(generatedSource).Contains("ServiceName");
+    await Assert.That(generatedSource).Contains("perspective");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_AbstractClass_IsIgnoredAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderModel {
-    public string OrderId { get; set; } = """";
+    public string OrderId { get; set; } = "";
   }
 
   public abstract class BasePerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
@@ -188,7 +195,8 @@ namespace TestNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -196,8 +204,8 @@ namespace TestNamespace {
     // Assert - Should only register the concrete class, not the abstract base
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("ConcretePerspective");
-    await Assert.That(generatedSource!).DoesNotContain("BasePerspective");
+    await Assert.That(generatedSource).Contains("ConcretePerspective");
+    await Assert.That(generatedSource).DoesNotContain("BasePerspective");
   }
 
   [Test]
@@ -206,21 +214,22 @@ namespace TestNamespace {
     // Arrange - A perspective implementing multiple interfaces that share the same event type
     // This can cause duplicate (PerspectiveClassName, MessageTypeName) pairs which would cause
     // "ON CONFLICT DO UPDATE command cannot affect row a second time" PostgreSQL errors
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderUpdatedEvent : IEvent {
-    public string OrderId { get; init; } = """";
+    public string OrderId { get; init; } = "";
   }
 
   public record OrderModel {
-    public string OrderId { get; set; } = """";
+    public string OrderId { get; set; } = "";
   }
 
   // A perspective implementing two IPerspectiveFor interfaces
@@ -236,7 +245,8 @@ namespace TestNamespace {
       return currentData;
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -272,7 +282,8 @@ namespace TestNamespace {
   public async Task Generator_NestedPerspective_UsesClrTypeNameWithPlusSeparatorAsync() {
     // Arrange - A nested perspective class inside an Activity parent class
     // This is a common pattern: Activity { Model, Projection }
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -285,17 +296,18 @@ namespace TestNamespace {
     public class Model {
       [StreamId]
       public Guid Id { get; set; }
-      public string Name { get; set; } = """";
+      public string Name { get; set; } = "";
     }
 
-    // Nested perspective class - should be registered as ""TestNamespace.Activity+Projection""
+    // Nested perspective class - should be registered as "TestNamespace.Activity+Projection"
     public class Projection : IPerspectiveFor<Model, CreatedEvent> {
       public Model Apply(Model currentData, CreatedEvent @event) {
         return currentData;
       }
     }
   }
-}";
+}
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
@@ -306,12 +318,12 @@ namespace TestNamespace {
 
     // The perspective name should use CLR format: "Namespace.Parent+Child"
     // NOT just "Projection" or "Activity.Projection"
-    await Assert.That(generatedSource!).Contains("TestNamespace.Activity+Projection")
+    await Assert.That(generatedSource).Contains("TestNamespace.Activity+Projection")
       .Because("nested perspective should use CLR format with '+' separator");
 
     // Should NOT contain just "Projection" without the parent
     // (checking that the TargetName includes the parent)
-    await Assert.That(generatedSource!).DoesNotContain("\"TargetName\\\": \\\"Projection\\\"")
+    await Assert.That(generatedSource).DoesNotContain("\"TargetName\\\": \\\"Projection\\\"")
       .Because("nested perspective should include parent class in name");
   }
 
@@ -319,7 +331,7 @@ namespace TestNamespace {
   [RequiresAssemblyFiles()]
   public async Task Generator_DeeplyNestedPerspective_UsesClrTypeNameAsync() {
     // Arrange - A deeply nested perspective class (multiple levels)
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -353,7 +365,7 @@ namespace TestNamespace {
     await Assert.That(generatedSource).IsNotNull();
 
     // The perspective name should use CLR format: "Namespace.Parent+Child+GrandChild"
-    await Assert.That(generatedSource!).Contains("TestNamespace.Sessions+Active+Projection")
+    await Assert.That(generatedSource).Contains("TestNamespace.Sessions+Active+Projection")
       .Because("deeply nested perspective should use CLR format with '+' for each nesting level");
   }
 }

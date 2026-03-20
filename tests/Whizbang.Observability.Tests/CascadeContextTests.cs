@@ -121,8 +121,8 @@ public class CascadeContextTests {
   [Test]
   public async Task NewRootWithAmbientSecurity_WithAmbientContext_InheritsSecurityAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     var scopeContext = _createTestScopeContext(testUserId, testTenantId, shouldPropagate: true);
     ScopeContextAccessor.CurrentContext = scopeContext;
@@ -193,8 +193,8 @@ public class CascadeContextTests {
   [Test]
   public async Task GetSecurityFromAmbient_WithImmutableContextAndPropagation_ReturnsSecurityAsync() {
     // Arrange
-    var testUserId = "propagate-user";
-    var testTenantId = "propagate-tenant";
+    const string testUserId = "propagate-user";
+    const string testTenantId = "propagate-tenant";
 
     var scopeContext = _createTestScopeContext(testUserId, testTenantId, shouldPropagate: true);
     ScopeContextAccessor.CurrentContext = scopeContext;

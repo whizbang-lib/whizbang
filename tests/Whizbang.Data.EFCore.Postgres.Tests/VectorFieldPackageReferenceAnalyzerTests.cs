@@ -20,7 +20,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task VectorField_WithBothPackages_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -56,7 +56,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task VectorField_MissingPgvectorEFCore_ReportsWHIZ070Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -94,7 +94,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task VectorField_MissingPgvector_ReportsWHIZ071Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -132,7 +132,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task VectorField_MissingBothPackages_ReportsBothDiagnosticsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -171,7 +171,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task NoVectorField_MissingPackages_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -205,7 +205,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task VectorField_WithSuppressAttribute_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -243,7 +243,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task MultiplePerspectives_WithVectorFields_ReportsOncePerPackageAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -289,7 +289,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
   [Test]
   public async Task NonPerspectiveClass_WithVectorField_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 

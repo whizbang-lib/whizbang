@@ -18,7 +18,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "test_table",
-      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true)]
     );
     var config = new SchemaConfiguration();
 
@@ -38,8 +38,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns:
 
       [
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("name", WhizbangDataType.STRING, Nullable: false, MaxLength: 255),
         new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
 ,
       ]);
@@ -62,7 +62,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns:
 
       [
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
         new ColumnDefinition(
           "created_at",
           WhizbangDataType.TIMESTAMP_TZ,
@@ -88,8 +88,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns:
 
       [
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("email", WhizbangDataType.STRING, MaxLength: 255, Nullable: false, Unique: true)
+        new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true),
+        new ColumnDefinition("email", WhizbangDataType.STRING, Nullable: false, Unique: true, MaxLength: 255)
 ,
       ]);
     var config = new SchemaConfiguration();
@@ -106,7 +106,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "product_dto",
-      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true)]
     );
     var config = new SchemaConfiguration();
 
@@ -124,8 +124,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Name: "idx_users_email",
       Columns: ["email"]
     );
-    var tableName = "users";
-    var prefix = "wh_";
+    const string tableName = "users";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
@@ -142,8 +142,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Name: "idx_events_type_created",
       Columns: ["event_type", "created_at"]
     );
-    var tableName = "events";
-    var prefix = "wh_";
+    const string tableName = "events";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
@@ -161,8 +161,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns: ["aggregate_id", "version"],
       Unique: true
     );
-    var tableName = "event_store";
-    var prefix = "wh_";
+    const string tableName = "event_store";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
@@ -278,7 +278,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
   public async Task BuildCreateSequence_SimpleSequence_GeneratesCreateSequenceAsync() {
     // Arrange
     var sequence = new SequenceDefinition("event_sequence");
-    var prefix = "wh_";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
@@ -293,7 +293,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
   public async Task BuildCreateSequence_WithCustomStartValue_GeneratesCorrectStartAsync() {
     // Arrange
     var sequence = new SequenceDefinition("order_sequence", StartValue: 1000);
-    var prefix = "wh_";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
@@ -306,7 +306,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
   public async Task BuildCreateSequence_WithCustomIncrement_GeneratesCorrectIncrementAsync() {
     // Arrange
     var sequence = new SequenceDefinition("batch_sequence", IncrementBy: 10);
-    var prefix = "wh_";
+    const string prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
@@ -391,7 +391,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "test_table",
-      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, Nullable: false, PrimaryKey: true)]
     );
 
     // Act

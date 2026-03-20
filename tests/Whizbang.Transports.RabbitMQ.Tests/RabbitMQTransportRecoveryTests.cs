@@ -98,9 +98,7 @@ public class RabbitMQTransportRecoveryTests {
     );
 
     var disconnectedEventFired = false;
-    subscription.OnDisconnected += (sender, args) => {
-      disconnectedEventFired = true;
-    };
+    subscription.OnDisconnected += (sender, args) => disconnectedEventFired = true;
 
     // Act - Simulate channel shutdown initiated by library (e.g., connection loss)
     await fakeChannel.SimulateShutdownAsync(ShutdownInitiator.Library, "Connection lost", null);
@@ -142,9 +140,7 @@ public class RabbitMQTransportRecoveryTests {
     );
 
     var disconnectedEventFired = false;
-    subscription.OnDisconnected += (sender, args) => {
-      disconnectedEventFired = true;
-    };
+    subscription.OnDisconnected += (sender, args) => disconnectedEventFired = true;
 
     // Act - Dispose subscription (application-initiated)
     subscription.Dispose();
@@ -186,9 +182,7 @@ public class RabbitMQTransportRecoveryTests {
     );
 
     Exception? receivedException = null;
-    subscription.OnDisconnected += (sender, args) => {
-      receivedException = args.Exception;
-    };
+    subscription.OnDisconnected += (sender, args) => receivedException = args.Exception;
 
     // Act - Simulate shutdown with exception
     var testException = new InvalidOperationException("Test connection failure");

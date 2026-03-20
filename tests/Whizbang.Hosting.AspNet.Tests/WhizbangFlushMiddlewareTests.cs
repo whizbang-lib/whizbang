@@ -27,9 +27,7 @@ public class WhizbangFlushMiddlewareTests {
     using var host = await new HostBuilder()
       .ConfigureWebHost(webBuilder => {
         webBuilder.UseTestServer();
-        webBuilder.ConfigureServices(services => {
-          services.AddScoped<IWorkFlusher>(_ => flusher);
-        });
+        webBuilder.ConfigureServices(services => services.AddScoped<IWorkFlusher>(_ => flusher));
         webBuilder.Configure(app => {
           app.UseWhizbangFlush();
           app.Run(context => {
@@ -87,9 +85,7 @@ public class WhizbangFlushMiddlewareTests {
     using var host = await new HostBuilder()
       .ConfigureWebHost(webBuilder => {
         webBuilder.UseTestServer();
-        webBuilder.ConfigureServices(services => {
-          services.AddScoped<IWorkFlusher>(_ => flusher);
-        });
+        webBuilder.ConfigureServices(services => services.AddScoped<IWorkFlusher>(_ => flusher));
         webBuilder.Configure(app => {
           app.UseWhizbangFlush();
           app.Run(_ => Task.CompletedTask);
@@ -121,9 +117,7 @@ public class WhizbangFlushMiddlewareTests {
     using var host = await new HostBuilder()
       .ConfigureWebHost(webBuilder => {
         webBuilder.UseTestServer();
-        webBuilder.ConfigureServices(services => {
-          services.AddScoped<IWorkFlusher>(_ => flusher);
-        });
+        webBuilder.ConfigureServices(services => services.AddScoped<IWorkFlusher>(_ => flusher));
         webBuilder.Configure(app => {
           app.UseWhizbangFlush();
           app.Run(_ => {
@@ -153,9 +147,7 @@ public class WhizbangFlushMiddlewareTests {
     using var host = await new HostBuilder()
       .ConfigureWebHost(webBuilder => {
         webBuilder.UseTestServer();
-        webBuilder.ConfigureServices(services => {
-          services.AddScoped<IWorkFlusher, FakeWorkFlusher>();
-        });
+        webBuilder.ConfigureServices(services => services.AddScoped<IWorkFlusher, FakeWorkFlusher>());
         webBuilder.Configure(app => {
           app.UseWhizbangFlush();
           app.Run(context => {

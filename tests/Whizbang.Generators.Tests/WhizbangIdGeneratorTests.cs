@@ -17,7 +17,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithExplicitTypeDeclaration_GeneratesValueObjectAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -34,7 +34,7 @@ public partial class WhizbangIdGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Assert - Should contain struct declaration with correct namespace
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Domain");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Domain");
     await Assert.That(generatedSource).Contains("public readonly partial struct ProductId");
 
     // Assert - Should contain TrackedGuid-backed storage with Guid Value property for EF Core
@@ -51,7 +51,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should generate JSON converter with UUIDv7
     var converterSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductIdJsonConverter.g.cs");
     await Assert.That(converterSource).IsNotNull();
-    await Assert.That(converterSource!).Contains("Uuid7");
+    await Assert.That(converterSource).Contains("Uuid7");
   }
 
   /// <summary>
@@ -61,7 +61,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleIdTypes_GeneratesAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -89,9 +89,9 @@ public partial class WhizbangIdGeneratorTests {
     await Assert.That(customerIdSource).IsNotNull();
 
     // Assert - Each should be independent
-    await Assert.That(productIdSource!).Contains("struct ProductId");
-    await Assert.That(orderIdSource!).Contains("struct OrderId");
-    await Assert.That(customerIdSource!).Contains("struct CustomerId");
+    await Assert.That(productIdSource).Contains("struct ProductId");
+    await Assert.That(orderIdSource).Contains("struct OrderId");
+    await Assert.That(customerIdSource).Contains("struct CustomerId");
   }
 
   /// <summary>
@@ -102,7 +102,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCustomNamespace_UsesSpecifiedNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -117,7 +117,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should use custom namespace
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Custom.Ids");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Custom.Ids");
     await Assert.That(generatedSource).DoesNotContain("namespace MyApp.Domain");
   }
 
@@ -129,7 +129,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNamespaceProperty_UsesSpecifiedNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -144,7 +144,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should use custom namespace
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Ids");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Ids");
   }
 
   /// <summary>
@@ -154,7 +154,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNonPartialStruct_ProducesDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -180,7 +180,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithIdType_GeneratesJsonConverterAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -197,7 +197,7 @@ public partial class WhizbangIdGeneratorTests {
     await Assert.That(converterSource).IsNotNull();
 
     // Assert - Should extend JsonConverter
-    await Assert.That(converterSource!).Contains("JsonConverter<ProductId>");
+    await Assert.That(converterSource).Contains("JsonConverter<ProductId>");
     await Assert.That(converterSource).Contains("class ProductIdJsonConverter");
   }
 
@@ -209,7 +209,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPropertyBasedDiscovery_GeneratesValueObjectAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Commands;
@@ -227,7 +227,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should generate ProductId.g.cs in same namespace as declaring type
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Commands");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Commands");
     await Assert.That(generatedSource).Contains("public readonly partial struct ProductId");
   }
 
@@ -239,7 +239,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithParameterBasedDiscovery_GeneratesValueObjectAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Commands;
@@ -256,7 +256,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should generate ProductId.g.cs in same namespace as declaring type
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Commands");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Commands");
     await Assert.That(generatedSource).Contains("public readonly partial struct ProductId");
   }
 
@@ -267,7 +267,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithHybridDiscovery_GeneratesAllIdsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -309,7 +309,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPropertyBasedAndCustomNamespace_UsesCustomNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Commands;
@@ -326,7 +326,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should use custom namespace
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace MyApp.Domain.Ids");
+    await Assert.That(generatedSource).Contains("namespace MyApp.Domain.Ids");
     await Assert.That(generatedSource).DoesNotContain("namespace MyApp.Commands");
   }
 
@@ -337,7 +337,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDuplicateDiscovery_GeneratesOnlyOnceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -378,7 +378,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCollision_EmitsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -417,7 +417,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithCollisionSuppressed_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -449,7 +449,7 @@ public partial class WhizbangIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratesCreateProviderMethodAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -464,7 +464,7 @@ public partial class WhizbangIdGeneratorTests {
     // Assert - Should generate CreateProvider method
     var valueObjectSource = GeneratorTestHelper.GetGeneratedSource(result, "TestId.g.cs");
     await Assert.That(valueObjectSource).IsNotNull();
-    await Assert.That(valueObjectSource!).Contains("public static global::Whizbang.Core.IWhizbangIdProvider<TestId> CreateProvider(");
+    await Assert.That(valueObjectSource).Contains("public static global::Whizbang.Core.IWhizbangIdProvider<TestId> CreateProvider(");
     await Assert.That(valueObjectSource).Contains("return new TestIdProvider(baseProvider);");
   }
 

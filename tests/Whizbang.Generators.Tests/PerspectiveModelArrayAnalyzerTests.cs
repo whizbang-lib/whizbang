@@ -215,7 +215,7 @@ public class PerspectiveModelArrayAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_RegularClassWithArray_NoWarningAsync() {
     // Arrange - no stubs needed since we're testing non-perspective classes
-    var source = """
+    const string source = """
         using System;
 
         namespace TestApp {
@@ -240,7 +240,7 @@ public class PerspectiveModelArrayAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_RegularRecordWithArray_NoWarningAsync() {
     // Arrange - no stubs needed since we're testing non-perspective records
-    var source = """
+    const string source = """
         using System;
 
         namespace TestApp {

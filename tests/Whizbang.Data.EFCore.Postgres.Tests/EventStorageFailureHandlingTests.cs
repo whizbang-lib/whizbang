@@ -103,7 +103,7 @@ public class EventStorageFailureHandlingTests {
   [Test]
   public async Task MessageFailureReason_HasEventStorageFailureValueAsync() {
     // Arrange & Act
-    var reason = MessageFailureReason.EventStorageFailure;
+    const MessageFailureReason reason = MessageFailureReason.EventStorageFailure;
 
     // Assert
     await Assert.That((int)reason).IsEqualTo(7);
@@ -113,7 +113,7 @@ public class EventStorageFailureHandlingTests {
   [Test]
   public async Task MessageFailureReason_EventStorageFailure_CanBeConvertedAsync() {
     // Arrange
-    int reasonValue = 7;
+    const int reasonValue = 7;
 
     // Act
     var reason = (MessageFailureReason)reasonValue;

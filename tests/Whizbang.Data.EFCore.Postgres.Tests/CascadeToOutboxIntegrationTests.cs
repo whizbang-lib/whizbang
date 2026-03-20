@@ -669,9 +669,9 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
         $"Got context with UserId={securityContext?.Scope?.UserId}, TenantId={securityContext?.Scope?.TenantId}");
     } catch (SecurityContextRequiredException ex) {
       // EXPECTED: This is the JDNext behavior - test passes because we reproduced the bug
-      Console.WriteLine($"=== REPRODUCED BUG ===");
+      Console.WriteLine("=== REPRODUCED BUG ===");
       Console.WriteLine($"SecurityContextRequiredException: {ex.Message}");
-      Console.WriteLine($"=== END ===");
+      Console.WriteLine("=== END ===");
 
       // Now we need to FIX this - the exception should NOT be thrown
       // For the RED phase, we mark this as expected and will fix it
@@ -1077,10 +1077,10 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
     // THE CRITICAL ASSERTION - Do the enum keys survive?
     var hasKey = retrievedHop.Scope.Values!.ContainsKey(ScopeProp.Scope);
 
-    Console.WriteLine($"\n=== KEY CHECK ===");
+    Console.WriteLine("\n=== KEY CHECK ===");
     Console.WriteLine($"ContainsKey(ScopeProp.Scope): {hasKey}");
     Console.WriteLine($"Dictionary count: {retrievedHop.Scope.Values.Count}");
-    Console.WriteLine($"Actual keys in dictionary:");
+    Console.WriteLine("Actual keys in dictionary:");
     foreach (var kvp in retrievedHop.Scope.Values) {
       Console.WriteLine($"  {kvp.Key} (int: {(int)kvp.Key}): {kvp.Value}");
     }

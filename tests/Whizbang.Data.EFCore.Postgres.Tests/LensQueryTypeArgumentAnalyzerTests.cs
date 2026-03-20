@@ -22,7 +22,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task Query_WithT1_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -71,7 +71,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task Query_WithT2_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -120,7 +120,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task GetByIdAsync_WithT1_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading.Tasks;
@@ -170,7 +170,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task SingleGenericILensQuery_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -220,7 +220,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task Query_WithInvalidType_ReportsWHIZ400Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -274,7 +274,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task GetByIdAsync_WithInvalidType_ReportsWHIZ400Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
             using System.Threading.Tasks;
@@ -327,7 +327,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task ThreeGeneric_Query_WithInvalidType_ReportsWHIZ400Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 
@@ -384,7 +384,7 @@ public class LensQueryTypeArgumentAnalyzerTests {
   [Test]
   public async Task ThreeGeneric_Query_WithT3_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Linq;
 

@@ -171,7 +171,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     // Test with different numeric formats
-    var json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":123.45}""";
+    const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":123.45}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 123.45m };
     var context = new TagContext<MetricTagAttribute> {

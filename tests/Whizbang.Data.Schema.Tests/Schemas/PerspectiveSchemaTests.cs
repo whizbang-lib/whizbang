@@ -21,15 +21,15 @@ public class PerspectiveSchemaTests {
       new ColumnDefinition(
         Name: "name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 100,
         Nullable: false
-      ),
+,
+        MaxLength: 100),
       new ColumnDefinition(
         Name: "description",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: true
-      )
+,
+        MaxLength: 500)
     );
 
     // Act
@@ -56,9 +56,9 @@ public class PerspectiveSchemaTests {
       new ColumnDefinition(
         Name: "status",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 50,
         Nullable: false
-      )
+,
+        MaxLength: 50)
     );
 
     var indexes = ImmutableArray.Create(
@@ -86,9 +86,9 @@ public class PerspectiveSchemaTests {
       new ColumnDefinition(
         Name: "name",
         DataType: WhizbangDataType.STRING,
-        MaxLength: 100,
         Nullable: false
-      ),
+,
+        MaxLength: 100),
       new ColumnDefinition(
         Name: "price",
         DataType: WhizbangDataType.INTEGER,

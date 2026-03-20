@@ -12,7 +12,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesSchemaAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -42,7 +42,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate schema file (Roslyn appends .cs to all AddSource calls)
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("CREATE TABLE");
+    await Assert.That(generatedSource).Contains("CREATE TABLE");
     await Assert.That(generatedSource).Contains("order_perspective");
   }
 
@@ -50,7 +50,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithAbstractPerspective_SkipsSchemaAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -82,7 +82,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultiplePerspectives_GeneratesAllSchemasAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -124,7 +124,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate schemas for both perspectives
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("order_perspective");
+    await Assert.That(generatedSource).Contains("order_perspective");
     await Assert.That(generatedSource).Contains("customer_perspective");
   }
 
@@ -177,7 +177,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoPerspectives_GeneratesNoOutputAsync() {
     // Arrange - No IPerspectiveFor implementations
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -202,7 +202,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesJSONBColumnsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -230,7 +230,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate 3-column JSONB pattern
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("model_data");
+    await Assert.That(generatedSource).Contains("model_data");
     await Assert.That(generatedSource).Contains("metadata");
     await Assert.That(generatedSource).Contains("scope");
     await Assert.That(generatedSource).Contains("JSONB");
@@ -240,7 +240,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesUniversalColumnsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -268,7 +268,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should generate universal columns
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("id");
+    await Assert.That(generatedSource).Contains("id");
     await Assert.That(generatedSource).Contains("created_at");
     await Assert.That(generatedSource).Contains("updated_at");
     await Assert.That(generatedSource).Contains("version");
@@ -278,7 +278,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspective_GeneratesCorrectTableNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -306,14 +306,14 @@ public class PerspectiveSchemaGeneratorTests {
     // Assert - Should convert to snake_case
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("customer_order_perspective");
+    await Assert.That(generatedSource).Contains("customer_order_perspective");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithClassNoBaseList_SkipsAsync() {
     // Arrange - Class with no base list (no interfaces)
-    var source = """
+    const string source = """
             using System;
 
             namespace MyApp;
@@ -336,7 +336,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithStaticProperties_ExcludesFromCountAsync() {
     // Arrange - Tests p => !p.IsStatic branch in property counting
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -368,14 +368,14 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("mixed_perspective");
+    await Assert.That(generatedSource).Contains("mixed_perspective");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithOnlyStaticProperties_GeneratesSchemaAsync() {
     // Arrange - Perspective with only static properties (edge case)
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -405,14 +405,14 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("static_only_perspective");
+    await Assert.That(generatedSource).Contains("static_only_perspective");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleIPerspectiveInterfaces_GeneratesSchemaAsync() {
     // Arrange - Class implementing multiple IPerspectiveFor interfaces
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -446,14 +446,14 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("multi_perspective");
+    await Assert.That(generatedSource).Contains("multi_perspective");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveSchemaGenerator_LowercaseClassName_GeneratesTableNameWithoutLeadingUnderscoreAsync() {
     // Arrange - Tests line 150-156: i > 0 condition when i == 0 (lowercase first character)
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -487,7 +487,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Check table creation uses correct name with wh_per_ prefix
     // orderPerspective → wh_per_order_perspective ("Perspective" is NOT in default suffix list)
     // The test verifies lowercase class names don't get leading underscores
-    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS wh_per_order_perspective (");
+    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_order_perspective (");
   }
 
   [Test]
@@ -536,7 +536,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task PerspectiveSchemaGenerator_ClassWithBaseListButNotPerspective_SkipsAsync() {
     // Arrange - Tests line 59: perspectiveInterfaces.Count == 0 branch
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -564,7 +564,7 @@ public class PerspectiveSchemaGeneratorTests {
   public async Task Generator_NestedPerspective_GeneratesUniqueTableNameAsync() {
     // Arrange - Nested Projection class inside Activity parent
     // Bug: classSymbol.Name returns just "Projection", causing table name collision
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -597,7 +597,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Activity.Projection → ActivityProjection → wh_per_activity (Projection suffix stripped)
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("CREATE TABLE IF NOT EXISTS wh_per_activity")
+    await Assert.That(generatedSource).Contains("CREATE TABLE IF NOT EXISTS wh_per_activity")
       .Because("nested perspective should include parent class and have wh_per_ prefix");
     await Assert.That(generatedSource).DoesNotContain("CREATE TABLE IF NOT EXISTS projection (")
       .Because("table name should not be just 'projection' for nested class");
@@ -607,7 +607,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_MultipleNestedProjections_GeneratesDistinctTableNamesAsync() {
     // Arrange - Two nested Projection classes that should NOT collide
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -653,7 +653,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Session.Projection → SessionProjection → wh_per_session
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("wh_per_activity")
+    await Assert.That(generatedSource).Contains("wh_per_activity")
       .Because("Activity.Projection should generate wh_per_activity table");
     await Assert.That(generatedSource).Contains("wh_per_session")
       .Because("Session.Projection should generate wh_per_session table");
@@ -803,7 +803,7 @@ public class PerspectiveSchemaGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_DeeplyNestedPerspective_GeneratesCorrectTableNameAsync() {
     // Arrange - Deeply nested perspective (multiple levels of nesting)
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -837,7 +837,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Sessions.Active.Projection → SessionsActiveProjection → wh_per_sessions_active
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("wh_per_sessions_active")
+    await Assert.That(generatedSource).Contains("wh_per_sessions_active")
       .Because("deeply nested perspective should include all parent classes with wh_per_ prefix");
   }
 }

@@ -27,7 +27,7 @@ public class IdentifierValidationTests {
   [Test]
   public async Task ValidateTableName_WithinLimit_ReturnsNullAsync() {
     // Arrange
-    var tableName = "wh_per_order";
+    const string tableName = "wh_per_order";
     var limits = new TestLimits { MaxTableNameBytes = 63 };
 
     // Act
@@ -48,9 +48,9 @@ public class IdentifierValidationTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Contains("67 bytes");
-    await Assert.That(result!).Contains("63 bytes");
-    await Assert.That(result!).Contains("TestProvider");
+    await Assert.That(result).Contains("67 bytes");
+    await Assert.That(result).Contains("63 bytes");
+    await Assert.That(result).Contains("TestProvider");
   }
 
   [Test]
@@ -111,7 +111,7 @@ public class IdentifierValidationTests {
   [Test]
   public async Task ValidateColumnName_WithinLimit_ReturnsNullAsync() {
     // Arrange
-    var columnName = "order_id";
+    const string columnName = "order_id";
     var limits = new TestLimits { MaxColumnNameBytes = 63 };
 
     // Act
@@ -132,8 +132,8 @@ public class IdentifierValidationTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Contains("70 bytes");
-    await Assert.That(result!).Contains("Column name");
+    await Assert.That(result).Contains("70 bytes");
+    await Assert.That(result).Contains("Column name");
   }
 
   [Test]
@@ -155,7 +155,7 @@ public class IdentifierValidationTests {
   [Test]
   public async Task ValidateIndexName_WithinLimit_ReturnsNullAsync() {
     // Arrange
-    var indexName = "ix_orders_customer_id";
+    const string indexName = "ix_orders_customer_id";
     var limits = new TestLimits { MaxIndexNameBytes = 63 };
 
     // Act
@@ -176,8 +176,8 @@ public class IdentifierValidationTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Contains("68 bytes");
-    await Assert.That(result!).Contains("Index name");
+    await Assert.That(result).Contains("68 bytes");
+    await Assert.That(result).Contains("Index name");
   }
 
   [Test]
@@ -199,7 +199,7 @@ public class IdentifierValidationTests {
   [Test]
   public async Task GetByteCount_AsciiString_ReturnsLengthAsync() {
     // Arrange - ASCII characters are 1 byte each
-    var ascii = "hello_world";
+    const string ascii = "hello_world";
 
     // Act
     var result = IdentifierValidation.GetByteCount(ascii);
@@ -211,7 +211,7 @@ public class IdentifierValidationTests {
   [Test]
   public async Task GetByteCount_UnicodeString_ReturnsCorrectBytesAsync() {
     // Arrange - '\u00E9' (e with accent) is 2 bytes in UTF-8
-    var unicode = "caf\u00E9";
+    const string unicode = "caf\u00E9";
 
     // Act
     var result = IdentifierValidation.GetByteCount(unicode);

@@ -45,7 +45,7 @@ public class VectorSearchExtensionsTests {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
       });

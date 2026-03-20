@@ -134,7 +134,7 @@ public class AzureServiceBusConnectionRetryTests {
     var retry = new AzureServiceBusConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(null!); })
+    await Assert.That(async () => await retry.CreateClientWithRetryAsync(null!))
       .Throws<ArgumentException>();
   }
 
@@ -145,7 +145,7 @@ public class AzureServiceBusConnectionRetryTests {
     var retry = new AzureServiceBusConnectionRetry(options);
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync(""); })
+    await Assert.That(async () => await retry.CreateClientWithRetryAsync(""))
       .Throws<ArgumentException>();
   }
 
@@ -161,7 +161,7 @@ public class AzureServiceBusConnectionRetryTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync("Endpoint=sb://invalid.servicebus.windows.net/;SharedAccessKeyName=Test;SharedAccessKey=abc123", cts.Token); })
+    await Assert.That(async () => await retry.CreateClientWithRetryAsync("Endpoint=sb://invalid.servicebus.windows.net/;SharedAccessKeyName=Test;SharedAccessKey=abc123", cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -177,7 +177,7 @@ public class AzureServiceBusConnectionRetryTests {
 
     // Act & Assert - Using invalid connection string to force failure
     // The Azure SDK throws ServiceBusException for connection failures
-    await Assert.That(async () => { await retry.CreateClientWithRetryAsync("Endpoint=sb://invalid-test-namespace.servicebus.windows.net/;SharedAccessKeyName=Test;SharedAccessKey=abc123"); })
+    await Assert.That(async () => await retry.CreateClientWithRetryAsync("Endpoint=sb://invalid-test-namespace.servicebus.windows.net/;SharedAccessKeyName=Test;SharedAccessKey=abc123"))
       .ThrowsException();  // Could be ServiceBusException or wrapped in AggregateException
   }
 

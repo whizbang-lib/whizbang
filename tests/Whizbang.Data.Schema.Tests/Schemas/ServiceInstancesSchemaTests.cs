@@ -175,13 +175,13 @@ public class ServiceInstancesSchemaTests {
   [Category("Schema")]
   public async Task Columns_HasAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    var instanceId = ServiceInstancesSchema.Columns.INSTANCE_ID;
-    var serviceName = ServiceInstancesSchema.Columns.SERVICE_NAME;
-    var hostName = ServiceInstancesSchema.Columns.HOST_NAME;
-    var processId = ServiceInstancesSchema.Columns.PROCESS_ID;
-    var startedAt = ServiceInstancesSchema.Columns.STARTED_AT;
-    var lastHeartbeatAt = ServiceInstancesSchema.Columns.LAST_HEARTBEAT_AT;
-    var metadata = ServiceInstancesSchema.Columns.METADATA;
+    const string instanceId = ServiceInstancesSchema.Columns.INSTANCE_ID;
+    const string serviceName = ServiceInstancesSchema.Columns.SERVICE_NAME;
+    const string hostName = ServiceInstancesSchema.Columns.HOST_NAME;
+    const string processId = ServiceInstancesSchema.Columns.PROCESS_ID;
+    const string startedAt = ServiceInstancesSchema.Columns.STARTED_AT;
+    const string lastHeartbeatAt = ServiceInstancesSchema.Columns.LAST_HEARTBEAT_AT;
+    const string metadata = ServiceInstancesSchema.Columns.METADATA;
 
     // Assert - Verify constants match column names
     await Assert.That(instanceId).IsEqualTo("instance_id");

@@ -33,7 +33,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   [Test]
   public async Task IsReadyAsync_WithInvalid_connectionString_ReturnsFalseAsync() {
     // Arrange
-    var invalid_connectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
+    const string invalid_connectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
     var readinessCheck = new PostgresDatabaseReadinessCheck(
       invalid_connectionString,
       NullLogger<PostgresDatabaseReadinessCheck>.Instance
@@ -131,7 +131,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
 
     // Verify tables exist directly in database
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var tableCountSql = @"
+    const string tableCountSql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -194,7 +194,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
 
     // Verify the process_work_batch function exists in test database (in public schema)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var functionCountSql = @"
+    const string functionCountSql = @"
       SELECT COUNT(*)
       FROM information_schema.routines
       WHERE routine_schema = 'public'

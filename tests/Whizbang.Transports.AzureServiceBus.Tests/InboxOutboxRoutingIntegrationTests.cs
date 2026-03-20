@@ -159,7 +159,7 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   public async Task SharedOutbox_ToSharedInbox_EndToEndAsync() {
     // Arrange - Both use shared topic strategy with topic-00
     // Commands go to shared topic; Events go to namespace topics
-    var sharedTopic = "topic-00";
+    const string sharedTopic = "topic-00";
     var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
     var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };

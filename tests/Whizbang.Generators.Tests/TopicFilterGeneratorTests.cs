@@ -15,15 +15,17 @@ public class TopicFilterGeneratorTests {
   [Test]
   public async Task Generator_WithStringFilter_GeneratesRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""orders.create"")]
+[TopicFilter("orders.create")]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -33,7 +35,7 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should contain GetTopicFilters method
-    await Assert.That(registrySource!).Contains("GetTopicFilters<TCommand>");
+    await Assert.That(registrySource).Contains("GetTopicFilters<TCommand>");
 
     // Should contain mapping for CreateOrderCommand
     await Assert.That(registrySource).Contains("CreateOrderCommand");
@@ -46,16 +48,18 @@ public record CreateOrderCommand : ICommand {
   [Test]
   public async Task Generator_WithMultipleStringFilters_GeneratesAllMappingsAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""orders.create"")]
-[TopicFilter(""commands.order"")]
+[TopicFilter("orders.create")]
+[TopicFilter("commands.order")]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -65,31 +69,33 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should contain both filters
-    await Assert.That(registrySource!).Contains("orders.create");
+    await Assert.That(registrySource).Contains("orders.create");
     await Assert.That(registrySource).Contains("commands.order");
   }
 
   [Test]
   public async Task Generator_WithEnumFilter_ExtractsDescriptionAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System.ComponentModel;
 using Whizbang.Core;
 
 namespace TestNamespace;
 
 public enum Topics {
-    [Description(""orders.created"")]
+    [Description("orders.created")]
     OrdersCreated,
 
-    [Description(""orders.updated"")]
+    [Description("orders.updated")]
     OrdersUpdated
 }
 
 [TopicFilter<Topics>(Topics.OrdersCreated)]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -99,14 +105,14 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should extract description attribute value
-    await Assert.That(registrySource!).Contains("orders.created");
+    await Assert.That(registrySource).Contains("orders.created");
     await Assert.That(registrySource).DoesNotContain("OrdersCreated");  // Should use description, not symbol
   }
 
   [Test]
   public async Task Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace TestNamespace;
@@ -129,29 +135,31 @@ public record ProcessPaymentCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should fall back to symbol name
-    await Assert.That(registrySource!).Contains("Payments");
+    await Assert.That(registrySource).Contains("Payments");
   }
 
   [Test]
   public async Task Generator_WithMultipleCommands_GeneratesAllMappingsAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""orders.create"")]
+[TopicFilter("orders.create")]
 public record CreateOrderCommand : ICommand {
 }
 
-[TopicFilter(""payments.process"")]
+[TopicFilter("payments.process")]
 public record ProcessPaymentCommand : ICommand {
 }
 
-[TopicFilter(""products.update"")]
+[TopicFilter("products.update")]
 public record UpdateProductCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -161,7 +169,7 @@ public record UpdateProductCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should contain all command mappings
-    await Assert.That(registrySource!).Contains("CreateOrderCommand");
+    await Assert.That(registrySource).Contains("CreateOrderCommand");
     await Assert.That(registrySource).Contains("ProcessPaymentCommand");
     await Assert.That(registrySource).Contains("UpdateProductCommand");
 
@@ -174,7 +182,7 @@ public record UpdateProductCommand : ICommand {
   [Test]
   public async Task Generator_WithNoFilters_GeneratesEmptyRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using Whizbang.Core;
 
 namespace TestNamespace;
@@ -197,7 +205,8 @@ public record SomeCommand : ICommand {
   [Test]
   public async Task Generator_WithCustomDerivedAttribute_RecognizesFilterAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System;
 using System.ComponentModel;
 using Whizbang.Core;
@@ -205,7 +214,7 @@ using Whizbang.Core;
 namespace TestNamespace;
 
 public enum RabbitMqTopics {
-    [Description(""orders.queue"")]
+    [Description("orders.queue")]
     Orders
 }
 
@@ -217,7 +226,8 @@ public class RabbitMqTopicAttribute : TopicFilterAttribute<RabbitMqTopics> {
 [RabbitMqTopic(RabbitMqTopics.Orders)]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -227,28 +237,30 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should recognize derived attribute and extract description
-    await Assert.That(registrySource!).Contains("orders.queue");
+    await Assert.That(registrySource).Contains("orders.queue");
   }
 
   [Test]
   public async Task Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System.ComponentModel;
 using Whizbang.Core;
 
 namespace TestNamespace;
 
 public enum Topics {
-    [Description(""orders.created"")]
+    [Description("orders.created")]
     OrdersCreated
 }
 
 [TopicFilter<Topics>(Topics.OrdersCreated)]
-[TopicFilter(""backup.queue"")]
+[TopicFilter("backup.queue")]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -258,22 +270,24 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should contain both enum-based and string-based filters
-    await Assert.That(registrySource!).Contains("orders.created");
+    await Assert.That(registrySource).Contains("orders.created");
     await Assert.That(registrySource).Contains("backup.queue");
   }
 
   [Test]
   public async Task Generator_GeneratesGetAllFiltersMethod_ForDiagnosticsAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""orders.create"")]
+[TopicFilter("orders.create")]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -283,22 +297,24 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should have GetAllFilters diagnostic method
-    await Assert.That(registrySource!).Contains("GetAllFilters()");
+    await Assert.That(registrySource).Contains("GetAllFilters()");
     await Assert.That(registrySource).Contains("IReadOnlyDictionary");
   }
 
   [Test]
   public async Task Generator_UsesAssemblySpecificNamespace_AvoidingConflictsAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""orders.create"")]
+[TopicFilter("orders.create")]
 public record CreateOrderCommand : ICommand {
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);
@@ -308,21 +324,23 @@ public record CreateOrderCommand : ICommand {
     await Assert.That(registrySource).IsNotNull();
 
     // Should use assembly-specific namespace (TestAssembly.Generated)
-    await Assert.That(registrySource!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(registrySource).Contains("namespace TestAssembly.Generated");
   }
 
   [Test]
   public async Task Generator_WithFilterOnNonCommand_ReportsErrorAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using Whizbang.Core;
 
 namespace TestNamespace;
 
-[TopicFilter(""should.fail"")]
+[TopicFilter("should.fail")]
 public record NotACommand {  // Missing ICommand
 }
-";
+
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicFilterGenerator>(source);

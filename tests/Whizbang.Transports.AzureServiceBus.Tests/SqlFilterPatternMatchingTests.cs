@@ -31,7 +31,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_HashWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with #
-    var rabbitPattern = "jdx.contracts.chat.#";
+    const string rabbitPattern = "jdx.contracts.chat.#";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -43,7 +43,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_AsteriskWildcard_TranslatesToPercentAsync() {
     // Arrange - RabbitMQ-style pattern with *
-    var rabbitPattern = "jdx.contracts.chat.*";
+    const string rabbitPattern = "jdx.contracts.chat.*";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -55,7 +55,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task TranslatePattern_StandaloneHash_TranslatesToPercentAsync() {
     // Arrange - Single # (match all)
-    var rabbitPattern = "#";
+    const string rabbitPattern = "#";
 
     // Act
     var sqlPattern = _translateToSqlPattern(rabbitPattern);
@@ -95,8 +95,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: jdx.contracts.chat.activitytrackedcommand
     // SqlFilter pattern is: [Subject] LIKE 'jdx.contracts.chat.%'
-    var subject = "jdx.contracts.chat.activitytrackedcommand";
-    var pattern = "jdx.contracts.chat.%";
+    const string subject = "jdx.contracts.chat.activitytrackedcommand";
+    const string pattern = "jdx.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -111,8 +111,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: jdx.contracts.chat.chatconversationscontracts+createcommand
     // SqlFilter pattern is: [Subject] LIKE 'jdx.contracts.chat.%'
-    var subject = "jdx.contracts.chat.chatconversationscontracts+createcommand";
-    var pattern = "jdx.contracts.chat.%";
+    const string subject = "jdx.contracts.chat.chatconversationscontracts+createcommand";
+    const string pattern = "jdx.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -127,8 +127,8 @@ public class SqlFilterPatternMatchingTests {
     // Arrange
     // TransportPublishStrategy generates: myapp.orders.events.ordercreatedevent
     // SqlFilter pattern is: [Subject] LIKE 'myapp.orders.events.%'
-    var subject = "myapp.orders.events.ordercreatedevent";
-    var pattern = "myapp.orders.events.%";
+    const string subject = "myapp.orders.events.ordercreatedevent";
+    const string pattern = "myapp.orders.events.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -141,8 +141,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_DifferentNamespace_DoesNotMatchAsync() {
     // Arrange - Chat pattern should NOT match auth namespace
-    var subject = "jdx.contracts.auth.authcontracts+createtenantcommand";
-    var pattern = "jdx.contracts.chat.%";
+    const string subject = "jdx.contracts.auth.authcontracts+createtenantcommand";
+    const string pattern = "jdx.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -155,8 +155,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_DefaultSubject_DoesNotMatchNamespacePatternAsync() {
     // Arrange - This was the bug! Without RoutingKey, Subject defaulted to "message"
-    var subject = "message"; // Default when RoutingKey is null
-    var pattern = "jdx.contracts.chat.%";
+    const string subject = "message"; // Default when RoutingKey is null
+    const string pattern = "jdx.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -169,7 +169,7 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_MultiplePatterns_MatchesAnyAsync() {
     // Arrange - Service subscribed to multiple namespaces
-    var subject = "jdx.contracts.facts.factcreatedevent";
+    const string subject = "jdx.contracts.facts.factcreatedevent";
     var patterns = new[] {
       "whizbang.core.commands.system.%",
       "jdx.contracts.chat.%",
@@ -187,8 +187,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_SystemCommand_MatchesSystemPatternAsync() {
     // Arrange - System commands are always included
-    var subject = "whizbang.core.commands.system.healthcheckcommand";
-    var pattern = "whizbang.core.commands.system.%";
+    const string subject = "whizbang.core.commands.system.healthcheckcommand";
+    const string pattern = "whizbang.core.commands.system.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);
@@ -201,8 +201,8 @@ public class SqlFilterPatternMatchingTests {
   [Test]
   public async Task SqlLikeMatch_CaseInsensitive_MatchesAsync() {
     // Arrange - Routing keys are lowercased by TransportPublishStrategy
-    var subject = "jdx.contracts.chat.createcommand";
-    var pattern = "jdx.contracts.chat.%";
+    const string subject = "jdx.contracts.chat.createcommand";
+    const string pattern = "jdx.contracts.chat.%";
 
     // Act
     var matches = _sqlLikeMatches(subject, pattern);

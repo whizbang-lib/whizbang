@@ -12,8 +12,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithValidNamesReturnsExpectedFormatAsync() {
     // Arrange
-    var subscriberName = "bff-service";
-    var topicName = "jdx.contracts.chat";
+    const string subscriberName = "bff-service";
+    const string topicName = "jdx.contracts.chat";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -28,8 +28,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithWildcardSanitizesCorrectlyAsync() {
     // Arrange - topic name contains # wildcard (invalid for ASB)
-    var subscriberName = "inventory";
-    var topicName = "myapp.events#test";
+    const string subscriberName = "inventory";
+    const string topicName = "myapp.events#test";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -44,8 +44,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameExceedsMaxLengthTruncatesTo50CharsAsync() {
     // Arrange - create names that exceed 50 chars when combined
-    var subscriberName = "very-long-subscriber-name";
-    var topicName = "equally.long.topic.namespace.events";
+    const string subscriberName = "very-long-subscriber-name";
+    const string topicName = "equally.long.topic.namespace.events";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -60,8 +60,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithEmptySubscriberNameThrowsArgumentExceptionAsync() {
     // Arrange
-    var subscriberName = "";
-    var topicName = "valid.topic";
+    const string subscriberName = "";
+    const string topicName = "valid.topic";
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentException>(
@@ -74,8 +74,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithEmptyTopicNameThrowsArgumentExceptionAsync() {
     // Arrange
-    var subscriberName = "valid-subscriber";
-    var topicName = "";
+    const string subscriberName = "valid-subscriber";
+    const string topicName = "";
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentException>(
@@ -88,8 +88,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithNullSubscriberNameThrowsArgumentExceptionAsync() {
     // Arrange
-    string? subscriberName = null;
-    var topicName = "valid.topic";
+    const string? subscriberName = null;
+    const string topicName = "valid.topic";
 
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentException>(
@@ -102,8 +102,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithAsteriskWildcardSanitizesCorrectlyAsync() {
     // Arrange
-    var subscriberName = "svc";
-    var topicName = "ns.*";
+    const string subscriberName = "svc";
+    const string topicName = "ns.*";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -118,8 +118,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithCommaSeparatedPatternSanitizesCorrectlyAsync() {
     // Arrange - comma-separated filter expression (invalid for ASB subscription name)
-    var subscriberName = "worker";
-    var topicName = "ns1,ns2";
+    const string subscriberName = "worker";
+    const string topicName = "ns1,ns2";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -134,8 +134,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithForwardSlashSanitizesCorrectlyAsync() {
     // Arrange
-    var subscriberName = "api/v1";
-    var topicName = "events/topic";
+    const string subscriberName = "api/v1";
+    const string topicName = "events/topic";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -150,8 +150,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithBackslashSanitizesCorrectlyAsync() {
     // Arrange
-    var subscriberName = @"domain\service";
-    var topicName = "topic";
+    const string subscriberName = @"domain\service";
+    const string topicName = "topic";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -166,8 +166,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithConsecutiveInvalidCharsRemovesDoubleHyphensAsync() {
     // Arrange
-    var subscriberName = "svc";
-    var topicName = "ns##test";
+    const string subscriberName = "svc";
+    const string topicName = "ns##test";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -182,8 +182,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithMixedCaseReturnsLowercaseAsync() {
     // Arrange
-    var subscriberName = "MyService";
-    var topicName = "MyApp.Events";
+    const string subscriberName = "MyService";
+    const string topicName = "MyApp.Events";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -198,8 +198,8 @@ public class ServiceBusSubscriptionNameHelperTests {
   [Test]
   public async Task GenerateSubscriptionNameWithLeadingTrailingInvalidCharsTrimsHyphensAsync() {
     // Arrange
-    var subscriberName = "#svc#";
-    var topicName = "*topic*";
+    const string subscriberName = "#svc#";
+    const string topicName = "*topic*";
 
     // Act
     var result = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);

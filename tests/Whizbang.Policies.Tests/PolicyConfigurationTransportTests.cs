@@ -20,7 +20,7 @@ public class PolicyConfigurationTransportTests {
   [Test]
   public async Task TransportType_ShouldHaveKafkaValueAsync() {
     // Arrange & Act
-    var transportType = TransportType.Kafka;
+    const TransportType transportType = TransportType.Kafka;
 
     // Assert
     await Assert.That((int)transportType).IsEqualTo(0); // First enum value
@@ -29,7 +29,7 @@ public class PolicyConfigurationTransportTests {
   [Test]
   public async Task TransportType_ShouldHaveServiceBusValueAsync() {
     // Arrange & Act
-    var transportType = TransportType.ServiceBus;
+    const TransportType transportType = TransportType.ServiceBus;
 
     // Assert
     await Assert.That(transportType).IsNotEqualTo(TransportType.Kafka);
@@ -38,7 +38,7 @@ public class PolicyConfigurationTransportTests {
   [Test]
   public async Task TransportType_ShouldHaveRabbitMQValueAsync() {
     // Arrange & Act
-    var transportType = TransportType.RabbitMQ;
+    const TransportType transportType = TransportType.RabbitMQ;
 
     // Assert
     await Assert.That(transportType).IsNotEqualTo(TransportType.Kafka);
@@ -48,7 +48,7 @@ public class PolicyConfigurationTransportTests {
   [Test]
   public async Task TransportType_ShouldHaveEventStoreValueAsync() {
     // Arrange & Act
-    var transportType = TransportType.EventStore;
+    const TransportType transportType = TransportType.EventStore;
 
     // Assert
     await Assert.That(transportType).IsNotEqualTo(TransportType.Kafka);
@@ -57,7 +57,7 @@ public class PolicyConfigurationTransportTests {
   [Test]
   public async Task TransportType_ShouldHaveInProcessValueAsync() {
     // Arrange & Act
-    var transportType = TransportType.InProcess;
+    const TransportType transportType = TransportType.InProcess;
 
     // Assert
     await Assert.That(transportType).IsNotEqualTo(TransportType.Kafka);

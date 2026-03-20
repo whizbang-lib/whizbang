@@ -132,7 +132,7 @@ public class EventEnvelopeJsonbAdapterScopeTests {
     var jsonb = adapter.ToJsonb(envelope);
 
     // Replace scope with legacy snake_case format
-    var legacyScope = """{"tenant_id":"legacy-tenant","user_id":"legacy-user"}""";
+    const string legacyScope = """{"tenant_id":"legacy-tenant","user_id":"legacy-user"}""";
     var legacyJsonb = new JsonbPersistenceModel {
       DataJson = jsonb.DataJson,
       MetadataJson = jsonb.MetadataJson,

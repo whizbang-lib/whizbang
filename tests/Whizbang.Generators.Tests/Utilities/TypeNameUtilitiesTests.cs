@@ -17,7 +17,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_Empty_ReturnsEmptyAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(input);
@@ -29,7 +29,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_SimpleNameNoDot_ReturnsSameAsync() {
     // Arrange - No dot in name
-    var input = "Order";
+    const string input = "Order";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(input);
@@ -41,7 +41,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_FullyQualified_ReturnsSimpleNameAsync() {
     // Arrange
-    var fullyQualified = "global::MyApp.Commands.CreateOrder";
+    const string fullyQualified = "global::MyApp.Commands.CreateOrder";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(fullyQualified);
@@ -53,7 +53,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_WithoutNamespace_ReturnsAsIsAsync() {
     // Arrange
-    var simpleName = "Order";
+    const string simpleName = "Order";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(simpleName);
@@ -65,7 +65,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_ArrayType_HandlesCorrectlyAsync() {
     // Arrange
-    var arrayType = "global::MyApp.Events.NotificationEvent[]";
+    const string arrayType = "global::MyApp.Events.NotificationEvent[]";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(arrayType);
@@ -77,7 +77,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_TupleType_HandlesCorrectlyAsync() {
     // Arrange
-    var tupleType = "(global::MyApp.A, global::MyApp.B)";
+    const string tupleType = "(global::MyApp.A, global::MyApp.B)";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(tupleType);
@@ -89,7 +89,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_NestedTuple_HandlesCorrectlyAsync() {
     // Arrange - Nested tuple with inner tuple
-    var nestedTuple = "(global::A.X, (global::B.Y, global::C.Z))";
+    const string nestedTuple = "(global::A.X, (global::B.Y, global::C.Z))";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(nestedTuple);
@@ -101,7 +101,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetSimpleName_String_ArrayInTuple_HandlesCorrectlyAsync() {
     // Arrange
-    var arrayInTuple = "(global::A.X[], global::B.Y)";
+    const string arrayInTuple = "(global::A.X[], global::B.Y)";
 
     // Act
     var result = TypeNameUtilities.GetSimpleName(arrayInTuple);
@@ -117,7 +117,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task SplitTupleParts_SimpleTuple_SplitsCorrectlyAsync() {
     // Arrange
-    var tupleContent = "A, B, C";
+    const string tupleContent = "A, B, C";
 
     // Act
     var result = TypeNameUtilities.SplitTupleParts(tupleContent);
@@ -132,7 +132,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task SplitTupleParts_NestedParentheses_PreservesNestedAsync() {
     // Arrange
-    var tupleContent = "A, B, (C, D)";
+    const string tupleContent = "A, B, (C, D)";
 
     // Act
     var result = TypeNameUtilities.SplitTupleParts(tupleContent);
@@ -147,7 +147,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task SplitTupleParts_Empty_ReturnsEmptyArrayAsync() {
     // Arrange
-    var tupleContent = "";
+    const string tupleContent = "";
 
     // Act
     var result = TypeNameUtilities.SplitTupleParts(tupleContent);
@@ -163,7 +163,7 @@ public class TypeNameUtilitiesTests {
   [Test]
   public async Task GetDbSetPropertyName_TopLevel_ReturnsNameWithSAsync() {
     // Arrange - Create a compilation with a top-level class
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class Order { }
 }";
@@ -180,7 +180,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetDbSetPropertyName_Nested_ReturnsParentModelsAsync() {
     // Arrange - Create a compilation with a nested class
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class ActiveJobTemplate {
         public class Model { }
@@ -203,7 +203,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_TopLevel_ReturnsNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class Order { }
 }";
@@ -220,7 +220,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_Nested_ReturnsConcatenatedNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class TaskItem {
         public class Model { }
@@ -239,7 +239,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_NestedExactMatch_ReturnsContainingNameOnlyAsync() {
     // Arrange - Nested class has exact same name as containing class
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class ActiveAccount {
         public class ActiveAccount { }
@@ -258,7 +258,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_NestedStartsWithContaining_ReturnsContainingNameOnlyAsync() {
     // Arrange - Nested class name starts with containing class name
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class ActiveAccount {
         public class ActiveAccountModel { }
@@ -277,7 +277,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_NestedDifferentName_ReturnsConcatenatedAsync() {
     // Arrange - Nested class name does NOT start with containing class name
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class OrderViews {
         public class Model { }
@@ -296,7 +296,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_NestedPartialMatch_ReturnsContainingOnlyAsync() {
     // Arrange - Nested name starts with containing name (partial but valid prefix match)
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class Order {
         public class Ordering { }
@@ -315,7 +315,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetTableBaseName_DraftJobPattern_ReturnsContainingOnlyAsync() {
     // Arrange - Real-world pattern: DraftJobCareerStream.DraftJobCareerStream
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class DraftJobCareerStream {
         public class DraftJobCareerStream { }
@@ -338,7 +338,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetSimpleName_INamedTypeSymbol_TopLevelClass_ReturnsNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class OrderPerspective { }
 }";
@@ -355,7 +355,7 @@ namespace TestNamespace {
   [Test]
   public async Task GetSimpleName_INamedTypeSymbol_NestedClass_ReturnsParentDotNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class DraftJobStatus {
         public class Projection { }
@@ -388,7 +388,7 @@ namespace TestNamespace {
   [Test]
   public async Task FormatTypeNameForRuntime_ReturnsTypeCommaAssemblyAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class ProductCreatedEvent { }
 }";
@@ -405,7 +405,7 @@ namespace TestNamespace {
   [Test]
   public async Task FormatTypeNameForRuntime_ArrayType_HandlesCorrectlyAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class OrderEvent { }
     public class Container {
@@ -428,7 +428,7 @@ namespace TestNamespace {
   [Test]
   public async Task FormatTypeNameForRuntime_NestedType_UsesPlusNotDotAsync() {
     // Arrange - Nested class like AuthContracts.TenantCreatedEvent
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class AuthContracts {
         public class TenantCreatedEvent { }
@@ -448,7 +448,7 @@ namespace TestNamespace {
   [Test]
   public async Task FormatTypeNameForRuntime_DeeplyNestedType_UsesPlusForAllLevelsAsync() {
     // Arrange - Deeply nested class: Outer.Middle.Inner
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class Outer {
         public static class Middle {
@@ -473,7 +473,7 @@ namespace TestNamespace {
   [Test]
   public async Task BuildClrTypeName_TopLevelClass_ReturnsNamespaceAndNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public class SimpleEvent { }
 }";
@@ -490,7 +490,7 @@ namespace TestNamespace {
   [Test]
   public async Task BuildClrTypeName_NestedClass_UsesPlusSeparatorAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 namespace TestNamespace {
     public static class Container {
         public class NestedEvent { }
@@ -509,7 +509,7 @@ namespace TestNamespace {
   [Test]
   public async Task BuildClrTypeName_GlobalNamespace_ReturnsTypeNameOnlyAsync() {
     // Arrange - Type in global namespace
-    var source = @"
+    const string source = @"
 public class GlobalEvent { }
 ";
     var compilation = GeneratorTestHelper.CreateCompilation(source);

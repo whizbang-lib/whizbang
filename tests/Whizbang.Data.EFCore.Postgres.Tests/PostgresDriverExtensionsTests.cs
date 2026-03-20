@@ -26,9 +26,7 @@ public class PostgresTestModel {
 public class PostgresTestDbContext(DbContextOptions<PostgresTestDbContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     // This call will be discovered by EFCoreServiceRegistrationGenerator
-    modelBuilder.Entity<PerspectiveRow<PostgresTestModel>>(entity => {
-      entity.HasKey(e => e.Id);
-    });
+    modelBuilder.Entity<PerspectiveRow<PostgresTestModel>>(entity => entity.HasKey(e => e.Id));
   }
 }
 
@@ -83,8 +81,8 @@ public class PostgresDriverExtensionsTests {
     var exception = await Assert.That(() => fakeOptions.Postgres)
         .Throws<InvalidOperationException>();
 
-    await Assert.That(exception.Message!).Contains("Postgres driver can only be used with EF Core storage");
-    await Assert.That(exception.Message!).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
+    await Assert.That(exception.Message).Contains("Postgres driver can only be used with EF Core storage");
+    await Assert.That(exception.Message).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
   }
 
   [Test]

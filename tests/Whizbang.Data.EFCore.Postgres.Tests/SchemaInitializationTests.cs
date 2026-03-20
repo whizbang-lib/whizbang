@@ -22,7 +22,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -64,7 +64,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -90,7 +90,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -122,7 +122,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Migration 001 - Outbox work coordination columns
-    var sql1 = @"
+    const string sql1 = @"
       SELECT column_name
       FROM information_schema.columns
       WHERE table_name = 'wh_outbox'
@@ -144,7 +144,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await Assert.That(outboxColumns).Contains("lease_expiry");
 
     // Migration 014 - process_work_batch function exists
-    var sql2 = @"
+    const string sql2 = @"
       SELECT routine_name
       FROM information_schema.routines
       WHERE routine_schema = 'public'
@@ -281,7 +281,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
 
     // Create just the outbox table (simulating partial initialization)
     // This matches OutboxSchema.Table C# schema definition
-    var coreTableSql = @"
+    const string coreTableSql = @"
       CREATE TABLE IF NOT EXISTS wh_outbox (
         message_id UUID NOT NULL PRIMARY KEY,
         destination VARCHAR(500) NOT NULL,
@@ -311,7 +311,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await dbContext.EnsureWhizbangDatabaseInitializedAsync();
 
     // Assert - All tables should now exist
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -337,7 +337,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -365,7 +365,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -431,7 +431,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Drop all Whizbang tables in correct order (respecting foreign keys)
-    var dropSql = @"
+    const string dropSql = @"
       DROP TABLE IF EXISTS wh_schema_migrations CASCADE;
       DROP TABLE IF EXISTS wh_schema_versions CASCADE;
       DROP TABLE IF EXISTS wh_receptor_processing CASCADE;

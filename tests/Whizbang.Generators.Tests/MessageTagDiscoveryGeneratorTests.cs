@@ -19,7 +19,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithNotificationTag_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -35,7 +35,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("OrderCreatedEvent");
+    await Assert.That(code).Contains("OrderCreatedEvent");
     await Assert.That(code).Contains("order-created");
   }
 
@@ -46,7 +46,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTelemetryTag_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Tags;
@@ -63,7 +63,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("PaymentProcessedEvent");
+    await Assert.That(code).Contains("PaymentProcessedEvent");
     await Assert.That(code).Contains("payment-processed");
   }
 
@@ -74,7 +74,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMetricTag_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Tags;
@@ -91,7 +91,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("OrderCountEvent");
+    await Assert.That(code).Contains("OrderCountEvent");
     await Assert.That(code).Contains("orders-metric");
   }
 
@@ -102,7 +102,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithAuditEvent_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Audit;
@@ -119,7 +119,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CustomerDataViewedEvent");
+    await Assert.That(code).Contains("CustomerDataViewedEvent");
     // Note: Generator can't see constructor-initialized Tag values, only named arguments
     await Assert.That(code).Contains("AuditEventAttribute");
   }
@@ -131,7 +131,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleTaggedTypes_GeneratesAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -153,7 +153,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("order-created");
+    await Assert.That(code).Contains("order-created");
     await Assert.That(code).Contains("order-shipped");
     await Assert.That(code).Contains("order-cancelled");
   }
@@ -165,7 +165,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithIncludeEvent_GeneratesPayloadWithEventAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -181,7 +181,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("__event");
+    await Assert.That(code).Contains("__event");
   }
 
   /// <summary>
@@ -191,7 +191,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithExtraJson_GeneratesMergeCodeAsync() {
     // Arrange
-    var source = """"
+    const string source = """"
             using System;
             using Whizbang.Core.Attributes;
 
@@ -208,7 +208,7 @@ public class MessageTagDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
     // Should have code to merge extra JSON
-    await Assert.That(code!).Contains("source");
+    await Assert.That(code).Contains("source");
   }
 
   /// <summary>
@@ -218,7 +218,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithProperties_GeneratesPropertyExtractorsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -235,7 +235,7 @@ public class MessageTagDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
     // Should extract only specified properties
-    await Assert.That(code!).Contains("OrderId");
+    await Assert.That(code).Contains("OrderId");
     await Assert.That(code).Contains("Status");
     await Assert.That(code).Contains("Total");
   }
@@ -247,7 +247,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithNoTaggedTypes_GeneratesEmptyRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -275,7 +275,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ProducesCompilableCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -307,7 +307,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTaggedTypes_ImplementsIMessageTagRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -323,7 +323,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("IMessageTagRegistry");
+    await Assert.That(code).Contains("IMessageTagRegistry");
     // Class name is unique per assembly (e.g., GeneratedMessageTagRegistry_TestAssembly)
     await Assert.That(code).Contains("class GeneratedMessageTagRegistry_");
   }
@@ -335,7 +335,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTaggedTypes_GeneratesModuleInitializerAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -351,7 +351,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[ModuleInitializer]");
+    await Assert.That(code).Contains("[ModuleInitializer]");
     await Assert.That(code).Contains("MessageTagRegistry.Register");
   }
 
@@ -362,7 +362,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTaggedTypes_RegistersWithAssemblyRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -379,7 +379,7 @@ public class MessageTagDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
     // Should register with static MessageTagRegistry which wraps AssemblyRegistry
-    await Assert.That(code!).Contains("Whizbang.Core.Tags.MessageTagRegistry.Register");
+    await Assert.That(code).Contains("Whizbang.Core.Tags.MessageTagRegistry.Register");
   }
 
   /// <summary>
@@ -389,7 +389,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTaggedTypes_UsesPriority100ForContractsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -406,7 +406,7 @@ public class MessageTagDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
     // Priority 100 for contracts assemblies (first to be tried)
-    await Assert.That(code!).Contains("priority: 100");
+    await Assert.That(code).Contains("priority: 100");
   }
 
   /// <summary>
@@ -416,7 +416,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GetTagsFor_ReturnsEmptyForUnknownTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -433,7 +433,7 @@ public class MessageTagDiscoveryGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
     // Should have GetTagsFor implementation with yield pattern
-    await Assert.That(code!).Contains("IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType)");
+    await Assert.That(code).Contains("IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType)");
   }
 
   /// <summary>
@@ -443,7 +443,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomAttribute_GeneratesRegistrationAsync() {
     // Arrange - using AuditEventAttribute which inherits from MessageTagAttribute
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Audit;
@@ -460,7 +460,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("UserLoggedInEvent");
+    await Assert.That(code).Contains("UserLoggedInEvent");
     await Assert.That(code).Contains("AuditEventAttribute");
   }
 
@@ -471,7 +471,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_OutputIsAotCompatible_NoReflectionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -508,7 +508,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithConstructorArgument_ExtractsTagAsync() {
     // Arrange - Define custom attribute with constructor parameter
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -533,7 +533,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("TenantCreatedEvent");
+    await Assert.That(code).Contains("TenantCreatedEvent");
     // CRITICAL: Tag must be "tenants" (from constructor), not empty string
     await Assert.That(code).Contains("tenants");
   }
@@ -546,7 +546,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMixedSyntax_ExtractsAllValuesAsync() {
     // Arrange - Define custom attribute with constructor AND named property support
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -581,7 +581,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // Both events should be registered
-    await Assert.That(code!).Contains("OrderPlacedEvent");
+    await Assert.That(code).Contains("OrderPlacedEvent");
     await Assert.That(code).Contains("InventoryUpdatedEvent");
 
     // Constructor argument should be extracted
@@ -601,7 +601,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithPropertiesInConstructor_ExtractsPropertiesAsync() {
     // Arrange - Define custom attribute with properties in constructor
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -627,7 +627,7 @@ public class MessageTagDiscoveryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageTagRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("UserRegisteredEvent");
+    await Assert.That(code).Contains("UserRegisteredEvent");
     await Assert.That(code).Contains("users");
 
     // Should extract specified properties from constructor array
@@ -647,7 +647,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithBoolInConstructor_ExtractsValueAsync() {
     // Arrange - Define custom attribute with bool in constructor
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -678,7 +678,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // Both events should be registered
-    await Assert.That(code!).Contains("PaymentProcessedEvent");
+    await Assert.That(code).Contains("PaymentProcessedEvent");
     await Assert.That(code).Contains("RefundIssuedEvent");
 
     // PaymentProcessedEvent should have __event in payload (IncludeEvent = true)
@@ -702,7 +702,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleTagAttributes_DiscoversAllAsync() {
     // Arrange - Event with TWO different tag attributes (like JDNext's NotificationTag + NotificationIdTag)
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -742,7 +742,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // CRITICAL: Both attributes MUST be in the generated registry
-    await Assert.That(code!).Contains("CategoryTagAttribute");
+    await Assert.That(code).Contains("CategoryTagAttribute");
     await Assert.That(code).Contains("EntityTagAttribute");
 
     // Both tag values should be present
@@ -761,7 +761,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleSameTypeAttributes_DiscoversAllAsync() {
     // Arrange - Event with TWO NotificationTag attributes
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -781,7 +781,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
 
     // Both tag values should be present
-    await Assert.That(code!).Contains("orders");
+    await Assert.That(code).Contains("orders");
     await Assert.That(code).Contains("all-events");
   }
 
@@ -793,7 +793,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleAttributes_GeneratesCorrectCountAsync() {
     // Arrange - 3 events with varying attribute counts
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -860,7 +860,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomAttributes_GeneratesDispatcherAsync() {
     // Arrange - Custom attribute that isn't a built-in Whizbang attribute
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -887,7 +887,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(dispatcherCode).IsNotNull();
 
     // Dispatcher should implement IMessageTagHookDispatcher
-    await Assert.That(dispatcherCode!).Contains("IMessageTagHookDispatcher");
+    await Assert.That(dispatcherCode).Contains("IMessageTagHookDispatcher");
 
     // Dispatcher should handle TenantTagAttribute
     await Assert.That(dispatcherCode).Contains("TenantTagAttribute");
@@ -905,7 +905,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithOnlyBuiltInAttributes_DoesNotGenerateDispatcherAsync() {
     // Arrange - Only using built-in Whizbang attributes
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Tags;
@@ -942,7 +942,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task GeneratedDispatcher_TryCreateContext_ReturnsTypedContextAsync() {
     // Arrange - Multiple custom attributes
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -976,7 +976,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(dispatcherCode).IsNotNull();
 
     // TryCreateContext should handle CategoryTagAttribute
-    await Assert.That(dispatcherCode!).Contains("typeof(global::TestApp.CategoryTagAttribute)");
+    await Assert.That(dispatcherCode).Contains("typeof(global::TestApp.CategoryTagAttribute)");
     await Assert.That(dispatcherCode).Contains("TagContext<global::TestApp.CategoryTagAttribute>");
 
     // TryCreateContext should handle EntityIdTagAttribute
@@ -991,7 +991,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task GeneratedDispatcher_TryDispatchAsync_InvokesHookAsync() {
     // Arrange - Custom attribute with hook invocation pattern
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -1017,7 +1017,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(dispatcherCode).IsNotNull();
 
     // TryDispatchAsync should check hook type
-    await Assert.That(dispatcherCode!).Contains("IMessageTagHook<global::TestApp.AuditTagAttribute>");
+    await Assert.That(dispatcherCode).Contains("IMessageTagHook<global::TestApp.AuditTagAttribute>");
 
     // Should call OnTaggedMessageAsync on the hook
     await Assert.That(dispatcherCode).Contains("OnTaggedMessageAsync");
@@ -1035,7 +1035,7 @@ public class MessageTagDiscoveryGeneratorTests {
   public async Task Generator_WithMultipleCustomNamespaces_GeneratesDispatcherForAllAsync() {
     // Arrange - Custom attributes in different namespaces (like JDNext)
     // Note: Using block-scoped namespaces since C# only allows one file-scoped namespace per file
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -1072,7 +1072,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(dispatcherCode).IsNotNull();
 
     // Should handle SignalTagAttribute from App.Notifications
-    await Assert.That(dispatcherCode!).Contains("global::App.Notifications.SignalTagAttribute");
+    await Assert.That(dispatcherCode).Contains("global::App.Notifications.SignalTagAttribute");
 
     // Should handle TrackingTagAttribute from App.Tracking
     await Assert.That(dispatcherCode).Contains("global::App.Tracking.TrackingTagAttribute");
@@ -1085,7 +1085,7 @@ public class MessageTagDiscoveryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task GeneratedDispatcher_IsAotCompatible_NoReflectionAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 

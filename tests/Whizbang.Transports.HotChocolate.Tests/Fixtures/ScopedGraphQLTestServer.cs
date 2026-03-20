@@ -58,7 +58,7 @@ public record CurrentScopeResult {
 /// <summary>
 /// Lens interface for scoped order queries.
 /// </summary>
-public interface IScopedOrderLens : ILensQuery<OrderReadModel> { }
+public interface IScopedOrderLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// Scoped lens implementation that filters by the current scope context.

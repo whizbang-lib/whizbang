@@ -42,7 +42,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
@@ -107,7 +107,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       });
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
@@ -160,7 +160,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new DuplicateDetectingStrategy(processedMessageIds, () => flushCount++);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
@@ -208,7 +208,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -246,7 +246,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -284,7 +284,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
 
     var strategy = new NoOpWorkCoordinatorStrategy();
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
 
     var serviceProvider = services.BuildServiceProvider();
@@ -322,7 +322,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 
@@ -373,7 +373,7 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var strategy = new CapturingWorkCoordinatorStrategy(capturedInboxMessages);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    services.AddWhizbangMessageSecurity(opts => opts.AllowAnonymous = true);
     services.AddScoped<IWorkCoordinatorStrategy>(_ => strategy);
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(jsonOptions));
 

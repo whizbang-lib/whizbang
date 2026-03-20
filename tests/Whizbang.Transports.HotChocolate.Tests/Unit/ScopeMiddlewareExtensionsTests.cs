@@ -64,9 +64,7 @@ public class ScopeMiddlewareExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    services.AddWhizbangScope(options => {
-      options.TenantIdClaimType = "custom_tenant";
-    });
+    services.AddWhizbangScope(options => options.TenantIdClaimType = "custom_tenant");
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -80,9 +78,7 @@ public class ScopeMiddlewareExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    services.AddWhizbangScope(options => {
-      options.TenantIdClaimType = "my_tenant";
-    });
+    services.AddWhizbangScope(options => options.TenantIdClaimType = "my_tenant");
     var provider = services.BuildServiceProvider();
 
     // Assert
@@ -97,9 +93,7 @@ public class ScopeMiddlewareExtensionsTests {
     var services = new ServiceCollection();
 
     // Act
-    var result = services.AddWhizbangScope(options => {
-      options.TenantIdClaimType = "test";
-    });
+    var result = services.AddWhizbangScope(options => options.TenantIdClaimType = "test");
 
     // Assert
     await Assert.That(result).IsSameReferenceAs(services);
@@ -131,9 +125,7 @@ public class ScopeMiddlewareExtensionsTests {
     var app = new ApplicationBuilder(services.BuildServiceProvider());
 
     // Act
-    var result = app.UseWhizbangScope(options => {
-      options.TenantIdClaimType = "custom";
-    });
+    var result = app.UseWhizbangScope(options => options.TenantIdClaimType = "custom");
 
     // Assert
     await Assert.That(result).IsNotNull();

@@ -21,7 +21,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedCode_ImplementsIDiagnosticsInterfaceAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -60,7 +60,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedDiagnostics_HasCorrectGeneratorNameAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -94,7 +94,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -132,7 +132,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -168,7 +168,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedDiagnostics_WithNoPerspectives_ReportsZeroAsync() {
     // Arrange - Source with no perspectives
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       namespace TestApp;
@@ -199,7 +199,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedDiagnostics_DeduplicatesPerspectivesAsync() {
     // Arrange - Two perspectives using same model type
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -243,7 +243,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedCode_WithPublicSchema_CallsHasDefaultSchemaAsync() {
     // Arrange - Source with no explicit schema (defaults to "public")
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -286,7 +286,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   public async Task GeneratedCode_WithCustomSchema_CallsHasDefaultSchemaWithCustomValueAsync() {
     // Arrange - Source with DbContext specifying custom schema
     // Note: Must use RunEFCoreGeneratorWithEFCoreReferencesAsync for DbContext discovery to work
-    var source = @"
+    const string source = """
+
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -303,11 +304,12 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ItemCreated : IEvent;
 
-      [WhizbangDbContext(Schema = ""inventory"")]
+      [WhizbangDbContext(Schema = "inventory")]
       public class InventoryDbContext : DbContext {
         public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
       }
-    ";
+    
+""";
 
     // Act - Use helper WITH EF Core references to enable DbContext schema discovery
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync(source);
@@ -328,7 +330,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedCode_SchemaCondition_OnlyChecksForNonEmptyAsync() {
     // Arrange - Any source that triggers generator
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -369,7 +371,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   public async Task GeneratedCode_WithNamespaceDerivedSchema_CallsHasDefaultSchemaAsync() {
     // Arrange - Source with DbContext but no explicit Schema property
     // The schema should be derived from namespace: "TestApp.InventoryWorker" -> "inventory"
-    var source = @"
+    const string source = @"
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -415,7 +417,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task GeneratedCode_HasDefaultSchema_IncludesDocumentationCommentAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -459,7 +461,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Table name format: wh_per_ (7 bytes) + snake_case name
     // We need total > 63 bytes, so model name part needs > 56 bytes in snake_case
     // "VeryLongModelNameThatWillDefinitelyExceedTheSixtyThreeByteLimitForPostgres" → ~70+ bytes
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -493,7 +495,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithShortTableName_DoesNotEmitWHIZ820ErrorAsync() {
     // Arrange - Create a model with a short name
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -523,17 +525,18 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithLongColumnName_EmitsWHIZ821ErrorAsync() {
     // Arrange - Create a model with a physical field with a very long property name
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto {
-        public string Name { get; init; } = """";
+        public string Name { get; init; } = "";
 
         [PhysicalField(Indexed = true)]
-        public string VeryLongPropertyNameThatWillExceedTheSixtyThreeByteLimitForPostgresColumnNames { get; init; } = """";
+        public string VeryLongPropertyNameThatWillExceedTheSixtyThreeByteLimitForPostgresColumnNames { get; init; } = "";
       }
 
       public class ProductPerspective(IPerspectiveStore<ProductDto> store)
@@ -542,7 +545,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       }
 
       public record ProductCreated : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
@@ -562,17 +566,18 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithShortColumnName_DoesNotEmitWHIZ821ErrorAsync() {
     // Arrange - Create a model with a physical field with a short property name
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto {
-        public string Name { get; init; } = """";
+        public string Name { get; init; } = "";
 
         [PhysicalField(Indexed = true)]
-        public string Status { get; init; } = """";
+        public string Status { get; init; } = "";
       }
 
       public class ProductPerspective(IPerspectiveStore<ProductDto> store)
@@ -581,7 +586,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       }
 
       public record ProductCreated : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
@@ -600,17 +606,18 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange - Create a model with long table name and indexed physical field
     // The combination should create an index name > 63 bytes
     // ix_ (3) + table_name + _ (1) + column_name
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record LongModelNameForTableThatWillCauseIndexNameOverflow {
-        public string Name { get; init; } = """";
+        public string Name { get; init; } = "";
 
         [PhysicalField(Indexed = true)]
-        public string SomeReasonablyLongPropertyNameForColumn { get; init; } = """";
+        public string SomeReasonablyLongPropertyNameForColumn { get; init; } = "";
       }
 
       public class TestPerspective(IPerspectiveStore<LongModelNameForTableThatWillCauseIndexNameOverflow> store)
@@ -619,7 +626,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       }
 
       public record ProductCreated : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
@@ -645,17 +653,18 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithShortIndexName_DoesNotEmitWHIZ822ErrorAsync() {
     // Arrange - Create a model with short names
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto {
-        public string Name { get; init; } = """";
+        public string Name { get; init; } = "";
 
         [PhysicalField(Indexed = true)]
-        public string Status { get; init; } = """";
+        public string Status { get; init; } = "";
       }
 
       public class ProductPerspective(IPerspectiveStore<ProductDto> store)
@@ -664,7 +673,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       }
 
       public record ProductCreated : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
@@ -685,7 +695,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // "ExactlyFiftySixBytesModelNameHere" → "exactly_fifty_six_bytes_model_name_here"
     // Let's calculate: e_x_a_c_t_l_y_f_i_f_t_y_s_i_x_b_y_t_e_s_m_o_d_e_l (varies)
     // This is hard to calculate exactly, so we use a name that should be close
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -715,7 +725,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithIdentifierError_ExcludesPerspectiveFromOutputAsync() {
     // Arrange - Create one valid and one invalid perspective
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
@@ -765,17 +775,18 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
   [Test]
   public async Task Generator_WithLongUniqueFieldIndexName_EmitsWHIZ822ErrorAsync() {
     // Arrange - Create a model with a unique physical field (unique fields create indexes too)
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ModelWithLongUniqueField {
-        public string Name { get; init; } = """";
+        public string Name { get; init; } = "";
 
         [PhysicalField(Unique = true)]
-        public string VeryLongUniquePropertyNameThatCombinedWithTableNameExceedsLimit { get; init; } = """";
+        public string VeryLongUniquePropertyNameThatCombinedWithTableNameExceedsLimit { get; init; } = "";
       }
 
       public class TestPerspective(IPerspectiveStore<ModelWithLongUniqueField> store)
@@ -784,7 +795,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       }
 
       public record ProductCreated : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);

@@ -393,9 +393,7 @@ public class TestDbContext(DbContextOptions<TestDbContext> options) : DbContext(
 
       // Use owned types for InMemory provider (InMemory doesn't support JSON queries)
       // The actual PostgreSQL implementation will use .ToJson() instead
-      entity.OwnsOne(e => e.Data, data => {
-        data.WithOwner();
-      });
+      entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
       entity.OwnsOne(e => e.Metadata, metadata => {
         metadata.WithOwner();

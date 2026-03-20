@@ -60,9 +60,7 @@ public class EFCorePostgresLensQueryMultiGenericTests {
       modelBuilder.Entity<PerspectiveRow<TModel>>(entity => {
         entity.HasKey(e => e.Id);
 
-        entity.OwnsOne(e => e.Data, data => {
-          data.WithOwner();
-        });
+        entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
         entity.OwnsOne(e => e.Metadata, metadata => {
           metadata.WithOwner();
