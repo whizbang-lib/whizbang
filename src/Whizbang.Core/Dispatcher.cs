@@ -4031,7 +4031,8 @@ public abstract partial class Dispatcher(
 
       var messageType = typeof(TMessage);
       foreach (var message in messageList) {
-        var invoker = GetReceptorInvoker<TMessage>(message, messageType);
+        // Use <object> to find ANY receptor (result-returning or void)
+        var invoker = GetReceptorInvoker<object>(message, messageType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);
 
@@ -4049,13 +4050,18 @@ public abstract partial class Dispatcher(
 
       // Process all messages via outbox in a single batch (optimized)
       if (outboxMessages.Count > 0) {
-        var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-        // Only add Accepted receipts for messages without a local receptor
-        // (locally-handled messages already have Delivered receipts)
-        for (var i = 0; i < outboxReceipts.Count; i++) {
-          if (!hasLocalReceptor[i]) {
-            receipts.Add(outboxReceipts[i]);
+        try {
+          var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
+          // Only add Accepted receipts for messages without a local receptor
+          // (locally-handled messages already have Delivered receipts)
+          for (var i = 0; i < outboxReceipts.Count; i++) {
+            if (!hasLocalReceptor[i]) {
+              receipts.Add(outboxReceipts[i]);
+            }
           }
+        } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
+          // No outbox strategy available but all messages handled locally - acceptable.
+          // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
         }
       }
 
@@ -4108,13 +4114,18 @@ public abstract partial class Dispatcher(
 
       // Process all messages via outbox in a single batch (optimized)
       if (outboxMessages.Count > 0) {
-        var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
-        // Only add Accepted receipts for messages without a local receptor
-        // (locally-handled messages already have Delivered receipts)
-        for (var i = 0; i < outboxReceipts.Count; i++) {
-          if (!hasLocalReceptor[i]) {
-            receipts.Add(outboxReceipts[i]);
+        try {
+          var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
+          // Only add Accepted receipts for messages without a local receptor
+          // (locally-handled messages already have Delivered receipts)
+          for (var i = 0; i < outboxReceipts.Count; i++) {
+            if (!hasLocalReceptor[i]) {
+              receipts.Add(outboxReceipts[i]);
+            }
           }
+        } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
+          // No outbox strategy available but all messages handled locally - acceptable.
+          // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
         }
       }
 
