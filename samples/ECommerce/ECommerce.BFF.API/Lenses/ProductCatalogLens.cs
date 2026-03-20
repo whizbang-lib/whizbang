@@ -14,7 +14,7 @@ public class ProductCatalogLens(ILensQuery<ProductDto> query) : IProductCatalogL
 
   /// <inheritdoc />
   public async Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    var product = await _query.GetByIdAsync(productId, cancellationToken);
+    var product = await _query.DefaultScope.GetByIdAsync(productId, cancellationToken);
 
     // Filter out deleted products
     if (product?.DeletedAt != null) {
@@ -26,7 +26,7 @@ public class ProductCatalogLens(ILensQuery<ProductDto> query) : IProductCatalogL
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProductDto>> GetAllAsync(bool includeDeleted = false, CancellationToken cancellationToken = default) {
-    var query = _query.Query.AsNoTracking();
+    var query = _query.DefaultScope.Query.AsNoTracking();
 
     if (!includeDeleted) {
       query = query.Where(row => row.Data.DeletedAt == null);
@@ -46,7 +46,7 @@ public class ProductCatalogLens(ILensQuery<ProductDto> query) : IProductCatalogL
       return Array.Empty<ProductDto>();
     }
 
-    var results = await _query.Query
+    var results = await _query.DefaultScope.Query
       .AsNoTracking()
       .Where(row => ids.Contains(row.Id) && row.Data.DeletedAt == null)
       .Select(row => row.Data)

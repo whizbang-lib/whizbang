@@ -25,7 +25,7 @@ public class CatalogQueries {
     [Service] ILensQuery<ProductDto> productQuery) {
     // Return IQueryable for HotChocolate to apply filters/sorts/projections
     // Filter out deleted products by default
-    return productQuery.Query
+    return productQuery.DefaultScope.Query
       .AsNoTracking()
       .Where(row => row.Data.DeletedAt == null)
       .Select(row => row.Data);
@@ -53,7 +53,7 @@ public class CatalogQueries {
   public IQueryable<InventoryLevelDto> GetInventory(
     [Service] ILensQuery<InventoryLevelDto> inventoryQuery) {
     // Return IQueryable for HotChocolate to apply filters/sorts/projections
-    return inventoryQuery.Query
+    return inventoryQuery.DefaultScope.Query
       .AsNoTracking()
       .Select(row => row.Data);
   }
