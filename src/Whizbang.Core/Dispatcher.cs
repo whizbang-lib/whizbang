@@ -3682,7 +3682,9 @@ public abstract partial class Dispatcher(
 
       // Queue ALL messages to the strategy
       foreach (var (message, messageType, context) in messages) {
-        var destination = _resolveCommandDestination(messageType);
+        var destination = message is IEvent
+            ? _resolveEventTopic(messageType)
+            : _resolveCommandDestination(messageType);
         var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
@@ -3738,9 +3740,15 @@ public abstract partial class Dispatcher(
           receipts.Add(outboxReceipts[i]);
         }
       }
-    } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
-      // No outbox strategy available but all messages handled locally - acceptable.
-      // This happens when no IWorkCoordinatorStrategy is registered (e.g., in-process only mode).
+    } catch (InvalidOperationException ex) when (hasLocalReceptor.TrueForAll(static x => x)) {
+      // No outbox strategy — all messages handled locally only.
+      // Cross-service delivery will not occur without IWorkCoordinatorStrategy.
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical in error path
+      CascadeLogger.LogWarning(
+        "SendManyAsync outbox delivery skipped: no IWorkCoordinatorStrategy registered. " +
+        "{Count} message(s) handled locally only. Error: {Error}",
+        outboxMessages.Count, ex.Message);
+#pragma warning restore CA1848
     }
   }
 
@@ -4052,7 +4060,8 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       var receipts = new List<IDeliveryReceipt>();
 
-      // All messages go to outbox (matching PublishAsync semantics: local + outbox).
+      // All messages go to outbox for cross-service delivery.
+      // Events route via _resolveEventTopic, commands via _resolveCommandDestination.
       // Messages with local receptors are ALSO processed locally.
       var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
       var hasLocalReceptor = new List<bool>();
@@ -4104,7 +4113,8 @@ public abstract partial class Dispatcher(
       _dispatcherMetrics?.SendManyBatchSize.Record(messageList.Count);
       var receipts = new List<IDeliveryReceipt>();
 
-      // All messages go to outbox (matching PublishAsync semantics: local + outbox).
+      // All messages go to outbox for cross-service delivery.
+      // Events route via _resolveEventTopic, commands via _resolveCommandDestination.
       // Messages with local receptors are ALSO processed locally.
       var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
       var hasLocalReceptor = new List<bool>();
@@ -4124,6 +4134,114 @@ public abstract partial class Dispatcher(
         // ALWAYS queue for outbox delivery (cross-service propagation)
         var cascade = _cascadeContextFactory.NewRoot();
         outboxMessages.Add((message, messageType, MessageContext.Create(cascade)));
+      }
+
+      // Flush outbox batch and collect receipts for non-local messages
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
+
+      return receipts;
+    } finally {
+      sw.Stop();
+      _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
+    }
+  }
+
+  /// <summary>
+  /// Publishes multiple typed events with event routing (namespace-specific topics).
+  /// Each event is processed locally (if handlers exist) and queued to the outbox.
+  /// Optimized for batch operations - creates a single scope and flushes once.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull {
+    ArgumentNullException.ThrowIfNull(events);
+
+    var sw = Stopwatch.StartNew();
+    try {
+      var eventList = events.ToList();
+      _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
+      var receipts = new List<IDeliveryReceipt>();
+
+      // All events go to outbox for cross-service delivery.
+      // Events with local receptors are ALSO processed locally.
+      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+      var hasLocalReceptor = new List<bool>();
+
+      var eventType = typeof(TEvent);
+      foreach (var eventData in eventList) {
+        // Use <object> to find ANY receptor (result-returning or void)
+        var invoker = GetReceptorInvoker<object>(eventData, eventType);
+        var isLocal = invoker != null;
+        hasLocalReceptor.Add(isLocal);
+
+        if (isLocal) {
+          // Auto-generate StreamId for events with [GenerateStreamId] attribute
+          _autoGenerateStreamIdIfNeeded(eventData!, eventType);
+
+          // Has local receptor - process locally via publish semantics
+          var cascade = _cascadeContextFactory.NewRoot();
+          var receipt = await _sendAsyncInternalAsync<TEvent>(eventData, MessageContext.Create(cascade));
+          receipts.Add(receipt);
+        }
+
+        // ALWAYS queue for outbox delivery (cross-service propagation)
+        var outboxCascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((eventData, eventType, MessageContext.Create(outboxCascade)));
+      }
+
+      // Flush outbox batch and collect receipts for non-local messages
+      await _flushOutboxBatchAndCollectReceiptsAsync(outboxMessages, hasLocalReceptor, receipts);
+
+      return receipts;
+    } finally {
+      sw.Stop();
+      _dispatcherMetrics?.SendManyDuration.Record(sw.Elapsed.TotalMilliseconds);
+    }
+  }
+
+  /// <summary>
+  /// Publishes multiple events with event routing.
+  /// For AOT compatibility, use the generic overload PublishManyAsync&lt;TEvent&gt;.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) {
+    ArgumentNullException.ThrowIfNull(events);
+
+    var sw = Stopwatch.StartNew();
+    try {
+      var eventList = events.ToList();
+      _dispatcherMetrics?.SendManyBatchSize.Record(eventList.Count);
+      var receipts = new List<IDeliveryReceipt>();
+
+      // All events go to outbox for cross-service delivery.
+      // Events with local receptors are ALSO processed locally.
+      var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+      var hasLocalReceptor = new List<bool>();
+
+      foreach (var eventData in eventList) {
+        var eventType = eventData.GetType();
+        var invoker = GetReceptorInvoker<object>(eventData, eventType);
+        var isLocal = invoker != null;
+        hasLocalReceptor.Add(isLocal);
+
+        if (isLocal) {
+          // Has local receptor - process locally (Delivered receipt)
+          var receipt = await SendAsync(eventData);
+          receipts.Add(receipt);
+        }
+
+        // ALWAYS queue for outbox delivery (cross-service propagation)
+        var cascade = _cascadeContextFactory.NewRoot();
+        outboxMessages.Add((eventData, eventType, MessageContext.Create(cascade)));
       }
 
       // Flush outbox batch and collect receipts for non-local messages
