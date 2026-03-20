@@ -561,18 +561,18 @@ public class DispatcherOutboxTests {
   // SENDMANYASYNC ROUTING FIX TESTS
   // ========================================
 
-  // Test event that has a local receptor (source-generated, AOT-safe)
+  // Test command that has a local result-returning receptor (source-generated, AOT-safe).
   // Used to verify SendManyAsync sends to BOTH local receptor AND outbox.
-  public record LocallyHandledEvent([property: StreamId] Guid ItemId) : IEvent;
+  public record LocallyHandledCommand(string Name);
 
-  // Receptor for LocallyHandledEvent - registered via source generator at build time.
-  // Having this receptor means GetReceptorInvoker will return non-null for LocallyHandledEvent.
-  public class LocallyHandledEventReceptor : IReceptor<LocallyHandledEvent> {
-    private static int _handleCount;
+  // Result type for the receptor
+  public record LocallyHandledResult(bool Success);
 
-    public ValueTask HandleAsync(LocallyHandledEvent message, CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _handleCount);
-      return ValueTask.CompletedTask;
+  // Receptor for LocallyHandledCommand - registered via source generator at build time.
+  // Having this receptor means GetReceptorInvoker will return non-null for LocallyHandledCommand.
+  public class LocallyHandledCommandReceptor : IReceptor<LocallyHandledCommand, LocallyHandledResult> {
+    public ValueTask<LocallyHandledResult> HandleAsync(LocallyHandledCommand message, CancellationToken cancellationToken = default) {
+      return ValueTask.FromResult(new LocallyHandledResult(true));
     }
   }
 
@@ -589,13 +589,13 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
-    var receipts = await dispatcher.SendManyAsync<LocallyHandledEvent>(events);
+    var receipts = await dispatcher.SendManyAsync<LocallyHandledCommand>(events);
 
     // Assert - All messages should reach outbox even though they have local receptors
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
@@ -613,9 +613,9 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new object[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
@@ -641,13 +641,13 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
-    var receipts = await dispatcher.LocalSendManyAsync<LocallyHandledEvent>(events);
+    var receipts = await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events);
 
     // Assert - No outbox messages (local only)
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(0);
@@ -665,9 +665,9 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new object[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
@@ -689,12 +689,12 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
-    var receipts = (await dispatcher.LocalSendManyAsync<LocallyHandledEvent>(events)).ToList();
+    var receipts = (await dispatcher.LocalSendManyAsync<LocallyHandledCommand>(events)).ToList();
 
     // Assert - All messages processed locally with Delivered status
     await Assert.That(receipts).Count().IsEqualTo(2);
@@ -713,8 +713,8 @@ public class DispatcherOutboxTests {
     var strategy = new StubWorkCoordinatorStrategy();
     var dispatcher = _createDispatcherWithStrategy(strategy);
     var events = new object[] {
-      new LocallyHandledEvent(Guid.NewGuid()),
-      new LocallyHandledEvent(Guid.NewGuid())
+      new LocallyHandledCommand("item-" + Guid.NewGuid()),
+      new LocallyHandledCommand("item-" + Guid.NewGuid())
     };
 
     // Act
