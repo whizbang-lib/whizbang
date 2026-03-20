@@ -579,7 +579,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       ITypeSymbol modelType) {
 
     var returnTypes = new List<EventReturnTypeInfo>();
-    var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Use shared utility to include inherited Apply methods from base classes
     foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {

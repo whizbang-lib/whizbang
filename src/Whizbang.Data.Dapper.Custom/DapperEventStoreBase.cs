@@ -176,8 +176,8 @@ public abstract class DapperEventStoreBase : IEventStore {
 
       // Restore scope from Scope column if present and first hop has no ScopeDelta
       // Supports both new PerspectiveScope short keys ("t","u","c","o") and legacy snake_case ("tenant_id","user_id")
-      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0 && hops[0].Scope == null) {
-        if (JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
+      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0 && hops[0].Scope == null
+          && JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
           string? tenantId = null;
           string? userId = null;
           string? customerId = null;
@@ -215,7 +215,6 @@ public abstract class DapperEventStoreBase : IEventStore {
             var firstHop = hops[0];
             hops[0] = firstHop with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
           }
-        }
       }
 
       envelopes.Add(new MessageEnvelope<TMessage> {
@@ -299,8 +298,8 @@ public abstract class DapperEventStoreBase : IEventStore {
 
       // Restore scope from Scope column if present and first hop has no ScopeDelta
       // Supports both new PerspectiveScope short keys ("t","u","c","o") and legacy snake_case ("tenant_id","user_id")
-      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0 && hops[0].Scope == null) {
-        if (JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
+      if (!string.IsNullOrEmpty(row.Scope) && hops.Count > 0 && hops[0].Scope == null
+          && JsonSerializer.Deserialize(row.Scope, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
           string? tenantId = null;
           string? userId = null;
           string? customerId = null;
@@ -338,7 +337,6 @@ public abstract class DapperEventStoreBase : IEventStore {
             var firstHop = hops[0];
             hops[0] = firstHop with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
           }
-        }
       }
 
       envelopes.Add(new MessageEnvelope<IEvent> {

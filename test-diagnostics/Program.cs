@@ -1,7 +1,7 @@
 using Whizbang.Core.Generated;
 
 // Print all collected diagnostics from all generators
-var diagnostics = WhizbangDiagnostics.Diagnostics(
+_ = WhizbangDiagnostics.Diagnostics(
   categories: DiagnosticCategory.All,
   printToConsole: true
 );
