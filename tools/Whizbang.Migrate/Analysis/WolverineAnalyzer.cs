@@ -377,8 +377,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
       string className,
       int lineNumber) {
     // Check if this class is nested inside another type
-    var parentType = classDecl.Parent as TypeDeclarationSyntax;
-    if (parentType != null) {
+    if (classDecl.Parent is TypeDeclarationSyntax parentType) {
       var parentName = parentType.Identifier.Text;
       return new MigrationWarning(
           filePath,
@@ -506,7 +505,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     // Remove generic arguments: IHandle<T> -> IHandle
     var genericIndex = typeName.IndexOf('<');
     if (genericIndex > 0) {
-      return typeName.Substring(0, genericIndex);
+      return typeName[..genericIndex];
     }
 
     return typeName;

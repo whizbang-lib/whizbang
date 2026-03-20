@@ -181,7 +181,7 @@ public static class Program {
           sourceDir,
           dryRun,
           includes,
-          allExcludes.ToArray(),
+          [.. allExcludes],
           loadedDecisionFile,
           managePackages);
 

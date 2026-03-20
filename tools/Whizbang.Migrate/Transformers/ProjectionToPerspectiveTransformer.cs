@@ -74,8 +74,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -134,14 +133,9 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms projection base types to perspective interfaces.
   /// </summary>
-  private sealed class ProjectionToPerspectiveRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public ProjectionToPerspectiveRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class ProjectionToPerspectiveRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node) {
       if (node.BaseList == null) {
@@ -246,8 +240,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
       }
 
       // P04: Check if class is nested (common pattern in larger codebases)
-      var parentClass = classDecl.Parent as ClassDeclarationSyntax;
-      if (parentClass != null) {
+      if (classDecl.Parent is ClassDeclarationSyntax parentClass) {
         _warnings.Add($"Line {lineNumber}: Found nested projection class '{className}' inside '{parentClass.Identifier.Text}'. " +
             "Consider flattening to a top-level perspective class for better discoverability.");
       }
@@ -371,14 +364,9 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms ShouldDelete methods to Apply methods returning ModelAction.
   /// </summary>
-  private sealed class ShouldDeleteToModelActionRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public ShouldDeleteToModelActionRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class ShouldDeleteToModelActionRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node) {
       // Only transform ShouldDelete methods

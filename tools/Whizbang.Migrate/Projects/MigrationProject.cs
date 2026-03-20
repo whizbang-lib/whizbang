@@ -12,7 +12,7 @@ namespace Whizbang.Migrate.Projects;
 [JsonSerializable(typeof(MigrationProject))]
 [JsonSerializable(typeof(MigrationProgress))]
 [JsonSerializable(typeof(ProjectIndex))]
-internal sealed partial class MigrationProjectJsonContext : JsonSerializerContext { }
+internal sealed partial class MigrationProjectJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Represents a migration project that tracks migration state and decisions.
