@@ -142,12 +142,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContext? _returns;
-
-    public TestSecurityContextProvider(IScopeContext? returns = null) {
-      _returns = returns;
-    }
+  private sealed class TestSecurityContextProvider(IScopeContext? returns = null) : IMessageSecurityContextProvider {
+    private readonly IScopeContext? _returns = returns;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -198,12 +194,8 @@ public class ReceptorInvokerTagProcessorScopeTests {
   /// <summary>
   /// Test tag processor that captures the scope passed to ProcessTagsAsync.
   /// </summary>
-  private sealed class TestTagProcessor : IMessageTagProcessor {
-    private readonly System.Action<IScopeContext?>? _onProcessTags;
-
-    public TestTagProcessor(System.Action<IScopeContext?>? onProcessTags = null) {
-      _onProcessTags = onProcessTags;
-    }
+  private sealed class TestTagProcessor(System.Action<IScopeContext?>? onProcessTags = null) : IMessageTagProcessor {
+    private readonly System.Action<IScopeContext?>? _onProcessTags = onProcessTags;
 
     public ValueTask ProcessTagsAsync(
         object message,
@@ -222,13 +214,9 @@ public class ReceptorInvokerTagProcessorScopeTests {
     public void RecordInvocation(string receptorId, LifecycleStage stage) => _invocations.Add((receptorId, stage));
   }
 
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
+  private sealed class TestReceptorRegistry(ReceptorInvokerTagProcessorScopeTests.InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(System.Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-    private readonly InvocationTracker _tracker;
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
+    private readonly InvocationTracker _tracker = tracker;
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) where TMessage : notnull {
       var key = (typeof(TMessage), stage);

@@ -909,12 +909,8 @@ public class AutoPopulateProcessorTests {
   /// <summary>
   /// Test implementation of IAutoPopulateRegistry for unit tests.
   /// </summary>
-  private sealed class TestAutoPopulateRegistry : IAutoPopulateRegistry {
-    private readonly AutoPopulateRegistration[] _registrations;
-
-    public TestAutoPopulateRegistry(AutoPopulateRegistration[] registrations) {
-      _registrations = registrations;
-    }
+  private sealed class TestAutoPopulateRegistry(AutoPopulateRegistration[] registrations) : IAutoPopulateRegistry {
+    private readonly AutoPopulateRegistration[] _registrations = registrations;
 
     public IEnumerable<AutoPopulateRegistration> GetRegistrationsFor(Type messageType) {
       return _registrations.Where(r => r.MessageType == messageType);

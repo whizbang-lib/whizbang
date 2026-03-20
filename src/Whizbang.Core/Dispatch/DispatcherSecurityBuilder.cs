@@ -102,7 +102,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// <docs>fundamentals/security/message-security#cross-tenant-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
   public DispatcherSecurityBuilder WithTenant(string tenantId) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));
+    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
     return new DispatcherSecurityBuilder(
       _dispatcher,

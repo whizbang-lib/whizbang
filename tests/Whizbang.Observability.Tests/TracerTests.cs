@@ -236,12 +236,8 @@ public class TracerTests {
   /// <summary>
   /// Simple IOptionsMonitor implementation for testing.
   /// </summary>
-  private sealed class TestOptionsMonitor<T> : IOptionsMonitor<T> {
-    private readonly T _options;
-
-    public TestOptionsMonitor(T options) {
-      _options = options;
-    }
+  private sealed class TestOptionsMonitor<T>(T options) : IOptionsMonitor<T> {
+    private readonly T _options = options;
 
     public T CurrentValue => _options;
     public T Get(string? name) => _options;

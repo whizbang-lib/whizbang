@@ -1255,7 +1255,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       streamId: streamId);
 
     // Act - Report completion with Status = 0 (clears lease, doesn't change status)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
@@ -1331,7 +1331,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       instanceId: _instanceId);
 
     // Act - Report failure for message 1, and release message 2 and 3 (Status = 0)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
@@ -1473,7 +1473,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(message3Id, "topic", "Event3", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId, streamId: streamId);
 
     // Act - Report mixed completions and failures in a single call (Unit of Work pattern)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
@@ -1854,16 +1854,15 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         .Because("Stale instance should be deleted");
 
       // Partition assignments for stale instance should also be deleted (CASCADE)
-      await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
-        await connection.OpenAsync();
-        await using var command = new Npgsql.NpgsqlCommand(
-          "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
-          connection);
-        command.Parameters.AddWithValue("instanceId", (Guid)staleInstanceId);
-        var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
-        await Assert.That(count).IsEqualTo(0)
-          .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
-      }
+      await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
+        connection);
+      command.Parameters.AddWithValue("instanceId", (Guid)staleInstanceId);
+      var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
+      await Assert.That(count).IsEqualTo(0)
+        .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
     }
   }
 
@@ -2114,17 +2113,16 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Assert - Both messages accepted (no deduplication for outbox)
     // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
-    await using (var dbContext = CreateDbContext()) {
-      var outboxRecord1 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message1Id);
-      var outboxRecord2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(r => r.MessageId == (Guid)message2Id);
+    await using var dbContext = CreateDbContext();
+    var outboxRecord1 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(r => r.MessageId == (Guid)message1Id);
+    var outboxRecord2 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(r => r.MessageId == (Guid)message2Id);
 
-      await Assert.That(outboxRecord1).IsNotNull()
-        .Because("Outbox does not deduplicate - application's responsibility");
-      await Assert.That(outboxRecord2).IsNotNull()
-        .Because("Outbox does not deduplicate - application's responsibility");
-    }
+    await Assert.That(outboxRecord1).IsNotNull()
+      .Because("Outbox does not deduplicate - application's responsibility");
+    await Assert.That(outboxRecord2).IsNotNull()
+      .Because("Outbox does not deduplicate - application's responsibility");
   }
 
   // ===== ORDERING UNDER FAILURE TESTS =====
@@ -2209,21 +2207,20 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify that M2 and M3 DO have their leases cleared (Status=0 worked)
     // Note: Cast TrackedGuid to Guid for EF Core LINQ query parameters
-    await using (var dbContext = CreateDbContext()) {
-      var message2 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message2Id);
-      var message3 = await dbContext.Set<OutboxRecord>()
-        .FirstOrDefaultAsync(m => m.MessageId == (Guid)message3Id);
+    await using var dbContext = CreateDbContext();
+    var message2 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(m => m.MessageId == (Guid)message2Id);
+    var message3 = await dbContext.Set<OutboxRecord>()
+      .FirstOrDefaultAsync(m => m.MessageId == (Guid)message3Id);
 
-      await Assert.That(message2?.InstanceId).IsNull()
-        .Because("Status=0 completion should clear instance_id");
-      await Assert.That(message2?.LeaseExpiry).IsNull()
-        .Because("Status=0 completion should clear lease_expiry");
-      await Assert.That(message3?.InstanceId).IsNull()
-        .Because("Status=0 completion should clear instance_id");
-      await Assert.That(message3?.LeaseExpiry).IsNull()
-        .Because("Status=0 completion should clear lease_expiry");
-    }
+    await Assert.That(message2?.InstanceId).IsNull()
+      .Because("Status=0 completion should clear instance_id");
+    await Assert.That(message2?.LeaseExpiry).IsNull()
+      .Because("Status=0 completion should clear lease_expiry");
+    await Assert.That(message3?.InstanceId).IsNull()
+      .Because("Status=0 completion should clear instance_id");
+    await Assert.That(message3?.LeaseExpiry).IsNull()
+      .Because("Status=0 completion should clear lease_expiry");
   }
 
   /// <summary>
@@ -2551,7 +2548,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",

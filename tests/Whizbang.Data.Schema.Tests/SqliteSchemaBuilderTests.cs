@@ -18,9 +18,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "test_table",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
-      )
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
     );
     var config = new SchemaConfiguration();
 
@@ -37,12 +35,14 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "users",
-      Columns: ImmutableArray.Create(
+      Columns:
+
+      [
         new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
         new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
-      )
-    );
+,
+      ]);
     var config = new SchemaConfiguration();
 
     // Act
@@ -59,7 +59,9 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "events",
-      Columns: ImmutableArray.Create(
+      Columns:
+
+      [
         new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition(
           "created_at",
@@ -67,8 +69,8 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
           Nullable: false,
           DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
         )
-      )
-    );
+,
+      ]);
     var config = new SchemaConfiguration();
 
     // Act
@@ -83,11 +85,13 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "users",
-      Columns: ImmutableArray.Create(
+      Columns:
+
+      [
         new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition("email", WhizbangDataType.STRING, MaxLength: 255, Nullable: false, Unique: true)
-      )
-    );
+,
+      ]);
     var config = new SchemaConfiguration();
 
     // Act
@@ -102,9 +106,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var table = new TableDefinition(
       Name: "product_dto",
-      Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
-      )
+      Columns: [new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)]
     );
     var config = new SchemaConfiguration();
 
@@ -120,7 +122,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var index = new IndexDefinition(
       Name: "idx_users_email",
-      Columns: ImmutableArray.Create("email")
+      Columns: ["email"]
     );
     var tableName = "users";
     var prefix = "wh_";
@@ -138,7 +140,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var index = new IndexDefinition(
       Name: "idx_events_type_created",
-      Columns: ImmutableArray.Create("event_type", "created_at")
+      Columns: ["event_type", "created_at"]
     );
     var tableName = "events";
     var prefix = "wh_";
@@ -156,7 +158,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Arrange
     var index = new IndexDefinition(
       Name: "idx_aggregate_version",
-      Columns: ImmutableArray.Create("aggregate_id", "version"),
+      Columns: ["aggregate_id", "version"],
       Unique: true
     );
     var tableName = "event_store";

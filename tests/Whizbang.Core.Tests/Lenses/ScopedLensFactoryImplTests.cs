@@ -66,10 +66,10 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      securityPrincipals: new[] {
+      securityPrincipals: [
         SecurityPrincipalId.User("user-456"),
         SecurityPrincipalId.Group("developers")
-      });
+      ]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -87,7 +87,7 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      permissions: new[] { Permission.Read("orders") });
+      permissions: [Permission.Read("orders")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -103,7 +103,7 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      permissions: new[] { Permission.Read("orders") });
+      permissions: [Permission.Read("orders")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -118,7 +118,7 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      permissions: new[] { Permission.Write("orders") });
+      permissions: [Permission.Write("orders")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -137,7 +137,7 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      permissions: new[] { Permission.Read("customers") });
+      permissions: [Permission.Read("customers")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -198,7 +198,7 @@ public class ScopedLensFactoryImplTests {
     // Arrange
     var context = _createScopeContext(
       tenantId: "tenant-123",
-      securityPrincipals: new[] { SecurityPrincipalId.Group("team") });
+      securityPrincipals: [SecurityPrincipalId.Group("team")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 
@@ -216,7 +216,7 @@ public class ScopedLensFactoryImplTests {
     var context = _createScopeContext(
       tenantId: "tenant-123",
       userId: "user-456",
-      securityPrincipals: new[] { SecurityPrincipalId.Group("team") });
+      securityPrincipals: [SecurityPrincipalId.Group("team")]);
     var (factory, accessor) = _createFactory();
     accessor.Current = context;
 

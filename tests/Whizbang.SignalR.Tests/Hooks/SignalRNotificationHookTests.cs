@@ -225,21 +225,13 @@ public class SignalRNotificationHookTests {
   private sealed class TestHub : Hub { }
 
   // Mock implementations
-  private sealed class MockHubContext<THub> : IHubContext<THub> where THub : Hub {
-    public IHubClients Clients { get; }
+  private sealed class MockHubContext<THub>(IHubClients clients) : IHubContext<THub> where THub : Hub {
+    public IHubClients Clients { get; } = clients;
     public IGroupManager Groups => throw new NotImplementedException();
-
-    public MockHubContext(IHubClients clients) {
-      Clients = clients;
-    }
   }
 
-  private sealed class MockHubClients : IHubClients {
-    private readonly List<(string Method, object? Notification)> _sent;
-
-    public MockHubClients(List<(string, object?)> sent) {
-      _sent = sent;
-    }
+  private sealed class MockHubClients(List<(string, object?)> sent) : IHubClients {
+    private readonly List<(string Method, object? Notification)> _sent = sent;
 
     public IClientProxy All => new MockClientProxy(_sent);
     public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotImplementedException();
@@ -252,12 +244,8 @@ public class SignalRNotificationHookTests {
     public IClientProxy Users(IReadOnlyList<string> userIds) => throw new NotImplementedException();
   }
 
-  private sealed class MockHubClientsWithGroup : IHubClients {
-    private readonly List<(string Method, object? Notification, string? Group)> _sent;
-
-    public MockHubClientsWithGroup(List<(string, object?, string?)> sent) {
-      _sent = sent;
-    }
+  private sealed class MockHubClientsWithGroup(List<(string, object?, string?)> sent) : IHubClients {
+    private readonly List<(string Method, object? Notification, string? Group)> _sent = sent;
 
     public IClientProxy All => new MockClientProxyWithGroup(_sent, null);
     public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotImplementedException();
@@ -270,12 +258,8 @@ public class SignalRNotificationHookTests {
     public IClientProxy Users(IReadOnlyList<string> userIds) => throw new NotImplementedException();
   }
 
-  private sealed class MockHubClientsCapture : IHubClients {
-    private readonly List<(string Method, NotificationMessage? Notification)> _sent;
-
-    public MockHubClientsCapture(List<(string, NotificationMessage?)> sent) {
-      _sent = sent;
-    }
+  private sealed class MockHubClientsCapture(List<(string, NotificationMessage?)> sent) : IHubClients {
+    private readonly List<(string Method, NotificationMessage? Notification)> _sent = sent;
 
     public IClientProxy All => new MockClientProxyCapture(_sent);
     public IClientProxy AllExcept(IReadOnlyList<string> excludedConnectionIds) => throw new NotImplementedException();
@@ -288,12 +272,8 @@ public class SignalRNotificationHookTests {
     public IClientProxy Users(IReadOnlyList<string> userIds) => throw new NotImplementedException();
   }
 
-  private sealed class MockClientProxy : IClientProxy {
-    private readonly List<(string Method, object? Notification)> _sent;
-
-    public MockClientProxy(List<(string, object?)> sent) {
-      _sent = sent;
-    }
+  private sealed class MockClientProxy(List<(string, object?)> sent) : IClientProxy {
+    private readonly List<(string Method, object? Notification)> _sent = sent;
 
     public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default) {
       _sent.Add((method, args.Length > 0 ? args[0] : null));
@@ -301,14 +281,9 @@ public class SignalRNotificationHookTests {
     }
   }
 
-  private sealed class MockClientProxyWithGroup : IClientProxy {
-    private readonly List<(string Method, object? Notification, string? Group)> _sent;
-    private readonly string? _group;
-
-    public MockClientProxyWithGroup(List<(string, object?, string?)> sent, string? group) {
-      _sent = sent;
-      _group = group;
-    }
+  private sealed class MockClientProxyWithGroup(List<(string, object?, string?)> sent, string? group) : IClientProxy {
+    private readonly List<(string Method, object? Notification, string? Group)> _sent = sent;
+    private readonly string? _group = group;
 
     public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default) {
       _sent.Add((method, args.Length > 0 ? args[0] : null, _group));
@@ -316,12 +291,8 @@ public class SignalRNotificationHookTests {
     }
   }
 
-  private sealed class MockClientProxyCapture : IClientProxy {
-    private readonly List<(string Method, NotificationMessage? Notification)> _sent;
-
-    public MockClientProxyCapture(List<(string, NotificationMessage?)> sent) {
-      _sent = sent;
-    }
+  private sealed class MockClientProxyCapture(List<(string, NotificationMessage?)> sent) : IClientProxy {
+    private readonly List<(string Method, NotificationMessage? Notification)> _sent = sent;
 
     public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default) {
       _sent.Add((method, args.Length > 0 ? args[0] as NotificationMessage : null));

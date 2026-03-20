@@ -9,8 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for ModelRegistrationRegistry tests.
 /// </summary>
-public class RegistryTestDbContext : DbContext {
-  public RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> options) : base(options) { }
+public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> options) : DbContext(options) {
 }
 
 /// <summary>
@@ -24,9 +23,9 @@ public class ModelRegistrationRegistryTests {
   public async Task RegisterModels_WithValidRegistrar_StoresCallbackAsync() {
     // Arrange
     var wasCalled = false;
-    Action<IServiceCollection, Type, IDbUpsertStrategy> registrar = (services, dbContextType, strategy) => {
+    void registrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
       wasCalled = true;
-    };
+    }
 
     // Act
     ModelRegistrationRegistry.RegisterModels(registrar);
@@ -59,11 +58,11 @@ public class ModelRegistrationRegistryTests {
     Type? capturedDbContextType = null;
     IDbUpsertStrategy? capturedStrategy = null;
 
-    Action<IServiceCollection, Type, IDbUpsertStrategy> registrar = (services, dbContextType, strategy) => {
+    void registrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
       capturedServices = services;
       capturedDbContextType = dbContextType;
       capturedStrategy = strategy;
-    };
+    }
 
     ModelRegistrationRegistry.RegisterModels(registrar);
 
@@ -85,13 +84,13 @@ public class ModelRegistrationRegistryTests {
     var firstCalled = false;
     var secondCalled = false;
 
-    Action<IServiceCollection, Type, IDbUpsertStrategy> firstRegistrar = (services, dbContextType, strategy) => {
+    void firstRegistrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
       firstCalled = true;
-    };
+    }
 
-    Action<IServiceCollection, Type, IDbUpsertStrategy> secondRegistrar = (services, dbContextType, strategy) => {
+    void secondRegistrar(IServiceCollection services, Type dbContextType, IDbUpsertStrategy strategy) {
       secondCalled = true;
-    };
+    }
 
     // Act
     ModelRegistrationRegistry.RegisterModels(firstRegistrar);

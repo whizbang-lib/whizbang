@@ -462,11 +462,8 @@ namespace TestNamespace {
     await Assert.That(registrySource).IsNotNull();
 
     // Count occurrences of typeof(global::TestNamespace.SharedEvent) in _allEventTypes
-    var allEventTypesSection = registrySource!.Substring(
-        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal),
-        registrySource.IndexOf("public IReadOnlyList<Type> GetEventTypes()", StringComparison.Ordinal) -
-        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal)
-    );
+    var allEventTypesSection = registrySource![
+        registrySource.IndexOf("_allEventTypes", StringComparison.Ordinal)..registrySource.IndexOf("public IReadOnlyList<Type> GetEventTypes()", StringComparison.Ordinal)];
     var sharedEventCount = _countOccurrences(allEventTypesSection, "typeof(global::TestNamespace.SharedEvent)");
     await Assert.That(sharedEventCount).IsEqualTo(1);
   }

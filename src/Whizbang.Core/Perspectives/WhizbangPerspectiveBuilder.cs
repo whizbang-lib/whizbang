@@ -1,3 +1,5 @@
+#pragma warning disable S3604, S3928 // Primary constructor field/property initializers are intentional
+
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core.Perspectives;

@@ -64,7 +64,7 @@ public class PerspectiveSchemaTests {
     var indexes = ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_product_status",
-        Columns: ImmutableArray.Create("status")
+        Columns: ["status"]
       )
     );
 

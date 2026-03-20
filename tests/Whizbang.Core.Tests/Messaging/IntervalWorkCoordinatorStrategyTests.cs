@@ -231,7 +231,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush (should not wait for 5 second timer)
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Manual flush should work immediately (not wait for timer)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -1109,12 +1109,8 @@ public class IntervalWorkCoordinatorStrategyTests {
     public ScopeContext? GetCurrentScope() => null;
   }
 
-  private sealed class SlowWorkCoordinator : IWorkCoordinator {
-    private readonly int _delayMilliseconds;
-
-    public SlowWorkCoordinator(int delayMilliseconds) {
-      _delayMilliseconds = delayMilliseconds;
-    }
+  private sealed class SlowWorkCoordinator(int delayMilliseconds) : IWorkCoordinator {
+    private readonly int _delayMilliseconds = delayMilliseconds;
 
     public async Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,

@@ -43,10 +43,10 @@ public class SubscriptionStateTests {
   public async Task Status_SetToRecovering_UpdatesStatusAsync() {
     // Arrange
     var destination = new TransportDestination("test-topic", "test-subscription");
-    var state = new SubscriptionState(destination);
-
-    // Act
-    state.Status = SubscriptionStatus.Recovering;
+    var state = new SubscriptionState(destination) {
+      // Act
+      Status = SubscriptionStatus.Recovering
+    };
 
     // Assert
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Recovering);
@@ -56,10 +56,10 @@ public class SubscriptionStateTests {
   public async Task Status_SetToHealthy_UpdatesStatusAsync() {
     // Arrange
     var destination = new TransportDestination("test-topic", "test-subscription");
-    var state = new SubscriptionState(destination);
-
-    // Act
-    state.Status = SubscriptionStatus.Healthy;
+    var state = new SubscriptionState(destination) {
+      // Act
+      Status = SubscriptionStatus.Healthy
+    };
 
     // Assert
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Healthy);
@@ -69,10 +69,10 @@ public class SubscriptionStateTests {
   public async Task Status_SetToFailed_UpdatesStatusAsync() {
     // Arrange
     var destination = new TransportDestination("test-topic", "test-subscription");
-    var state = new SubscriptionState(destination);
-
-    // Act
-    state.Status = SubscriptionStatus.Failed;
+    var state = new SubscriptionState(destination) {
+      // Act
+      Status = SubscriptionStatus.Failed
+    };
 
     // Assert
     await Assert.That(state.Status).IsEqualTo(SubscriptionStatus.Failed);
@@ -96,10 +96,10 @@ public class SubscriptionStateTests {
   public async Task AttemptCount_SetValue_ReturnsSetValueAsync() {
     // Arrange
     var destination = new TransportDestination("test-topic", "test-subscription");
-    var state = new SubscriptionState(destination);
-
-    // Act
-    state.AttemptCount = 5;
+    var state = new SubscriptionState(destination) {
+      // Act
+      AttemptCount = 5
+    };
 
     // Assert
     await Assert.That(state.AttemptCount).IsEqualTo(5);
@@ -124,8 +124,9 @@ public class SubscriptionStateTests {
   public async Task ResetAttempts_ResetsCountToZeroAsync() {
     // Arrange
     var destination = new TransportDestination("test-topic", "test-subscription");
-    var state = new SubscriptionState(destination);
-    state.AttemptCount = 10;
+    var state = new SubscriptionState(destination) {
+      AttemptCount = 10
+    };
 
     // Act
     state.ResetAttempts();

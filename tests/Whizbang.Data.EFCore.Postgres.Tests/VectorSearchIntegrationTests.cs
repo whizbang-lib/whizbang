@@ -62,10 +62,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// DbContext for vector search tests with explicit configuration.
   /// Uses manual configuration instead of source generation for test isolation.
   /// </summary>
-  private sealed class VectorTestDbContext : DbContext {
-    public VectorTestDbContext(DbContextOptions<VectorTestDbContext> options)
-        : base(options) { }
-
+  private sealed class VectorTestDbContext(DbContextOptions<VectorSearchIntegrationTests.VectorTestDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<VectorTestModel>> VectorTestRows => Set<PerspectiveRow<VectorTestModel>>();
     public DbSet<PerspectiveRow<SecondVectorTestModel>> SecondVectorTestRows => Set<PerspectiveRow<SecondVectorTestModel>>();
 
@@ -241,8 +238,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Item4", Embedding: "[0.707,0.707,0]", Reference: "[0.707,0.707,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
   }
 
@@ -470,8 +467,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Differ", Embedding: "[1,0,0]", Reference: "[0,1,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -503,8 +500,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Differ", Embedding: "[1,0,0]", Reference: "[-1,0,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -535,8 +532,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Far", Embedding: "[1,0,0]", Reference: "[0,1,0]")        // Distance 1
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -569,8 +566,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "Far", Embedding: "[1,0,0]", Reference: "[-1,0,0]")
     };
 
-    foreach (var item in items) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Reference);
+    foreach (var (Id, Name, Embedding, Reference) in items) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Reference);
     }
 
     await using var context = _createDbContext();
@@ -608,8 +605,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       (Id: Guid.NewGuid(), Name: "V3", Embedding: "[-1,0,0]")
     };
 
-    foreach (var item in vectorItems) {
-      await _insertVectorTestModelAsync(connection, item.Id, item.Name, item.Embedding, item.Embedding);
+    foreach (var (Id, Name, Embedding) in vectorItems) {
+      await _insertVectorTestModelAsync(connection, Id, Name, Embedding, Embedding);
     }
 
     // Seed SecondVectorTestModel with target vector [1,0,0]

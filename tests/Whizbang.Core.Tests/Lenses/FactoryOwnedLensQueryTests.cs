@@ -247,7 +247,7 @@ public class FactoryOwnedLensQueryTests {
   /// Mock ILensQueryFactory for testing.
   /// </summary>
   private sealed class MockLensQueryFactory : ILensQueryFactory {
-    private readonly Dictionary<Type, object> _queries = new();
+    private readonly Dictionary<Type, object> _queries = [];
     public int GetQueryCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
 

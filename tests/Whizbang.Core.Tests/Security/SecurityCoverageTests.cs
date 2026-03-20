@@ -891,14 +891,9 @@ public class SecurityCoverageTests {
     }
   }
 
-  private sealed class TestExtractorWithResult : ISecurityContextExtractor {
-    private readonly int _priority;
-    private readonly SecurityExtraction? _extraction;
-
-    public TestExtractorWithResult(int priority, SecurityExtraction? extraction) {
-      _priority = priority;
-      _extraction = extraction;
-    }
+  private sealed class TestExtractorWithResult(int priority, SecurityExtraction? extraction) : ISecurityContextExtractor {
+    private readonly int _priority = priority;
+    private readonly SecurityExtraction? _extraction = extraction;
 
     public int Priority => _priority;
 
@@ -910,13 +905,9 @@ public class SecurityCoverageTests {
     }
   }
 
-  private sealed class TestSecurityCallback : ISecurityContextCallback {
-    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask> _callback;
-
-    public TestSecurityCallback(
-        Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask> callback) {
-      _callback = callback;
-    }
+  private sealed class TestSecurityCallback(
+      Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask> callback) : ISecurityContextCallback {
+    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask> _callback = callback;
 
     public ValueTask OnContextEstablishedAsync(
         IScopeContext context,
@@ -956,12 +947,8 @@ public class SecurityCoverageTests {
     }
   }
 
-  private sealed class MockScopeContextAccessor : IScopeContextAccessor {
-    private readonly IScopeContext? _explicitContext;
-
-    public MockScopeContextAccessor(IScopeContext? explicitContext) {
-      _explicitContext = explicitContext;
-    }
+  private sealed class MockScopeContextAccessor(IScopeContext? explicitContext) : IScopeContextAccessor {
+    private readonly IScopeContext? _explicitContext = explicitContext;
 
     public IScopeContext? Current {
       get => _explicitContext;

@@ -349,11 +349,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi);
-    if (process == null) {
-      throw new InvalidOperationException("Failed to start docker compose process");
-    }
-
+    using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start docker compose process");
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {

@@ -10,8 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for EFCoreExtensions tests.
 /// </summary>
-public class SampleDbContext : DbContext {
-  public SampleDbContext(DbContextOptions<SampleDbContext> options) : base(options) { }
+public class SampleDbContext(DbContextOptions<SampleDbContext> options) : DbContext(options) {
 }
 
 /// <summary>

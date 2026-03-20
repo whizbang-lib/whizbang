@@ -1745,7 +1745,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, Routed<ProcessedEvent>>
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade should NOT contain Routed<> wrapper type - only the inner type
     await Assert.That(cascadeSection).DoesNotContain("Routed<");
@@ -1794,7 +1794,7 @@ public class ValidateReceptor : IReceptor<ValidateCommand, RoutedNone> {
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade section should NOT contain RoutedNone (nothing to cascade)
     await Assert.That(cascadeSection).DoesNotContain("RoutedNone");
@@ -1887,7 +1887,7 @@ public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, 
     if (cascadeEnd < 0) {
       cascadeEnd = dispatcher.Length;
     }
-    var cascadeSection = dispatcher.Substring(cascadeStart, cascadeEnd - cascadeStart);
+    var cascadeSection = dispatcher[cascadeStart..cascadeEnd];
 
     // Cascade should contain both inner event types (unwrapped from Routed<>)
     await Assert.That(cascadeSection).Contains("SuccessEvent");
@@ -2421,7 +2421,7 @@ public class CleanupReceptor : IReceptor<CleanupCommand, CleanupEvent> {
       endIndex = dispatcher.Length;
     }
 
-    var finallySection = dispatcher.Substring(finallyIndex, endIndex - finallyIndex);
+    var finallySection = dispatcher[finallyIndex..endIndex];
     await Assert.That(finallySection).Contains("scope");
   }
 

@@ -543,7 +543,7 @@ public class ScopeDeltaApplyToTests {
       Roles = new HashSet<string>(roles ?? []),
       Permissions = new HashSet<Permission>((permissions ?? []).Select(p => new Permission(p))),
       SecurityPrincipals = new HashSet<SecurityPrincipalId>((principals ?? []).Select(p => new SecurityPrincipalId(p))),
-      Claims = claims ?? new Dictionary<string, string>()
+      Claims = claims ?? []
     };
   }
 

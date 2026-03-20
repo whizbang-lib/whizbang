@@ -138,13 +138,9 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test sync awaiter that tracks when WaitForStreamAsync is called.
   /// </summary>
-  private sealed class TestTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
+  private sealed class TestTrackingSyncAwaiter(Func<SyncResult> onWaitForStreamAsync) : IPerspectiveSyncAwaiter {
     public Guid AwaiterId { get; } = Guid.NewGuid();
-    private readonly Func<SyncResult> _onWaitForStreamAsync;
-
-    public TestTrackingSyncAwaiter(Func<SyncResult> onWaitForStreamAsync) {
-      _onWaitForStreamAsync = onWaitForStreamAsync;
-    }
+    private readonly Func<SyncResult> _onWaitForStreamAsync = onWaitForStreamAsync;
 
     public Task<SyncResult> WaitAsync(Type perspectiveType, PerspectiveSyncOptions options, CancellationToken ct = default) {
       return Task.FromResult(_onWaitForStreamAsync());
@@ -168,12 +164,8 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test receptor registry that returns a receptor with SyncAttributes.
   /// </summary>
-  private sealed class TestSyncReceptorRegistry : IReceptorRegistry {
-    private readonly Action _onInvoke;
-
-    public TestSyncReceptorRegistry(Action onInvoke) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class TestSyncReceptorRegistry(Action onInvoke) : IReceptorRegistry {
+    private readonly Action _onInvoke = onInvoke;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType == typeof(TestSyncCommand) &&

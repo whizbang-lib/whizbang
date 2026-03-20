@@ -871,7 +871,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   public async Task ClaimOrphanedOutbox_ClaimsMessagesForCorrectPartitionAsync() {
     // Arrange
     var instance1 = _idProvider.NewGuid();
-    var instance2 = _idProvider.NewGuid();
+    _ = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var message1Id = _idProvider.NewGuid();
     var message2Id = _idProvider.NewGuid();

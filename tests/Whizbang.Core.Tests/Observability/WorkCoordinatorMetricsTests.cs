@@ -50,7 +50,7 @@ public class WorkCoordinatorMetricsTests {
     var whizbangMetrics = new WhizbangMetrics(factory);
 
     // Act
-    var metrics = new WorkCoordinatorMetrics(whizbangMetrics);
+    _ = new WorkCoordinatorMetrics(whizbangMetrics);
 
     // Assert - factory was used (meter was created)
     await Assert.That(factory.CreatedMeterNames).Contains(WorkCoordinatorMetrics.METER_NAME);

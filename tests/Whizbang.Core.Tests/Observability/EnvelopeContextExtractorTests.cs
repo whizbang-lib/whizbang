@@ -45,7 +45,7 @@ public class EnvelopeContextExtractorTests {
     // Arrange - Valid W3C traceparent format
     var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = traceParent
@@ -56,7 +56,7 @@ public class EnvelopeContextExtractorTests {
     var result = EnvelopeContextExtractor.ExtractTraceContext(hops);
 
     // Assert
-    await Assert.That(result).IsNotEqualTo(default(ActivityContext));
+    await Assert.That(result).IsNotEqualTo(default);
     await Assert.That(result.TraceId.ToString()).IsEqualTo("0af7651916cd43dd8448eb211c80319c");
     await Assert.That(result.SpanId.ToString()).IsEqualTo("b7ad6b7169203331");
   }
@@ -65,7 +65,7 @@ public class EnvelopeContextExtractorTests {
   public async Task ExtractTraceContext_WhenNoTraceParent_ReturnsDefaultAsync() {
     // Arrange
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = null
@@ -86,12 +86,12 @@ public class EnvelopeContextExtractorTests {
     var lastTraceParent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2-bbbbbbbbbbbbbb02-01";
 
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = firstTraceParent
       },
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = lastTraceParent
@@ -112,7 +112,7 @@ public class EnvelopeContextExtractorTests {
       new SecurityContext { TenantId = "tenant-123", UserId = "user-456" });
 
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta
@@ -132,7 +132,7 @@ public class EnvelopeContextExtractorTests {
   public async Task ExtractScope_WhenNoScopeDelta_ReturnsNullAsync() {
     // Arrange
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = null
@@ -150,13 +150,13 @@ public class EnvelopeContextExtractorTests {
   public async Task ExtractScope_WhenMultipleHops_MergesScopeDeltasAsync() {
     // Arrange - First hop has TenantId, second adds UserId
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = ScopeDelta.FromSecurityContext(
           new SecurityContext { TenantId = "tenant-A" })
       },
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = ScopeDelta.FromSecurityContext(
@@ -177,13 +177,13 @@ public class EnvelopeContextExtractorTests {
   public async Task ExtractScope_WhenHopTypeNotCurrent_IgnoresHopAsync() {
     // Arrange - Causation hop should be ignored, only Current hops count
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Causation,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = ScopeDelta.FromSecurityContext(
           new SecurityContext { TenantId = "causation-tenant" })
       },
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = ScopeDelta.FromSecurityContext(
@@ -207,7 +207,7 @@ public class EnvelopeContextExtractorTests {
       new SecurityContext { TenantId = "combined-tenant", UserId = "combined-user" });
 
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = traceParent,
@@ -219,7 +219,7 @@ public class EnvelopeContextExtractorTests {
     var result = EnvelopeContextExtractor.ExtractFromHops(hops);
 
     // Assert - Both trace context AND scope extracted
-    await Assert.That(result.TraceContext).IsNotEqualTo(default(ActivityContext));
+    await Assert.That(result.TraceContext).IsNotEqualTo(default);
     await Assert.That(result.TraceContext.TraceId.ToString()).IsEqualTo("0af7651916cd43dd8448eb211c80319c");
     await Assert.That(result.Scope).IsNotNull();
     await Assert.That(result.Scope!.Scope?.TenantId).IsEqualTo("combined-tenant");
@@ -234,7 +234,7 @@ public class EnvelopeContextExtractorTests {
       new SecurityContext { TenantId = "envelope-tenant" });
 
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         TraceParent = traceParent,
@@ -270,7 +270,7 @@ public class EnvelopeContextExtractorTests {
       new SecurityContext { TenantId = "test-tenant" });
 
     var hops = new List<MessageHop> {
-      new MessageHop {
+      new() {
         Type = HopType.Current,
         ServiceInstance = ServiceInstanceInfo.Unknown,
         Scope = scopeDelta

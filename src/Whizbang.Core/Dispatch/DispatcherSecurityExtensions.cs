@@ -135,8 +135,8 @@ public static class DispatcherSecurityExtensions {
   /// <docs>fundamentals/security/scope-propagation#impersonation-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs</tests>
   public static ImpersonationDispatcherBuilder RunAs(this IDispatcher dispatcher, string effectiveIdentity) {
-    ArgumentNullException.ThrowIfNull(effectiveIdentity, nameof(effectiveIdentity));
-    ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity, nameof(effectiveIdentity));
+    ArgumentNullException.ThrowIfNull(effectiveIdentity);
+    ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity);
 
     // Capture current context (uses static accessor)
     var currentContext = ScopeContextAccessor.CurrentContext;

@@ -227,14 +227,13 @@ public class DistributedTracingCorrelationTests {
       }
 
       // Inbox activity parented to BFF request
-      using (var inbox = WhizbangActivitySource.Transport.StartActivity(
+      using var inbox = WhizbangActivitySource.Transport.StartActivity(
         "Inbox UserCreatedEvent",
         ActivityKind.Consumer,
-        parentContext: parentContext)) {
+        parentContext: parentContext);
 
-        // Receptor runs under inbox
-        using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { }
-      }
+      // Receptor runs under inbox
+      using (WhizbangActivitySource.Tracing.StartActivity("Receptor UserCreatedHandler", ActivityKind.Internal)) { }
     }
 
     // Assert - Build tree and verify hierarchy

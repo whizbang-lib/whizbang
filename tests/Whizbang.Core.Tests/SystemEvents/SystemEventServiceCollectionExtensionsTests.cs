@@ -318,7 +318,7 @@ public class SystemEventServiceCollectionExtensionsTests {
   public async Task AddSystemEvents_WithEventNameHumanizer_SetsCustomHumanizerAsync() {
     // Arrange
     var services = new ServiceCollection();
-    Func<string, string?> humanizer = eventType => eventType == "TestEvent" ? "Test" : null;
+    string? humanizer(string eventType) => eventType == "TestEvent" ? "Test" : null;
 
     // Act - Exercise line 58: sets CustomHumanizer
     services.AddSystemEvents(opts => {
@@ -336,7 +336,7 @@ public class SystemEventServiceCollectionExtensionsTests {
   public async Task AddSystemEvents_WithEventDescriptionHumanizer_SetsCustomDescriptionHumanizerAsync() {
     // Arrange
     var services = new ServiceCollection();
-    Func<string, string?> descHumanizer = eventType => "Description";
+    string? descHumanizer(string eventType) => "Description";
 
     // Act - Exercise line 61: sets CustomDescriptionHumanizer
     services.AddSystemEvents(opts => {

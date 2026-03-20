@@ -1206,13 +1206,9 @@ public class PerspectiveWorkerSecurityContextTests {
 
   private sealed record TestEvent(Guid Id, string Data) : IEvent;
 
-  private sealed class CapturingLifecycleInvoker : IReceptorInvoker {
-    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke;
-
-    public CapturingLifecycleInvoker(
-        Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null) {
-      _onInvoke = onInvoke;
-    }
+  private sealed class CapturingLifecycleInvoker(
+      Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? onInvoke = null) : IReceptorInvoker {
+    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?>? _onInvoke = onInvoke;
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
@@ -1371,19 +1367,13 @@ public class PerspectiveWorkerSecurityContextTests {
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => false;
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly string? _userId;
-    private readonly bool _returnsNull;
-    private readonly IScopeContextAccessor? _scopeContextAccessor;
-
-    public TestSecurityContextProvider(
-        string? userId = null,
-        bool returnsNull = false,
-        IScopeContextAccessor? scopeContextAccessor = null) {
-      _userId = userId;
-      _returnsNull = returnsNull;
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class TestSecurityContextProvider(
+      string? userId = null,
+      bool returnsNull = false,
+      IScopeContextAccessor? scopeContextAccessor = null) : IMessageSecurityContextProvider {
+    private readonly string? _userId = userId;
+    private readonly bool _returnsNull = returnsNull;
+    private readonly IScopeContextAccessor? _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1396,9 +1386,7 @@ public class PerspectiveWorkerSecurityContextTests {
       var context = new TestScopeContext { UserId = _userId ?? "default-user" };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      if (_scopeContextAccessor is not null) {
-        _scopeContextAccessor.Current = context;
-      }
+      _scopeContextAccessor?.Current = context;
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1408,19 +1396,13 @@ public class PerspectiveWorkerSecurityContextTests {
   /// Security provider that returns scope with BOTH UserId AND TenantId.
   /// Used to test that extractor result is properly used in MessageContext.
   /// </summary>
-  private sealed class TestSecurityContextProviderWithTenant : IMessageSecurityContextProvider {
-    private readonly string _tenantId;
-    private readonly string _userId;
-    private readonly IScopeContextAccessor? _scopeContextAccessor;
-
-    public TestSecurityContextProviderWithTenant(
-        string tenantId,
-        string userId,
-        IScopeContextAccessor? scopeContextAccessor = null) {
-      _tenantId = tenantId;
-      _userId = userId;
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class TestSecurityContextProviderWithTenant(
+      string tenantId,
+      string userId,
+      IScopeContextAccessor? scopeContextAccessor = null) : IMessageSecurityContextProvider {
+    private readonly string _tenantId = tenantId;
+    private readonly string _userId = userId;
+    private readonly IScopeContextAccessor? _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1432,9 +1414,7 @@ public class PerspectiveWorkerSecurityContextTests {
       };
 
       // Set the accessor if provided (simulates what happens in real implementation)
-      if (_scopeContextAccessor is not null) {
-        _scopeContextAccessor.Current = context;
-      }
+      _scopeContextAccessor?.Current = context;
 
       return ValueTask.FromResult<IScopeContext?>(context);
     }
@@ -1467,13 +1447,9 @@ public class PerspectiveWorkerSecurityContextTests {
   /// <summary>
   /// Test callback that captures invocations for assertions.
   /// </summary>
-  private sealed class TestSecurityContextCallback : ISecurityContextCallback {
-    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? _onContextEstablished;
-
-    public TestSecurityContextCallback(
-        Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? onContextEstablished = null) {
-      _onContextEstablished = onContextEstablished;
-    }
+  private sealed class TestSecurityContextCallback(
+      Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? onContextEstablished = null) : ISecurityContextCallback {
+    private readonly Func<IScopeContext, IMessageEnvelope, IServiceProvider, CancellationToken, ValueTask>? _onContextEstablished = onContextEstablished;
 
     public ValueTask OnContextEstablishedAsync(
         IScopeContext context,
@@ -1484,12 +1460,8 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
-  private sealed class EnvelopeAwareSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContextAccessor _scopeContextAccessor;
-
-    public EnvelopeAwareSecurityContextProvider(IScopeContextAccessor scopeContextAccessor) {
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  private sealed class EnvelopeAwareSecurityContextProvider(IScopeContextAccessor scopeContextAccessor) : IMessageSecurityContextProvider {
+    private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -1506,14 +1478,10 @@ public class PerspectiveWorkerSecurityContextTests {
     }
   }
 
-  private sealed class TestScopeContextAccessor : IScopeContextAccessor {
-    private readonly Action? _onSet;
+  private sealed class TestScopeContextAccessor(Action? onSet = null) : IScopeContextAccessor {
+    private readonly Action? _onSet = onSet;
     private IScopeContext? _current;
     private IMessageContext? _initiatingContext;
-
-    public TestScopeContextAccessor(Action? onSet = null) {
-      _onSet = onSet;
-    }
 
     public IScopeContext? Current {
       get => _current;
@@ -1533,12 +1501,8 @@ public class PerspectiveWorkerSecurityContextTests {
     public IMessageContext? Current { get; set; }
   }
 
-  private sealed class TestEventTypeProvider : IEventTypeProvider {
-    private readonly IReadOnlyList<Type> _eventTypes;
-
-    public TestEventTypeProvider(IReadOnlyList<Type> eventTypes) {
-      _eventTypes = eventTypes;
-    }
+  private sealed class TestEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
+    private readonly IReadOnlyList<Type> _eventTypes = eventTypes;
 
     public IReadOnlyList<Type> GetEventTypes() => _eventTypes;
   }

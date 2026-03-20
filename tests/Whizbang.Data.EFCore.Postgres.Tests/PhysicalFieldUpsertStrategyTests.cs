@@ -29,10 +29,7 @@ public class PhysicalFieldUpsertStrategyTests {
   /// <summary>
   /// Test DbContext that configures shadow properties for physical fields.
   /// </summary>
-  private sealed class PhysicalFieldTestDbContext : DbContext {
-    public PhysicalFieldTestDbContext(DbContextOptions<PhysicalFieldTestDbContext> options)
-        : base(options) { }
-
+  private sealed class PhysicalFieldTestDbContext(DbContextOptions<PhysicalFieldUpsertStrategyTests.PhysicalFieldTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 
@@ -334,10 +331,7 @@ public class PhysicalFieldUpsertStrategyTests {
   /// <summary>
   /// Test DbContext that configures shadow properties for vector fields.
   /// </summary>
-  private sealed class VectorFieldTestDbContext : DbContext {
-    public VectorFieldTestDbContext(DbContextOptions<VectorFieldTestDbContext> options)
-        : base(options) { }
-
+  private sealed class VectorFieldTestDbContext(DbContextOptions<PhysicalFieldUpsertStrategyTests.VectorFieldTestDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 

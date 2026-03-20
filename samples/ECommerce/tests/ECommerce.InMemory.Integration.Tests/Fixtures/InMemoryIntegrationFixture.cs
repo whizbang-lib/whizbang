@@ -1064,7 +1064,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Extract simple type name for handler name (last part after last '.')
     var lastDotIndex = messageTypeName.LastIndexOf('.');
     var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
+      ? messageTypeName[(lastDotIndex + 1)..].Split(',')[0].Trim()
       : messageTypeName.Split(',')[0].Trim();
     var handlerName = simpleTypeName + "Handler";
 

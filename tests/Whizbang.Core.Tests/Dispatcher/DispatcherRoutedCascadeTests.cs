@@ -97,7 +97,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   public static class RoutedCascadeTracker {
     private static readonly List<object> _localInvocations = [];
     private static readonly List<object> _outboxPublications = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -136,13 +136,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
 
     public static IReadOnlyList<object> GetLocalInvocations() {
       lock (_lock) {
-        return _localInvocations.ToList();
+        return [.. _localInvocations];
       }
     }
 
     public static IReadOnlyList<object> GetOutboxPublications() {
       lock (_lock) {
-        return _outboxPublications.ToList();
+        return [.. _outboxPublications];
       }
     }
   }
@@ -377,11 +377,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that tracks cascade behavior with routing support.
   /// </summary>
-  private sealed class RoutingTestDispatcher : Core.Dispatcher {
-    public RoutingTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class RoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Handle RoutedTestCommand -> (RoutedTestResult, Routed<RoutedTestEvent>) for Local routing test
       if (messageType == typeof(RoutedTestCommand) && typeof(TResult) == typeof((RoutedTestResult, Routed<RoutedTestEvent>))) {
@@ -452,7 +448,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
     var command = new RoutedTestCommand(Guid.NewGuid());
 
     // Act - Invoke and let cascade happen
-    var (result, routedEvent) = await dispatcher.LocalInvokeAsync<(RoutedTestResult, Routed<RoutedTestEvent>)>(command);
+    var (result, _) = await dispatcher.LocalInvokeAsync<(RoutedTestResult, Routed<RoutedTestEvent>)>(command);
 
     // Assert - Result should be returned
     await Assert.That(result.Success).IsTrue();
@@ -474,17 +470,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed<T> send path testing.
   /// </summary>
-  private sealed class RoutedSendTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedSendTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     private readonly List<object> _sentMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedSendTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetSentMessages() {
       lock (_lock) {
-        return _sentMessages.ToList();
+        return [.. _sentMessages];
       }
     }
 
@@ -649,17 +641,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Test dispatcher that supports Routed&lt;T&gt; local invoke testing.
   /// </summary>
-  private sealed class RoutedLocalInvokeTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     private readonly List<object> _invokedMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedLocalInvokeTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetInvokedMessages() {
       lock (_lock) {
-        return _invokedMessages.ToList();
+        return [.. _invokedMessages];
       }
     }
 
@@ -768,17 +756,13 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that supports tracing path testing with Routed&lt;T&gt;.
   /// Registers a trace store or receptor registry to trigger the tracing code path.
   /// </summary>
-  private sealed class RoutedTracingTestDispatcher : Core.Dispatcher {
+  private sealed class RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
     private readonly List<object> _invokedMessages = [];
-    private readonly object _lock = new();
-
-    public RoutedTracingTestDispatcher(IServiceProvider serviceProvider, IReceptorRegistry? receptorRegistry = null)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null), traceStore: null, receptorRegistry: receptorRegistry) {
-    }
+    private readonly Lock _lock = new();
 
     public List<object> GetInvokedMessages() {
       lock (_lock) {
-        return _invokedMessages.ToList();
+        return [.. _invokedMessages];
       }
     }
 
@@ -960,11 +944,7 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// Test dispatcher that wires PlaceOrderReceptor and BatchProcessReceptor for integration testing.
   /// Tracks which events were cascaded locally vs to outbox.
   /// </summary>
-  private sealed class RealisticRoutingTestDispatcher : Core.Dispatcher {
-    public RealisticRoutingTestDispatcher(IServiceProvider serviceProvider)
-        : base(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class RealisticRoutingTestDispatcher(IServiceProvider serviceProvider) : Core.Dispatcher(serviceProvider, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // Wire PlaceOrderCommand → PlaceOrderReceptor
       if (messageType == typeof(PlaceOrderCommand)) {
@@ -1100,12 +1080,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Simple service scope factory for testing.
   /// </summary>
-  private sealed class TestServiceScopeFactory : IServiceScopeFactory {
-    private readonly IServiceProvider _provider;
-
-    public TestServiceScopeFactory(IServiceProvider provider) {
-      _provider = provider;
-    }
+  private sealed class TestServiceScopeFactory(IServiceProvider provider) : IServiceScopeFactory {
+    private readonly IServiceProvider _provider = provider;
 
     public IServiceScope CreateScope() {
       return new TestServiceScope(_provider);
@@ -1115,12 +1091,8 @@ public class DispatcherRoutedCascadeTests : DiagnosticTestBase {
   /// <summary>
   /// Simple service scope for testing.
   /// </summary>
-  private sealed class TestServiceScope : IServiceScope {
-    public TestServiceScope(IServiceProvider provider) {
-      ServiceProvider = provider;
-    }
-
-    public IServiceProvider ServiceProvider { get; }
+  private sealed class TestServiceScope(IServiceProvider provider) : IServiceScope {
+    public IServiceProvider ServiceProvider { get; } = provider;
 
     public void Dispose() { }
   }

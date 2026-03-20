@@ -460,13 +460,9 @@ public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
   /// <summary>
   /// Mock IDbContextFactory for testing.
   /// </summary>
-  private sealed class MockDbContextFactory<TContext> : IDbContextFactory<TContext>
+  private sealed class MockDbContextFactory<TContext>(Func<TContext> createContext) : IDbContextFactory<TContext>
       where TContext : DbContext {
-    private readonly Func<TContext> _createContext;
-
-    public MockDbContextFactory(Func<TContext> createContext) {
-      _createContext = createContext ?? throw new ArgumentNullException(nameof(createContext));
-    }
+    private readonly Func<TContext> _createContext = createContext ?? throw new ArgumentNullException(nameof(createContext));
 
     public TContext CreateDbContext() => _createContext();
   }
@@ -474,13 +470,8 @@ public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
   /// <summary>
   /// DbContext subclass that tracks disposal.
   /// </summary>
-  private sealed class TrackingDbContext : WorkCoordinationDbContext {
-    private readonly Action _onDispose;
-
-    public TrackingDbContext(DbContextOptions<WorkCoordinationDbContext> options, Action onDispose)
-        : base(options) {
-      _onDispose = onDispose;
-    }
+  private sealed class TrackingDbContext(DbContextOptions<WorkCoordinationDbContext> options, Action onDispose) : WorkCoordinationDbContext(options) {
+    private readonly Action _onDispose = onDispose;
 
     public override void Dispose() {
       _onDispose();

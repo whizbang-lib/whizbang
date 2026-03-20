@@ -167,7 +167,7 @@ public class PerspectiveChannelWriterTests {
     var readWork1 = await writer.Reader.ReadAsync();
     var readWork2 = await writer.Reader.ReadAsync();
 
-    await Assert.That(new[] { readWork1, readWork2 }).Contains(work1);
-    await Assert.That(new[] { readWork1, readWork2 }).Contains(work2);
+    await Assert.That([readWork1, readWork2]).Contains(work1);
+    await Assert.That([readWork1, readWork2]).Contains(work2);
   }
 }

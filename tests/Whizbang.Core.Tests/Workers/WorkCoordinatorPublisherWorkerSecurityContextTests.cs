@@ -51,7 +51,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -65,7 +65,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      }
+      ]
     };
 
     // Act - establish security context using helper
@@ -105,7 +105,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = testMessageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -119,7 +119,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      }
+      ]
     };
 
     // Act
@@ -155,7 +155,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -166,7 +166,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ]
     };
 
     // Act - should not throw
@@ -209,7 +209,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = testMessageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -220,7 +220,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ]
     };
 
     // Act

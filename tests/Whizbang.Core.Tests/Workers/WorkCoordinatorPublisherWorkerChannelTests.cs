@@ -127,8 +127,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Flags = WorkBatchFlags.None,
       }
     ];
-
-    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    _ = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act & Assert - verify work was published
     // Note: Full worker integration will be tested separately

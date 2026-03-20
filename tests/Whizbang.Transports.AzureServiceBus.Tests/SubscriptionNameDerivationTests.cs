@@ -25,8 +25,7 @@ public class SubscriptionNameDerivationTests {
     var metadata = new Dictionary<string, JsonElement> {
       ["SubscriberName"] = JsonSerializer.SerializeToElement(subscriberName)
     };
-
-    var destination = new TransportDestination(topicName, "#", metadata);
+    _ = new TransportDestination(topicName, "#", metadata);
 
     // Act - Derive subscription name (testing the helper directly since _deriveSubscriptionName is private)
     var derivedName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);

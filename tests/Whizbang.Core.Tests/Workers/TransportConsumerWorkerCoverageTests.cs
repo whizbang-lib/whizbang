@@ -186,8 +186,7 @@ public class TransportConsumerWorkerCoverageTests {
   [Test]
   public async Task Constructor_WithRecoveryTransport_RegistersRecoveryHandlerAsync() {
     var transport = new CoverageRecoveringTransport();
-
-    var worker = new TransportConsumerWorker(
+    _ = new TransportConsumerWorker(
       transport: transport,
       options: new TransportConsumerOptions(),
       resilienceOptions: new SubscriptionResilienceOptions(),
@@ -1022,7 +1021,7 @@ public class TransportConsumerWorkerCoverageTests {
     var services = new ServiceCollection();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Options.Create(
-      new RoutingOptions().OwnDomains(ownedDomains.ToArray())));
+      new RoutingOptions().OwnDomains([.. ownedDomains])));
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
@@ -1256,12 +1255,8 @@ public class TransportConsumerWorkerCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class CoverageSelectiveFailTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
-
-    public CoverageSelectiveFailTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
+  private sealed class CoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -1301,19 +1296,14 @@ public class TransportConsumerWorkerCoverageTests {
     }
   }
 
-  private sealed class CoverageWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    private readonly Guid _expectedMessageId;
-    private readonly bool _returnEmptyInboxWork;
+  private sealed class CoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) : IWorkCoordinatorStrategy {
+    private readonly Guid _expectedMessageId = expectedMessageId;
+    private readonly bool _returnEmptyInboxWork = returnEmptyInboxWork;
 
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }
     public Guid? LastQueuedStreamId { get; private set; }
     public string? LastQueuedHandlerName { get; private set; }
-
-    public CoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) {
-      _expectedMessageId = expectedMessageId;
-      _returnEmptyInboxWork = returnEmptyInboxWork;
-    }
 
     public void QueueInboxMessage(InboxMessage message) {
       QueuedInboxCount++;

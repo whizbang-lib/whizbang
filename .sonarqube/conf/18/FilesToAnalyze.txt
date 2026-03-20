@@ -1,2 +1,0 @@
-﻿/Users/philcarbone/src/whizbang/src/Whizbang.Data.EFCore.Custom/WhizbangDbContextAttribute.cs
-/Users/philcarbone/src/whizbang/README.md

@@ -53,12 +53,8 @@ public interface IFilterOnlyLens : ILensQuery<OrderReadModel> { }
 /// <summary>
 /// In-memory test lens implementation for orders.
 /// </summary>
-public class TestOrderLens : IOrderLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-
-  public TestOrderLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestOrderLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) : IOrderLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query => _data.AsQueryable();
 
@@ -75,12 +71,8 @@ public class TestOrderLens : IOrderLens {
 /// <summary>
 /// In-memory test lens implementation for products.
 /// </summary>
-public class TestProductLens : IProductLens {
-  private readonly List<PerspectiveRow<ProductReadModel>> _data;
-
-  public TestProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) : IProductLens {
+  private readonly List<PerspectiveRow<ProductReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<ProductReadModel>> Query => _data.AsQueryable();
 
@@ -97,12 +89,8 @@ public class TestProductLens : IProductLens {
 /// <summary>
 /// In-memory test lens for filter-only tests.
 /// </summary>
-public class TestFilterOnlyLens : IFilterOnlyLens {
-  private readonly List<PerspectiveRow<OrderReadModel>> _data;
-
-  public TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = null) : IFilterOnlyLens {
+  private readonly List<PerspectiveRow<OrderReadModel>> _data = data?.ToList() ?? [];
 
   public IQueryable<PerspectiveRow<OrderReadModel>> Query => _data.AsQueryable();
 
@@ -131,12 +119,8 @@ public interface IPreOrderedProductLens : ILensQuery<ProductReadModel> { }
 /// In-memory test lens that returns a pre-ordered query.
 /// This simulates application code that applies a default OrderBy before HotChocolate.
 /// </summary>
-public class TestPreOrderedProductLens : IPreOrderedProductLens {
-  private readonly List<PerspectiveRow<ProductReadModel>> _data;
-
-  public TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) {
-    _data = data?.ToList() ?? [];
-  }
+public class TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data = null) : IPreOrderedProductLens {
+  private readonly List<PerspectiveRow<ProductReadModel>> _data = data?.ToList() ?? [];
 
   /// <summary>
   /// Returns pre-ordered query - this is the scenario that triggers the bug.

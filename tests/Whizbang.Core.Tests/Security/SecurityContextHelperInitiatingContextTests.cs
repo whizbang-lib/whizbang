@@ -327,7 +327,7 @@ public class SecurityContextHelperInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -344,7 +344,7 @@ public class SecurityContextHelperInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ]
     };
   }
 
@@ -353,7 +353,7 @@ public class SecurityContextHelperInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -367,7 +367,7 @@ public class SecurityContextHelperInitiatingContextTests {
           },
           Scope = null
         }
-      }
+      ]
     };
   }
 
@@ -380,7 +380,7 @@ public class SecurityContextHelperInitiatingContextTests {
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -397,7 +397,7 @@ public class SecurityContextHelperInitiatingContextTests {
             TenantId = tenantId
           })
         }
-      }
+      ]
     };
   }
 

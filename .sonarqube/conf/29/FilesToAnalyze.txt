@@ -1,7 +1,0 @@
-﻿/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQChannelPool.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQHealthCheck.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQOptions.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQSubscription.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQTransport.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/ServiceCollectionExtensions.cs
-/Users/philcarbone/src/whizbang/README.md

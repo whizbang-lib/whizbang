@@ -222,12 +222,8 @@ public class ReceptorInvokerScopePropagationTests {
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContext? _returns;
-
-    public TestSecurityContextProvider(IScopeContext? returns = null) {
-      _returns = returns;
-    }
+  private sealed class TestSecurityContextProvider(IScopeContext? returns = null) : IMessageSecurityContextProvider {
+    private readonly IScopeContext? _returns = returns;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -281,12 +277,8 @@ public class ReceptorInvokerScopePropagationTests {
     }
   }
 
-  private sealed class TestEventCascader : IEventCascader {
-    private readonly System.Action? _onCascade;
-
-    public TestEventCascader(System.Action? onCascade = null) {
-      _onCascade = onCascade;
-    }
+  private sealed class TestEventCascader(System.Action? onCascade = null) : IEventCascader {
+    private readonly System.Action? _onCascade = onCascade;
 
     public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
       _onCascade?.Invoke();
@@ -294,13 +286,9 @@ public class ReceptorInvokerScopePropagationTests {
     }
   }
 
-  private sealed class TestMessageContextAccessor : IMessageContextAccessor {
-    private readonly System.Action<IMessageContext?>? _onSet;
+  private sealed class TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) : IMessageContextAccessor {
+    private readonly System.Action<IMessageContext?>? _onSet = onSet;
     private IMessageContext? _current;
-
-    public TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) {
-      _onSet = onSet;
-    }
 
     public IMessageContext? Current {
       get => _current;
@@ -324,13 +312,9 @@ public class ReceptorInvokerScopePropagationTests {
   /// <summary>
   /// Test receptor registry that allows registering receptors that return events.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
+  private sealed class TestReceptorRegistry(ReceptorInvokerScopePropagationTests.InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(System.Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-    private readonly InvocationTracker _tracker;
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
+    private readonly InvocationTracker _tracker = tracker;
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) where TMessage : notnull {
       var key = (typeof(TMessage), stage);

@@ -37,7 +37,7 @@ public class WorkCoordinatorFlushHelperTests {
     var outboxMessages = new[] { _buildTestOutboxMessage() };
 
     // Act
-    var result = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
+    _ = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
       coordinator,
       scopeFactory: null,
       instanceProvider,

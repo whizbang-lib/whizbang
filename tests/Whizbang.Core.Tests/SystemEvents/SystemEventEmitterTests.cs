@@ -1252,7 +1252,7 @@ public class SystemEventEmitterTests {
     public MessageId CausationId { get; init; } = MessageId.New();
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public string? UserId { get; set; }
-    public Dictionary<string, object> Metadata { get; } = new();
+    public Dictionary<string, object> Metadata { get; } = [];
 
     public string? TenantId => throw new NotImplementedException();
     public Core.Security.IScopeContext? ScopeContext => null;

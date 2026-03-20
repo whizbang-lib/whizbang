@@ -30,7 +30,7 @@ public class DispatcherCoverageVoidInvokeTests {
   public record VoidAnyResult(string Data);
 
   private static readonly List<string> _invocations = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   private static void _track(string invocation) {
     lock (_lock) { _invocations.Add(invocation); }
@@ -44,11 +44,7 @@ public class DispatcherCoverageVoidInvokeTests {
     lock (_lock) { return [.. _invocations]; }
   }
 
-  private sealed class VoidAsyncDispatcher : Core.Dispatcher {
-    public VoidAsyncDispatcher(IServiceProvider sp)
-        : base(sp, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class VoidAsyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }
@@ -97,11 +93,7 @@ public class DispatcherCoverageVoidInvokeTests {
     }
   }
 
-  private sealed class VoidTracingDispatcher : Core.Dispatcher {
-    public VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore)
-        : base(sp, new ServiceInstanceProvider(configuration: null), traceStore: traceStore) {
-    }
-
+  private sealed class VoidTracingDispatcher(IServiceProvider sp, ITraceStore traceStore) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null), traceStore: traceStore) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }

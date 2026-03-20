@@ -72,7 +72,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     });
 
     // Act
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -129,7 +129,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxMessage(outboxMessage);
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
@@ -181,7 +181,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxMessage(inboxMessage);
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);

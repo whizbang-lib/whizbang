@@ -56,8 +56,8 @@ public class TableDefinitionTests {
     );
 
     var indexes = ImmutableArray.Create(
-      new IndexDefinition("idx_email", ImmutableArray.Create("email"), Unique: true),
-      new IndexDefinition("idx_created_at", ImmutableArray.Create("created_at"))
+      new IndexDefinition("idx_email", ["email"], Unique: true),
+      new IndexDefinition("idx_created_at", ["created_at"])
     );
 
     // Act

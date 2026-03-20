@@ -21,8 +21,7 @@ public class SamplePerspectiveModel {
 /// <summary>
 /// Test DbContext for EFCoreInfrastructureRegistration tests.
 /// </summary>
-public class InfraTestDbContext : DbContext {
-  public InfraTestDbContext(DbContextOptions<InfraTestDbContext> options) : base(options) { }
+public class InfraTestDbContext(DbContextOptions<InfraTestDbContext> options) : DbContext(options) {
 }
 
 /// <summary>

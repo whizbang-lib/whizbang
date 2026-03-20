@@ -1,3 +1,5 @@
+#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
+
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Security;

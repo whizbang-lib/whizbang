@@ -266,7 +266,7 @@ public sealed class DispatcherLocalInvokeAndSyncTimingTests {
   // Sequence tracking helper
   public sealed class SequenceTracker {
     private readonly List<string> _events = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public void RecordEvent(string eventName) {
       lock (_lock) {

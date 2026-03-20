@@ -1,3 +1,5 @@
+#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;

@@ -34,7 +34,7 @@ public class EventNamespaceRegistryTests {
   [Test]
   public async Task Register_WithNull_ThrowsArgumentNullExceptionAsync() {
     // Act
-    var action = () => EventNamespaceRegistry.Register(null!);
+    void action() => EventNamespaceRegistry.Register(null!);
 
     // Assert
     await Assert.That(action).Throws<ArgumentNullException>()

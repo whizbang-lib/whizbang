@@ -1,3 +1,5 @@
+#pragma warning disable S3604 // Primary constructor field/property initializers are intentional
+
 using Whizbang.Core.Lenses;
 
 namespace Whizbang.Core.Security.Attributes;

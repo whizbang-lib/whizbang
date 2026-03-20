@@ -135,8 +135,8 @@ public sealed class SystemDispatcherBuilder {
   /// <docs>fundamentals/security/scope-propagation#tenant-scoped-system-operations</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/SystemDispatcherBuilderTests.cs:AsSystem_ForTenant_SetsExplicitTenantIdAsync</tests>
   public DispatcherSecurityBuilder ForTenant(string tenantId) {
-    ArgumentNullException.ThrowIfNull(tenantId, nameof(tenantId));
-    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));
+    ArgumentNullException.ThrowIfNull(tenantId);
+    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
     return new DispatcherSecurityBuilder(
         _dispatcher,

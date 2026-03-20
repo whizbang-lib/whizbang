@@ -42,7 +42,7 @@ public class DispatcherCascadeNullEnvelopeTests {
 
   public static class NullEnvelopeCascadeTracker {
     private static readonly List<(string? userId, string? tenantId)> _capturedContexts = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -58,7 +58,7 @@ public class DispatcherCascadeNullEnvelopeTests {
 
     public static IReadOnlyList<(string? userId, string? tenantId)> GetCapturedContexts() {
       lock (_lock) {
-        return _capturedContexts.ToList();
+        return [.. _capturedContexts];
       }
     }
 
@@ -85,12 +85,8 @@ public class DispatcherCascadeNullEnvelopeTests {
     }
   }
 
-  public class NullEnvelopeEventReceptor : IReceptor<NullEnvelopeEvent> {
-    private readonly IMessageContextAccessor _messageContextAccessor;
-
-    public NullEnvelopeEventReceptor(IMessageContextAccessor messageContextAccessor) {
-      _messageContextAccessor = messageContextAccessor;
-    }
+  public class NullEnvelopeEventReceptor(IMessageContextAccessor messageContextAccessor) : IReceptor<NullEnvelopeEvent> {
+    private readonly IMessageContextAccessor _messageContextAccessor = messageContextAccessor;
 
     public ValueTask HandleAsync(NullEnvelopeEvent message, CancellationToken cancellationToken = default) {
       // Capture the message context that should have been established by EstablishMessageContextForCascade

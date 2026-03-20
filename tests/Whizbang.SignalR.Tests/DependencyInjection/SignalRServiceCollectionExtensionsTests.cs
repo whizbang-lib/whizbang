@@ -63,7 +63,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
     // Act
     services.AddWhizbangSignalR();
-    var serviceProvider = services.BuildServiceProvider();
+    _ = services.BuildServiceProvider();
 
     // Assert - SignalR should be registered
     await Assert.That(services.Count).IsGreaterThan(0);

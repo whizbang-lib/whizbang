@@ -161,7 +161,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_NoWork_IncreasesConsecutiveEmptyPollsAsync() {
     // Arrange - No work returned
-    var (worker, coordinator, _) = _createWorker();
+    var (worker, _, _) = _createWorker();
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -202,7 +202,7 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_DatabaseBecomesReady_ResetsConsecutiveCheckCounterAsync() {
     // Arrange - Start not ready, become ready after some polls
-    var (worker, coordinator, dbCheck) = _createWorker();
+    var (worker, _, dbCheck) = _createWorker();
     dbCheck.IsReady = false;
 
     // Act - Start worker with database not ready
@@ -870,12 +870,12 @@ public class PerspectiveWorkerCoverageTests {
   [Test]
   public async Task Worker_PerspectiveRunThrows_ReportsFailureViaStrategyAsync() {
     // Arrange - suppress unobserved task exceptions from intentional test throw
-    EventHandler<UnobservedTaskExceptionEventArgs> handler = (s, e) => {
+    void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is InvalidOperationException ioe &&
           ioe.Message == "Perspective run failed") {
         e.SetObserved();
       }
-    };
+    }
     TaskScheduler.UnobservedTaskException += handler;
 
     try {
@@ -1608,7 +1608,7 @@ public class PerspectiveWorkerCoverageTests {
   }
 
   private sealed class FakeEventStore : IEventStore {
-    private readonly Dictionary<Guid, List<MessageEnvelope<IEvent>>> _events = new();
+    private readonly Dictionary<Guid, List<MessageEnvelope<IEvent>>> _events = [];
     public int GetEventsBetweenPolymorphicCallCount { get; private set; }
 
     public void AddEvent(Guid streamId, Guid eventId, IEvent payload, string? userId = null) {
@@ -1676,12 +1676,8 @@ public class PerspectiveWorkerCoverageTests {
       => Task.FromResult(-1L);
   }
 
-  private sealed class FakeEventTypeProvider : IEventTypeProvider {
-    private readonly IReadOnlyList<Type> _eventTypes;
-
-    public FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) {
-      _eventTypes = eventTypes;
-    }
+  private sealed class FakeEventTypeProvider(IReadOnlyList<Type> eventTypes) : IEventTypeProvider {
+    private readonly IReadOnlyList<Type> _eventTypes = eventTypes;
 
     public IReadOnlyList<Type> GetEventTypes() => _eventTypes;
   }
@@ -1700,12 +1696,8 @@ public class PerspectiveWorkerCoverageTests {
     }
   }
 
-  private sealed class FakeOptionsMonitor<T> : IOptionsMonitor<T> {
-    public FakeOptionsMonitor(T currentValue) {
-      CurrentValue = currentValue;
-    }
-
-    public T CurrentValue { get; }
+  private sealed class FakeOptionsMonitor<T>(T currentValue) : IOptionsMonitor<T> {
+    public T CurrentValue { get; } = currentValue;
 
     public T Get(string? name) => CurrentValue;
 

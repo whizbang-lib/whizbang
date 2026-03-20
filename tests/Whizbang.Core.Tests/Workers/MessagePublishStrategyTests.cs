@@ -129,12 +129,8 @@ public class MessagePublishStrategyTests {
     }
   }
 
-  private sealed class ReadinessAwarePublishStrategy : IMessagePublishStrategy {
-    private readonly bool _isReady;
-
-    public ReadinessAwarePublishStrategy(bool isReady) {
-      _isReady = isReady;
-    }
+  private sealed class ReadinessAwarePublishStrategy(bool isReady) : IMessagePublishStrategy {
+    private readonly bool _isReady = isReady;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       return Task.FromResult(_isReady);

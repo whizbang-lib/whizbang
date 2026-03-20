@@ -23,11 +23,11 @@ public sealed class MetricAssertionHelper : IDisposable {
       _trackedMeters.Add(m);
     }
 
-    _listener = new MeterListener();
-
-    _listener.InstrumentPublished = (instrument, listener) => {
-      if (_trackedMeters.Contains(instrument.Meter)) {
-        listener.EnableMeasurementEvents(instrument);
+    _listener = new MeterListener {
+      InstrumentPublished = (instrument, listener) => {
+        if (_trackedMeters.Contains(instrument.Meter)) {
+          listener.EnableMeasurementEvents(instrument);
+        }
       }
     };
 
@@ -51,11 +51,11 @@ public sealed class MetricAssertionHelper : IDisposable {
   /// </summary>
   public MetricAssertionHelper(params string[] meterNames) {
     var meterNameSet = new HashSet<string>(meterNames);
-    _listener = new MeterListener();
-
-    _listener.InstrumentPublished = (instrument, listener) => {
-      if (instrument.Meter.Name != null && meterNameSet.Contains(instrument.Meter.Name)) {
-        listener.EnableMeasurementEvents(instrument);
+    _listener = new MeterListener {
+      InstrumentPublished = (instrument, listener) => {
+        if (instrument.Meter.Name != null && meterNameSet.Contains(instrument.Meter.Name)) {
+          listener.EnableMeasurementEvents(instrument);
+        }
       }
     };
 

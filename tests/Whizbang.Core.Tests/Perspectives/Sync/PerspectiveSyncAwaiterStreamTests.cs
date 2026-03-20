@@ -234,14 +234,9 @@ public class PerspectiveSyncAwaiterStreamTests {
   /// <summary>
   /// Stub work coordinator that returns configured sync results.
   /// </summary>
-  private sealed class StubWorkCoordinator : IWorkCoordinator {
-    private readonly int _pendingCount;
-    private readonly int _processedCount;
-
-    public StubWorkCoordinator(int pendingCount, int processedCount) {
-      _pendingCount = pendingCount;
-      _processedCount = processedCount;
-    }
+  private sealed class StubWorkCoordinator(int pendingCount, int processedCount) : IWorkCoordinator {
+    private readonly int _pendingCount = pendingCount;
+    private readonly int _processedCount = processedCount;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(ProcessWorkBatchRequest request, CancellationToken cancellationToken = default) {
       return Task.FromResult(new WorkBatch {
@@ -272,10 +267,8 @@ public class PerspectiveSyncAwaiterStreamTests {
   /// <summary>
   /// Stub debugger-aware clock for tests.
   /// </summary>
-  private sealed class StubDebuggerAwareClock : IDebuggerAwareClock {
-    private readonly bool _timedOut;
-
-    public StubDebuggerAwareClock(bool timedOut = false) => _timedOut = timedOut;
+  private sealed class StubDebuggerAwareClock(bool timedOut = false) : IDebuggerAwareClock {
+    private readonly bool _timedOut = timedOut;
 
     public DebuggerDetectionMode Mode => DebuggerDetectionMode.Disabled;
     public bool IsPaused => false;
@@ -296,10 +289,8 @@ public class PerspectiveSyncAwaiterStreamTests {
   /// <summary>
   /// Stub active stopwatch for tests.
   /// </summary>
-  private sealed class StubActiveStopwatch : IActiveStopwatch {
-    private readonly bool _timedOut;
-
-    public StubActiveStopwatch(bool timedOut) => _timedOut = timedOut;
+  private sealed class StubActiveStopwatch(bool timedOut) : IActiveStopwatch {
+    private readonly bool _timedOut = timedOut;
 
     public TimeSpan ActiveElapsed => _timedOut ? TimeSpan.FromSeconds(10) : TimeSpan.FromMilliseconds(50);
     public TimeSpan WallElapsed => ActiveElapsed;
