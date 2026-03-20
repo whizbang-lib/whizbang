@@ -19,7 +19,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_SingleClassNoInheritance_ReturnsAllPublicPropertiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
         public string Name { get; set; }
@@ -39,7 +39,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_TwoLevelInheritance_IncludesBaseClassPropertiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseEvent {
         public string StreamId { get; set; }
       }
@@ -61,7 +61,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_ThreeLevelInheritance_IncludesAllAncestorPropertiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class GrandparentEvent {
         public string EventId { get; set; }
       }
@@ -87,7 +87,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_OverriddenProperty_DerivedTakesPrecedenceAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseClass {
         public virtual string Name { get; set; }
       }
@@ -109,7 +109,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_StaticPropertyExcluded_ExcludesStaticByDefaultAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
         public static string DefaultStatus { get; set; }
@@ -128,7 +128,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_IncludeStatic_IncludesStaticPropertiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
         public static string DefaultStatus { get; set; }
@@ -148,7 +148,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_NonPublicExcluded_ExcludesNonPublicByDefaultAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
         private string InternalId { get; set; }
@@ -169,7 +169,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_IncludeNonPublic_IncludesAllAccessibilitiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
         private string PrivateId { get; set; }
@@ -191,7 +191,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllProperties_StopsAtSystemObject_DoesNotIncludeObjectPropertiesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Order {
         public string Id { get; set; }
       }
@@ -213,7 +213,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllPublicPropertyNames_ReturnsStringArrayOfNamesAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseEvent {
         public string StreamId { get; set; }
       }
@@ -241,7 +241,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task FindPropertyWithAttribute_DeclaredProperty_FindsPropertyAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       [AttributeUsage(AttributeTargets.Property)]
       public class StreamIdAttribute : Attribute { }
@@ -265,7 +265,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task FindPropertyWithAttribute_InheritedProperty_FindsPropertyInBaseClassAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       [AttributeUsage(AttributeTargets.Property)]
       public class StreamIdAttribute : Attribute { }
@@ -291,7 +291,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task FindPropertyWithAttribute_NoMatch_ReturnsNullAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       [AttributeUsage(AttributeTargets.Property)]
       public class StreamIdAttribute : Attribute { }
@@ -312,7 +312,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task FindPropertyWithAttribute_MultipleInheritanceLevels_FindsDeepestMatchAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using System;
       [AttributeUsage(AttributeTargets.Property)]
       public class StreamIdAttribute : Attribute { }
@@ -345,7 +345,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllMethods_SingleClass_ReturnsAllPublicMethodsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class OrderHandler {
         public void Process() { }
         public void Handle() { }
@@ -364,7 +364,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllMethods_InheritedMethods_IncludesBaseMethodsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseHandler {
         public void BaseProcess() { }
       }
@@ -385,7 +385,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllMethods_OverriddenMethod_DerivedTakesPrecedenceAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseHandler {
         public virtual void Process() { }
       }
@@ -407,7 +407,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllMethods_MethodOverloads_IncludesAllOverloadsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class Handler {
         public void Apply(string data) { }
         public void Apply(int data) { }
@@ -427,7 +427,7 @@ public class TypeSymbolExtensionsTests {
   [Test]
   public async Task GetAllMethods_InheritedOverloads_IncludesBaseOverloadsAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       public class BaseHandler {
         public void Apply(string data) { }
       }

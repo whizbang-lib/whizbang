@@ -82,7 +82,7 @@ public class GitOperationsTests {
   [Test]
   public async Task GetProjectName_ExtractsFromDirectoryName_Async() {
     // Arrange
-    var projectPath = "/Users/dev/src/MyAwesomeProject";
+    const string projectPath = "/Users/dev/src/MyAwesomeProject";
 
     // Act
     var projectName = GitOperations.GetProjectName(projectPath);
@@ -94,7 +94,7 @@ public class GitOperationsTests {
   [Test]
   public async Task GetProjectName_HandlesTrailingSlash_Async() {
     // Arrange
-    var projectPath = "/Users/dev/src/MyProject/";
+    const string projectPath = "/Users/dev/src/MyProject/";
 
     // Act
     var projectName = GitOperations.GetProjectName(projectPath);

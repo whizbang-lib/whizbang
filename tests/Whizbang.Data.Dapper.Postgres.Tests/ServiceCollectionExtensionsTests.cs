@@ -108,7 +108,7 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
     await Assert.That(services.Count).IsGreaterThan(0);
 
     // Verify infrastructure was initialized by connecting and querying
-    await using var connection = new Npgsql.NpgsqlConnection(_connectionString!);
+    await using var connection = new Npgsql.NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
@@ -150,7 +150,7 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
     await Assert.That(services.Count).IsGreaterThan(0);
 
     // Verify both infrastructure and perspective were initialized
-    await using var connection = new Npgsql.NpgsqlConnection(_connectionString!);
+    await using var connection = new Npgsql.NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
     // Check infrastructure table

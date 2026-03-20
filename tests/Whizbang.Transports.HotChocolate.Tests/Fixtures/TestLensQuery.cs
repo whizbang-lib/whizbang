@@ -28,7 +28,7 @@ public record ProductReadModel {
 /// Test lens interface for orders.
 /// </summary>
 [GraphQLLens(QueryName = "orders")]
-public interface IOrderLens : ILensQuery<OrderReadModel> { }
+public interface IOrderLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// Test lens interface for products with custom configuration.
@@ -38,7 +38,7 @@ public interface IOrderLens : ILensQuery<OrderReadModel> { }
     EnablePaging = true,
     DefaultPageSize = 10,
     MaxPageSize = 50)]
-public interface IProductLens : ILensQuery<ProductReadModel> { }
+public interface IProductLens : ILensQuery<ProductReadModel>;
 
 /// <summary>
 /// Test lens with filtering only.
@@ -48,7 +48,7 @@ public interface IProductLens : ILensQuery<ProductReadModel> { }
     EnableFiltering = true,
     EnableSorting = false,
     EnablePaging = false)]
-public interface IFilterOnlyLens : ILensQuery<OrderReadModel> { }
+public interface IFilterOnlyLens : ILensQuery<OrderReadModel>;
 
 /// <summary>
 /// In-memory test lens implementation for orders.
@@ -113,7 +113,7 @@ public class TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? dat
     EnablePaging = true,
     DefaultPageSize = 10,
     MaxPageSize = 50)]
-public interface IPreOrderedProductLens : ILensQuery<ProductReadModel> { }
+public interface IPreOrderedProductLens : ILensQuery<ProductReadModel>;
 
 /// <summary>
 /// In-memory test lens that returns a pre-ordered query.

@@ -57,5 +57,5 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposabl
     return Task.FromResult<IEventStore>(eventStore);
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

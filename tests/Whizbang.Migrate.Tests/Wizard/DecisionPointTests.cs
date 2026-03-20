@@ -10,7 +10,7 @@ public class DecisionPointTests {
   [Test]
   public async Task Create_CreatesDecisionPoint_WithAllProperties_Async() {
     // Arrange
-    var originalCode = "public class OrderHandler : IHandle<CreateOrder> { }";
+    const string originalCode = "public class OrderHandler : IHandle<CreateOrder> { }";
     var options = new List<DecisionOption> {
       new("A", "Convert to IReceptor<T>", "public class OrderReceptor : IReceptor<CreateOrder> { }", true),
       new("B", "Skip", null, false)
@@ -93,7 +93,7 @@ public class DecisionPointTests {
   [Test]
   public async Task GetSelectedTransformedCode_ReturnsCorrectCode_WhenOptionSelected_Async() {
     // Arrange
-    var transformedCode = "public class OrderReceptor : IReceptor<CreateOrder> { }";
+    const string transformedCode = "public class OrderReceptor : IReceptor<CreateOrder> { }";
     var options = new List<DecisionOption> {
       new("A", "Convert", transformedCode, true),
       new("B", "Skip", null, false)

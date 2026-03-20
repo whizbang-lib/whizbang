@@ -222,7 +222,7 @@ public class SignalRNotificationHookTests {
   }
 
   // Test hub
-  private sealed class TestHub : Hub { }
+  private sealed class TestHub : Hub;
 
   // Mock implementations
   private sealed class MockHubContext<THub>(IHubClients clients) : IHubContext<THub> where THub : Hub {

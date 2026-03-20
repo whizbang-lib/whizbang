@@ -18,7 +18,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_UsesTrackedGuidBackingFieldAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -35,7 +35,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should use TrackedGuid backing field for metadata tracking
-    await Assert.That(generatedSource!).Contains("TrackedGuid _tracked");
+    await Assert.That(generatedSource).Contains("TrackedGuid _tracked");
     // EF Core sees only the Guid Value property
     await Assert.That(generatedSource).Contains("public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
   }
@@ -47,7 +47,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedNew_CallsTrackedGuidNewMedoAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -64,7 +64,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should use TrackedGuid.NewMedo() for ID generation
-    await Assert.That(generatedSource!).Contains("TrackedGuid.NewMedo()");
+    await Assert.That(generatedSource).Contains("TrackedGuid.NewMedo()");
   }
 
   /// <summary>
@@ -74,7 +74,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_ImplementsIWhizbangIdAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -91,7 +91,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should implement IWhizbangId interface
-    await Assert.That(generatedSource!).Contains("IWhizbangId");
+    await Assert.That(generatedSource).Contains("IWhizbangId");
     await Assert.That(generatedSource).Contains("global::Whizbang.Core.IWhizbangId");
   }
 
@@ -102,7 +102,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_HasIsTimeOrderedPropertyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -119,7 +119,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have IsTimeOrdered delegating to _tracked
-    await Assert.That(generatedSource!).Contains("IsTimeOrdered => _tracked.IsTimeOrdered");
+    await Assert.That(generatedSource).Contains("IsTimeOrdered => _tracked.IsTimeOrdered");
   }
 
   /// <summary>
@@ -130,7 +130,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_HasSubMillisecondPrecisionPropertyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -147,7 +147,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have SubMillisecondPrecision delegating to _tracked
-    await Assert.That(generatedSource!).Contains("SubMillisecondPrecision => _tracked.SubMillisecondPrecision");
+    await Assert.That(generatedSource).Contains("SubMillisecondPrecision => _tracked.SubMillisecondPrecision");
     // Also has public convenience method delegating to _tracked
     await Assert.That(generatedSource).Contains("GetSubMillisecondPrecision() => _tracked.SubMillisecondPrecision");
   }
@@ -159,7 +159,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_HasTimestampPropertyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -176,7 +176,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have Timestamp delegating to _tracked
-    await Assert.That(generatedSource!).Contains("DateTimeOffset");
+    await Assert.That(generatedSource).Contains("DateTimeOffset");
     await Assert.That(generatedSource).Contains("Timestamp => _tracked.Timestamp");
   }
 
@@ -187,7 +187,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_HasToGuidMethodAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -204,7 +204,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have ToGuid method that returns _tracked.Value
-    await Assert.That(generatedSource!).Contains("Guid ToGuid()");
+    await Assert.That(generatedSource).Contains("Guid ToGuid()");
     await Assert.That(generatedSource).Contains("ToGuid() => _tracked.Value");
   }
 
@@ -215,7 +215,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedFrom_WithNonV7Guid_ThrowsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -232,7 +232,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should validate UUIDv7 in From(Guid) method
-    await Assert.That(generatedSource!).Contains("Version != 7");
+    await Assert.That(generatedSource).Contains("Version != 7");
     await Assert.That(generatedSource).Contains("ArgumentException");
     await Assert.That(generatedSource).Contains("UUIDv7");
   }
@@ -244,7 +244,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_GeneratedId_HasFromTrackedGuidMethodAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -261,6 +261,6 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Should have From(TrackedGuid) method
-    await Assert.That(generatedSource!).Contains("From(TrackedGuid");
+    await Assert.That(generatedSource).Contains("From(TrackedGuid");
   }
 }

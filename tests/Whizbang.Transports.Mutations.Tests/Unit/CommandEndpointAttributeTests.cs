@@ -261,6 +261,6 @@ public class CommandEndpointAttributeTests {
 }
 
 // Test types for attribute tests
-public class TestCommand : ICommand { }
+public class TestCommand : ICommand;
 public class TestResult { public string? Value { get; set; } }
 public class TestRequest { public string? Data { get; set; } }

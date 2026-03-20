@@ -422,7 +422,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Database-backed lens query interface.
   /// </summary>
-  public interface IDatabaseOrderLensQuery : ILensQuery<Order> { }
+  public interface IDatabaseOrderLensQuery : ILensQuery<Order>;
 
   /// <summary>
   /// Database-backed lens implementation using EFCoreFilterableLensQuery.

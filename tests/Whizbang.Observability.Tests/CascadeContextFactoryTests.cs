@@ -392,7 +392,7 @@ public class CascadeContextFactoryTests {
   // TEST TYPES
   // ========================================
 
-  private sealed class TestMessage { }
+  private sealed class TestMessage;
 
   /// <summary>
   /// Test enricher that adds a key-value pair to metadata.

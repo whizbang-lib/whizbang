@@ -99,7 +99,7 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
   public async Task AddAzureServiceBusTransport_WithOptions_AppliesOptionsAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var customMaxConcurrentCalls = 10;
+    const int customMaxConcurrentCalls = 10;
 
     // Pre-register the client
     services.AddSingleton(_fixture.Client);
@@ -107,9 +107,7 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
     // Act
     services.AddAzureServiceBusTransport(
       _fixture.ConnectionString,
-      options => {
-        options.MaxConcurrentCalls = customMaxConcurrentCalls;
-      }
+      options => options.MaxConcurrentCalls = customMaxConcurrentCalls
     );
     var provider = services.BuildServiceProvider();
     var transport = provider.GetService<ITransport>();

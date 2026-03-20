@@ -22,9 +22,7 @@ public class InMemoryTestModel {
 public class InMemoryTestDbContext(DbContextOptions<InMemoryTestDbContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     // This call will be discovered by EFCoreServiceRegistrationGenerator
-    modelBuilder.Entity<PerspectiveRow<InMemoryTestModel>>(entity => {
-      entity.HasKey(e => e.Id);
-    });
+    modelBuilder.Entity<PerspectiveRow<InMemoryTestModel>>(entity => entity.HasKey(e => e.Id));
   }
 }
 
@@ -79,8 +77,8 @@ public class InMemoryDriverExtensionsTests {
     var exception = await Assert.That(() => fakeOptions.InMemory)
         .Throws<InvalidOperationException>();
 
-    await Assert.That(exception.Message!).Contains("InMemory driver can only be used with EF Core storage");
-    await Assert.That(exception.Message!).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.InMemory");
+    await Assert.That(exception.Message).Contains("InMemory driver can only be used with EF Core storage");
+    await Assert.That(exception.Message).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.InMemory");
   }
 
   /// <summary>

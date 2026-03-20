@@ -10,7 +10,7 @@ public class StreamIdDetectorTests {
   [Test]
   public async Task DetectAsync_FindsStreamIdProperty_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid StreamId, string CustomerId);
       public record OrderUpdated(Guid StreamId, string Description);
       public record OrderCancelled(Guid StreamId, string Reason);
@@ -29,7 +29,7 @@ public class StreamIdDetectorTests {
   [Test]
   public async Task DetectAsync_FindsStreamIdPropertyInItemEvents_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       public record ItemCreated(Guid StreamId, string Name);
       public record ItemUpdated(Guid StreamId, string Name);
       """;
@@ -47,7 +47,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_FindsDomainSpecificIdProperty_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string CustomerId);
       public record OrderShipped(Guid OrderId, DateTimeOffset ShippedAt);
       public record OrderDelivered(Guid OrderId, DateTimeOffset DeliveredAt);
@@ -66,7 +66,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_RanksMultiplePropertiesByOccurrence_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(Guid OrderId, string CustomerId);
       public record OrderUpdated(Guid OrderId, string Description);
       public record OrderShipped(Guid OrderId, string Carrier);
@@ -88,7 +88,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_IgnoresNonGuidIdProperties_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(string OrderId, int CustomerId);
       public record OrderUpdated(string OrderId, string Description);
       """;
@@ -105,7 +105,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_RecognizesStronglyTypedIds_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(OrderId OrderId, string CustomerId);
       public record OrderUpdated(OrderId OrderId, string Description);
 
@@ -125,7 +125,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_SkipsNonEventRecords_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         private readonly Guid _orderId;
         public Guid OrderId => _orderId;
@@ -147,7 +147,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_HandlesIdPropertyWithExplicitGuidType_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public record OrderCreated(System.Guid Id, string CustomerId);
       public record OrderUpdated(System.Guid Id, string Description);
       """;
@@ -165,7 +165,7 @@ public class StreamIdDetectorTests {
   public async Task DetectAsync_ReturnsEmptyForNoEvents_Async() {
     // Arrange
     // Static methods - no detector instance needed
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void ProcessOrder() { }
       }

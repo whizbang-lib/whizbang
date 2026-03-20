@@ -10,5 +10,4 @@ namespace Whizbang.Hosting.Azure.ServiceBus.Tests;
 /// are correctly configured for Whizbang inbox pattern.
 /// TODO: Add tests when WithDestinationFilter extension method is implemented.
 /// </summary>
-public class ServiceBusSubscriptionExtensionsTests {
-}
+public class ServiceBusSubscriptionExtensionsTests;

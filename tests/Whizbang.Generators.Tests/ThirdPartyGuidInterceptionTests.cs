@@ -37,7 +37,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MartenCombGuid_InterceptsAndAddsSourceMartenMetadataAsync() {
     // Arrange - Simulated Marten code structure
-    var source = """
+    const string source = """
             using System;
 
             // Simulating Marten's CombGuidIdGeneration
@@ -62,7 +62,7 @@ public class ThirdPartyGuidInterceptionTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("SourceMarten");
   }
 
@@ -78,7 +78,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MedoUuid7Direct_InterceptsAsync() {
     // Arrange - Simulated Medo code structure
-    var source = """
+    const string source = """
             using System;
 
             // Simulating Medo.Uuid7
@@ -104,7 +104,7 @@ public class ThirdPartyGuidInterceptionTests {
     // Assert - Should intercept the NewUuid7() call
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("SourceMedo");
   }
 
@@ -119,7 +119,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_UuidNextDatabaseFriendly_InterceptsAsync() {
     // Arrange - Simulated UUIDNext code structure
-    var source = """
+    const string source = """
             using System;
 
             // Simulating UUIDNext library
@@ -147,7 +147,7 @@ public class ThirdPartyGuidInterceptionTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("InterceptsLocation");
+    await Assert.That(generatedSource).Contains("InterceptsLocation");
     await Assert.That(generatedSource).Contains("SourceUuidNext");
   }
 
@@ -158,7 +158,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_UuidNextSequential_InterceptsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace UUIDNext {
@@ -182,7 +182,7 @@ public class ThirdPartyGuidInterceptionTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("SourceUuidNext");
+    await Assert.That(generatedSource).Contains("SourceUuidNext");
   }
 
   // ========================================
@@ -196,7 +196,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MultipleLibraries_AllInterceptedWithCorrectMetadataAsync() {
     // Arrange - Simulated libraries return default to avoid internal Guid calls being intercepted
-    var source = """
+    const string source = """
             using System;
 
             // Simulated libraries (return default to avoid internal Guid calls)
@@ -248,7 +248,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SuppressOnThirdPartyUsage_NoInterceptionAsync() {
     // Arrange - Simulated library returns default to avoid internal Guid calls
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -294,7 +294,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_MartenCombGuid_DetectedAsVersion7Async() {
     // Arrange - Simulated library returns default to avoid internal Guid calls
-    var source = """
+    const string source = """
             using System;
 
             namespace Marten.Schema.Identity {
@@ -318,7 +318,7 @@ public class ThirdPartyGuidInterceptionTests {
     // Assert - Marten CombGuid should be marked as Version7
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "GuidInterceptors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("Version7");
+    await Assert.That(generatedSource).Contains("Version7");
   }
 
   // ========================================
@@ -332,7 +332,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_SimilarClassName_NotInterceptedAsync() {
     // Arrange - User has their own class with similar name (returns default to avoid internal Guid calls)
-    var source = """
+    const string source = """
             using System;
 
             namespace MyApp.Schema.Identity {
@@ -371,7 +371,7 @@ public class ThirdPartyGuidInterceptionTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GuidExtensionMethod_NotInterceptedAsync() {
     // Arrange - Extension method returns default to avoid internal Guid.NewGuid() being intercepted
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;

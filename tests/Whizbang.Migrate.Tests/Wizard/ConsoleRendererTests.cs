@@ -129,7 +129,7 @@ public class ConsoleRendererTests {
   [Test]
   public async Task RenderCodeBlock_FormatsCodeWithBorder_Async() {
     // Arrange
-    var code = "public class Test { }";
+    const string code = "public class Test { }";
     var writer = new StringWriter();
 
     // Act

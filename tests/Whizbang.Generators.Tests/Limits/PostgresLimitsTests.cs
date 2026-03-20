@@ -18,7 +18,7 @@ public class PostgresLimitsTests {
   [Test]
   public async Task MAX_IDENTIFIER_BYTES_Is63Async() {
     // Arrange - store constant in variable to satisfy TUnit assertion rules
-    var value = PostgresLimits.MAX_IDENTIFIER_BYTES;
+    const int value = PostgresLimits.MAX_IDENTIFIER_BYTES;
 
     // Assert - PostgreSQL NAMEDATALEN - 1 = 63
     await Assert.That(value).IsEqualTo(63);

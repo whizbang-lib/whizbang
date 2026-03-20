@@ -44,9 +44,7 @@ public class PhysicalFieldUpsertStrategyTests {
         entity.Property(e => e.Version).HasColumnName("version");
 
         // Use owned types for InMemory provider
-        entity.OwnsOne(e => e.Data, data => {
-          data.WithOwner();
-        });
+        entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
         entity.OwnsOne(e => e.Metadata, metadata => {
           metadata.WithOwner();
@@ -344,9 +342,7 @@ public class PhysicalFieldUpsertStrategyTests {
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
 
-        entity.OwnsOne(e => e.Data, data => {
-          data.WithOwner();
-        });
+        entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
         entity.OwnsOne(e => e.Metadata, metadata => {
           metadata.WithOwner();

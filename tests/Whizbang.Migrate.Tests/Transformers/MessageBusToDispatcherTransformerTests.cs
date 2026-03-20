@@ -11,7 +11,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_IMessageBusField_TransformsToIDispatcherAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -36,7 +36,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_IMessageBusParameter_TransformsToIDispatcherAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -60,7 +60,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_SendAsyncCall_TransformsCorrectlyAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -86,7 +86,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_PublishAsyncCall_TransformsCorrectlyAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -112,7 +112,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_InvokeAsync_TransformsToSendAsyncAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -141,7 +141,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_UsingWolverine_TransformsToWhizbangCoreAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -162,7 +162,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_NoMessageBus_ReturnsUnchangedAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void Process() { }
       }
@@ -181,7 +181,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_PublishAsyncEvent_EmitsWarningAboutPatternAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderReceptor {
@@ -210,7 +210,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_RenamesFieldToDispatcherAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {
@@ -241,7 +241,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_PreservesOtherCodeAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Microsoft.Extensions.Logging;
 
@@ -274,7 +274,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_PreservesNamespaceAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       namespace MyApp.Services;
@@ -295,7 +295,7 @@ public class MessageBusToDispatcherTransformerTests {
   public async Task TransformAsync_TracksAllChangesAsync() {
     // Arrange
     var transformer = new MessageBusToDispatcherTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class OrderService {

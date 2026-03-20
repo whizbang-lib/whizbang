@@ -152,7 +152,7 @@ public class DapperWorkCoordinatorCommandTimeoutTests : PostgresTestBase {
       commandTimeout: 10));
 
     // If we reach here, the query completed successfully within the timeout
-    var completed = true;
+    const bool completed = true;
     await Assert.That(completed).IsTrue();
   }
 

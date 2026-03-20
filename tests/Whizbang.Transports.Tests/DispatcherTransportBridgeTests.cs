@@ -443,7 +443,7 @@ public class DispatcherTransportBridgeTests {
     }
 
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
-      return async (evt) => { await Task.CompletedTask; };
+      return async (evt) => await Task.CompletedTask;
     }
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {

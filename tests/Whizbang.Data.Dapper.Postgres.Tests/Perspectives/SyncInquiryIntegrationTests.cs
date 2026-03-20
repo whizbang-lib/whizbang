@@ -40,7 +40,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -104,7 +104,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -170,7 +170,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -253,7 +253,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -333,8 +333,8 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var stream2Id = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspective1Name = "Perspective1";
-    var perspective2Name = "Perspective2";
+    const string perspective1Name = "Perspective1";
+    const string perspective2Name = "Perspective2";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -427,7 +427,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var nonExistentEventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Create sync inquiry for event that doesn't exist in perspective_events
     var inquiryId = _idProvider.NewGuid();
@@ -479,7 +479,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
     var event4Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -632,7 +632,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -693,7 +693,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -775,7 +775,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -855,7 +855,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -938,7 +938,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1023,7 +1023,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1085,7 +1085,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1152,7 +1152,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var startedEventId = _idProvider.NewGuid();
     var completedEventId = _idProvider.NewGuid();
     var cancelledEventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1214,7 +1214,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     // Arrange: No events exist for the stream yet
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Create sync inquiry with DiscoverPendingFromOutbox = true
     var inquiryId = _idProvider.NewGuid();
@@ -1268,7 +1268,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1334,7 +1334,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1404,7 +1404,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var explicitEventId = _idProvider.NewGuid();
     var otherEventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1489,7 +1489,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     // Stored format: "TypeName, AssemblyName"
@@ -1556,7 +1556,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     // Stored format: "TypeName, AssemblyName"
@@ -1647,7 +1647,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -1725,7 +1725,7 @@ public class SyncInquiryIntegrationTests : PostgresTestBase {
 
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // NOTE: We do NOT insert any event - simulates timing race where
     // event is cascaded but not yet committed to wh_event_store

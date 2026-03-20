@@ -165,9 +165,7 @@ public class OrderPerspectiveTests {
         entity.HasKey(e => e.Id);
 
         // Use owned types for InMemory provider
-        entity.OwnsOne(e => e.Data, data => {
-          data.WithOwner();
-        });
+        entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
         entity.OwnsOne(e => e.Metadata, metadata => {
           metadata.WithOwner();

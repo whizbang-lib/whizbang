@@ -225,7 +225,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
   [Test]
   public async Task ExecuteAsync_RespectsConcurrencyLimit_OnlyMaxConcurrentExecutionsAsync() {
     // Arrange
-    var maxConcurrency = 3;
+    const int maxConcurrency = 3;
     var executor = new ParallelExecutor(maxConcurrency);
     await executor.StartAsync();
     var envelope = CreateTestEnvelope("test");

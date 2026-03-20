@@ -22,7 +22,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCommandEndpointAndRestRoute_GeneratesEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -46,7 +46,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrderCommandEndpoint");
+    await Assert.That(code).Contains("CreateOrderCommandEndpoint");
     await Assert.That(code).Contains("CreateOrderCommand");
   }
 
@@ -57,7 +57,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleCommands_GeneratesAllEndpointsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -84,7 +84,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrderCommandEndpoint");
+    await Assert.That(code).Contains("CreateOrderCommandEndpoint");
     await Assert.That(code).Contains("CreateProductCommandEndpoint");
     await Assert.That(code).Contains("CreateCustomerCommandEndpoint");
   }
@@ -96,7 +96,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutRestRoute_DoesNotGenerateAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -124,7 +124,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutCommandEndpointAttribute_DoesNotGenerateAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -148,7 +148,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomRoute_UsesRouteFromAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -167,7 +167,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("/api/v2/custom-orders");
+    await Assert.That(code).Contains("/api/v2/custom-orders");
   }
 
   /// <summary>
@@ -177,7 +177,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ProducesCompilableCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -208,7 +208,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_UsesConsumerNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -227,7 +227,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace MyCompany.OrderService.Generated");
+    await Assert.That(code).Contains("namespace MyCompany.OrderService.Generated");
   }
 
   /// <summary>
@@ -237,7 +237,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesDiagnosticsClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -256,7 +256,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("WhizbangRestMutationDiagnostics");
+    await Assert.That(code).Contains("WhizbangRestMutationDiagnostics");
     await Assert.That(code).Contains("DiscoveredMutationCount");
   }
 
@@ -267,7 +267,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesPostEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -286,7 +286,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("Post(");
+    await Assert.That(code).Contains("Post(");
   }
 
   /// <summary>
@@ -296,7 +296,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesPartialClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -315,7 +315,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("public partial class");
+    await Assert.That(code).Contains("public partial class");
   }
 
   /// <summary>
@@ -325,7 +325,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_InheritsFromRestMutationEndpointBaseAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -344,7 +344,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("RestMutationEndpointBase<");
+    await Assert.That(code).Contains("RestMutationEndpointBase<");
   }
 
   /// <summary>
@@ -354,7 +354,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithBothRestAndGraphQL_GeneratesRestEndpointAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -375,7 +375,7 @@ public class RestMutationEndpointGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("CreateOrderCommandEndpoint");
+    await Assert.That(code).Contains("CreateOrderCommandEndpoint");
     await Assert.That(code).Contains("/api/orders");
   }
 
@@ -386,7 +386,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithCustomRequestType_GeneratesWithRequestTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -409,7 +409,7 @@ public class RestMutationEndpointGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
     // When custom request type is specified, endpoint should use it
-    await Assert.That(code!).Contains("CreateOrderRequest");
+    await Assert.That(code).Contains("CreateOrderRequest");
   }
 
   /// <summary>
@@ -419,7 +419,7 @@ public class RestMutationEndpointGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DerivesEndpointNameFromCommandAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Transports.Mutations;
@@ -439,6 +439,6 @@ public class RestMutationEndpointGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestMutationEndpoints.g.cs");
     await Assert.That(code).IsNotNull();
     // Endpoint name should be PlaceOrderCommandEndpoint
-    await Assert.That(code!).Contains("PlaceOrderCommandEndpoint");
+    await Assert.That(code).Contains("PlaceOrderCommandEndpoint");
   }
 }

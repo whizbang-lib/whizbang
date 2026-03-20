@@ -70,7 +70,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync() {
     // Arrange
-    var metadataJson = """{"version":"1.0.0","environment":"test","enabled":true}""";
+    const string metadataJson = """{"version":"1.0.0","environment":"test","enabled":true}""";
     var metadata = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson);
 
     // Act
@@ -200,7 +200,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", statusFlags: (int)MessageProcessingStatus.Stored, instanceId: _instanceId);
 
     // Error message with special characters that need JSON escaping
-    var errorMessage = "Error with \"quotes\", \nnewlines\n, and \\backslashes\\";
+    const string errorMessage = "Error with \"quotes\", \nnewlines\n, and \\backslashes\\";
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
@@ -610,8 +610,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var complexJson = "{\"nested\":{\"key\":\"value\"},\"array\":[1,2,3]}";
-    var complexMetadata = "{\"correlation_id\":\"abc-123\",\"user\":\"test\"}";
+    const string complexJson = "{\"nested\":{\"key\":\"value\"},\"array\":[1,2,3]}";
+    const string complexMetadata = "{\"correlation_id\":\"abc-123\",\"user\":\"test\"}";
 
     await InsertOutboxMessageAsync(
       messageId,
@@ -2506,7 +2506,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
     // Create a simple test event with StreamId
-    var testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
+    const string testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
     var productId = _idProvider.NewGuid();
     var messageId = _idProvider.NewGuid();
 

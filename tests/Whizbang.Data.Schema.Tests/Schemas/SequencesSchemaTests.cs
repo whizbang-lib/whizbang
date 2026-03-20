@@ -124,10 +124,10 @@ public class SequencesSchemaTests {
   [Category("Schema")]
   public async Task Columns_HasAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    var sequenceName = SequencesSchema.Columns.SEQUENCE_NAME;
-    var currentValue = SequencesSchema.Columns.CURRENT_VALUE;
-    var incrementBy = SequencesSchema.Columns.INCREMENT_BY;
-    var lastUpdatedAt = SequencesSchema.Columns.LAST_UPDATED_AT;
+    const string sequenceName = SequencesSchema.Columns.SEQUENCE_NAME;
+    const string currentValue = SequencesSchema.Columns.CURRENT_VALUE;
+    const string incrementBy = SequencesSchema.Columns.INCREMENT_BY;
+    const string lastUpdatedAt = SequencesSchema.Columns.LAST_UPDATED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(sequenceName).IsEqualTo("sequence_name");

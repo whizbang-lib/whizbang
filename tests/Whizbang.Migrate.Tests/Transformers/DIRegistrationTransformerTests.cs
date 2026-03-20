@@ -11,7 +11,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsAddWolverineToAddWhizbang_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       var builder = WebApplication.CreateBuilder(args);
@@ -30,7 +30,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsAddWolverineWithOptions_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       var builder = WebApplication.CreateBuilder(args);
@@ -51,7 +51,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsAddMartenToAddWhizbangEventStore_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       var builder = WebApplication.CreateBuilder(args);
@@ -70,7 +70,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsAddMartenWithOptions_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       var builder = WebApplication.CreateBuilder(args);
@@ -92,7 +92,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsUseWolverineToUseWhizbang_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       var app = builder.Build();
@@ -111,7 +111,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_UpdatesUsingDirectives_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Marten;
 
@@ -133,7 +133,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_TracksChanges_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       var builder = WebApplication.CreateBuilder(args);
@@ -152,7 +152,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_NoDIRegistrations_ReturnsUnchanged_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void Process() { }
       }
@@ -170,7 +170,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_ConvertsIntegrateWithWolverine_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Marten;
 
@@ -191,7 +191,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_PreservesOtherServiceRegistrations_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Microsoft.Extensions.DependencyInjection;
 
@@ -213,7 +213,7 @@ public class DIRegistrationTransformerTests {
   public async Task TransformAsync_HandlesHostBuilderPattern_Async() {
     // Arrange
     var transformer = new DIRegistrationTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       Host.CreateDefaultBuilder(args)

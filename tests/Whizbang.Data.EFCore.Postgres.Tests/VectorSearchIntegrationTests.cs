@@ -77,7 +77,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
@@ -101,7 +101,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.CreatedAt).HasColumnName("created_at");
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
-        entity.OwnsOne(e => e.Data, data => { data.ToJson("data"); });
+        entity.OwnsOne(e => e.Data, data => data.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata).ToJson("metadata");
         entity.ComplexProperty(e => e.Scope).ToJson("scope");
 
@@ -258,8 +258,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       Embedding = (float[]?)null,
       ReferenceEmbedding = (float[]?)null
     });
-    var metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
-    var scopeJson = "{}";
+    const string metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
+    const string scopeJson = "{}";
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_per_vector_test_model (id, data, metadata, scope, embedding, reference_embedding)
@@ -279,8 +279,8 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
       Id = id.ToString(),
       Label = label
     });
-    var metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
-    var scopeJson = "{}";
+    const string metadataJson = """{"EventType":"Test","EventId":"1","Timestamp":"2024-01-01T00:00:00Z"}""";
+    const string scopeJson = "{}";
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_per_second_vector_test_model (id, data, metadata, scope, target_embedding)

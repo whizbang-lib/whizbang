@@ -34,7 +34,7 @@ public class RabbitMQTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithMissingPayloadField_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with all fields except "p" (Payload)
-    var jsonWithoutPayload = """
+    const string jsonWithoutPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "h": []
@@ -71,7 +71,7 @@ public class RabbitMQTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithExplicitNullPayload_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with explicit null for "p" (Payload)
-    var jsonWithNullPayload = """
+    const string jsonWithNullPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "p": null,

@@ -291,7 +291,7 @@ public class PolicyConfigurationExtensionsTests {
   }
 
   // Fake types for testing
-  private sealed class FakeExecutionStrategy { }
-  private sealed class FakePartitionRouter { }
-  private sealed class FakeSequenceProvider { }
+  private sealed class FakeExecutionStrategy;
+  private sealed class FakePartitionRouter;
+  private sealed class FakeSequenceProvider;
 }

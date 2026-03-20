@@ -16,7 +16,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for failure_reason column in wh_outbox
-    var sql = @"
+    const string sql = @"
       SELECT column_name, data_type, column_default
       FROM information_schema.columns
       WHERE table_name = 'wh_outbox'
@@ -48,7 +48,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for failure_reason column in wh_inbox
-    var sql = @"
+    const string sql = @"
       SELECT column_name, data_type, column_default
       FROM information_schema.columns
       WHERE table_name = 'wh_inbox'
@@ -80,7 +80,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for index on failure_reason
-    var sql = @"
+    const string sql = @"
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'wh_outbox'
@@ -101,7 +101,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for index on failure_reason
-    var sql = @"
+    const string sql = @"
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'wh_inbox'
@@ -126,7 +126,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     var testValues = new[] { 0, 1, 2, 3, 4, 5, 6, 99 };
 
     foreach (var reasonValue in testValues) {
-      var insertSql = @"
+      const string insertSql = @"
         INSERT INTO wh_outbox (
           message_id, destination, message_type, event_data, metadata,
           status, created_at, failure_reason
@@ -142,7 +142,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
       await insertCommand.ExecuteNonQueryAsync();
 
       // Verify value was stored correctly
-      var selectSql = "SELECT failure_reason FROM wh_outbox WHERE message_id = @message_id";
+      const string selectSql = "SELECT failure_reason FROM wh_outbox WHERE message_id = @message_id";
       await using var selectCommand = new NpgsqlCommand(selectSql, connection);
       selectCommand.Parameters.AddWithValue("message_id", messageId);
       var storedValue = (int)(await selectCommand.ExecuteScalarAsync() ?? -1);
@@ -151,7 +151,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     }
 
     // Cleanup
-    var deleteSql = "DELETE FROM wh_outbox WHERE message_id = @message_id";
+    const string deleteSql = "DELETE FROM wh_outbox WHERE message_id = @message_id";
     await using var deleteCommand = new NpgsqlCommand(deleteSql, connection);
     deleteCommand.Parameters.AddWithValue("message_id", messageId);
     await deleteCommand.ExecuteNonQueryAsync();

@@ -218,14 +218,14 @@ public class ReceptorProcessingSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var id = ReceptorProcessingSchema.Columns.ID;
-    var eventId = ReceptorProcessingSchema.Columns.EVENT_ID;
-    var receptorName = ReceptorProcessingSchema.Columns.RECEPTOR_NAME;
-    var status = ReceptorProcessingSchema.Columns.STATUS;
-    var attempts = ReceptorProcessingSchema.Columns.ATTEMPTS;
-    var error = ReceptorProcessingSchema.Columns.ERROR;
-    var startedAt = ReceptorProcessingSchema.Columns.STARTED_AT;
-    var processedAt = ReceptorProcessingSchema.Columns.PROCESSED_AT;
+    const string id = ReceptorProcessingSchema.Columns.ID;
+    const string eventId = ReceptorProcessingSchema.Columns.EVENT_ID;
+    const string receptorName = ReceptorProcessingSchema.Columns.RECEPTOR_NAME;
+    const string status = ReceptorProcessingSchema.Columns.STATUS;
+    const string attempts = ReceptorProcessingSchema.Columns.ATTEMPTS;
+    const string error = ReceptorProcessingSchema.Columns.ERROR;
+    const string startedAt = ReceptorProcessingSchema.Columns.STARTED_AT;
+    const string processedAt = ReceptorProcessingSchema.Columns.PROCESSED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(id).IsEqualTo("id");

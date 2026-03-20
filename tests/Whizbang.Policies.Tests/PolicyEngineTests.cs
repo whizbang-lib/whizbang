@@ -116,9 +116,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("PaymentPolicy", ctx => ctx.Message is PaymentCommand, config => {
-      config.UseTopic("payments");
-    });
+    engine.AddPolicy("PaymentPolicy", ctx => ctx.Message is PaymentCommand, config => config.UseTopic("payments"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -136,9 +134,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => ctx.Message is OrderCommand, config => {
-      config.UseTopic("orders");
-    });
+    engine.AddPolicy("OrderPolicy", ctx => ctx.Message is OrderCommand, config => config.UseTopic("orders"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -159,9 +155,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("PaymentPolicy", ctx => ctx.Message is PaymentCommand, config => {
-      config.UseTopic("payments");
-    });
+    engine.AddPolicy("PaymentPolicy", ctx => ctx.Message is PaymentCommand, config => config.UseTopic("payments"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -182,9 +176,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UseTopic("orders");
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.UseTopic("orders"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -202,9 +194,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UseStreamId("order-123");
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.UseStreamId("order-123"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -222,9 +212,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UseExecutionStrategy<SerialExecutor>();
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.UseExecutionStrategy<SerialExecutor>());
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -242,9 +230,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UsePartitionRouter<HashPartitionRouter>();
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.UsePartitionRouter<HashPartitionRouter>());
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -262,9 +248,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.UseSequenceProvider<InMemorySequenceProvider>();
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.UseSequenceProvider<InMemorySequenceProvider>());
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -282,9 +266,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.WithPartitions(4);
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.WithPartitions(4));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -302,9 +284,7 @@ public class PolicyEngineTests {
     // Arrange
     var engine = new PolicyEngine();
 
-    engine.AddPolicy("OrderPolicy", ctx => true, config => {
-      config.WithConcurrency(10);
-    });
+    engine.AddPolicy("OrderPolicy", ctx => true, config => config.WithConcurrency(10));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -388,9 +368,7 @@ public class PolicyEngineTests {
   public async Task MatchAsync_WithPredicateThrowingException_ShouldRecordFailureAsync() {
     // Arrange
     var engine = new PolicyEngine();
-    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => {
-      config.UseTopic("test");
-    });
+    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => config.UseTopic("test"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);
@@ -413,12 +391,8 @@ public class PolicyEngineTests {
   public async Task MatchAsync_WithPredicateThrowingException_ShouldContinueToNextPolicyAsync() {
     // Arrange
     var engine = new PolicyEngine();
-    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => {
-      config.UseTopic("test1");
-    });
-    engine.AddPolicy("SuccessPolicy", ctx => ctx.Message is OrderCommand, config => {
-      config.UseTopic("test2");
-    });
+    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => config.UseTopic("test1"));
+    engine.AddPolicy("SuccessPolicy", ctx => ctx.Message is OrderCommand, config => config.UseTopic("test2"));
 
     var message = new OrderCommand("order-123", 100m);
     var envelope = _createTestEnvelope(message);

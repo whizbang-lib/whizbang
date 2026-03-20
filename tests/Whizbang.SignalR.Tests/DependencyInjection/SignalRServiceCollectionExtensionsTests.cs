@@ -33,9 +33,7 @@ public class SignalRServiceCollectionExtensionsTests {
 
     // Act
     var builder = services.AddWhizbangSignalR()
-        .AddHubOptions<Microsoft.AspNetCore.SignalR.Hub>(options => {
-          options.EnableDetailedErrors = true;
-        });
+        .AddHubOptions<Microsoft.AspNetCore.SignalR.Hub>(options => options.EnableDetailedErrors = true);
 
     // Assert
     await Assert.That(builder).IsNotNull();
@@ -48,9 +46,7 @@ public class SignalRServiceCollectionExtensionsTests {
     var timeout = TimeSpan.FromSeconds(45);
 
     // Act
-    var builder = services.AddWhizbangSignalR(options => {
-      options.ClientTimeoutInterval = timeout;
-    });
+    var builder = services.AddWhizbangSignalR(options => options.ClientTimeoutInterval = timeout);
 
     // Assert
     await Assert.That(builder).IsNotNull();

@@ -97,7 +97,7 @@ public class EFCoreDriverSelectorTests {
     var exception = await Assert.That(() => new EFCoreDriverSelector(services!, dbContextType))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName!).IsEqualTo("services");
+    await Assert.That(exception.ParamName).IsEqualTo("services");
   }
 
   [Test]
@@ -110,6 +110,6 @@ public class EFCoreDriverSelectorTests {
     var exception = await Assert.That(() => new EFCoreDriverSelector(services, dbContextType!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName!).IsEqualTo("dbContextType");
+    await Assert.That(exception.ParamName).IsEqualTo("dbContextType");
   }
 }

@@ -10,7 +10,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_FindsDomainsFromHierarchicalNamespaces_Async() {
     // Arrange - Hierarchical: MyApp.Orders.Events → "orders"
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Orders.Events;
 
       public record OrderCreated(Guid OrderId, string CustomerId);
@@ -28,7 +28,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_FindsDomainsFromFlatNamespaces_Async() {
     // Arrange - Flat: MyApp.Contracts.Commands.CreateOrder → extract from type name
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts.Commands;
 
       public record CreateOrder(Guid OrderId, string CustomerId);
@@ -46,7 +46,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_FindsMultipleDomainsFromSingleFile_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts.Events;
 
       public record OrderCreated(Guid OrderId);
@@ -70,7 +70,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_RanksDomainsByOccurrence_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts.Events;
 
       public record OrderCreated(Guid OrderId);
@@ -90,7 +90,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_ExtractsDomainFromNamespaceSegment_Async() {
     // Arrange - Second-to-last segment when pattern detected
-    var sourceCode = """
+    const string sourceCode = """
       namespace Company.Ecommerce.Orders.Events;
 
       public record OrderPlaced(Guid OrderId);
@@ -107,7 +107,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_ExtractsDomainFromTypeName_WhenNamespaceIsGeneric_Async() {
     // Arrange - Namespace is generic (Contracts), extract from type name
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts.Events;
 
       public record PaymentProcessed(Guid PaymentId, decimal Amount);
@@ -125,7 +125,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_NormalizesToLowercase_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.ORDERS.Events;
 
       public record OrderCreated(Guid OrderId);
@@ -141,7 +141,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_HandlesEmptySourceCode_Async() {
     // Arrange
-    var sourceCode = "";
+    const string sourceCode = "";
 
     // Act
     var result = await DomainOwnershipDetector.DetectAsync(sourceCode, "Empty.cs");
@@ -182,7 +182,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_SkipsGenericNamespaceSegments_Async() {
     // Arrange - Skip segments like "Contracts", "Commands", "Events", "Queries"
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts.Commands;
 
       public record ProcessPayment(Guid PaymentId);
@@ -199,7 +199,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_RecognizesCommandSuffix_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts;
 
       public record PlaceOrderCommand(Guid OrderId);
@@ -217,7 +217,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_RecognizesEventSuffix_Async() {
     // Arrange
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Contracts;
 
       public record OrderPlacedEvent(Guid OrderId);
@@ -235,7 +235,7 @@ public class DomainOwnershipDetectorTests {
   [Test]
   public async Task DetectAsync_HandlesPastTenseEventNames_Async() {
     // Arrange - Names like OrderCreated, OrderShipped (domain = order)
-    var sourceCode = """
+    const string sourceCode = """
       namespace MyApp.Events;
 
       public record OrderCreated(Guid OrderId);

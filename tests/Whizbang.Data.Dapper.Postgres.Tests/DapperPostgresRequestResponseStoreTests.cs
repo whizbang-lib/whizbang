@@ -38,5 +38,5 @@ public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContr
     return Task.FromResult<IRequestResponseStore>(store);
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

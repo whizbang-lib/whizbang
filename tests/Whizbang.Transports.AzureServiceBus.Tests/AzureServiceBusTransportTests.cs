@@ -310,9 +310,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     var destination = new TransportDestination("topic-00");
 
     // Act & Assert
-    await Assert.That(async () => {
-      await transport.SendAsync<TestMessage, TestMessage>(envelope, destination);
-    }).Throws<NotSupportedException>();
+    await Assert.That(async () => await transport.SendAsync<TestMessage, TestMessage>(envelope, destination)).Throws<NotSupportedException>();
   }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {

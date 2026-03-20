@@ -18,9 +18,7 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
     // Subscribe to PostgreSQL NOTICE messages
     var noticeDbContext = CreateDbContext();
     var connection = (Npgsql.NpgsqlConnection)noticeDbContext.Database.GetDbConnection();
-    connection.Notice += (sender, args) => {
-      Console.WriteLine($"[POSTGRES NOTICE] {args.Notice.MessageText}");
-    };
+    connection.Notice += (sender, args) => Console.WriteLine($"[POSTGRES NOTICE] {args.Notice.MessageText}");
 
     var instanceId = Guid.CreateVersion7();
     var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(noticeDbContext, JsonContextRegistry.CreateCombinedOptions());
