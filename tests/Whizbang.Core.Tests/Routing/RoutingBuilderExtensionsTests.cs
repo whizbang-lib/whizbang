@@ -24,9 +24,7 @@ public class RoutingBuilderExtensionsTests {
     var builder = new WhizbangBuilder(services);
 
     // Act
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands"));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -42,9 +40,7 @@ public class RoutingBuilderExtensionsTests {
     var builder = new WhizbangBuilder(services);
 
     // Act
-    builder.WithRouting(routing => {
-      routing.SubscribeTo("myapp.events");
-    });
+    builder.WithRouting(routing => routing.SubscribeTo("myapp.events"));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -59,9 +55,7 @@ public class RoutingBuilderExtensionsTests {
     var builder = new WhizbangBuilder(services);
 
     // Act
-    builder.WithRouting(routing => {
-      routing.OwnDomains("myapp.orders.commands", "myapp.users.commands");
-    });
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands", "myapp.users.commands"));
 
     // Assert
     var provider = services.BuildServiceProvider();
@@ -78,9 +72,7 @@ public class RoutingBuilderExtensionsTests {
     var builder = new WhizbangBuilder(services);
 
     // Act
-    builder.WithRouting(routing => {
-      routing.SubscribeTo("myapp.orders.events", "myapp.users.events");
-    });
+    builder.WithRouting(routing => routing.SubscribeTo("myapp.orders.events", "myapp.users.events"));
 
     // Assert
     var provider = services.BuildServiceProvider();
