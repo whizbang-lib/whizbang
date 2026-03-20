@@ -132,7 +132,7 @@ public class LenientDateTimeOffsetConverterTests {
   [Test]
   public async Task Read_NumberToken_ThrowsJsonExceptionAsync() {
     // Arrange - JSON number instead of string
-    var json = "123456789";
+    const string json = "123456789";
 
     // Act & Assert
     await Assert.ThrowsAsync<JsonException>(async () => {
@@ -247,7 +247,7 @@ public class LenientNullableDateTimeOffsetConverterTests {
   [Test]
   public async Task Read_Null_ReturnsNullAsync() {
     // Arrange
-    var json = "null";
+    const string json = "null";
 
     // Act
     var result = JsonSerializer.Deserialize<DateTimeOffset?>(json, _options);

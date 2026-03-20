@@ -94,7 +94,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -145,7 +145,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       Hops = []
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -209,7 +209,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -384,7 +384,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -429,7 +429,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     // Envelope with traceparent to create activity for error tagging
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -443,7 +443,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act & Assert
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -531,7 +531,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -691,7 +691,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - process message; deserialization may fail but completion/failure handlers run
     try {
@@ -744,7 +744,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act
     try {
@@ -794,7 +794,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await Task.Delay(200);
 
     // Create envelope with valid traceparent to exercise activity creation path
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -808,7 +808,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[My.Namespace.OrderCreated, App]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[My.Namespace.OrderCreated, App]], Whizbang.Core";
 
     // Act - should succeed and activity should be created with "Inbox OrderCreated" name
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -853,7 +853,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
     // Type without assembly qualifier (no comma in message type)
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[SimpleCommand]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[SimpleCommand]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -987,7 +987,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
     // Use a command type (not in the event type provider list)
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.SomeCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.SomeCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -1045,7 +1045,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);

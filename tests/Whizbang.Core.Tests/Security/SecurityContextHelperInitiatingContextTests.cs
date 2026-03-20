@@ -37,8 +37,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task EstablishFullContextAsync_ShouldSetInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -79,8 +79,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task SetMessageContextFromEnvelope_ShouldSetInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -113,8 +113,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task EstablishFullContextAsync_InitiatingContextAndMessageContext_ShouldBeTheSameInstanceAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -191,8 +191,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task EstablishMessageContextForCascade_ShouldSetInitiatingContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     // Pre-set parent context in AsyncLocal (simulates parent receptor having set context)
     MessageContextAccessor.CurrentContext = new MessageContext {
@@ -233,8 +233,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task EstablishFullContextAsync_InitiatingContext_ShouldBeSetWithFullContextAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     var capturingScopeAccessor = new CapturingScopeContextAccessor();
@@ -275,8 +275,8 @@ public class SecurityContextHelperInitiatingContextTests {
   [Test]
   public async Task InitiatingContext_ShouldExposeFullMessageContextForDebuggingAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
     var testCorrelationId = CorrelationId.New();
     var testCausationId = MessageId.New();

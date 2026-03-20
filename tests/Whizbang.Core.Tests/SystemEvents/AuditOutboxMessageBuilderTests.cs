@@ -260,7 +260,7 @@ public class AuditOutboxMessageBuilderTests {
   [Test]
   public async Task TryBuildAuditMessage_WithCorrelationIdInHopMetadata_ExtractsCorrelationIdAsync() {
     // Arrange
-    var correlationId = "corr-abc-123";
+    const string correlationId = "corr-abc-123";
     var message = _createOutboxMessage(
       isEvent: true,
       correlationIdInHop: correlationId);

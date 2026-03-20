@@ -363,7 +363,7 @@ public class DispatcherCoverageGenericTests {
   public async Task LocalInvokeAsync_WithOptions_NoReceptor_ThrowsAsync() {
     var provider = _buildProvider();
     var dispatcher = new GenericSyncDispatcher(provider);
-    var unknownMsg = "unknown";
+    const string unknownMsg = "unknown";
     var options = new DispatchOptions();
 
     await Assert.That(async () => await dispatcher.LocalInvokeAsync<string>(unknownMsg, options))

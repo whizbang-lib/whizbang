@@ -65,9 +65,9 @@ public class ServiceInstanceProviderTests {
   public async Task ServiceInstanceProvider_WithExplicitValues_UsesProvidedValuesAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
-    var serviceName = "ExplicitService";
-    var hostName = "test-host";
-    var processId = 12345;
+    const string serviceName = "ExplicitService";
+    const string hostName = "test-host";
+    const int processId = 12345;
 
     // Act
     var provider = new ServiceInstanceProvider(instanceId, serviceName, hostName, processId);
@@ -83,9 +83,9 @@ public class ServiceInstanceProviderTests {
   public async Task ServiceInstanceProvider_ToInfo_ReturnsServiceInstanceInfoAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
-    var serviceName = "TestService";
-    var hostName = "test-host";
-    var processId = 99999;
+    const string serviceName = "TestService";
+    const string hostName = "test-host";
+    const int processId = 99999;
     var provider = new ServiceInstanceProvider(instanceId, serviceName, hostName, processId);
 
     // Act

@@ -26,7 +26,7 @@ public class SyncEventTypeRegistrationsTests {
   public async Task Register_SingleMapping_AddsMappingAsync() {
     // Arrange
     var eventType = typeof(RegistrationTestEvent);
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Act
     SyncEventTypeRegistrations.Register(eventType, perspectiveName);
@@ -41,8 +41,8 @@ public class SyncEventTypeRegistrationsTests {
   public async Task Register_MultiplePerspectivesForSameEvent_AddsBothAsync() {
     // Arrange
     var eventType = typeof(RegistrationTestEvent);
-    var perspective1 = "Perspective1";
-    var perspective2 = "Perspective2";
+    const string perspective1 = "Perspective1";
+    const string perspective2 = "Perspective2";
 
     // Act
     SyncEventTypeRegistrations.Register(eventType, perspective1);
@@ -59,7 +59,7 @@ public class SyncEventTypeRegistrationsTests {
   public async Task Register_SamePerspectiveTwice_DoesNotDuplicateAsync() {
     // Arrange
     var eventType = typeof(RegistrationTestEvent);
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Act
     SyncEventTypeRegistrations.Register(eventType, perspectiveName);

@@ -175,8 +175,8 @@ public class SecurityContextHelperTests {
   public async Task EstablishScopeContextAsync_WithProvider_ReturnsContextAndSetsAccessorAsync() {
     // Arrange
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
-    var expectedTenantId = "tenant-123";
-    var expectedUserId = "user-456";
+    const string expectedTenantId = "tenant-123";
+    const string expectedUserId = "user-456";
 
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { TenantId = expectedTenantId, UserId = expectedUserId },
@@ -290,7 +290,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task SetMessageContextFromEnvelope_WithSecurityContext_SetsUserIdAsync() {
     // Arrange
-    var expectedUserId = "user-789";
+    const string expectedUserId = "user-789";
     var envelope = _createEnvelopeWithSecurityContext(new TestSecurityMessage("test"), expectedUserId);
     var messageContextAccessor = new MessageContextAccessor();
     var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
@@ -307,7 +307,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task SetMessageContextFromEnvelope_WithSecurityContext_SetsTenantIdAsync() {
     // Arrange
-    var expectedTenantId = "tenant-from-hop";
+    const string expectedTenantId = "tenant-from-hop";
     var envelope = _createEnvelopeWithSecurityContextAndTenant(new TestSecurityMessage("test"), "user-1", expectedTenantId);
     var messageContextAccessor = new MessageContextAccessor();
     var services = _createServiceProviderWithMessageAccessor(messageContextAccessor);
@@ -329,8 +329,8 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task SetMessageContextFromEnvelope_WithSecurityContext_SetsScopeContextAsync() {
     // Arrange
-    var expectedUserId = "user-scope-test";
-    var expectedTenantId = "tenant-scope-test";
+    const string expectedUserId = "user-scope-test";
+    const string expectedTenantId = "tenant-scope-test";
     var envelope = _createEnvelopeWithSecurityContextAndTenant(
         new TestSecurityMessage("test"),
         expectedUserId,
@@ -399,8 +399,8 @@ public class SecurityContextHelperTests {
   public async Task EstablishFullContextAsync_SetsBothContextsAsync() {
     // Arrange
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
-    var expectedTenantId = "tenant-full";
-    var expectedUserId = "user-full";
+    const string expectedTenantId = "tenant-full";
+    const string expectedUserId = "user-full";
 
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { TenantId = expectedTenantId, UserId = expectedUserId },
@@ -465,7 +465,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync() {
     // Arrange
-    var expectedUserId = "user-cascade";
+    const string expectedUserId = "user-cascade";
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { UserId = expectedUserId, TenantId = "tenant-cascade" },
       Roles = new HashSet<string>(),
@@ -494,7 +494,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithScopeContext_PropagatesTenantIdAsync() {
     // Arrange
-    var expectedTenantId = "tenant-cascade";
+    const string expectedTenantId = "tenant-cascade";
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { UserId = "user-cascade", TenantId = expectedTenantId },
       Roles = new HashSet<string>(),
@@ -589,8 +589,8 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithParentContext_SetsScopeContextAccessorCurrentAsync() {
     // Arrange: Set MessageContextAccessor.CurrentContext with UserId/TenantId (simulate parent)
-    var expectedUserId = "user-new-test-123";
-    var expectedTenantId = "tenant-new-test-456";
+    const string expectedUserId = "user-new-test-123";
+    const string expectedTenantId = "tenant-new-test-456";
     MessageContextAccessor.CurrentContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
@@ -671,7 +671,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithOnlyTenantId_SetsScopeContextAccessorCurrentAsync() {
     // Arrange: Set MessageContextAccessor.CurrentContext with NULL UserId, valid TenantId
-    var expectedTenantId = "tenant-only-test";
+    const string expectedTenantId = "tenant-only-test";
     MessageContextAccessor.CurrentContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
@@ -699,7 +699,7 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithOnlyUserId_SetsScopeContextAccessorCurrentAsync() {
     // Arrange: Set MessageContextAccessor.CurrentContext with valid UserId, NULL TenantId
-    var expectedUserId = "user-only-test";
+    const string expectedUserId = "user-only-test";
     MessageContextAccessor.CurrentContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
@@ -727,8 +727,8 @@ public class SecurityContextHelperTests {
   [Test]
   public async Task EstablishMessageContextForCascade_WithScopeContextFallback_SetsScopeContextAccessorCurrentAsync() {
     // Arrange: Set ScopeContextAccessor.CurrentContext with UserId/TenantId (NO MessageContextAccessor)
-    var expectedUserId = "user-fallback-test";
-    var expectedTenantId = "tenant-fallback-test";
+    const string expectedUserId = "user-fallback-test";
+    const string expectedTenantId = "tenant-fallback-test";
     var extraction = new SecurityExtraction {
       Scope = new PerspectiveScope { UserId = expectedUserId, TenantId = expectedTenantId },
       Roles = new HashSet<string>(),
@@ -758,10 +758,10 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithExplicitContext_TakesPriorityOverAsyncLocalAsync() {
     // Arrange: Set BOTH explicit context (via IScopeContextAccessor.Current) AND AsyncLocal context
     // This simulates AsSystem/RunAs scenario where explicit context should take priority
-    var explicitUserId = "explicit-user-id";
-    var explicitTenantId = "explicit-tenant-id";
-    var asyncLocalUserId = "asynclocal-user-id";
-    var asyncLocalTenantId = "asynclocal-tenant-id";
+    const string explicitUserId = "explicit-user-id";
+    const string explicitTenantId = "explicit-tenant-id";
+    const string asyncLocalUserId = "asynclocal-user-id";
+    const string asyncLocalTenantId = "asynclocal-tenant-id";
 
     // Set AsyncLocal context (this would normally come from parent receptor)
     MessageContextAccessor.CurrentContext = new MessageContext {
@@ -809,8 +809,8 @@ public class SecurityContextHelperTests {
   public async Task EstablishMessageContextForCascade_WithExplicitContext_DoesNotOverwriteScopeContextAccessorAsync() {
     // Arrange: Set explicit context (via IScopeContextAccessor.Current)
     // Verify that EstablishMessageContextForCascade does NOT overwrite ScopeContextAccessor.CurrentContext
-    var explicitUserId = "explicit-user-id";
-    var explicitTenantId = "explicit-tenant-id";
+    const string explicitUserId = "explicit-user-id";
+    const string explicitTenantId = "explicit-tenant-id";
 
     // Create explicit context (this would be set by AsSystem/RunAs)
     var explicitExtraction = new SecurityExtraction {

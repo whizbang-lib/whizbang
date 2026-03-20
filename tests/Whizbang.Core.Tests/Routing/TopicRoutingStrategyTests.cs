@@ -18,7 +18,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = PassthroughRoutingStrategy.Instance;
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -32,7 +32,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = PassthroughRoutingStrategy.Instance;
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
     var context = new Dictionary<string, object> { ["TenantId"] = "tenant-123" };
 
     // Act
@@ -47,7 +47,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = new PoolSuffixRoutingStrategy("01");
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -61,7 +61,7 @@ public class TopicRoutingStrategyTests {
     // Arrange
     var strategy = new PoolSuffixRoutingStrategy("09");
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
 
     // Act
     var result = strategy.ResolveTopic(messageType, baseTopic);
@@ -99,7 +99,7 @@ public class TopicRoutingStrategyTests {
     var composite = new CompositeTopicRoutingStrategy(tenantStrategy, poolStrategy);
 
     var messageType = typeof(TestEvent);
-    var baseTopic = "products";
+    const string baseTopic = "products";
 
     // Act
     var result = composite.ResolveTopic(messageType, baseTopic);
@@ -115,7 +115,7 @@ public class TopicRoutingStrategyTests {
     var composite = new CompositeTopicRoutingStrategy(poolStrategy);
 
     var messageType = typeof(TestEvent);
-    var baseTopic = "inventory";
+    const string baseTopic = "inventory";
 
     // Act
     var result = composite.ResolveTopic(messageType, baseTopic);

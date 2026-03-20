@@ -41,8 +41,8 @@ public class DispatcherLocalInvokeSecurityTests {
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
 
     // Set up scope context with security
-    var testUserId = "user-123";
-    var testTenantId = "tenant-456";
+    const string testUserId = "user-123";
+    const string testTenantId = "tenant-456";
 
     var scope = new PerspectiveScope {
       UserId = testUserId,
@@ -129,8 +129,8 @@ public class DispatcherLocalInvokeSecurityTests {
     var serviceProvider = services.BuildServiceProvider();
     var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
 
-    var testUserId = "user-chain-test";
-    var testTenantId = "tenant-chain-test";
+    const string testUserId = "user-chain-test";
+    const string testTenantId = "tenant-chain-test";
 
     var scope = new PerspectiveScope {
       UserId = testUserId,

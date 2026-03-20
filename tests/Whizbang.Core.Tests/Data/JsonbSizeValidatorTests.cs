@@ -196,7 +196,7 @@ public class JsonbSizeValidatorTests {
     // Arrange
     var validator = new JsonbSizeValidator(_nullLogger);
     var largeData = new string('x', 3_000); // > compression threshold
-    var malformedMetadata = "not valid json {{{";
+    const string malformedMetadata = "not valid json {{{";
     var model = new JsonbPersistenceModel {
       DataJson = largeData,
       MetadataJson = malformedMetadata

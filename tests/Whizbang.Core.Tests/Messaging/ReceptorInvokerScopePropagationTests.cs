@@ -35,8 +35,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenReceptorReturnsEvent_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-123";
-    var expectedUserId = "test-user-456";
+    const string expectedTenantId = "test-tenant-123";
+    const string expectedUserId = "test-user-456";
 
     // Security context returned by provider - MUST be ImmutableScopeContext with ShouldPropagate=true
     // This matches what DefaultMessageSecurityContextProvider returns
@@ -91,8 +91,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsNull_ButEnvelopeHasScopeInHops_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "hop-tenant-from-bff";
-    var expectedUserId = "hop-user-from-bff";
+    const string expectedTenantId = "hop-tenant-from-bff";
+    const string expectedUserId = "hop-user-from-bff";
 
     // Security provider returns NULL - simulating no JWT/token extraction
     var securityProvider = new TestSecurityContextProvider(returns: null);
@@ -142,8 +142,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsContext_MessageContextShouldHaveScopeContextAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-789";
-    var expectedUserId = "test-user-abc";
+    const string expectedTenantId = "test-tenant-789";
+    const string expectedUserId = "test-user-abc";
 
     // Security context returned by provider - matches DefaultMessageSecurityContextProvider
     var testScopeContext = new TestScopeContext(expectedTenantId, expectedUserId);

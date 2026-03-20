@@ -129,7 +129,7 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_KeepTenant_PreservesAmbientTenantIdAsync() {
     // Arrange
-    var ambientTenantId = "ambient-tenant-456";
+    const string ambientTenantId = "ambient-tenant-456";
     var mockDispatcher = new MockDispatcher();
     var systemBuilder = new SystemDispatcherBuilder(
         mockDispatcher,

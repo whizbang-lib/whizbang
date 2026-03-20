@@ -13,8 +13,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_ExactMode_ReturnsTrueForIdenticalStringsAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
     var strictness = MatchStrictness.Exact;
 
     // Act
@@ -27,8 +27,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_ExactMode_ReturnsFalseForDifferentStringsAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts";
     var strictness = MatchStrictness.Exact;
 
     // Act
@@ -41,8 +41,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_IgnoreAssemblyMode_MatchesWithoutAssemblyAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, DifferentAssembly";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, DifferentAssembly";
     var strictness = MatchStrictness.IgnoreAssembly;
 
     // Act
@@ -55,8 +55,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_IgnoreNamespaceMode_MatchesSimpleNamesAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "Different.Namespace.ProductCreatedEvent, DifferentAssembly";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "Different.Namespace.ProductCreatedEvent, DifferentAssembly";
     var strictness = MatchStrictness.IgnoreNamespace;
 
     // Act
@@ -69,8 +69,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_IgnoreVersion_StripsVersionInfoAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
-    var type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abcdef";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abcdef";
     var strictness = MatchStrictness.IgnoreVersion;
 
     // Act
@@ -83,8 +83,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_IgnoreCase_CaseInsensitiveAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ecommerce.contracts.events.productcreatedevent, ecommerce.contracts";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ecommerce.contracts.events.productcreatedevent, ecommerce.contracts";
     var strictness = MatchStrictness.IgnoreCase;
 
     // Act
@@ -97,8 +97,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_CombinedFlags_IgnoreCaseAndVersionAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=1.0.0.0";
-    var type2 = "ecommerce.contracts.events.productcreatedevent, ecommerce.contracts, Version=2.0.0.0";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts, Version=1.0.0.0";
+    const string type2 = "ecommerce.contracts.events.productcreatedevent, ecommerce.contracts, Version=2.0.0.0";
     var strictness = MatchStrictness.IgnoreCase | MatchStrictness.IgnoreVersion;
 
     // Act
@@ -111,8 +111,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_CombinedFlags_SimpleNameCaseInsensitiveAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "productcreatedevent";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "productcreatedevent";
     var strictness = MatchStrictness.SimpleNameCaseInsensitive;
 
     // Act
@@ -125,8 +125,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_SimpleName_MatchesJustTypeNameAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ProductCreatedEvent";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ProductCreatedEvent";
     var strictness = MatchStrictness.SimpleName;
 
     // Act
@@ -139,8 +139,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_WithoutAssembly_MatchesNamespaceAndTypeAsync() {
     // Arrange
-    var type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
-    var type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, DifferentAssembly";
+    const string type1 = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string type2 = "ECommerce.Contracts.Events.ProductCreatedEvent, DifferentAssembly";
     var strictness = MatchStrictness.WithoutAssembly;
 
     // Act
@@ -153,7 +153,7 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_RegexPattern_MatchesWildcardsAsync() {
     // Arrange
-    var typeString = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
+    const string typeString = "ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts";
     var pattern = new Regex(@".*Product.*Event.*");
 
     // Act
@@ -166,7 +166,7 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_RegexPattern_DoesNotMatchWhenNoMatchAsync() {
     // Arrange
-    var typeString = "ECommerce.Contracts.Commands.CreateOrder, ECommerce.Contracts";
+    const string typeString = "ECommerce.Contracts.Commands.CreateOrder, ECommerce.Contracts";
     var pattern = new Regex(@".*Product.*Event.*");
 
     // Act
@@ -179,8 +179,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_ExactMode_CaseSensitiveAsync() {
     // Arrange
-    var type1 = "MyNamespace.MyType";
-    var type2 = "myNamespace.myType";
+    const string type1 = "MyNamespace.MyType";
+    const string type2 = "myNamespace.myType";
     var strictness = MatchStrictness.Exact;
 
     // Act
@@ -193,8 +193,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_SimpleName_ExtractsCorrectSimpleNameAsync() {
     // Arrange
-    var type1 = "Namespace.SubNamespace.TypeName, Assembly";
-    var type2 = "TypeName";
+    const string type1 = "Namespace.SubNamespace.TypeName, Assembly";
+    const string type2 = "TypeName";
     var strictness = MatchStrictness.SimpleName;
 
     // Act
@@ -207,8 +207,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_EmptyStrings_ReturnsTrueAsync() {
     // Arrange
-    var type1 = "";
-    var type2 = "";
+    const string type1 = "";
+    const string type2 = "";
     var strictness = MatchStrictness.Exact;
 
     // Act
@@ -221,8 +221,8 @@ public class TypeMatcherTests {
   [Test]
   public async Task Matches_OneEmptyString_ReturnsFalseAsync() {
     // Arrange
-    var type1 = "MyType";
-    var type2 = "";
+    const string type1 = "MyType";
+    const string type2 = "";
     var strictness = MatchStrictness.Exact;
 
     // Act
