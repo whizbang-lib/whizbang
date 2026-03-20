@@ -68,6 +68,7 @@ jobs:
           "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
           "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
           "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
+          "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
           "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
           "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
           "SoftwareExtravaganza.Whizbang.Migrate"
