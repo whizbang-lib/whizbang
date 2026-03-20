@@ -264,9 +264,9 @@ public class SecurityIntegrationTests {
 
     // Arrange
     var permission = Permission.Admin("system");
-    var resourceType = "Configuration";
-    var resourceId = "global-settings";
-    var reason = AccessDenialReason.PolicyRejected;
+    const string resourceType = "Configuration";
+    const string resourceId = "global-settings";
+    const AccessDenialReason reason = AccessDenialReason.PolicyRejected;
 
     // Act
     var exception = new AccessDeniedException(permission, resourceType, resourceId, reason);
@@ -946,7 +946,7 @@ public class SecurityIntegrationTests {
     await Assert.That(scopeInsideCallback).IsNotNull()
       .Because("ScopeContextAccessor.CurrentContext should be set INSIDE the callback execution");
     await Assert.That(messageInsideCallback).IsNotNull()
-      .Because($"MessageContextAccessor.CurrentContext should be set INSIDE the callback. " +
+      .Because("MessageContextAccessor.CurrentContext should be set INSIDE the callback. " +
                $"scopeInside={scopeInsideCallback is not null}");
 
     // Verify the CAPTURED values inside callback have correct scope data
@@ -1144,7 +1144,7 @@ public class SecurityIntegrationTests {
     // {"Hops": [{"md": {...}, "sc": {"v": {"Scope": {"t": "c0ffee00-cafe-f00d-face-feed12345678", "u": "925321d2-9635-49e5-abd8-87b43dcf7e19"}}}, ...}], ...}
 
     // Arrange: The exact JSON from the database
-    var metadataJson = """
+    const string metadataJson = """
       {
         "Hops": [{
           "md": {"AggregateId": "019cd3a4-19dc-7548-aed6-e24ab97f8dc8"},
@@ -1205,8 +1205,8 @@ public class SecurityIntegrationTests {
     // with scope in hops, and GetCurrentScope() should return the scope.
 
     // Arrange: Create envelope with ScopeDelta in hops (matching database structure)
-    var tenantId = "c0ffee00-cafe-f00d-face-feed12345678";
-    var userId = "925321d2-9635-49e5-abd8-87b43dcf7e19";
+    const string tenantId = "c0ffee00-cafe-f00d-face-feed12345678";
+    const string userId = "925321d2-9635-49e5-abd8-87b43dcf7e19";
 
     // Create a ScopeDelta that matches the database structure
     var scopeDelta = new ScopeDelta {

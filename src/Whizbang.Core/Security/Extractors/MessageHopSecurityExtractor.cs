@@ -179,18 +179,6 @@ public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecuri
     }
 
     [LoggerMessage(
-      EventId = 6,
-      Level = LogLevel.Warning,
-      Message = "MessageHopSecurityExtractor: ScopeProp.Scope not found in Values. MessageId={MessageId}, AvailableKeys=[{AvailableKeys}]")]
-    private static partial void ScopePropNotFoundInternal(ILogger logger, ValueObjects.MessageId messageId, string availableKeys);
-
-    public static void ScopePropNotFound(ILogger? logger, ValueObjects.MessageId messageId, string availableKeys) {
-      if (logger != null) {
-        ScopePropNotFoundInternal(logger, messageId, availableKeys);
-      }
-    }
-
-    [LoggerMessage(
       EventId = 7,
       Level = LogLevel.Debug,
       Message = "MessageHopSecurityExtractor: Scope extracted successfully. MessageId={MessageId}, UserId={UserId}, TenantId={TenantId}")]

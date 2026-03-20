@@ -247,14 +247,6 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
       return DateTimeOffset.MinValue;
     }
 
-    // Extract first 48 bits (6 bytes) which contain Unix timestamp in ms
-    var bytes = guid.ToByteArray();
-
-    // Guid byte order is: time_low (4), time_mid (2), time_hi_and_version (2), clock_seq (2), node (6)
-    // For UUIDv7, the first 48 bits are the timestamp
-    // But Guid.ToByteArray() returns in little-endian format on Windows
-    // We need to handle the byte order correctly
-
     // Use Medo's Uuid7 for reliable timestamp extraction
     try {
       var uuid7 = new Uuid7(guid);

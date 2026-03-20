@@ -1,3 +1,5 @@
+#pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
+
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

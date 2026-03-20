@@ -190,9 +190,6 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
 
     // Determine request type - either custom or the command itself
     var requestType = mutation.RequestTypeName ?? mutation.CommandTypeName;
-    var requestTypeShort = mutation.RequestTypeName is not null
-        ? _getShortTypeName(mutation.RequestTypeName)
-        : mutation.CommandTypeNameShort;
     var usesCustomRequest = mutation.RequestTypeName is not null;
 
     sb.AppendLine("/// <summary>");

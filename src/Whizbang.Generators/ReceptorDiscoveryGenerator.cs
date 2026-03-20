@@ -1480,10 +1480,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .GroupBy(e => (e.RoutingMessageType, e.Stage))
         .ToList();
 
-    // Calculate handler count per (routing message type, stage) for tracing
-    var handlerCountByKey = groupedRoutingPairs
-        .ToDictionary(g => g.Key, g => g.Count());
-
     // Generate routing code for each (routingMessageType, stage) group
     var routingCode = new StringBuilder();
     foreach (var group in groupedRoutingPairs) {

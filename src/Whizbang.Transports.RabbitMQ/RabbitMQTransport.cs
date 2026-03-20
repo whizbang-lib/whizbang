@@ -524,19 +524,17 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// </summary>
   private static List<string> _getRoutingPatterns(TransportDestination destination) {
     // Try "RoutingPatterns" (plural) first - set by SharedTopicInboxStrategy
-    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsValue) == true) {
-      // RoutingPatterns is a JsonElement containing an array of strings
-      if (patternsValue.ValueKind == System.Text.Json.JsonValueKind.Array) {
-        var patterns = new List<string>();
-        foreach (var item in patternsValue.EnumerateArray()) {
-          var pattern = item.GetString();
-          if (!string.IsNullOrEmpty(pattern)) {
-            patterns.Add(pattern);
-          }
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsValue) == true
+        && patternsValue.ValueKind == System.Text.Json.JsonValueKind.Array) {
+      var patterns = new List<string>();
+      foreach (var item in patternsValue.EnumerateArray()) {
+        var pattern = item.GetString();
+        if (!string.IsNullOrEmpty(pattern)) {
+          patterns.Add(pattern);
         }
-        if (patterns.Count > 0) {
-          return patterns;
-        }
+      }
+      if (patterns.Count > 0) {
+        return patterns;
       }
     }
 
@@ -564,12 +562,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <param name="destination">The transport destination containing metadata</param>
   /// <returns>The subscriber name, or null if not found</returns>
   private static string? _getSubscriberName(TransportDestination destination) {
-    if (destination.Metadata?.TryGetValue("SubscriberName", out var subscriberNameValue) == true) {
-      if (subscriberNameValue.ValueKind == System.Text.Json.JsonValueKind.String) {
-        var name = subscriberNameValue.GetString();
-        if (!string.IsNullOrWhiteSpace(name)) {
-          return name;
-        }
+    if (destination.Metadata?.TryGetValue("SubscriberName", out var subscriberNameValue) == true
+        && subscriberNameValue.ValueKind == System.Text.Json.JsonValueKind.String) {
+      var name = subscriberNameValue.GetString();
+      if (!string.IsNullOrWhiteSpace(name)) {
+        return name;
       }
     }
     return null;

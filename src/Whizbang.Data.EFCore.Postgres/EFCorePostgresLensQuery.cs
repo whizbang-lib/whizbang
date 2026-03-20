@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 
+#pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
 // WHIZ400: Suppress for internal implementation - the runtime checks verify T is valid
 #pragma warning disable WHIZ400
 
