@@ -631,6 +631,26 @@ public interface IDispatcher {
   ValueTask<IEnumerable<IDeliveryReceipt>> LocalSendManyAsync(IEnumerable<object> messages);
 
   /// <summary>
+  /// Publishes multiple events with event routing (namespace-specific topics).
+  /// Each event is processed locally (if handlers exist) and queued to the outbox.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type</typeparam>
+  /// <param name="events">The events to publish</param>
+  /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync<TEvent>(IEnumerable<TEvent> events) where TEvent : notnull;
+
+  /// <summary>
+  /// Publishes multiple events. For AOT compatibility, use the generic overload.
+  /// </summary>
+  /// <param name="events">The events to publish</param>
+  /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherOutboxTests.cs:PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync</tests>
+  /// <docs>fundamentals/dispatcher/dispatcher#publishmanyasync</docs>
+  Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events);
+
+  /// <summary>
   /// Invokes multiple receptors in-process and collects all typed business results.
   /// RESTRICTION: In-process only - throws InvalidOperationException if used with remote transport.
   /// </summary>

@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Tests.Generated;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Dispatcher;
@@ -753,6 +754,193 @@ public class DispatcherOutboxTests {
   }
 
   // ========================================
+  // PUBLISHMANYASYNC TESTS
+  // ========================================
+
+  /// <summary>
+  /// PublishManyAsync (generic) queues all events with event routing to outbox.
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_Generic_QueuesAllEventsWithEventRoutingAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.PublishManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - All events routed to event topic
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("products");
+  }
+
+  /// <summary>
+  /// PublishManyAsync (non-generic) queues all events with event routing.
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_NonGeneric_QueuesAllEventsWithEventRoutingAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new InventoryUpdatedEvent(Guid.NewGuid(), 5),
+      new OrderPlacedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    var receipts = await dispatcher.PublishManyAsync(events);
+
+    // Assert - Each event routes to its namespace topic
+    await Assert.That(receipts.Count()).IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("inventory");
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("orders");
+  }
+
+  /// <summary>
+  /// PublishManyAsync flushes outbox only once for the entire batch (efficiency).
+  /// </summary>
+  [Test]
+  public async Task PublishManyAsync_SingleFlushForBatchAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.PublishManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - Only one flush for the batch
+    await Assert.That(strategy.FlushCount).IsEqualTo(1);
+  }
+
+  // ========================================
+  // SENDMANYASYNC EVENT ROUTING FIX TESTS
+  // ========================================
+
+  /// <summary>
+  /// SendManyAsync (non-generic) with events should route to event topics, not command destinations.
+  /// This tests the fix for the bug where _sendManyToOutboxAsync hardcoded _resolveCommandDestination
+  /// for ALL messages, causing events to route to "inbox" instead of namespace-specific topics.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithEvents_RoutesToEventTopicAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new InventoryUpdatedEvent(Guid.NewGuid(), 10)
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(events);
+
+    // Assert - Events should route to event topics, not command destinations
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("inventory");
+  }
+
+  /// <summary>
+  /// SendManyAsync with a mixed batch of events and commands should route each correctly.
+  /// Events get event topic routing, commands get command destination routing.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithMixedBatch_RoutesCorrectlyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var messages = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new CreateProductCommand("Widget"),
+      new OrderPlacedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(messages);
+
+    // Assert - Events get event routing, commands get command routing
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(3);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");       // event → products topic
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");       // command → products (convention)
+    await Assert.That(strategy.QueuedOutboxMessages[2].Destination).IsEqualTo("orders");         // event → orders topic
+  }
+
+  /// <summary>
+  /// SendManyAsync generic overload with event types should route to event topics.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_Generic_WithEvents_RoutesToEventTopicAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var events = new[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new ProductCreatedEvent(Guid.NewGuid())
+    };
+
+    // Act
+    await dispatcher.SendManyAsync<ProductCreatedEvent>(events);
+
+    // Assert - All events should route to "products" event topic
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products");
+    await Assert.That(strategy.QueuedOutboxMessages[1].Destination).IsEqualTo("products");
+  }
+
+  /// <summary>
+  /// SendManyAsync with IOutboxRoutingStrategy should pass correct MessageKind per message.
+  /// Events should get MessageKind.Event, commands should get MessageKind.Command.
+  /// </summary>
+  [Test]
+  public async Task SendManyAsync_WithOutboxRoutingStrategy_PassesCorrectMessageKindAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var kindTracker = new KindTrackingOutboxRoutingStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy, outboxRoutingStrategy: kindTracker);
+    var messages = new object[] {
+      new ProductCreatedEvent(Guid.NewGuid()),
+      new CreateProductCommand("Widget")
+    };
+
+    // Act
+    await dispatcher.SendManyAsync(messages);
+
+    // Assert - Event gets MessageKind.Event, command gets MessageKind.Command
+    await Assert.That(kindTracker.Calls).Count().IsEqualTo(2);
+    await Assert.That(kindTracker.Calls[0].kind).IsEqualTo(MessageKind.Event);
+    await Assert.That(kindTracker.Calls[1].kind).IsEqualTo(MessageKind.Command);
+  }
+
+  // ========================================
+  // STUB IMPLEMENTATIONS
+  // ========================================
+
+  // Tracks MessageKind passed to IOutboxRoutingStrategy per message type
+  private sealed class KindTrackingOutboxRoutingStrategy : IOutboxRoutingStrategy {
+    public List<(Type type, MessageKind kind)> Calls { get; } = [];
+    public TransportDestination GetDestination(Type messageType, IReadOnlySet<string> ownedDomains, MessageKind kind) {
+      Calls.Add((messageType, kind));
+      return new TransportDestination(kind == MessageKind.Event
+        ? $"events/{messageType.Name}" : $"commands/{messageType.Name}");
+    }
+  }
+
+  // ========================================
   // HELPER METHODS
   // ========================================
 
@@ -760,7 +948,8 @@ public class DispatcherOutboxTests {
     IWorkCoordinatorStrategy strategy,
     ITopicRegistry? registry = null,
     ITopicRoutingStrategy? routingStrategy = null,
-    IStreamIdExtractor? aggregateIdExtractor = null
+    IStreamIdExtractor? aggregateIdExtractor = null,
+    IOutboxRoutingStrategy? outboxRoutingStrategy = null
   ) {
     var services = new ServiceCollection();
 
@@ -782,6 +971,11 @@ public class DispatcherOutboxTests {
     // Register routing strategy if provided
     if (routingStrategy != null) {
       services.AddSingleton(routingStrategy);
+    }
+
+    // Register outbox routing strategy if provided
+    if (outboxRoutingStrategy != null) {
+      services.AddSingleton(outboxRoutingStrategy);
     }
 
     // Register receptors and dispatcher
