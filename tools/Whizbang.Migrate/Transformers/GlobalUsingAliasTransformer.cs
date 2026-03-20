@@ -42,10 +42,10 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
   /// <summary>
   /// Namespace prefixes that indicate Marten/Wolverine types.
   /// </summary>
-  private static readonly string[] _targetNamespacePrefixes = {
+  private static readonly string[] _targetNamespacePrefixes = [
     "Marten.",
     "Wolverine."
-  };
+  ];
 
   /// <inheritdoc />
   public Task<TransformationResult> TransformAsync(
@@ -58,8 +58,7 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
     var tree = CSharpSyntaxTree.ParseText(sourceCode, cancellationToken: ct);
     var root = tree.GetRoot(ct);
 
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return Task.FromResult(new TransformationResult(
           sourceCode,
           sourceCode,
@@ -188,7 +187,7 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
       return typeName;
     }
 
-    var baseName = typeName.Substring(0, genericStart);
+    var baseName = typeName[..genericStart];
     return baseName + "<T>";
   }
 }

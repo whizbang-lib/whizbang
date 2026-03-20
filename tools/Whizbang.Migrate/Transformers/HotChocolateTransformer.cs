@@ -120,8 +120,7 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -179,15 +178,10 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms HotChocolate Marten method calls to Whizbang equivalents.
   /// </summary>
-  private sealed class HotChocolateMethodCallRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
+  private sealed class HotChocolateMethodCallRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
     private bool _addedWhizbangLenses;
-
-    public HotChocolateMethodCallRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var methodName = _getMethodName(node);
@@ -198,7 +192,7 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
 
       // Handle AddMartenFiltering -> AddWhizbangLenses
       if (_methodsToReplaceWithLenses.Contains(methodName)) {
-        var newMethodName = "AddWhizbangLenses";
+        const string newMethodName = "AddWhizbangLenses";
         var newNode = _replaceMethodName(node, newMethodName);
         _addedWhizbangLenses = true;
 
@@ -257,12 +251,8 @@ public sealed class HotChocolateTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms IMartenQueryable to IQueryable.
   /// </summary>
-  private sealed class MartenQueryableRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public MartenQueryableRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class MartenQueryableRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitGenericName(GenericNameSyntax node) {
       if (node.Identifier.Text == "IMartenQueryable") {

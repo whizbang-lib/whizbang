@@ -83,8 +83,7 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _ensureWhizbangCoreValueObjectsUsing(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -122,8 +121,7 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _removeMartenSchemaIdentityUsing(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -260,12 +258,8 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Guid.NewGuid()/Guid.CreateVersion7()/CombGuidIdGeneration.NewGuid() to TrackedGuid.NewMedo().
   /// </summary>
-  private sealed class GuidCallRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public GuidCallRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class GuidCallRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var expr = node.Expression.ToString();
@@ -283,7 +277,7 @@ public sealed class GuidToTrackedGuidTransformer : ICodeTransformer {
             .WithTrailingTrivia(node.GetTrailingTrivia());
 
         var description = expr.Contains("CombGuid")
-            ? $"Replaced CombGuidIdGeneration.NewGuid() with 'TrackedGuid.NewMedo()' - MEDO provides similar sequential GUID benefits"
+            ? "Replaced CombGuidIdGeneration.NewGuid() with 'TrackedGuid.NewMedo()' - MEDO provides similar sequential GUID benefits"
             : $"Replaced '{expr}()' with 'TrackedGuid.NewMedo()'";
 
         _changes.Add(new CodeChange(

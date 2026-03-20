@@ -112,4 +112,4 @@ internal sealed class WhizbangConfig {
 [JsonSerializable(typeof(SchemaConfigWrapper))]
 [JsonSerializable(typeof(WhizbangConfig))]
 [JsonSerializable(typeof(WhizbangConfigWrapper))]
-internal sealed partial class SchemaConfigJsonContext : JsonSerializerContext { }
+internal sealed partial class SchemaConfigJsonContext : JsonSerializerContext;

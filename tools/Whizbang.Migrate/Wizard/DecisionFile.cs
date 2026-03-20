@@ -21,7 +21,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(UnknownInterfaceDecisions))]
 [JsonSerializable(typeof(PackageDecisions))]
 [JsonSerializable(typeof(JsonMigrationDecisions))]
-internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
+internal sealed partial class DecisionFileJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Represents a migration decision file that stores all migration choices and state.

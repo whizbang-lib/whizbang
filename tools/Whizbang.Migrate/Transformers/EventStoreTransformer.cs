@@ -214,8 +214,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -307,14 +306,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms IDocumentStore to IEventStore.
   /// </summary>
-  private sealed class DocumentStoreTypeRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public DocumentStoreTypeRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class DocumentStoreTypeRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node) {
       if (node.Identifier.Text == "IDocumentStore") {
@@ -369,14 +363,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Marten event operations to Whizbang patterns.
   /// </summary>
-  private sealed class EventOperationRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public EventOperationRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class EventOperationRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var expressionText = node.Expression.ToString();
@@ -447,12 +436,8 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that removes session variable declarations.
   /// </summary>
-  private sealed class SessionDeclarationRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public SessionDeclarationRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class SessionDeclarationRemover(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node) {
       var declarationText = node.Declaration.ToString();
@@ -482,12 +467,8 @@ public sealed class EventStoreTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that removes SaveChangesAsync calls.
   /// </summary>
-  private sealed class SaveChangesRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public SaveChangesRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class SaveChangesRemover(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node) {
       var expressionText = node.Expression.ToString();
