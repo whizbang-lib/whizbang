@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;

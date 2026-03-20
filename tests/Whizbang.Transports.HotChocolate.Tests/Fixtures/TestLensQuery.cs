@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Whizbang.Core.Lenses;
 
 namespace Whizbang.Transports.HotChocolate.Tests.Fixtures;
@@ -66,6 +67,10 @@ public class TestOrderLens(IEnumerable<PerspectiveRow<OrderReadModel>>? data = n
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -84,6 +89,10 @@ public class TestProductLens(IEnumerable<PerspectiveRow<ProductReadModel>>? data
   public void AddData(IEnumerable<PerspectiveRow<ProductReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<ProductReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -102,6 +111,10 @@ public class TestFilterOnlyLens(IEnumerable<PerspectiveRow<OrderReadModel>>? dat
   public void AddData(IEnumerable<PerspectiveRow<OrderReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<OrderReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<OrderReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
@@ -137,6 +150,10 @@ public class TestPreOrderedProductLens(IEnumerable<PerspectiveRow<ProductReadMod
   public void AddData(IEnumerable<PerspectiveRow<ProductReadModel>> rows) {
     _data.AddRange(rows);
   }
+
+  public IScopedLensAccess<ProductReadModel> Scope(QueryScope scope) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+  public IScopedLensAccess<ProductReadModel> DefaultScope => throw new NotImplementedException();
 }
 
 /// <summary>
