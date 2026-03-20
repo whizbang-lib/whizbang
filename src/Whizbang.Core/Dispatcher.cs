@@ -3740,15 +3740,12 @@ public abstract partial class Dispatcher(
           receipts.Add(outboxReceipts[i]);
         }
       }
-    } catch (InvalidOperationException ex) when (hasLocalReceptor.TrueForAll(static x => x)) {
+    } catch (InvalidOperationException) when (hasLocalReceptor.TrueForAll(static x => x)) {
       // No outbox strategy — all messages handled locally only.
       // Cross-service delivery will not occur without IWorkCoordinatorStrategy.
-#pragma warning disable CA1848 // Diagnostic logging - performance not critical in error path
-      CascadeLogger.LogWarning(
-        "SendManyAsync outbox delivery skipped: no IWorkCoordinatorStrategy registered. " +
-        "{Count} message(s) handled locally only. Error: {Error}",
-        outboxMessages.Count, ex.Message);
-#pragma warning restore CA1848
+      if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
+        Log.OutboxDeliverySkipped(CascadeLogger, outboxMessages.Count);
+      }
     }
   }
 
@@ -4683,5 +4680,12 @@ public abstract partial class Dispatcher(
       Level = LogLevel.Debug,
       Message = "[STREAM_ID] Propagated StreamId={StreamId} from source {SourceType} to cascaded {EventType}")]
     public static partial void StreamIdPropagatedFromSource(ILogger logger, Guid streamId, string sourceType, string eventType);
+
+    [LoggerMessage(
+      EventId = 5,
+      Level = LogLevel.Warning,
+      Message = "[DISPATCHER] SendManyAsync: No IWorkCoordinatorStrategy registered — " +
+                "outbox delivery skipped. All {MessageCount} messages were handled by local receptors.")]
+    public static partial void OutboxDeliverySkipped(ILogger logger, int messageCount);
   }
 }
