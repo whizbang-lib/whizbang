@@ -31,7 +31,7 @@ public class ITransportWithRecoveryTests {
     transport.SetRecoveryHandler(_ => Task.CompletedTask);
 
     // Act - setting null clears the handler
-    transport.SetRecoveryHandler(null!);
+    transport.SetRecoveryHandler(null);
 
     // Assert
     await Assert.That(transport.RecoveryHandler).IsNull();

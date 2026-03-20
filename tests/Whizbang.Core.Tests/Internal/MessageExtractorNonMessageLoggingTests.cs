@@ -30,7 +30,7 @@ public class MessageExtractorNonMessageLoggingTests {
     // Assert
     await Assert.That(messages).IsEmpty();
     await Assert.That(callbackType).IsNotNull();
-    await Assert.That(callbackType!).IsEqualTo(typeof(int));
+    await Assert.That(callbackType).IsEqualTo(typeof(int));
   }
 
   [Test]
@@ -45,7 +45,7 @@ public class MessageExtractorNonMessageLoggingTests {
     // Assert
     await Assert.That(messages).IsEmpty();
     await Assert.That(callbackType).IsNotNull();
-    await Assert.That(callbackType!).IsEqualTo(typeof(string));
+    await Assert.That(callbackType).IsEqualTo(typeof(string));
   }
 
   [Test]
@@ -129,7 +129,7 @@ public class MessageExtractorNonMessageLoggingTests {
     // Assert
     await Assert.That(messages).IsEmpty();
     await Assert.That(callbackType).IsNotNull();
-    await Assert.That(callbackType!).IsEqualTo(typeof(int));
+    await Assert.That(callbackType).IsEqualTo(typeof(int));
   }
 
   [Test]

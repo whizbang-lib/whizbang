@@ -436,7 +436,7 @@ public class JsonMessageSerializerTests {
     var deserialized = await serializer.DeserializeAsync<SerializerTestCommand>(bytes);
 
     // Assert - Metadata should remain null after round-trip
-    await Assert.That(deserialized.Hops[0].Metadata!).IsNull();
+    await Assert.That(deserialized.Hops[0].Metadata).IsNull();
   }
 
   // ===========================

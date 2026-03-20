@@ -315,7 +315,7 @@ public class ImmediateUnitOfWorkStrategyTests {
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();
-    await Assert.That(lifecycleStagesInCallback!).ContainsKey(message);
+    await Assert.That(lifecycleStagesInCallback).ContainsKey(message);
     await Assert.That(lifecycleStagesInCallback[message]).IsEqualTo(LifecycleStage.PreDistributeAsync);
   }
 
