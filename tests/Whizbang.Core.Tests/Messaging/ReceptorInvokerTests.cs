@@ -914,7 +914,7 @@ public class ReceptorInvokerTests {
     var exception = await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () =>
         await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline));
 
-    await Assert.That(exception!.PerspectiveType!).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(exception!.PerspectiveType).IsEqualTo(typeof(TestPerspective));
     await Assert.That(exception.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(5000));
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0); // Receptor not invoked
   }

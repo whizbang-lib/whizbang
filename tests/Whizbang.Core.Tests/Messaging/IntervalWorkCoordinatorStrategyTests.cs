@@ -569,7 +569,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act & Assert
     await Assert.That(() => new IntervalWorkCoordinatorStrategy(
-      null!,
+      null,
       instanceProvider,
       options
     )).Throws<ArgumentNullException>();

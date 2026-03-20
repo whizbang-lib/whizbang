@@ -315,7 +315,7 @@ public class ScopedUnitOfWorkStrategyTests {
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();
-    await Assert.That(lifecycleStagesInCallback!).ContainsKey(message1);
+    await Assert.That(lifecycleStagesInCallback).ContainsKey(message1);
     await Assert.That(lifecycleStagesInCallback).ContainsKey(message2);
     await Assert.That(lifecycleStagesInCallback[message1]).IsEqualTo(LifecycleStage.PreDistributeAsync);
     await Assert.That(lifecycleStagesInCallback[message2]).IsEqualTo(LifecycleStage.PostDistributeAsync);
