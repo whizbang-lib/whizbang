@@ -1,0 +1,166 @@
+name: NuGet Push
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version being published'
+        required: true
+        type: string
+      artifact-name:
+        description: 'Name of the artifact containing .nupkg files'
+        required: true
+        type: string
+    secrets:
+      PUSHOVER_API_TOKEN:
+        required: false
+      PUSHOVER_USER_KEY_1:
+        required: false
+      PUSHOVER_USER_KEY_2:
+        required: false
+      PUSHOVER_USER_KEY_3:
+        required: false
+      PUSHOVER_USER_KEY_4:
+        required: false
+      PUSHOVER_USER_KEY_5:
+        required: false
+      PUSHOVER_USER_KEY_6:
+        required: false
+      PUSHOVER_USER_KEY_7:
+        required: false
+      PUSHOVER_USER_KEY_8:
+        required: false
+      PUSHOVER_USER_KEY_9:
+        required: false
+      PUSHOVER_USER_KEY_10:
+        required: false
+
+permissions: read-all
+
+jobs:
+  push:
+    name: Push to NuGet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: nuget-publish
+    permissions:
+      id-token: write
+    outputs:
+      version: ${{ inputs.version }}
+
+    steps:
+      - name: Download NuGet packages
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ./packages
+
+      - name: List packages
+        run: ls -la ./packages/*.nupkg
+
+      - name: NuGet Login (OIDC Trusted Publishing)
+        uses: nuget/login@d22cc5f58ff5b88bf9bd452535b4335137e24544 # v1
+        id: nuget-login
+        with:
+          user: phil.carbone
+
+      - name: Push to NuGet (with retry)
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          for attempt in 1 2 3; do
+            if dotnet nuget push "./packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate; then
+              echo "Published successfully on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
+          echo "All attempts failed"
+          exit 1
+
+      - name: Generate SHA256 Hashes
+        run: |
+          cd ./packages
+          for file in *.nupkg; do
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Summary
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
+          echo "## Published v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version**: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Packages**: $PACKAGE_COUNT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # Notifications
+  # ============================================================================
+
+  notify-deployed:
+    name: Notify Deployed
+    needs: [push]
+    if: success() && vars.PUSHOVER_ENABLED == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Send Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+          title: "🚀 Deployed v${{ needs.push.outputs.version }}"
+          message: "Whizbang v${{ needs.push.outputs.version }} published to NuGet"
+          status: deployed
+          url: "https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/${{ needs.push.outputs.version }}"
+          url-title: "View on NuGet"
+
+  notify-deploy-failed:
+    name: Notify Deploy Failed
+    needs: [push]
+    if: failure() && vars.PUSHOVER_ENABLED == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Send Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+          title: "❌ Deploy Failed"
+          message: "Failed to publish Whizbang to NuGet"
+          status: deploy-failed
+          url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          url-title: "View Workflow"

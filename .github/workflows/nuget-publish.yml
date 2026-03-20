@@ -1,4 +1,4 @@
-name: NuGet Publish
+name: NuGet Publish (Emergency)
 
 on:
   workflow_dispatch:
@@ -11,50 +11,26 @@ on:
         description: 'Git ref to checkout (branch, tag, or SHA). Defaults to current ref.'
         required: false
         type: string
-  workflow_call:
-    inputs:
-      version:
-        description: 'Version to publish'
-        required: true
-        type: string
-      ref:
-        description: 'Git ref to checkout'
-        required: false
-        type: string
-    secrets:
-      PUSHOVER_API_TOKEN:
-        required: false
-      PUSHOVER_USER_KEY_1:
-        required: false
-      PUSHOVER_USER_KEY_2:
-        required: false
-      PUSHOVER_USER_KEY_3:
-        required: false
-      PUSHOVER_USER_KEY_4:
-        required: false
-      PUSHOVER_USER_KEY_5:
-        required: false
-      PUSHOVER_USER_KEY_6:
-        required: false
-      PUSHOVER_USER_KEY_7:
-        required: false
-      PUSHOVER_USER_KEY_8:
-        required: false
-      PUSHOVER_USER_KEY_9:
-        required: false
-      PUSHOVER_USER_KEY_10:
-        required: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+# Minimal top-level permissions; write permissions are declared at job level
+permissions: read-all
 
 jobs:
   publish:
+    name: Build, Pack & Publish
     runs-on: ubuntu-latest
-    environment: nuget-publish  # Required for trusted publishing
+    environment: nuget-publish
     permissions:
-      contents: write   # Required for creating GitHub releases
-      id-token: write   # Required for NuGet trusted publishing (OIDC)
+      contents: write
+      id-token: write
 
     steps:
-    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         ref: ${{ inputs.ref || github.ref }}
 
@@ -63,16 +39,27 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
+    - name: Cache NuGet packages
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+        restore-keys: ${{ runner.os }}-nuget-
+
     - name: Restore dependencies
       run: dotnet restore
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore -p:Version=${{ inputs.version }}
+      env:
+        VERSION: ${{ inputs.version }}
+      run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
 
     - name: Pack NuGet packages
+      env:
+        VERSION: ${{ inputs.version }}
       run: |
         # NU5017 false positive for analyzer packages in .NET 10 SDK
-        dotnet pack --configuration Release --output ./packages -p:Version=${{ inputs.version }} || true
+        dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
         ls -la ./packages/*.nupkg
         if [ $(ls ./packages/*.nupkg 2>/dev/null | wc -l) -eq 0 ]; then
           echo "ERROR: No packages were created"
@@ -86,7 +73,9 @@ jobs:
         user: phil.carbone
 
     - name: Publish to NuGet
-      run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      env:
+        NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+      run: dotnet nuget push "./packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
     - name: Generate SHA256 Hashes
       run: |
@@ -101,9 +90,9 @@ jobs:
         VERSION: ${{ inputs.version }}
       run: |
         if [[ "$VERSION" =~ -[a-zA-Z] ]]; then
-          echo "prerelease=true" >> $GITHUB_OUTPUT
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
         else
-          echo "prerelease=false" >> $GITHUB_OUTPUT
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Create Tag if Missing
@@ -139,11 +128,11 @@ jobs:
         VERSION: ${{ inputs.version }}
       run: |
         PACKAGE_COUNT=$(ls ./packages/*.nupkg 2>/dev/null | wc -l)
-        echo "## Published v$VERSION" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Packages**: $PACKAGE_COUNT" >> $GITHUB_STEP_SUMMARY
-        echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "## Published v$VERSION (Emergency)" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Version**: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **Packages**: $PACKAGE_COUNT" >> "$GITHUB_STEP_SUMMARY"
+        echo "- **NuGet**: https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
     outputs:
       version: ${{ inputs.version }}
@@ -160,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           sparse-checkout: .github/actions/notify-pushover
 
@@ -178,10 +167,10 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "🚀 Deployed v${{ needs.publish.outputs.version }}"
-          message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet"
+          title: "🚀 Deployed v${{ needs.publish.outputs.version }} (Emergency)"
+          message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet via emergency workflow"
           status: deployed
-          url: "https://www.nuget.org/packages/Whizbang.Core/${{ needs.publish.outputs.version }}"
+          url: "https://www.nuget.org/packages/SoftwareExtravaganza.Whizbang.Core/${{ needs.publish.outputs.version }}"
           url-title: "View on NuGet"
 
   notify-deploy-failed:
@@ -192,7 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           sparse-checkout: .github/actions/notify-pushover
 
@@ -210,8 +199,8 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "❌ Deploy Failed"
-          message: "Failed to publish Whizbang to NuGet"
+          title: "❌ Emergency Deploy Failed"
+          message: "Failed to publish Whizbang to NuGet via emergency workflow"
           status: deploy-failed
           url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           url-title: "View Workflow"

@@ -46,6 +46,10 @@ jobs:
             "hotfix/*:main"
             "hotfix/*:develop"
 
+            # Bugfix branches → develop OR release/*
+            "bugfix/*:develop"
+            "bugfix/*:release/*"
+
             # Dependabot → develop (configured in dependabot.yml)
             "dependabot/*:develop"
 
