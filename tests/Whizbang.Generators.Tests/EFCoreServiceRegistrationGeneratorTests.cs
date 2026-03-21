@@ -1641,6 +1641,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelB)] = \"wh_per_model_b\"");
 
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    // (constructor requires 4 params: context, tableNames, scopeContextAccessor, whizbangOptions)
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
+
     // Should have auto-detected comment
     await Assert.That(sourceText).Contains("Auto-detected: ILensQuery<TestApp.ModelA, TestApp.ModelB>");
   }
@@ -1790,6 +1797,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
     // Should generate registration for three-model ILensQuery
     await Assert.That(sourceText).Contains("ILensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
     await Assert.That(sourceText).Contains("EFCorePostgresLensQuery<global::TestApp.ModelA, global::TestApp.ModelB, global::TestApp.ModelC>");
+
+    // Should pass scopeContextAccessor and whizbangOptions to constructor
+    await Assert.That(sourceText).Contains("scopeContextAccessor")
+      .Because("Multi-model LensQuery constructor requires IScopeContextAccessor parameter");
+    await Assert.That(sourceText).Contains("whizbangOptions")
+      .Because("Multi-model LensQuery constructor requires IOptions<WhizbangCoreOptions> parameter");
 
     // Should include all three table name mappings
     await Assert.That(sourceText).Contains("[typeof(global::TestApp.ModelA)] = \"wh_per_model_a\"");
