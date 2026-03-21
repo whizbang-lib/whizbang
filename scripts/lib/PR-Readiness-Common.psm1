@@ -448,6 +448,38 @@ $script:HistorySchemaVersion = 1
 # Script version (tracks feature changes, shown in headers)
 $script:ScriptVersion = "1.0.0"
 
+# AI attention marker — prefix on any line that AI agents should parse/act on.
+# AI consumers can filter output with: grep "🤖"
+$script:AI = "🤖"
+
+function Write-AiLine {
+    <#
+    .SYNOPSIS
+        Writes a line prefixed with the AI attention marker (🤖).
+        AI agents can filter script output by grepping for this marker.
+
+    .PARAMETER Message
+        The message to write.
+
+    .PARAMETER ForegroundColor
+        Console foreground color. Default: Yellow.
+
+    .PARAMETER Indent
+        Optional indent prefix.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [string]$ForegroundColor = "Yellow",
+
+        [string]$Indent = ""
+    )
+
+    Write-Host "${Indent}${script:AI} ${Message}" -ForegroundColor $ForegroundColor
+}
+
 function Write-HistoryEntry {
     <#
     .SYNOPSIS
@@ -707,10 +739,8 @@ Format check failed. Fix:
         }
     }
 
-    if ($Indent) {
-        $instructions -split "`n" | ForEach-Object { Write-Host "${Indent}$_" -ForegroundColor Yellow }
-    } else {
-        Write-Host $instructions -ForegroundColor Yellow
+    $instructions -split "`n" | Where-Object { $_.Trim() } | ForEach-Object {
+        Write-Host "${Indent}${script:AI} $_" -ForegroundColor Yellow
     }
 }
 
@@ -852,6 +882,7 @@ Export-ModuleMember -Function @(
     'Get-RunEstimate'
     'Get-CheckEstimate'
     'Write-AiInstructions'
+    'Write-AiLine'
     'Format-Duration'
     'Invoke-CleanLogs'
     'Invoke-CleanMetrics'
