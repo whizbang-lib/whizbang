@@ -18,6 +18,8 @@ public static partial class WhizbangBanner {
   private static readonly string _background = $"{ESC_CODE}[48;2;{BACKGROUND_R};{BACKGROUND_G};{BACKGROUND_B}m";
   private static readonly string _reset = $"{ESC_CODE}[0m";
   private static readonly char[] _starChars = ['.', '·', '∙', '*', '⋅', '✦'];
+  private static readonly Lock _consoleLock = new();
+  private static CancellationTokenSource? _twinkleCts;
 
   private static readonly string[] _plainBanner =
   [
@@ -211,6 +213,125 @@ public static partial class WhizbangBanner {
   }
 
   /// <summary>
+  /// Prints the banner with animated twinkling stars.
+  /// Stars re-randomize every second for the specified duration in a background thread.
+  /// The main thread returns immediately — call <see cref="StopTwinkle"/> to stop early.
+  /// </summary>
+  /// <param name="durationSeconds">How long to twinkle (default 5 seconds).</param>
+  /// <param name="enabled">When false, prints static banner without animation.</param>
+  public static void PrintAnimated(int durationSeconds = 5, bool enabled = true) {
+    if (!enabled) {
+      return;
+    }
+
+    // Track background space positions during render
+    var bgPositions = new List<(int Row, int Col)>();
+    var row = 0;
+    var col = 0;
+    var random = Random.Shared;
+    var sb = new StringBuilder(4096);
+
+    void Seg(string text, int r, int g, int b) {
+      var isBg = r == BACKGROUND_R && g == BACKGROUND_G && b == BACKGROUND_B;
+      foreach (var ch in text) {
+        if (isBg && ch == ' ') {
+          bgPositions.Add((row, col));
+          if (random.Next(12) == 0) {
+            var brightness = random.Next(220, 256);
+            var star = _starChars[random.Next(_starChars.Length)];
+            sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{brightness};{brightness + 5};{brightness + 10}m{star}{_reset}");
+          } else {
+            sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
+          }
+        } else {
+          sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
+        }
+        col++;
+      }
+    }
+
+    void Eol() {
+      sb.Append(CultureInfo.InvariantCulture, $"{_background}  {_reset}");
+      sb.AppendLine();
+      row++;
+      col = 0;
+    }
+
+    var bannerStartRow = Console.CursorTop + 1; // +1 for the blank line
+    sb.AppendLine();
+
+    // Render banner body (same as Print but tracking positions)
+    Seg("                                                                                    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("Φ", 70, 158, 174); Seg("▌", 56, 155, 181); Seg("▌     ", 57, 144, 176); Seg(",▄▄", 108, 101, 131); Seg("         ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▌▌", 190, 60, 105); Seg("H", 154, 100, 108); Seg("      ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╒", 144, 126, 110); Seg("██", 234, 124, 16); Seg("⌐", 148, 129, 106); Seg("         ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓▓", 150, 152, 154); Seg("L", 165, 167, 169); Seg("                                     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 19, 161, 206); Seg("W", 94, 128, 148); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("█████", 66, 52, 143); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄", 173, 70, 133); Seg("m ", 161, 92, 125); Seg("▓█", 210, 42, 88); Seg("▄▄▌▌▄", 175, 90, 70); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄", 186, 131, 66); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄▄▄▄▄", 181, 146, 71); Seg("╕", 158, 138, 95); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌▌▌▌▄", 140, 142, 144); Seg("_", 170, 170, 170); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg(",▄▌▌▄▄▄⌐", 155, 157, 159); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╔▄▄▄▌▌▄", 155, 157, 159); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("²▌▌▌▄▄▄", 150, 152, 154); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▀", 53, 142, 178); Seg("██", 24, 131, 191); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▌", 80, 89, 141); Seg("██", 45, 45, 143); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╟", 115, 84, 134); Seg("██", 121, 36, 141); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐▓▓", 156, 90, 131); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▓", 208, 43, 62); Seg("\"", 160, 101, 94); Seg("'", 157, 110, 97); Seg("▀██", 195, 100, 55); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 130, 11); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("\"\"", 172, 143, 80); Seg("╠▓▓", 187, 165, 64); Seg("▀", 213, 157, 36); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("███", 140, 142, 144); Seg("╙", 160, 162, 164); Seg("\"", 165, 167, 169); Seg("╨██", 135, 137, 139); Seg("╕", 165, 167, 169); Seg("▄██▀", 138, 140, 142); Seg("╙╙", 165, 167, 169); Seg("▀██", 130, 132, 134); Seg("M", 160, 162, 164); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓██▀", 145, 147, 149); Seg("²", 165, 167, 169); Seg("▀██", 130, 132, 134); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("┌██▀", 170, 172, 174); Seg("\"", 165, 167, 169); Seg("╙▓██", 145, 147, 149); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 27, 102, 180); Seg("▄▄", 97, 113, 140); Seg("██", 42, 54, 147); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌", 132, 56, 137); Seg("_", 132, 122, 128); Seg("▓▓", 205, 26, 137); Seg("Ñ", 181, 71, 123); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█", 206, 44, 55); Seg("H", 165, 98, 89); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 103, 12); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 143, 10); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("_", 137, 131, 117); Seg("Φ▓▌", 199, 166, 52); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌", 140, 142, 144); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▓██▌▓▄", 143, 145, 147); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██M", 138, 140, 142); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╫▓▌", 155, 157, 159); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 130, 132, 134); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐██", 160, 162, 164); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╓██", 170, 172, 174); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╙", 99, 122, 142); Seg("████", 35, 81, 157); Seg("     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▀██▓▀", 152, 49, 137); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█", 204, 47, 51); Seg("M", 167, 98, 87); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 108, 12); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 148, 10); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐▓▓▓▓▓▓▌", 200, 180, 80); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("███████▌", 140, 142, 144); Seg("\"", 165, 167, 169); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("'", 170, 172, 174); Seg("▓██████", 143, 145, 147); Seg("M", 160, 162, 164); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▌", 210, 212, 214); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 130, 132, 134); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╨███████", 138, 140, 142); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("                                                                          ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▌▄▄▓█▌", 150, 152, 154); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("                                                                                    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("                                ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("W! - https://whizba.ng/", 200, 210, 220); Seg("                             ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+
+    sb.AppendLine();
+    Console.Out.Write(sb);
+
+    // Start background twinkle thread
+    if (bgPositions.Count > 0) {
+      _twinkleCts?.Cancel();
+      _twinkleCts = new CancellationTokenSource();
+      var ct = _twinkleCts.Token;
+      var positions = bgPositions.ToArray();
+      var startRow = bannerStartRow;
+
+      _ = Task.Run(() => {
+        var rng = Random.Shared;
+        try {
+          for (var frame = 0; frame < durationSeconds && !ct.IsCancellationRequested; frame++) {
+            Thread.Sleep(1000);
+            if (ct.IsCancellationRequested) {
+              break;
+            }
+
+            lock (_consoleLock) {
+              // Save cursor
+              Console.Write($"{ESC_CODE}[s");
+
+              // Update ~25 random background positions
+              for (var i = 0; i < 25; i++) {
+                var pos = positions[rng.Next(positions.Length)];
+                var absRow = startRow + pos.Row + 1; // +1 for 1-based ANSI
+                var absCol = pos.Col + 1;            // +1 for 1-based ANSI
+
+                Console.Write($"{ESC_CODE}[{absRow};{absCol}H");
+                if (rng.Next(3) == 0) {
+                  var b = rng.Next(220, 256);
+                  var star = _starChars[rng.Next(_starChars.Length)];
+                  Console.Write($"{_background}{ESC_CODE}[38;2;{b};{b + 5};{b + 10}m{star}{_reset}");
+                } else {
+                  Console.Write($"{_background}{ESC_CODE}[38;2;{BACKGROUND_R};{BACKGROUND_G};{BACKGROUND_B}m {_reset}");
+                }
+              }
+
+              // Restore cursor
+              Console.Write($"{ESC_CODE}[u");
+              Console.Out.Flush();
+            }
+          }
+        } catch {
+          // Terminal resized or closed — stop gracefully
+        }
+      }, ct);
+    }
+  }
+
+  /// <summary>
+  /// Stops the background twinkle animation if running.
+  /// </summary>
+  public static void StopTwinkle() {
+    _twinkleCts?.Cancel();
+    _twinkleCts = null;
+  }
+
+  /// <summary>
   /// Prints the full branded header: ASCII art banner + config box.
   /// For CLI tools, pass the tool name and version. For services, pass the service name
   /// and optionally the Whizbang library version.
@@ -234,8 +355,8 @@ public static partial class WhizbangBanner {
     version ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
     whizbangVersion ??= typeof(WhizbangBanner).Assembly.GetName().Version?.ToString(3);
 
-    // Print the ASCII art banner first
-    Print();
+    // Print the ASCII art banner with twinkling stars
+    PrintAnimated();
 
     // Build config line
     var configParts = new List<string>();
