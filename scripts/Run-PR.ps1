@@ -435,8 +435,8 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime).ToUnixTimeSeconds()
-            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps 2>&1 | Out-Null
+            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
+            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
@@ -455,8 +455,8 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $parentEpoch = [DateTimeOffset]::new($startTime).ToUnixTimeSeconds()
-            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps 2>&1 | Out-Null
+            $parentEpoch = [DateTimeOffset]::new($startTime, [TimeSpan]::Zero).ToUnixTimeSeconds()
+            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
