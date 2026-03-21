@@ -553,18 +553,64 @@ function Invoke-Prepare {
 
                 # Query results from local SonarQube
                 if ($exitCode -eq 0) {
-                    Start-Sleep -Seconds 3  # Wait for SonarQube to process
+                    Start-Sleep -Seconds 5  # Wait for SonarQube to process
                     try {
                         $authHeader = @{ Authorization = "Bearer $sonarToken" }
+
+                        # Quality gate
                         $qg = Invoke-RestMethod -Uri "$sonarUrl/api/qualitygates/project_status?projectKey=$sonarProjectKey" -Headers $authHeader -ErrorAction Stop
                         if ($qg.projectStatus.status -eq "OK") {
-                            Write-Host "    Quality Gate: ✅ Passed" -ForegroundColor Green
+                            Write-AiLine "    Quality Gate: ✅ Passed" -ForegroundColor Green
                         } else {
-                            Write-Host "    Quality Gate: ❌ $($qg.projectStatus.status)" -ForegroundColor Red
+                            Write-AiLine "    Quality Gate: ❌ $($qg.projectStatus.status)" -ForegroundColor Red
                             $exitCode = 1
                         }
+
+                        # Measures: coverage, duplication, issues
+                        $metrics = "coverage,duplicated_lines_density,bugs,vulnerabilities,code_smells,ncloc"
+                        $measures = Invoke-RestMethod -Uri "$sonarUrl/api/measures/component?component=$sonarProjectKey&metricKeys=$metrics" -Headers $authHeader -ErrorAction Stop
+                        $mValues = @{}
+                        foreach ($m in $measures.component.measures) { $mValues[$m.metric] = $m.value }
+
+                        if ($mValues.ContainsKey("coverage")) {
+                            Write-AiLine "    Coverage: $($mValues['coverage'])%" -ForegroundColor Cyan
+                        }
+                        if ($mValues.ContainsKey("duplicated_lines_density")) {
+                            Write-AiLine "    Duplication: $($mValues['duplicated_lines_density'])%" -ForegroundColor $(if ([double]$mValues['duplicated_lines_density'] -gt 3) { "Yellow" } else { "Green" })
+                        }
+                        $bugCount = if ($mValues.ContainsKey("bugs")) { $mValues['bugs'] } else { "0" }
+                        $vulnCount = if ($mValues.ContainsKey("vulnerabilities")) { $mValues['vulnerabilities'] } else { "0" }
+                        $smellCount = if ($mValues.ContainsKey("code_smells")) { $mValues['code_smells'] } else { "0" }
+                        Write-AiLine "    Issues: $bugCount bugs, $vulnCount vulnerabilities, $smellCount code smells" -ForegroundColor $(if ([int]$bugCount -gt 0 -or [int]$vulnCount -gt 0) { "Red" } else { "Gray" })
+
+                        # Top issues with file + line numbers
+                        $issues = Invoke-RestMethod -Uri "$sonarUrl/api/issues/search?projectKeys=$sonarProjectKey&ps=20&statuses=OPEN,CONFIRMED&s=SEVERITY&asc=false" -Headers $authHeader -ErrorAction Stop
+                        if ($issues.issues.Count -gt 0) {
+                            Write-Host ""
+                            Write-AiLine "    Top Issues:" -ForegroundColor Yellow
+                            foreach ($issue in $issues.issues | Select-Object -First 15) {
+                                $severity = switch ($issue.severity) {
+                                    "BLOCKER" { "🔴" }
+                                    "CRITICAL" { "🟠" }
+                                    "MAJOR" { "🟡" }
+                                    "MINOR" { "🔵" }
+                                    default { "⚪" }
+                                }
+                                $component = $issue.component -replace "^${sonarProjectKey}:", ""
+                                $line = if ($issue.line) { ":$($issue.line)" } else { "" }
+                                Write-AiLine "      $severity [$($issue.rule)] $($issue.message)" -ForegroundColor Gray
+                                Write-AiLine "         $component$line" -ForegroundColor DarkGray
+                            }
+                            if ($issues.total -gt 15) {
+                                Write-Host "      ... and $($issues.total - 15) more issues" -ForegroundColor DarkGray
+                            }
+                        }
+
+                        Write-Host ""
                         Write-Host "    Dashboard: $sonarUrl/dashboard?id=$sonarProjectKey" -ForegroundColor DarkCyan
-                    } catch { }
+                    } catch {
+                        Write-Host "    Warning: Could not fetch SonarQube results: $_" -ForegroundColor Yellow
+                    }
                 }
                 @{ ExitCode = $exitCode; Details = $null }
             }
