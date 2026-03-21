@@ -229,16 +229,8 @@ function Invoke-Prepare {
     $script:stepNumber = 0
     $script:failureTypes = @()
 
-    # Calculate total steps (dynamic based on flags)
-    # Steps: Format, Build, Unit Tests, Integration Tests, Coverage Report, Sonar, Coverage Threshold
-    $script:totalSteps = 0
-    if (-not $SkipFormat) { $script:totalSteps++ }
-    if (-not $SkipBuild) { $script:totalSteps++ }
-    if (-not $SkipUnitTests) { $script:totalSteps++ }
-    if (-not $SkipIntegration) { $script:totalSteps++ }
-    if (-not $SkipCoverage) { $script:totalSteps += 2 }  # Coverage Report + Coverage Threshold
-    if (-not $SkipSonar) { $script:totalSteps++ }
-    if ($script:totalSteps -eq 0) { $script:totalSteps = 1 }  # avoid div by zero
+    # Total steps always includes all 7 steps (skipped ones still show in output)
+    $script:totalSteps = 7  # Format, Build, Unit Tests, Integration, Coverage Report, Sonar, Coverage Threshold
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
     $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
@@ -294,7 +286,7 @@ function Invoke-Prepare {
         )
 
         $script:stepNumber++
-        $pct = [math]::Round(($script:stepNumber / $script:totalSteps) * 100)
+        $pct = [math]::Min(100, [math]::Round(($script:stepNumber / $script:totalSteps) * 100))
 
         $timingStr = Format-StepTiming -StepName $Name
 
