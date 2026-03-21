@@ -212,17 +212,17 @@ function Write-WhizbangBanner {
 
     Write-Host ""
 
-    # Save cursor position before banner
-    $bannerTop = [Console]::CursorTop
-
-    # Initial render
+    # Initial render — measure how many terminal lines it actually takes
+    $cursorBefore = [Console]::CursorTop
     Write-BannerBody
+    $cursorAfter = [Console]::CursorTop
+    $bannerHeight = $cursorAfter - $cursorBefore
 
-    # Twinkle: redraw from saved position with fresh random stars
-    if ($Animate) {
+    # Twinkle: move cursor back up and redraw with fresh random stars
+    if ($Animate -and $bannerHeight -gt 0) {
         for ($frame = 0; $frame -lt 3; $frame++) {
             Start-Sleep -Seconds 1
-            [Console]::SetCursorPosition(0, $bannerTop)
+            Write-Host "$([char]27)[${bannerHeight}A$([char]27)[0G" -NoNewline
             Write-BannerBody
         }
     }
