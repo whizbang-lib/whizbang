@@ -75,7 +75,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
           var intercepted = data.Left.Left.Right;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
-          _generateInterceptors(ctx, compilation, intercepted, suppressed, enabled);
+          _generateInterceptors(ctx, intercepted, suppressed, enabled);
         }
     );
   }
@@ -306,8 +306,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 #pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
-      Compilation _,
-      ImmutableArray<GuidInterceptionInfo> intercepted,
+            ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
 #pragma warning restore S1144
