@@ -122,6 +122,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Suppress progress bars in AI mode (cleaner for token-based consumers and CI)
+if ($Mode -eq "Ai") {
+    $ProgressPreference = 'SilentlyContinue'
+}
+
 # Import shared module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
@@ -291,10 +296,11 @@ function Invoke-Prepare {
         }
 
         $stepStart = [DateTime]::UtcNow
+        $stepLabel = "  ▶ [$($script:stepNumber)/$($script:totalSteps)] $Name...$estStr"
         if ($ShowOutput) {
-            Write-Host "  ▶ $Name...$estStr" -ForegroundColor Cyan
+            Write-Host $stepLabel -ForegroundColor Cyan
         } else {
-            Write-Host "  ▶ $Name...$estStr" -ForegroundColor Cyan -NoNewline
+            Write-Host $stepLabel -ForegroundColor Cyan -NoNewline
         }
 
         try {

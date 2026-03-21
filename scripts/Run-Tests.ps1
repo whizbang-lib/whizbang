@@ -330,6 +330,11 @@ $useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format ou
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
+# Suppress progress bars in AI mode
+if ($useAiOutput) {
+    $ProgressPreference = 'SilentlyContinue'
+}
+
 # FailFast defaults to true in AI modes (stop on first failure to save time)
 if ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
     $FailFast = $true
@@ -825,69 +830,52 @@ try {
             $reportDir = Join-Path $repoRoot "coverage-report"
             $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
-            # Generate HTML and TextSummary reports
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
+            # Generate HTML, TextSummary, and JsonSummary reports
+            # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
+            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
 
-            # Parse cobertura XML for detailed coverage info (single pass for totals + per-file)
+            # Read coverage totals from TextSummary (instant — no XML parsing needed)
+            $summaryFile = Join-Path $reportDir "Summary.txt"
             $totalLines = 0
             $totalCovered = 0
-            $uncoveredByFile = @{}
-            $fileCoverage = @{}
-            $fileCount = 0
-
-            Write-Host "Parsing coverage data..." -ForegroundColor Gray -NoNewline
-            foreach ($cobFile in $coberturaFiles) {
-                [xml]$cobXml = Get-Content $cobFile.FullName
-                foreach ($package in $cobXml.coverage.packages.package) {
-                    foreach ($class in $package.classes.class) {
-                        $filename = $class.filename
-                        # Only include src/ files, exclude test files
-                        if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                            if (-not $fileCoverage.ContainsKey($filename)) {
-                                $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                $fileCount++
-                                if ($fileCount % 100 -eq 0) { Write-Host "." -NoNewline }
-                            }
-                            foreach ($line in $class.lines.line) {
-                                $totalLines++
-                                $fileCoverage[$filename].Total++
-                                if ([int]$line.hits -gt 0) {
-                                    $totalCovered++
-                                    $fileCoverage[$filename].Covered++
-                                } else {
-                                    if (-not $uncoveredByFile.ContainsKey($filename)) {
-                                        $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
-                                    }
-                                    $uncoveredByFile[$filename].Add([int]$line.number)
-                                }
-                            }
-                        }
-                    }
-                }
+            $coveragePct = 0
+            if (Test-Path $summaryFile) {
+                $summaryText = Get-Content $summaryFile -Raw
+                if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
+                if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+                if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
             }
-            Write-Host " done ($fileCount files)" -ForegroundColor Gray
 
-            # Calculate and display overall coverage
-            $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
             Write-Host ""
             Write-Host "=====================================" -ForegroundColor Cyan
             Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
             Write-Host "=====================================" -ForegroundColor Cyan
 
-            # Show files below 100% coverage (data already collected in single pass above)
-            if ($uncoveredByFile.Count -gt 0) {
-                Write-Host ""
-                Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
-                foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
-                    $fc = $fileCoverage[$file]
-                    $filePct = if ($fc.Total -gt 0) { [math]::Round(($fc.Covered / $fc.Total) * 100, 2) } else { 0 }
-                    $relPath = $file
-                    if ($file.StartsWith($repoRoot)) {
-                        $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
+            # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
+            $jsonSummaryFile = Join-Path $reportDir "Summary.json"
+            if (Test-Path $jsonSummaryFile) {
+                $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
+                $filesBelow100 = @()
+                foreach ($assembly in $jsonSummary.coverage.assemblies) {
+                    foreach ($class in $assembly.classes) {
+                        if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
+                            $filesBelow100 += @{
+                                Name     = $class.name
+                                Coverage = $class.coverage
+                                Covered  = $class.coveredLines
+                                Total    = $class.coverableLines
+                            }
+                        }
                     }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object -Unique) -join ", "
-                    Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
-                    Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
+                }
+
+                if ($filesBelow100.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
+                    foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
+                        $uncovered = $file.Total - $file.Covered
+                        Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+                    }
                 }
             }
 
@@ -2026,69 +2014,52 @@ try {
             $reportDir = Join-Path $repoRoot "coverage-report"
             $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
-            # Generate HTML and TextSummary reports
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
+            # Generate HTML, TextSummary, and JsonSummary reports
+            # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
+            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
 
-            # Parse cobertura XML for detailed coverage info (single pass for totals + per-file)
+            # Read coverage totals from TextSummary (instant — no XML parsing needed)
+            $summaryFile = Join-Path $reportDir "Summary.txt"
             $totalLines = 0
             $totalCovered = 0
-            $uncoveredByFile = @{}
-            $fileCoverage = @{}
-            $fileCount = 0
-
-            Write-Host "Parsing coverage data..." -ForegroundColor Gray -NoNewline
-            foreach ($cobFile in $coberturaFiles) {
-                [xml]$cobXml = Get-Content $cobFile.FullName
-                foreach ($package in $cobXml.coverage.packages.package) {
-                    foreach ($class in $package.classes.class) {
-                        $filename = $class.filename
-                        # Only include src/ files, exclude test files
-                        if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                            if (-not $fileCoverage.ContainsKey($filename)) {
-                                $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                $fileCount++
-                                if ($fileCount % 100 -eq 0) { Write-Host "." -NoNewline }
-                            }
-                            foreach ($line in $class.lines.line) {
-                                $totalLines++
-                                $fileCoverage[$filename].Total++
-                                if ([int]$line.hits -gt 0) {
-                                    $totalCovered++
-                                    $fileCoverage[$filename].Covered++
-                                } else {
-                                    if (-not $uncoveredByFile.ContainsKey($filename)) {
-                                        $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
-                                    }
-                                    $uncoveredByFile[$filename].Add([int]$line.number)
-                                }
-                            }
-                        }
-                    }
-                }
+            $coveragePct = 0
+            if (Test-Path $summaryFile) {
+                $summaryText = Get-Content $summaryFile -Raw
+                if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
+                if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+                if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
             }
-            Write-Host " done ($fileCount files)" -ForegroundColor Gray
 
-            # Calculate and display overall coverage
-            $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
             Write-Host ""
             Write-Host "=====================================" -ForegroundColor Cyan
             Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
             Write-Host "=====================================" -ForegroundColor Cyan
 
-            # Show files below 100% coverage (data already collected in single pass above)
-            if ($uncoveredByFile.Count -gt 0) {
-                Write-Host ""
-                Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
-                foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
-                    $fc = $fileCoverage[$file]
-                    $filePct = if ($fc.Total -gt 0) { [math]::Round(($fc.Covered / $fc.Total) * 100, 2) } else { 0 }
-                    $relPath = $file
-                    if ($file.StartsWith($repoRoot)) {
-                        $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
+            # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
+            $jsonSummaryFile = Join-Path $reportDir "Summary.json"
+            if (Test-Path $jsonSummaryFile) {
+                $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
+                $filesBelow100 = @()
+                foreach ($assembly in $jsonSummary.coverage.assemblies) {
+                    foreach ($class in $assembly.classes) {
+                        if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
+                            $filesBelow100 += @{
+                                Name     = $class.name
+                                Coverage = $class.coverage
+                                Covered  = $class.coveredLines
+                                Total    = $class.coverableLines
+                            }
+                        }
                     }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object -Unique) -join ", "
-                    Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
-                    Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
+                }
+
+                if ($filesBelow100.Count -gt 0) {
+                    Write-Host ""
+                    Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
+                    foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
+                        $uncovered = $file.Total - $file.Covered
+                        Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+                    }
                 }
             }
 
