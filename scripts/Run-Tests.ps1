@@ -711,12 +711,25 @@ try {
             }
         }
 
+        # Complete sub-progress bar
+        $totalTestProjects = $unitTestProjects.Count + $integrationTestProjects.Count
+        if ($NoHeader) {
+            Write-Progress -Id 1 -ParentId 0 -Activity "Running Tests" -Completed
+        }
+
         # Aggregate results
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
         $failedProjects = @()
 
+        $resultIndex = 0
         foreach ($result in $results) {
+            $resultIndex++
+            if ($NoHeader) {
+                $pct = [math]::Round(($resultIndex / $totalTestProjects) * 100)
+                Write-Progress -Id 1 -ParentId 0 -Activity "Test Results" -Status "$resultIndex/$totalTestProjects: $($result.ProjectName)" -PercentComplete $pct
+            }
+
             if ($result.ExitCode -eq 0) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
