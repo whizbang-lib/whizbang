@@ -339,7 +339,8 @@ function Invoke-Prepare {
 
     # Step 1: Format check (with AutoFix support)
     if ($SkipFormat) {
-        Write-Host "  ▶ Format Check... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Format Check... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Format Check"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
@@ -362,7 +363,8 @@ function Invoke-Prepare {
 
     # Step 2: Build
     if ($SkipBuild) {
-        Write-Host "  ▶ Build... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Build"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
@@ -379,7 +381,8 @@ function Invoke-Prepare {
     # Step 3: Unit tests + coverage
     $coveragePct = $null
     if ($SkipUnitTests) {
-        Write-Host "  ▶ Unit Tests + Coverage... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests + Coverage... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Unit Tests + Coverage"; status = "skipped"; duration_s = 0 }
     } else {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
@@ -413,7 +416,8 @@ function Invoke-Prepare {
 
     # Step 4: Integration tests (unless skipped)
     if ($SkipIntegration) {
-        Write-Host "  ▶ Integration Tests... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Integration Tests"; status = "skipped"; duration_s = 0 }
     } else {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
@@ -431,7 +435,8 @@ function Invoke-Prepare {
 
     # Step 5: Sonar (unless skipped)
     if ($SkipSonar) {
-        Write-Host "  ▶ SonarQube Analysis... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Analysis... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "SonarCloud Analysis" -FailureType "SonarFailure" -Action {
@@ -444,7 +449,8 @@ function Invoke-Prepare {
 
     # Step 6: Coverage threshold
     if ($SkipCoverage) {
-        Write-Host "  ▶ Coverage Threshold... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped" -ForegroundColor DarkGray
         $script:steps += @{ name = "Coverage Threshold"; status = "skipped"; duration_s = 0 }
     } else {
         $script:stepNumber++
