@@ -82,6 +82,22 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 $useAiOutput = $Mode -eq "Ai"
 
+# Indentation: when called as child from Run-PR.ps1, indent all output
+if ($NoHeader) {
+    function Write-IndentedHost {
+        param(
+            [Parameter(Position = 0)] [string]$Object = "",
+            [string]$ForegroundColor = "",
+            [switch]$NoNewline
+        )
+        $params = @{}
+        if ($ForegroundColor) { $params["ForegroundColor"] = $ForegroundColor }
+        if ($NoNewline) { $params["NoNewline"] = $true }
+        Microsoft.PowerShell.Utility\Write-Host "    ${Object}" @params
+    }
+    Set-Alias -Name Write-Host -Value Write-IndentedHost -Scope Local
+}
+
 # Initialize tee logging
 if ($LogFile) {
     $effectiveLogMode = if ($LogMode) { $LogMode } else { $Mode }
