@@ -33,24 +33,40 @@ $script:Reset = "${script:Esc}[0m"
 
 $script:StarChars = @('.', '·', '∙', '*', '⋅', '✦')
 
+# Track background space positions for star animation
+$script:BgPositions = @()
+$script:BannerStartRow = 0
+$script:LogoCol = 0
+$script:LogoRow = 0
+
 function Write-LogoSeg {
     <# Write a segment of text with true RGB foreground on dark background.
-       Background spaces randomly get bright star characters. #>
+       Background spaces randomly get bright star characters.
+       Tracks background positions for animation. #>
     param([string]$Text, [int]$R, [int]$G, [int]$B)
     $isBg = ($R -eq 45 -and $G -eq 55 -and $B -eq 72)
     foreach ($ch in $Text.ToCharArray()) {
-        if ($isBg -and $ch -eq ' ' -and (Get-Random -Minimum 0 -Maximum 12) -eq 0) {
-            $brightness = Get-Random -Minimum 220 -Maximum 255
-            $starCh = $script:StarChars[(Get-Random -Minimum 0 -Maximum $script:StarChars.Count)]
-            Write-Host "${script:BgColor}${script:Esc}[38;2;${brightness};$($brightness + 5);$($brightness + 10)m${starCh}${script:Reset}" -NoNewline
+        if ($isBg -and $ch -eq ' ') {
+            # Record this position for animation
+            $script:BgPositions += @{ Row = $script:LogoRow; Col = $script:LogoCol }
+            if ((Get-Random -Minimum 0 -Maximum 12) -eq 0) {
+                $brightness = Get-Random -Minimum 220 -Maximum 255
+                $starCh = $script:StarChars[(Get-Random -Minimum 0 -Maximum $script:StarChars.Count)]
+                Write-Host "${script:BgColor}${script:Esc}[38;2;${brightness};$($brightness + 5);$($brightness + 10)m${starCh}${script:Reset}" -NoNewline
+            } else {
+                Write-Host "${script:BgColor}${script:Esc}[38;2;${R};${G};${B}m${ch}${script:Reset}" -NoNewline
+            }
         } else {
             Write-Host "${script:BgColor}${script:Esc}[38;2;${R};${G};${B}m${ch}${script:Reset}" -NoNewline
         }
+        $script:LogoCol++
     }
 }
 
 function Write-LogoEOL {
     Write-Host "${script:BgColor}  ${script:Reset}"
+    $script:LogoRow++
+    $script:LogoCol = 0
 }
 
 function Write-WhizbangBanner {
@@ -66,6 +82,13 @@ function Write-WhizbangBanner {
     param(
         [bool]$Animate = $true
     )
+
+    # Initialize position tracking
+    $script:BgPositions = @()
+    $script:LogoRow = 0
+    $script:LogoCol = 0
+    # Save the cursor row where the banner starts
+    $script:BannerStartRow = [Console]::CursorTop + 1  # +1 for the blank line
 
     Write-Host ""
 
@@ -213,17 +236,31 @@ function Write-WhizbangBanner {
 
     Write-Host ""
 
-    # Animate: redraw banner with new random stars (twinkling effect)
-    # Banner = 10 rendered lines (bg top + 6 art + bg bottom + tagline + blank)
-    if ($Animate) {
-        $bannerLineCount = 10
+    # Animate: twinkle stars by rewriting only background-space positions
+    if ($Animate -and $script:BgPositions.Count -gt 0) {
+        $saveCursorRow = [Console]::CursorTop
+        $saveCursorCol = [Console]::CursorLeft
+
         for ($frame = 0; $frame -lt 3; $frame++) {
             Start-Sleep -Seconds 1
-            # Move cursor up to overwrite the banner
-            Write-Host "$([char]27)[${bannerLineCount}A" -NoNewline
-            # Re-render (Write-LogoSeg randomizes stars differently each time)
-            Write-WhizbangBanner -Animate $false
+            foreach ($pos in $script:BgPositions) {
+                $absRow = $script:BannerStartRow + $pos.Row
+                $absCol = $pos.Col
+                # Move cursor to this position
+                [Console]::SetCursorPosition($absCol, $absRow)
+                # Randomly place a star or clear to background
+                if ((Get-Random -Minimum 0 -Maximum 12) -eq 0) {
+                    $brightness = Get-Random -Minimum 220 -Maximum 255
+                    $starCh = $script:StarChars[(Get-Random -Minimum 0 -Maximum $script:StarChars.Count)]
+                    Write-Host "${script:BgColor}${script:Esc}[38;2;${brightness};$($brightness + 5);$($brightness + 10)m${starCh}${script:Reset}" -NoNewline
+                } else {
+                    Write-Host "${script:BgColor}${script:Esc}[38;2;45;55;72m ${script:Reset}" -NoNewline
+                }
+            }
         }
+
+        # Restore cursor to after the banner
+        [Console]::SetCursorPosition($saveCursorCol, $saveCursorRow)
     }
 }
 
