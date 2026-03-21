@@ -370,8 +370,7 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $noBuildFlag = if ($SkipBuild) { @() } else { @("-NoBuild") }
-            $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json @noBuildFlag -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
+            $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
             $exitCode = $LASTEXITCODE
 
             if ($exitCode -ne 0) {
