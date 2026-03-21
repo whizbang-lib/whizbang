@@ -220,10 +220,8 @@ function Write-WhizbangBanner {
     Write-Host ""
 
     # Start async star twinkle animation in a background runspace.
-    # Uses ANSI save/restore cursor + relative movement to avoid scroll issues.
+    # Uses absolute buffer row positions — works as long as banner hasn't scrolled off.
     if ($Animate) {
-        $bannerHeight = $bannerEndRow - $bannerStartRow
-
         $script:TwinkleRunspace = [runspacefactory]::CreateRunspace()
         $script:TwinkleRunspace.Open()
 
@@ -233,28 +231,25 @@ function Write-WhizbangBanner {
             `$bg = "`$esc[48;2;45;55;72m"
             `$reset = "`$esc[0m"
             `$starChars = @('.', '·', '∙', '*', '⋅', '✦')
-            `$bannerHeight = $bannerHeight
+            `$startRow = $bannerStartRow
+            `$endRow = $bannerEndRow
             `$random = [System.Random]::new()
 
             for (`$frame = 0; `$frame -lt 5; `$frame++) {
                 Start-Sleep -Seconds 1
 
-                # Calculate how far above current cursor the banner is
-                `$currentRow = [Console]::CursorTop
-                `$bannerTopNow = `$currentRow - `$bannerHeight - 1  # -1 for the blank line after banner
-
-                # If banner has scrolled too far up, stop animating
-                if (`$bannerTopNow -lt 0) { break }
+                # If banner has scrolled off the top of the buffer, stop
+                if (`$startRow -lt ([Console]::CursorTop - [Console]::WindowHeight)) { break }
 
                 for (`$i = 0; `$i -lt 25; `$i++) {
-                    `$targetRow = `$random.Next(`$bannerTopNow, `$bannerTopNow + `$bannerHeight)
-                    `$targetCol = `$random.Next(0, [Math]::Min(86, [Console]::BufferWidth))
+                    `$row = `$random.Next(`$startRow, `$endRow)
+                    `$col = `$random.Next(0, [Math]::Min(86, [Console]::BufferWidth))
 
                     try {
                         `$savedTop = [Console]::CursorTop
                         `$savedLeft = [Console]::CursorLeft
 
-                        [Console]::SetCursorPosition(`$targetCol, `$targetRow)
+                        [Console]::SetCursorPosition(`$col, `$row)
 
                         if (`$random.Next(3) -eq 0) {
                             `$b = `$random.Next(220, 256)
