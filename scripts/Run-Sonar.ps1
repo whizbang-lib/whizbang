@@ -71,7 +71,11 @@ param(
 
     [switch]$FailFast,
 
-    [switch]$NoHeader  # Suppress the branded header (used when called from Run-PR.ps1)
+    [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
+
+    [switch]$CleanLogs,     # Remove log files and coverage reports before running
+    [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
+    [switch]$CleanAll       # Remove all logs, metrics, and reports before running
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,6 +85,16 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 $useAiOutput = $Mode -eq "Ai"
+
+# Handle cleanup flags
+$sonarRepoRoot = Split-Path -Parent $PSScriptRoot
+if ($CleanAll) {
+    Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
+    Invoke-CleanAll -RepoRoot $sonarRepoRoot
+} elseif ($CleanLogs -or $CleanMetrics) {
+    if ($CleanLogs) { Invoke-CleanLogs -RepoRoot $sonarRepoRoot }
+    if ($CleanMetrics) { Invoke-CleanMetrics -RepoRoot $sonarRepoRoot }
+}
 
 # Indentation: when called as child from Run-PR.ps1, indent all output
 if ($NoHeader) {

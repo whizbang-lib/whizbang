@@ -109,7 +109,11 @@ param(
 
     [int]$PollInterval = 30,
 
-    [switch]$NoHeader  # Suppress the branded header
+    [switch]$NoHeader,  # Suppress the branded header
+
+    [switch]$CleanLogs,     # Remove log files and coverage reports before running
+    [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
+    [switch]$CleanAll       # Remove all logs, metrics, and reports before running
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,6 +124,23 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 $useAiOutput = $Mode -eq "Ai"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+# Handle cleanup flags before anything else
+if ($CleanAll) {
+    Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
+    Invoke-CleanAll -RepoRoot $repoRoot
+    Write-Host ""
+} elseif ($CleanLogs -or $CleanMetrics) {
+    if ($CleanLogs) {
+        Write-Host "Cleaning logs and reports..." -ForegroundColor Yellow
+        Invoke-CleanLogs -RepoRoot $repoRoot
+    }
+    if ($CleanMetrics) {
+        Write-Host "Cleaning metrics..." -ForegroundColor Yellow
+        Invoke-CleanMetrics -RepoRoot $repoRoot
+    }
+    Write-Host ""
+}
 
 # Auto-generate a timestamped log file for this run (captures ALL output including child scripts)
 $logsDir = Join-Path $repoRoot "logs"
