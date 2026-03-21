@@ -245,7 +245,7 @@ function Invoke-Prepare {
         $entries = @(Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
             Where-Object { $_.Trim() } |
             ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
-            Where-Object { $_ -ne $null -and $_.steps })
+            Where-Object { $_ -ne $null -and $_.steps -and ($_.v -eq 1 -or -not $_.v) })
         if ($entries.Count -ge 1) {
             $stepDurations = @{}
             foreach ($entry in $entries) {
