@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.AutoPopulate;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -366,43 +367,49 @@ public partial class WorkCoordinatorPublisherWorker(
         // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
         // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
         // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-            var lifecycleContext = new LifecycleExecutionContext {
-              CurrentStage = LifecycleStage.PreOutboxAsync,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = MessageSource.Outbox,
-              AttemptNumber = work.Attempts
-            };
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+        ILifecycleTracking? outboxTracking = null;
+        IMessageEnvelope? outboxTypedEnvelope = null;
+        var coordinator = lifecycleScope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
-            // ImmediateAsync lifecycle receptors fire at the end of each stage
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-          }
-        }
+        if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+          outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
 
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-            var lifecycleContext = new LifecycleExecutionContext {
-              CurrentStage = LifecycleStage.PreOutboxInline,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
-              MessageSource = MessageSource.Outbox,
-              AttemptNumber = work.Attempts
-            };
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+          if (coordinator is not null) {
+            var eventId = work.MessageId;
+            outboxTracking = coordinator.BeginTracking(
+              eventId, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
 
-            // ImmediateAsync lifecycle receptors fire at the end of each stage
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
+            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+              await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, lifecycleScope.ServiceProvider, stoppingToken);
+            }
+
+            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+              await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, lifecycleScope.ServiceProvider, stoppingToken);
+            }
+          } else {
+            // Fallback: direct invocation when coordinator not registered
+            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+              var lifecycleContext = new LifecycleExecutionContext {
+                CurrentStage = LifecycleStage.PreOutboxAsync,
+                MessageSource = MessageSource.Outbox,
+                AttemptNumber = work.Attempts
+              };
+              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
+                lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
+            }
+
+            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PreOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+              var lifecycleContext = new LifecycleExecutionContext {
+                CurrentStage = LifecycleStage.PreOutboxInline,
+                MessageSource = MessageSource.Outbox,
+                AttemptNumber = work.Attempts
+              };
+              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
+                lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
+            }
           }
         }
 
@@ -443,49 +450,38 @@ public partial class WorkCoordinatorPublisherWorker(
         // PostOutbox lifecycle stages (after publishing to transport)
         // ALL receptors registered at PostOutbox stages fire here
         // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
-        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-            // Reconstruct envelope with deserialized payload to preserve security context
-            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+        if (outboxTracking is not null && coordinator is not null) {
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+            await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, lifecycleScope.ServiceProvider, stoppingToken);
+          }
 
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+            await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, lifecycleScope.ServiceProvider, stoppingToken);
+          }
+
+          // EXIT: event sent to transport
+          coordinator.AbandonTracking(work.MessageId);
+        } else if (outboxTypedEnvelope is not null && receptorInvoker is not null) {
+          // Fallback: direct invocation
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
             var lifecycleContext = new LifecycleExecutionContext {
               CurrentStage = LifecycleStage.PostOutboxAsync,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
               MessageSource = MessageSource.Outbox,
               AttemptNumber = work.Attempts
             };
-
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-
-            // ImmediateAsync lifecycle receptors fire at the end of each stage
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
               lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
-        }
 
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-            // Reconstruct envelope with deserialized payload to preserve security context
-            var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostOutboxInline", ActivityKind.Internal, parentContext: traceContext) : null) {
             var lifecycleContext = new LifecycleExecutionContext {
               CurrentStage = LifecycleStage.PostOutboxInline,
-              EventId = null,
-              StreamId = null,
-              LastProcessedEventId = null,
               MessageSource = MessageSource.Outbox,
               AttemptNumber = work.Attempts
             };
-
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-
-            // ImmediateAsync lifecycle receptors fire at the end of each stage
-            await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
               lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
           }
         }

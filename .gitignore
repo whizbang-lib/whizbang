@@ -435,3 +435,4 @@ coverage_files.txt
 .sonarqube-local.token
 .sonarqube/
 .mcp.json
+coverage-report/
