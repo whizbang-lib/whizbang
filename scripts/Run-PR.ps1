@@ -107,7 +107,9 @@ param(
 
     [switch]$Draft,
 
-    [int]$PollInterval = 30
+    [int]$PollInterval = 30,
+
+    [switch]$NoHeader  # Suppress the branded header
 )
 
 $ErrorActionPreference = "Stop"
@@ -136,10 +138,12 @@ $historyFile = Join-Path $repoRoot "logs" "pr-checks.jsonl"
 $estimate = Get-RunEstimate -FilePath $historyFile
 $estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
-# Branded header
-$headerParams = @{ Action = $Action; Mode = $Mode; Branch = $currentBranch }
-if ($CoverageThreshold -ne 80) { $headerParams["CoverageThreshold"] = "${CoverageThreshold}%" }
-Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
+# Branded header (suppressed with -NoHeader)
+if (-not $NoHeader) {
+    $headerParams = @{ Action = $Action; Mode = $Mode; Branch = $currentBranch }
+    if ($CoverageThreshold -ne 80) { $headerParams["CoverageThreshold"] = "${CoverageThreshold}%" }
+    Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
+}
 
 # ============================================================================
 # Gitflow Detection
