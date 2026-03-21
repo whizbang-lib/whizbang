@@ -95,9 +95,12 @@ param(
 
     [int]$CoverageThreshold = 80,
 
-    [switch]$SkipSonar,
-
-    [switch]$SkipIntegration,
+    [switch]$SkipFormat,       # Skip format check
+    [switch]$SkipBuild,        # Skip build step
+    [switch]$SkipUnitTests,    # Skip unit tests + coverage
+    [switch]$SkipIntegration,  # Skip integration tests
+    [switch]$SkipSonar,        # Skip SonarQube analysis
+    [switch]$SkipCoverage,     # Skip coverage threshold check
 
     [int]$PrNumber = 0,
 
@@ -220,10 +223,14 @@ function Invoke-Prepare {
     $script:stepNumber = 0
 
     # Calculate total steps (dynamic based on flags)
-    $script:totalSteps = 3  # Format, Build, Unit Tests
+    $script:totalSteps = 0
+    if (-not $SkipFormat) { $script:totalSteps++ }
+    if (-not $SkipBuild) { $script:totalSteps++ }
+    if (-not $SkipUnitTests) { $script:totalSteps++ }
     if (-not $SkipIntegration) { $script:totalSteps++ }
     if (-not $SkipSonar) { $script:totalSteps++ }
-    $script:totalSteps++  # Coverage threshold
+    if (-not $SkipCoverage) { $script:totalSteps++ }
+    if ($script:totalSteps -eq 0) { $script:totalSteps = 1 }  # avoid div by zero
 
     # Load per-step estimates from history
     $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
@@ -325,63 +332,70 @@ function Invoke-Prepare {
     Write-Host ""
 
     # Step 1: Format check (with AutoFix support)
-    $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
-        Push-Location $repoRoot
-        try {
-            dotnet format --verify-no-changes 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0 -and $AutoFix) {
-                Write-Host ""
-                Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
-                dotnet format 2>&1 | Out-Null
-                Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
+    if (-not $SkipFormat) {
+        $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
+            Push-Location $repoRoot
+            try {
                 dotnet format --verify-no-changes 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0 -and $AutoFix) {
+                    Write-Host ""
+                    Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
+                    dotnet format 2>&1 | Out-Null
+                    Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
+                    dotnet format --verify-no-changes 2>&1 | Out-Null
+                }
+                @{ ExitCode = $LASTEXITCODE; Details = $null }
             }
-            @{ ExitCode = $LASTEXITCODE; Details = $null }
+            finally { Pop-Location }
         }
-        finally { Pop-Location }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 2: Build
-    $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
-        Push-Location $repoRoot
-        try {
-            dotnet build --verbosity minimal 2>&1 | Out-Null
-            @{ ExitCode = $LASTEXITCODE; Details = $null }
+    if (-not $SkipBuild) {
+        $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
+            Push-Location $repoRoot
+            try {
+                dotnet build --verbosity minimal 2>&1 | Out-Null
+                @{ ExitCode = $LASTEXITCODE; Details = $null }
+            }
+            finally { Pop-Location }
         }
-        finally { Pop-Location }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 3: Unit tests + coverage
     $coveragePct = $null
-    $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
-    $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
-        $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-        $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
-        $exitCode = $LASTEXITCODE
+    if (-not $SkipUnitTests) {
+        $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
+        $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
+            $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
+            $noBuildFlag = if ($SkipBuild) { @() } else { @("-NoBuild") }
+            $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json @noBuildFlag -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
+            $exitCode = $LASTEXITCODE
 
-        if ($exitCode -ne 0) {
-            Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
-        }
+            if ($exitCode -ne 0) {
+                Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
+            }
 
-        # Parse JSON output for coverage
-        $details = $null
-        try {
-            $jsonStart = $testOutput.IndexOf("{")
-            if ($jsonStart -ge 0) {
-                $jsonStr = $testOutput.Substring($jsonStart)
-                $details = $jsonStr | ConvertFrom-Json
-                if ($details.coverage_pct) {
-                    $script:coveragePct = $details.coverage_pct
+            # Parse JSON output for coverage
+            $details = $null
+            try {
+                $jsonStart = $testOutput.IndexOf("{")
+                if ($jsonStart -ge 0) {
+                    $jsonStr = $testOutput.Substring($jsonStart)
+                    $details = $jsonStr | ConvertFrom-Json
+                    if ($details.coverage_pct) {
+                        $script:coveragePct = $details.coverage_pct
+                    }
                 }
             }
-        }
-        catch { }
+            catch { }
 
-        @{ ExitCode = $exitCode; Details = $details }
+            @{ ExitCode = $exitCode; Details = $details }
+        }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 4: Integration tests (unless skipped)
     if (-not $SkipIntegration) {
@@ -409,17 +423,19 @@ function Invoke-Prepare {
     }
 
     # Step 6: Coverage threshold
-    $script:stepNumber++
-    Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
-    if ($null -ne $coveragePct) {
-        if ($coveragePct -lt $CoverageThreshold) {
-            Write-Host "  ▶ Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}%" -ForegroundColor Red
-            $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
-            $script:overallPassed = $false
-        }
-        else {
-            Write-Host "  ▶ Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}%" -ForegroundColor Green
-            $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
+    if (-not $SkipCoverage) {
+        $script:stepNumber++
+        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
+        if ($null -ne $coveragePct) {
+            if ($coveragePct -lt $CoverageThreshold) {
+                Write-Host "  ▶ Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}%" -ForegroundColor Red
+                $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
+                $script:overallPassed = $false
+            }
+            else {
+                Write-Host "  ▶ Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}%" -ForegroundColor Green
+                $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
+            }
         }
     }
 
