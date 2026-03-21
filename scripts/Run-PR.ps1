@@ -242,10 +242,10 @@ function Invoke-Prepare {
     $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
     $script:stepStats = @{}  # name -> { Avg, StdDev, P85, Count }
     if (Test-Path $stepHistoryFile) {
-        $entries = Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
+        $entries = @(Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
             Where-Object { $_.Trim() } |
             ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
-            Where-Object { $_ -ne $null -and $_.steps }
+            Where-Object { $_ -ne $null -and $_.steps })
         if ($entries.Count -ge 1) {
             $stepDurations = @{}
             foreach ($entry in $entries) {
@@ -257,11 +257,11 @@ function Invoke-Prepare {
                 }
             }
             foreach ($name in $stepDurations.Keys) {
-                $durations = $stepDurations[$name] | Sort-Object
+                $durations = @($stepDurations[$name] | Sort-Object)
                 $avg = ($durations | Measure-Object -Average).Average
                 $sumSq = ($durations | ForEach-Object { [Math]::Pow($_ - $avg, 2) } | Measure-Object -Sum).Sum
-                $stddev = [Math]::Sqrt($sumSq / $durations.Count)
-                $p85Index = [Math]::Ceiling($durations.Count * 0.85) - 1
+                $stddev = if ($durations.Count -gt 0) { [Math]::Sqrt($sumSq / $durations.Count) } else { 0 }
+                $p85Index = [Math]::Max(0, [Math]::Ceiling($durations.Count * 0.85) - 1)
                 $p85 = $durations[[Math]::Min($p85Index, $durations.Count - 1)]
                 $script:stepStats[$name] = @{
                     Avg    = [math]::Round($avg, 1)
