@@ -237,16 +237,15 @@ function Invoke-Prepare {
     if (-not $SkipCoverage) { $script:totalSteps++ }
     if ($script:totalSteps -eq 0) { $script:totalSteps = 1 }  # avoid div by zero
 
-    # Load per-step estimates from history
+    # Load per-step estimates from history (full stats: avg, stddev, p85)
     $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
-    $script:stepEstimates = @{}
+    $script:stepStats = @{}  # name -> { Avg, StdDev, P85, Count }
     if (Test-Path $stepHistoryFile) {
         $entries = Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
             Where-Object { $_.Trim() } |
             ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
             Where-Object { $_ -ne $null -and $_.steps }
-        if ($entries.Count -ge 2) {
-            # Average durations per step name across all runs
+        if ($entries.Count -ge 1) {
             $stepDurations = @{}
             foreach ($entry in $entries) {
                 foreach ($step in $entry.steps) {
@@ -257,9 +256,29 @@ function Invoke-Prepare {
                 }
             }
             foreach ($name in $stepDurations.Keys) {
-                $avg = ($stepDurations[$name] | Measure-Object -Average).Average
-                $script:stepEstimates[$name] = [math]::Round($avg)
+                $durations = $stepDurations[$name] | Sort-Object
+                $avg = ($durations | Measure-Object -Average).Average
+                $sumSq = ($durations | ForEach-Object { [Math]::Pow($_ - $avg, 2) } | Measure-Object -Sum).Sum
+                $stddev = [Math]::Sqrt($sumSq / $durations.Count)
+                $p85Index = [Math]::Ceiling($durations.Count * 0.85) - 1
+                $p85 = $durations[[Math]::Min($p85Index, $durations.Count - 1)]
+                $script:stepStats[$name] = @{
+                    Avg    = [math]::Round($avg, 1)
+                    StdDev = [math]::Round($stddev, 1)
+                    P85    = [math]::Round($p85, 1)
+                    Count  = $durations.Count
+                }
             }
+        }
+    }
+
+    function Format-StepTiming {
+        param([string]$StepName)
+        if ($script:stepStats.ContainsKey($StepName)) {
+            $s = $script:stepStats[$StepName]
+            return "(Timing | est:$(Format-Duration -Seconds $s.P85) | avg:$(Format-Duration -Seconds $s.Avg) | std dev:$(Format-Duration -Seconds $s.StdDev) | 85th%:$(Format-Duration -Seconds $s.P85))"
+        } else {
+            return "(Timing | no historical data yet)"
         }
     }
 
@@ -274,19 +293,15 @@ function Invoke-Prepare {
         $script:stepNumber++
         $pct = [math]::Round(($script:stepNumber / $script:totalSteps) * 100)
 
-        # Build status with estimate
-        $estStr = ""
-        if ($script:stepEstimates.ContainsKey($Name)) {
-            $estStr = " (~$(Format-Duration -Seconds $script:stepEstimates[$Name]) est.)"
-        }
+        $timingStr = Format-StepTiming -StepName $Name
 
-        # Calculate total estimated time from all step estimates
+        # Calculate total estimated time from all step P85 estimates
         $totalEstSec = 0
-        foreach ($v in $script:stepEstimates.Values) { $totalEstSec += $v }
+        foreach ($s in $script:stepStats.Values) { $totalEstSec += $s.P85 }
         $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
 
         # Update step-based progress bar
-        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): $Name$estStr" -PercentComplete $pct
+        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): $Name" -PercentComplete $pct
 
         # Update time-based progress bar (only if we have estimates)
         if ($totalEstSec -gt 0) {
@@ -296,7 +311,7 @@ function Invoke-Prepare {
         }
 
         $stepStart = [DateTime]::UtcNow
-        $stepLabel = "  ▶ [$($script:stepNumber)/$($script:totalSteps)] $Name...$estStr"
+        $stepLabel = "  ▶ [$($script:stepNumber)/$($script:totalSteps)] $Name... $timingStr"
         if ($ShowOutput) {
             Write-Host $stepLabel -ForegroundColor Cyan
         } else {
@@ -340,7 +355,7 @@ function Invoke-Prepare {
     # Step 1: Format check (with AutoFix support)
     if ($SkipFormat) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Format Check... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Format Check... ⏭️ Skipped $(Format-StepTiming 'Format Check')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Format Check"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
@@ -364,7 +379,7 @@ function Invoke-Prepare {
     # Step 2: Build
     if ($SkipBuild) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped $(Format-StepTiming 'Build')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Build"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
@@ -382,7 +397,7 @@ function Invoke-Prepare {
     $coveragePct = $null
     if ($SkipUnitTests) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests + Coverage... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests + Coverage... ⏭️ Skipped $(Format-StepTiming 'Unit Tests + Coverage')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Unit Tests + Coverage"; status = "skipped"; duration_s = 0 }
     } else {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
@@ -417,7 +432,7 @@ function Invoke-Prepare {
     # Step 4: Integration tests (unless skipped)
     if ($SkipIntegration) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped $(Format-StepTiming 'Integration Tests')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Integration Tests"; status = "skipped"; duration_s = 0 }
     } else {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
@@ -436,7 +451,7 @@ function Invoke-Prepare {
     # Step 5: Sonar (unless skipped)
     if ($SkipSonar) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Analysis... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Analysis... ⏭️ Skipped $(Format-StepTiming 'SonarQube Analysis')" -ForegroundColor DarkGray
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "SonarCloud Analysis" -FailureType "SonarFailure" -Action {
@@ -450,19 +465,20 @@ function Invoke-Prepare {
     # Step 6: Coverage threshold
     if ($SkipCoverage) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped" -ForegroundColor DarkGray
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped $(Format-StepTiming 'Coverage Threshold')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Coverage Threshold"; status = "skipped"; duration_s = 0 }
     } else {
         $script:stepNumber++
+        $covTimingStr = Format-StepTiming -StepName "Coverage Threshold"
         Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
         if ($null -ne $coveragePct) {
             if ($coveragePct -lt $CoverageThreshold) {
-                Write-Host "  ▶ Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}%" -ForegroundColor Red
+                Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
                 $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
                 $script:overallPassed = $false
             }
             else {
-                Write-Host "  ▶ Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}%" -ForegroundColor Green
+                Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
                 $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
             }
         }
