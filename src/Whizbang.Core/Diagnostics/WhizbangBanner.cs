@@ -211,6 +211,62 @@ public static partial class WhizbangBanner {
   }
 
   /// <summary>
+  /// Prints the full branded header: ASCII art banner + config box.
+  /// For CLI tools, pass the tool name and version. For services, pass the service name
+  /// and optionally the Whizbang library version.
+  /// </summary>
+  /// <param name="name">Display name (e.g., "PR Runner", "OrderService", "whizbang-migrate").</param>
+  /// <param name="version">Version string (e.g., "1.0.0"). If null, reads from the calling assembly.</param>
+  /// <param name="parameters">Key-value pairs to display (e.g., Mode, Action, Branch).</param>
+  /// <param name="whizbangVersion">Whizbang library version. If null, reads from Whizbang.Core assembly. Shown for services.</param>
+  /// <param name="enabled">When false, nothing is printed.</param>
+  public static void PrintHeader(
+      string name,
+      string? version = null,
+      IDictionary<string, string>? parameters = null,
+      string? whizbangVersion = null,
+      bool enabled = true) {
+    if (!enabled) {
+      return;
+    }
+
+    // Auto-detect versions if not provided
+    version ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+    whizbangVersion ??= typeof(WhizbangBanner).Assembly.GetName().Version?.ToString(3);
+
+    // Print the ASCII art banner first
+    Print();
+
+    // Build config line
+    var configParts = new List<string>();
+    if (parameters != null) {
+      foreach (var kvp in parameters.OrderBy(k => k.Key)) {
+        configParts.Add($"{kvp.Key}: {kvp.Value}");
+      }
+    }
+
+    var configLine = string.Join(" | ", configParts);
+
+    // Fixed width matching the logo banner
+    const int BANNER_WIDTH = 84;
+    var innerWidth = BANNER_WIDTH - 4;
+
+    var titleLine = whizbangVersion != null
+        ? $"  {name} v{version} (Whizbang v{whizbangVersion})"
+        : $"  {name} v{version}";
+
+    Console.WriteLine($"  ╔{new string('═', innerWidth)}╗");
+    Console.WriteLine($"  ║{titleLine.PadRight(innerWidth)}║");
+
+    if (!string.IsNullOrEmpty(configLine)) {
+      Console.WriteLine($"  ║{"  " + configLine.PadRight(innerWidth - 2)}║");
+    }
+
+    Console.WriteLine($"  ╚{new string('═', innerWidth)}╝");
+    Console.WriteLine();
+  }
+
+  /// <summary>
   /// Logs the Whizbang banner with full ANSI true-color via ILogger.
   /// Use with Serilog console sink or other terminal-aware sinks that preserve ANSI codes.
   /// </summary>

@@ -14,8 +14,8 @@ public static class Program {
   /// Main entry point.
   /// </summary>
   public static async Task<int> Main(string[] args) {
-    // Show branded banner
-    WhizbangBanner.Print();
+    // Show branded banner with tool info
+    WhizbangBanner.PrintHeader("Whizbang Migrate");
 
     var rootCommand = new RootCommand("Migration tool for converting Marten/Wolverine projects to Whizbang");
 

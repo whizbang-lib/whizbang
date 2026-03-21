@@ -247,11 +247,10 @@ function Write-WhizbangHeader {
     }
     $configLine = $configParts -join " | "
 
-    # Calculate box width (minimum 56, expand for long content)
+    # Calculate box width to match the logo banner width (~86 chars)
     $titleLine = "  $ScriptName v$Version"
-    $maxContentWidth = @($titleLine.Length, $configLine.Length + 4, 56) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-    $boxWidth = [Math]::Min($maxContentWidth + 2, 80)
-    $innerWidth = $boxWidth - 2
+    $bannerWidth = 84
+    $innerWidth = $bannerWidth - 4  # account for "  ╔" and "╗" borders
 
     # Print config box
     Write-Host "  ╔$("═" * $innerWidth)╗" -ForegroundColor Cyan

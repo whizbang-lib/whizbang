@@ -7,8 +7,8 @@ using Whizbang.Migrate.Commands;
 
 const string version = "0.1.0";
 
-// Show branded banner
-WhizbangBanner.Print();
+// Show branded banner with tool info
+WhizbangBanner.PrintHeader("Whizbang CLI", version);
 
 // Parse command-line arguments
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h") {
