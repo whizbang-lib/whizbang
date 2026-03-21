@@ -244,5 +244,56 @@ public class ReceptorInvokerTagProcessorScopeTests {
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
   }
 
+  /// <summary>
+  /// Verifies that tags fire even when no receptors are registered at a stage.
+  /// This is the core fix: ProcessTagsAsync must run regardless of receptor count.
+  /// </summary>
+  [Test]
+  public async Task InvokeAsync_NoReceptorsAtStage_StillFiresTagProcessorAsync() {
+    // Arrange
+    LifecycleStage? capturedStage = null;
+    var stageCapturingTagProcessor = new StageCapturingTagProcessor(onProcessTags: (stage) => {
+      capturedStage = stage;
+    });
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IMessageTagProcessor>(stageCapturingTagProcessor);
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    using var scope = provider.CreateScope();
+
+    var tracker = new InvocationTracker();
+    var registry = new TestReceptorRegistry(tracker);
+    // NO receptors registered at PostPerspectiveInline — intentionally empty
+
+    var invoker = new ReceptorInvoker(registry, scope.ServiceProvider, null);
+    var message = new TestCommand("test");
+
+    // Act
+    await invoker.InvokeAsync(_createEnvelope(message), LifecycleStage.PostPerspectiveInline);
+
+    // Assert - Tag processor should still be called even without receptors
+    await Assert.That(capturedStage).IsNotNull()
+      .Because("ProcessTagsAsync should fire even when no receptors are registered at the stage");
+    await Assert.That(capturedStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+  }
+
+  /// <summary>
+  /// Test tag processor that captures the stage passed to ProcessTagsAsync.
+  /// </summary>
+  private sealed class StageCapturingTagProcessor(System.Action<LifecycleStage>? onProcessTags = null) : IMessageTagProcessor {
+    private readonly System.Action<LifecycleStage>? _onProcessTags = onProcessTags;
+
+    public ValueTask ProcessTagsAsync(
+        object message,
+        Type messageType,
+        LifecycleStage stage,
+        IScopeContext? scope = null,
+        CancellationToken ct = default) {
+      _onProcessTags?.Invoke(stage);
+      return ValueTask.CompletedTask;
+    }
+  }
+
   #endregion
 }
