@@ -362,7 +362,7 @@ if ($OutputFormat -ne "Json") {
     Write-Host "  Dashboard: $SonarHostUrl/dashboard?id=$ProjectKey" -ForegroundColor DarkCyan
     Write-Host ""
 
-    if ($hasErrors) {
+    if ($hasErrors -and -not $NoHeader) {
         Write-AiInstructions -Type SonarFailure
     }
 }
