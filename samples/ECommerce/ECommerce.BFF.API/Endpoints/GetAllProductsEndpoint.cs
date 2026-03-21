@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints;
 /// Get all non-deleted products
 /// </summary>
 public class GetAllProductsEndpoint(IProductCatalogLens lens) : EndpointWithoutRequest<List<ProductDto>> {
-  private readonly IProductCatalogLens _lens = lens;
 
   public override void Configure() {
     Get("/products");
@@ -16,7 +15,7 @@ public class GetAllProductsEndpoint(IProductCatalogLens lens) : EndpointWithoutR
   }
 
   public override async Task HandleAsync(CancellationToken ct) {
-    var products = await _lens.GetAllAsync(includeDeleted: false, ct);
+    var products = await lens.GetAllAsync(includeDeleted: false, ct);
     Response = [.. products];
   }
 }
