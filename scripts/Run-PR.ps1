@@ -121,7 +121,17 @@ Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 $useAiOutput = $Mode -eq "Ai"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
-# Initialize tee logging
+# Auto-generate a timestamped log file for this run (captures ALL output including child scripts)
+$logsDir = Join-Path $repoRoot "logs"
+if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Path $logsDir -Force | Out-Null }
+$runTimestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$autoLogFile = Join-Path $logsDir "pr-run-${runTimestamp}.log"
+$effectiveLogFile = if ($LogFile) { $LogFile } else { $autoLogFile }
+
+# Start transcript to capture all console output (including child scripts)
+Start-Transcript -Path $effectiveLogFile -Force | Out-Null
+
+# Initialize tee logging for structured dual-output if needed
 if ($LogFile) {
     $effectiveLogMode = if ($LogMode) { $LogMode } else { $Mode }
     Initialize-TeeLogging -LogFile $LogFile -ConsoleMode $Mode -LogMode $effectiveLogMode
@@ -143,6 +153,8 @@ if (-not $NoHeader) {
     $headerParams = @{ Action = $Action; Mode = $Mode; Branch = $currentBranch }
     if ($CoverageThreshold -ne 80) { $headerParams["CoverageThreshold"] = "${CoverageThreshold}%" }
     Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
+    Write-Host "  Log: $effectiveLogFile" -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 # ============================================================================
@@ -698,6 +710,9 @@ finally {
 
     # Stop tee logging
     if ($LogFile) { Stop-TeeLogging }
+
+    # Stop transcript
+    Stop-Transcript | Out-Null
 }
 
 # JSON output
