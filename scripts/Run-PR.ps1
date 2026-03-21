@@ -182,7 +182,8 @@ if (-not $NoHeader) {
     $headerParams = @{ Action = $Action; Mode = $Mode; Branch = $currentBranch }
     if ($CoverageThreshold -ne 80) { $headerParams["CoverageThreshold"] = "${CoverageThreshold}%" }
     Write-WhizbangHeader -ScriptName "PR Runner" -Params $headerParams -Estimate $estimateStr
-    Write-Host "  Log: $effectiveLogFile" -ForegroundColor DarkGray
+    Write-AiLine "Lines marked with 🤖 require AI attention. Filter with: grep '🤖'" -ForegroundColor DarkGray
+    Write-AiLine "Log: $effectiveLogFile" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -325,7 +326,7 @@ function Invoke-Prepare {
 
             if ($result.ExitCode -ne 0) {
                 $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
-                Write-Host "$prefix ❌ Failed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
+                Write-AiLine "$prefix ❌ Failed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
                 $script:steps += @{ name = $Name; status = "failed"; duration_s = [math]::Round($stepDuration, 1); details = $result.Details }
                 $script:overallPassed = $false
                 Write-AiInstructions -Type $FailureType
@@ -333,7 +334,7 @@ function Invoke-Prepare {
             }
             else {
                 $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
-                Write-Host "$prefix ✅ Passed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Green
+                Write-AiLine "$prefix ✅ Passed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Green
                 $script:steps += @{ name = $Name; status = "passed"; duration_s = [math]::Round($stepDuration, 1); details = $result.Details }
                 return $true
             }
@@ -341,8 +342,8 @@ function Invoke-Prepare {
         catch {
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
             $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
-            Write-Host "$prefix ❌ Error ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
-            Write-Host "    $_" -ForegroundColor Red
+            Write-AiLine "$prefix ❌ Error ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
+            Write-AiLine "    $_" -ForegroundColor Red
             $script:steps += @{ name = $Name; status = "error"; duration_s = [math]::Round($stepDuration, 1); details = $_.ToString() }
             $script:overallPassed = $false
             return $false
@@ -407,7 +408,7 @@ function Invoke-Prepare {
             & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
-                Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
+                Write-AiLine "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
             }
             @{ ExitCode = $exitCode; Details = $null }
         }
@@ -426,7 +427,7 @@ function Invoke-Prepare {
             & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
-                Write-Host "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
+                Write-AiLine "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
             }
             @{ ExitCode = $exitCode; Details = $null }
         }
@@ -473,7 +474,7 @@ function Invoke-Prepare {
                     $totalCovered = 0; $totalLines = 0
                     if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
                     if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
-                    Write-Host "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
+                    Write-AiLine "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
                     Write-Host "    HTML report: $(Join-Path $reportDir 'index.html')" -ForegroundColor DarkCyan
                     Write-Host "    SonarQube report: $(Join-Path $sonarDir 'SonarQube.xml')" -ForegroundColor DarkGray
                 }
@@ -496,12 +497,12 @@ function Invoke-Prepare {
         Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
         if ($null -ne $coveragePct) {
             if ($coveragePct -lt $CoverageThreshold) {
-                Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}% $covTimingStr" -ForegroundColor Red
                 $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
                 $script:overallPassed = $false
             }
             else {
-                Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
+                Write-AiLine "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}% $covTimingStr" -ForegroundColor Green
                 $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
             }
         }
