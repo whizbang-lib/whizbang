@@ -285,6 +285,8 @@ param(
 
     [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
 
+    [switch]$NoReport,  # Skip coverage report generation (used when Run-PR handles it)
+
     [switch]$CleanLogs,     # Remove log files and coverage reports before running
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
     [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
@@ -878,37 +880,36 @@ try {
         }
         Write-Host ""
 
-        # Generate coverage report
-        Write-Host ""
-        Write-Host "Generating coverage report..." -ForegroundColor Cyan
+        # Generate coverage report (skipped when Run-PR handles it separately)
+        if (-not $NoReport) {
+            Write-Host ""
+            Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
-        # Auto-install reportgenerator: try local manifest first, fall back to global
-        $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        if (-not $rgInstalled -and -not $rgLocal) {
-            Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
-            dotnet tool restore 2>&1 | Out-Null
+            # Auto-install reportgenerator: try local manifest first, fall back to global
+            $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
             $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-            if (-not $rgLocal) {
-                dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+            if (-not $rgInstalled -and -not $rgLocal) {
+                Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+                dotnet tool restore 2>&1 | Out-Null
+                $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+                if (-not $rgLocal) {
+                    dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+                }
             }
-        }
 
-        # Find all cobertura XML files from test output
-        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+            # Find all cobertura XML files from test output
+            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
 
-        if ($coberturaFiles.Count -gt 0) {
-            $reportDir = Join-Path $repoRoot "coverage-report"
-            $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-
-            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
-            $coveragePct = $coverageResult.CoveragePct
-            $totalLines = $coverageResult.TotalLines
-            $totalCovered = $coverageResult.TotalCovered
-            $htmlReport = $coverageResult.HtmlReport
-        } else {
-            Write-Host "No cobertura XML files found." -ForegroundColor Yellow
+            if ($coberturaFiles.Count -gt 0) {
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+                $coveragePct = $coverageResult.CoveragePct
+                $totalLines = $coverageResult.TotalLines
+                $totalCovered = $coverageResult.TotalCovered
+                $htmlReport = $coverageResult.HtmlReport
+            } else {
+                Write-Host "No cobertura XML files found." -ForegroundColor Yellow
+            }
         }
 
         Write-Host ""
@@ -2014,8 +2015,8 @@ try {
         $hasErrors = $LASTEXITCODE -ne 0
     }
 
-    # --- Coverage Report Generation ---
-    if ($Coverage) {
+    # --- Coverage Report Generation (skipped when Run-PR handles it separately) ---
+    if ($Coverage -and -not $NoReport) {
         Write-Host ""
         Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
@@ -2036,9 +2037,6 @@ try {
             Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
 
         if ($coberturaFiles.Count -gt 0) {
-            $reportDir = Join-Path $repoRoot "coverage-report"
-            $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-
             $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
             $coveragePct = $coverageResult.CoveragePct
             $totalLines = $coverageResult.TotalLines

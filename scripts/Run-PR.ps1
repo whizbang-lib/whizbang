@@ -404,7 +404,7 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-Null
+            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
@@ -423,7 +423,7 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
+            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-Host "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
