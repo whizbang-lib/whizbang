@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
-public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
+public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private DispatchUnitOfWork? _currentUnit;
   private bool _disposed;
 
