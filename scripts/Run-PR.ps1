@@ -91,6 +91,8 @@ param(
 
     [switch]$FailFast,
 
+    [bool]$AutoFix = $true,  # Automatically fix issues (e.g., run dotnet format) instead of failing
+
     [int]$CoverageThreshold = 80,
 
     [switch]$SkipSonar,
@@ -220,11 +222,18 @@ function Invoke-Prepare {
     Write-Host "  Preparing PR..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Step 1: Format check
+    # Step 1: Format check (with AutoFix support)
     $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
         Push-Location $repoRoot
         try {
             dotnet format --verify-no-changes 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0 -and $AutoFix) {
+                Write-Host ""
+                Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
+                dotnet format 2>&1 | Out-Null
+                Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
+                dotnet format --verify-no-changes 2>&1 | Out-Null
+            }
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
         finally { Pop-Location }
