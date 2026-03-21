@@ -490,6 +490,9 @@ try {
         [Console]::Out.Flush()
     }
 
+    # Indentation prefix: align child output under Run-PR's "▶" steps when called as child
+    $ind = if ($NoHeader) { "    " } else { "" }
+
     # Build the dotnet test command
     $testArgs = @("test")
 
@@ -519,10 +522,10 @@ try {
     # Coverage mode: Run projects in parallel with unique output paths per project
     # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
-        if (-not $useAiOutput -and -not $NoHeader) {
-            Write-Host "Coverage mode: Parallel execution with unique output paths" -ForegroundColor Yellow
-        } elseif ($useAiOutput -and -not $NoHeader) {
-            Write-Host "Coverage mode: Parallel execution (max $MaxParallel)" -ForegroundColor Gray
+        if (-not $useAiOutput) {
+            Write-Host "${ind}Coverage mode: Parallel execution with unique output paths" -ForegroundColor Yellow
+        } else {
+            Write-Host "${ind}Coverage mode: Parallel execution (max $MaxParallel)" -ForegroundColor Gray
         }
 
         # Discover test projects
@@ -581,10 +584,10 @@ try {
         $integrationTestProjects = @($testProjectPaths | Where-Object { $_ -match $integrationPattern })
 
         if (-not $useAiOutput) {
-            Write-Host "Discovered $($unitTestProjects.Count) unit test projects (parallel)" -ForegroundColor Gray
-            Write-Host "Discovered $($integrationTestProjects.Count) integration test projects (sequential)" -ForegroundColor Gray
+            Write-Host "${ind}Discovered $($unitTestProjects.Count) unit test projects (parallel)" -ForegroundColor Gray
+            Write-Host "${ind}Discovered $($integrationTestProjects.Count) integration test projects (sequential)" -ForegroundColor Gray
         } else {
-            Write-Host "Unit tests: $($unitTestProjects.Count) (parallel), Integration tests: $($integrationTestProjects.Count) (sequential)" -ForegroundColor Gray
+            Write-Host "${ind}Unit tests: $($unitTestProjects.Count) (parallel), Integration tests: $($integrationTestProjects.Count) (sequential)" -ForegroundColor Gray
         }
 
         # Helper function to run a single test project with coverage
@@ -637,14 +640,14 @@ try {
             if ($buildFailed) {
                 exit 1
             }
-            Write-Host "Build succeeded." -ForegroundColor Gray
+            Write-Host "${ind}Build succeeded." -ForegroundColor Gray
         } else {
-            Write-Host "Skipping build (-NoBuild specified, using pre-built artifacts)..." -ForegroundColor Gray
+            Write-Host "${ind}Skipping build (-NoBuild specified, using pre-built artifacts)..." -ForegroundColor Gray
         }
 
         # Phase 1: Run unit tests in parallel
         if ($unitTestProjects.Count -gt 0) {
-            Write-Host "Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
+            Write-Host "${ind}Running $($unitTestProjects.Count) unit test projects in parallel (max $MaxParallel)..." -ForegroundColor Cyan
 
             $unitTestProjects | ForEach-Object -ThrottleLimit $MaxParallel -Parallel {
                 $projectPath = $_
