@@ -448,16 +448,23 @@ function Invoke-Prepare {
     }
 
     # Step 5b: Coverage report (combined from unit + integration test coverage)
+    # Matches CI pipeline: merge all cobertura XMLs, generate HTML + TextSummary + SonarQube format
     if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
         $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
             $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
                 Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
 
             if ($coberturaFiles.Count -gt 0) {
-                # Use Invoke-CoverageReport from Run-Tests.ps1 module or do it inline
                 $reportDir = Join-Path $repoRoot "coverage-report"
+                $sonarDir = Join-Path $repoRoot "coverage" "sonarqube"
                 $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
+                $fileFilters = "-*.g.cs;-**/.whizbang-generated/*"
+
+                # Generate HTML + TextSummary + JsonSummary for human consumption
+                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" "-filefilters:$fileFilters" 2>&1 | Out-Null
+
+                # Generate SonarQube format for local SonarQube ingestion (matches CI pipeline)
+                reportgenerator "-reports:$reports" "-targetdir:$sonarDir" "-reporttypes:SonarQube" "-filefilters:$fileFilters" 2>&1 | Out-Null
 
                 $summaryFile = Join-Path $reportDir "Summary.txt"
                 if (Test-Path $summaryFile) {
@@ -468,6 +475,7 @@ function Invoke-Prepare {
                     if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
                     Write-Host "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
                     Write-Host "    HTML report: $(Join-Path $reportDir 'index.html')" -ForegroundColor DarkCyan
+                    Write-Host "    SonarQube report: $(Join-Path $sonarDir 'SonarQube.xml')" -ForegroundColor DarkGray
                 }
                 @{ ExitCode = 0; Details = $null }
             } else {
