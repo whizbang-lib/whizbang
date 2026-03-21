@@ -442,7 +442,7 @@ function Invoke-Prepare {
     # Start SonarScanner before build (so it captures the build output)
     # The begin/end wrapper avoids a second build — sonar observes the Step 2 build
     $script:sonarStarted = $false
-    $sonarToken = $null
+    $script:sonarToken = $null
     $sonarUrl = "http://localhost:9000"
     $sonarProjectKey = "whizbang-local"
     if (-not $SkipSonar) {
@@ -481,7 +481,7 @@ function Invoke-Prepare {
 
         $tokenFile = Join-Path $repoRoot ".sonarqube-local.token"
         if (Test-Path $tokenFile) {
-            $sonarToken = (Get-Content $tokenFile -Raw).Trim()
+            $script:sonarToken = (Get-Content $tokenFile -Raw).Trim()
             $sonarUrl = "http://localhost:9000"
             $sonarProjectKey = "whizbang-local"
 
@@ -505,7 +505,7 @@ function Invoke-Prepare {
             } else { "" }
 
             Push-Location $repoRoot
-            $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.token=$sonarToken", "/d:sonar.host.url=$sonarUrl")
+            $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.token=$script:sonarToken", "/d:sonar.host.url=$sonarUrl")
             if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
             if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
             $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
@@ -588,7 +588,7 @@ function Invoke-Prepare {
         $continue = Run-Step -Name "SonarQube Analysis" -FailureType "SonarFailure" -Action {
             Push-Location $repoRoot
             try {
-                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.token="$sonarToken" 2>&1 | Out-String
+                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.token="$script:sonarToken" 2>&1 | Out-String
                 $exitCode = $LASTEXITCODE
                 if ($exitCode -ne 0) {
                     Write-AiLine "    sonarscanner end failed:" -ForegroundColor Red
@@ -601,7 +601,7 @@ function Invoke-Prepare {
                 if ($exitCode -eq 0) {
                     Start-Sleep -Seconds 5  # Wait for SonarQube to process
                     try {
-                        $authHeader = @{ Authorization = "Bearer $sonarToken" }
+                        $authHeader = @{ Authorization = "Bearer $script:sonarToken" }
 
                         # Quality gate
                         $qg = Invoke-RestMethod -Uri "$sonarUrl/api/qualitygates/project_status?projectKey=$sonarProjectKey" -Headers $authHeader -ErrorAction Stop
