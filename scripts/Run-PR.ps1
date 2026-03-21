@@ -317,18 +317,14 @@ function Invoke-Prepare {
         # Step estimate for per-step progress
         $script:stepEstSec = if ($script:stepStats.ContainsKey($Name)) { $script:stepStats[$Name].P85 } else { 0 }
         $stepEstSec = $script:stepEstSec
+        $script:currentStepName = $Name
+        $script:stepStart = $stepStart
 
         try {
             $result = & $Action
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
 
-            # Update progress bars after step completion
-            $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
-            if ($totalEstSec -gt 0) {
-                $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
-                $remaining = [math]::Max(0, $totalEstSec - $elapsed)
-                Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
-            }
+            Update-StepProgress
             Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
 
             if ($result.ExitCode -ne 0) {
@@ -361,6 +357,37 @@ function Invoke-Prepare {
         }
     }
 
+    # Update all time-based progress bars (called from polling loops)
+    function script:Update-StepProgress {
+        if (-not $script:stepStart) { return }
+        $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+        $stepElapsed = ([DateTime]::UtcNow - $script:stepStart).TotalSeconds
+
+        if ($script:totalEstSec -gt 0) {
+            $timePct = [math]::Min(100, [math]::Round(($elapsed / $script:totalEstSec) * 100))
+            $remaining = [math]::Max(0, $script:totalEstSec - $elapsed)
+            Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
+        }
+
+        if ($script:stepEstSec -gt 0) {
+            $stepPct = [math]::Min(100, [math]::Round(($stepElapsed / $script:stepEstSec) * 100))
+            $stepRemain = [math]::Max(0, $script:stepEstSec - $stepElapsed)
+            Write-Progress -Id 3 -ParentId 0 -Activity "$($script:currentStepName): $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepPct
+        }
+    }
+
+    # Run a dotnet command as a background process, polling with progress bar ticks
+    function Invoke-DotnetWithProgress {
+        param([string]$Arguments, [string]$WorkingDir)
+        $proc = Start-Process -FilePath "dotnet" -ArgumentList $Arguments -WorkingDirectory $WorkingDir -NoNewWindow -PassThru -RedirectStandardOutput ([System.IO.Path]::GetTempFileName()) -RedirectStandardError ([System.IO.Path]::GetTempFileName())
+        while (-not $proc.HasExited) {
+            Update-StepProgress
+            Start-Sleep -Milliseconds 2000
+        }
+        $proc.WaitForExit()
+        return $proc.ExitCode
+    }
+
     Write-Host ""
     Write-Host "  Preparing PR..." -ForegroundColor Cyan
     Write-Host ""
@@ -372,19 +399,15 @@ function Invoke-Prepare {
         $script:steps += @{ name = "Format Check"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
-            Push-Location $repoRoot
-            try {
-                dotnet format --verify-no-changes 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0 -and $AutoFix) {
-                    Write-Host ""
-                    Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
-                    dotnet format 2>&1 | Out-Null
-                    Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
-                    dotnet format --verify-no-changes 2>&1 | Out-Null
-                }
-                @{ ExitCode = $LASTEXITCODE; Details = $null }
+            $exitCode = Invoke-DotnetWithProgress -Arguments "format --verify-no-changes" -WorkingDir $repoRoot
+            if ($exitCode -ne 0 -and $AutoFix) {
+                Write-Host ""
+                Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
+                $exitCode = Invoke-DotnetWithProgress -Arguments "format" -WorkingDir $repoRoot
+                Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
+                $exitCode = Invoke-DotnetWithProgress -Arguments "format --verify-no-changes" -WorkingDir $repoRoot
             }
-            finally { Pop-Location }
+            @{ ExitCode = $exitCode; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
@@ -396,12 +419,8 @@ function Invoke-Prepare {
         $script:steps += @{ name = "Build"; status = "skipped"; duration_s = 0 }
     } else {
         $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
-            Push-Location $repoRoot
-            try {
-                dotnet build --verbosity minimal 2>&1 | Out-Null
-                @{ ExitCode = $LASTEXITCODE; Details = $null }
-            }
-            finally { Pop-Location }
+            $exitCode = Invoke-DotnetWithProgress -Arguments "build --verbosity minimal" -WorkingDir $repoRoot
+            @{ ExitCode = $exitCode; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
