@@ -620,7 +620,8 @@ try {
                 if (Test-Path $testExe) { chmod +x $testExe 2>$null }
             }
 
-            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+            $coverageSettingsPath = Join-Path $repoRoot "codecoverage.config"
+            $args = @("run", "--project", $ProjectPath, "--configuration", $Config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
             if ($Filter) { $args += "--treenode-filter"; $args += "/*/*/*/*$Filter*" }
             if ($FailFastEnabled) { $args += "--fail-fast" }
 
@@ -673,13 +674,14 @@ try {
                 $testFilter = $using:TestFilter
                 $failFast = $using:FailFast
                 $resultsBag = $using:results
+                $coverageSettingsPath = Join-Path $using:repoRoot "codecoverage.config"
 
                 if ($IsLinux -or $IsMacOS) {
                     $testExe = Join-Path $projectDir "bin" $config "net10.0" $projectName
                     if (Test-Path $testExe) { chmod +x $testExe 2>$null }
                 }
 
-                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura")
+                $projectArgs = @("run", "--project", $projectPath, "--configuration", $config, "--no-build", "--", "--coverage", "--coverage-output-format", "cobertura", "--coverage-settings", $coverageSettingsPath)
                 if ($testFilter) { $projectArgs += "--treenode-filter"; $projectArgs += "/*/*/*/*$testFilter*" }
                 if ($failFast) { $projectArgs += "--fail-fast" }
 
