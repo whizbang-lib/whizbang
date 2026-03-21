@@ -468,75 +468,25 @@ try {
         $MaxParallel = [Environment]::ProcessorCount
     }
 
-    if (-not $useAiOutput) {
-        # Branded header (suppressed when called from Run-PR.ps1)
-        if (-not $NoHeader) {
-            $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
-            if ($Coverage) { $headerParams["Coverage"] = "On" }
-            if ($FailFast) { $headerParams["FailFast"] = "On" }
-            if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
-            if ($Tag) { $headerParams["Tag"] = $Tag }
-            Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
-        }
+    # Branded header (suppressed when called from Run-PR.ps1)
+    if (-not $NoHeader) {
+        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+        if ($Coverage) { $headerParams["Coverage"] = "On" }
+        if ($FailFast) { $headerParams["FailFast"] = "On" }
+        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+        if ($Tag) { $headerParams["Tag"] = $Tag }
 
-        Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
-        Write-Host "Mode: $Mode" -ForegroundColor Yellow
+        # Build detail lines for the config box
+        $details = @()
         if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
+            $details += "Integration Tests: Only"
         } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded (use -Mode Ai or -Mode Full to include)" -ForegroundColor Yellow
+            $details += "Integration Tests: Excluded"
         }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Yellow
-        }
-        Write-Host ""
-    } else {
-        # Branded header (AI mode, suppressed when called from Run-PR.ps1)
-        if (-not $NoHeader) {
-            $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
-            if ($Coverage) { $headerParams["Coverage"] = "On" }
-            if ($FailFast) { $headerParams["FailFast"] = "On" }
-            if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
-            if ($Tag) { $headerParams["Tag"] = $Tag }
-            Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
-        }
+        if ($TestFilter) { $details += "Test Filter: $TestFilter" }
+        if ($NoBuild) { $details += "Skipping build (using pre-built artifacts)" }
 
-        Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
-        Write-Host "Mode: $Mode" -ForegroundColor Gray
-        if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only" -ForegroundColor Gray
-        } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded" -ForegroundColor Gray
-        }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Gray
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled" -ForegroundColor Gray
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
-        }
-
-        # Flush output immediately so background processes show header right away
+        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr -Details $details
         [Console]::Out.Flush()
     }
 
@@ -569,9 +519,9 @@ try {
     # Coverage mode: Run projects in parallel with unique output paths per project
     # Each project writes coverage to its own directory to avoid collisions
     if ($Coverage) {
-        if (-not $useAiOutput) {
+        if (-not $useAiOutput -and -not $NoHeader) {
             Write-Host "Coverage mode: Parallel execution with unique output paths" -ForegroundColor Yellow
-        } else {
+        } elseif ($useAiOutput -and -not $NoHeader) {
             Write-Host "Coverage mode: Parallel execution (max $MaxParallel)" -ForegroundColor Gray
         }
 
