@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
@@ -371,6 +372,117 @@ public class DispatcherPostLifecycleCoverageTests {
     var invocations = _snapshot();
     await Assert.That(invocations).Contains("async-void");
     await Assert.That(invocations).DoesNotContain("should-not-fire");
+  }
+
+  // ========================================
+  // Tests: Coordinator path (ILifecycleCoordinator registered)
+  // ========================================
+
+  private static ServiceProvider _buildProviderWithCoordinator(
+      bool registerAsyncReceptor = true,
+      bool registerInlineReceptor = false,
+      bool registerTagProcessor = false) {
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(options => options.AllowAnonymous = true);
+
+    var registry = new TestReceptorRegistry();
+
+    if (registerAsyncReceptor) {
+      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+        MessageType: typeof(PostLifecycleCommand),
+        ReceptorId: "coord_post_lifecycle_async",
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          _track("coord-post-lifecycle-async");
+          return ValueTask.FromResult<object?>(null);
+        }));
+      registry.AddReceptor(LifecycleStage.PostLifecycleAsync, new ReceptorInfo(
+        MessageType: typeof(PostLifecycleSyncCommand),
+        ReceptorId: "coord_post_lifecycle_async_sync",
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          _track("coord-post-lifecycle-async-for-sync");
+          return ValueTask.FromResult<object?>(null);
+        }));
+    }
+
+    if (registerInlineReceptor) {
+      registry.AddReceptor(LifecycleStage.PostLifecycleInline, new ReceptorInfo(
+        MessageType: typeof(PostLifecycleCommand),
+        ReceptorId: "coord_post_lifecycle_inline",
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          _track("coord-post-lifecycle-inline");
+          return ValueTask.FromResult<object?>(null);
+        }));
+    }
+
+    if (registerTagProcessor) {
+      services.AddSingleton<IMessageTagProcessor>(new TrackingTagProcessor());
+    }
+
+    services.AddSingleton<IReceptorRegistry>(registry);
+    services.AddScoped<IReceptorInvoker>(sp =>
+      new ReceptorInvoker(sp.GetRequiredService<IReceptorRegistry>(), sp));
+    // Register the coordinator — this exercises the coordinator path in Dispatcher
+    services.AddSingleton<ILifecycleCoordinator, LifecycleCoordinator>();
+
+    return services.BuildServiceProvider();
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithCoordinator_FiresPostLifecycleAsync_ViaCoordinatorAsync() {
+    _reset();
+    var provider = _buildProviderWithCoordinator();
+    var dispatcher = new PostLifecycleDispatcher(provider);
+
+    await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+
+    var invocations = _snapshot();
+    await Assert.That(invocations).Contains("async-void");
+    await Assert.That(invocations).Contains("coord-post-lifecycle-async")
+      .Because("Coordinator path should fire PostLifecycleAsync receptors");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithCoordinator_FiresBothAsyncAndInline_ViaCoordinatorAsync() {
+    _reset();
+    var provider = _buildProviderWithCoordinator(registerAsyncReceptor: true, registerInlineReceptor: true);
+    var dispatcher = new PostLifecycleDispatcher(provider);
+
+    await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+
+    var invocations = _snapshot();
+    await Assert.That(invocations).Contains("coord-post-lifecycle-async");
+    await Assert.That(invocations).Contains("coord-post-lifecycle-inline");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_SyncVoid_WithCoordinator_FiresPostLifecycleAsync_ViaCoordinatorAsync() {
+    _reset();
+    var provider = _buildProviderWithCoordinator();
+    var dispatcher = new PostLifecycleDispatcher(provider);
+
+    await dispatcher.LocalInvokeAsync(new PostLifecycleSyncCommand("test"));
+
+    var invocations = _snapshot();
+    await Assert.That(invocations).Contains("sync-void");
+    await Assert.That(invocations).Contains("coord-post-lifecycle-async-for-sync");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithCoordinator_AndTagProcessor_FiresTagsAsync() {
+    _reset();
+    var provider = _buildProviderWithCoordinator(registerTagProcessor: true);
+    var dispatcher = new PostLifecycleDispatcher(provider);
+
+    await dispatcher.LocalInvokeAsync(new PostLifecycleCommand("test"));
+
+    var invocations = _snapshot();
+    await Assert.That(invocations).Contains("coord-post-lifecycle-async");
+    await Assert.That(invocations).Contains("tag-processed")
+      .Because("Coordinator path should also process tags via ReceptorInvoker");
   }
 
   // ========================================
