@@ -34,7 +34,7 @@ $script:Reset = "${script:Esc}[0m"
 $script:StarChars = @('.', '·', '∙', '*', '⋅', '✦')
 
 # Track background space positions for star animation
-$script:BgPositions = @()
+$script:BgPositions = [System.Collections.Generic.List[hashtable]]::new()
 $script:BannerStartRow = 0
 $script:LogoCol = 0
 $script:LogoRow = 0
@@ -48,7 +48,7 @@ function Write-LogoSeg {
     foreach ($ch in $Text.ToCharArray()) {
         if ($isBg -and $ch -eq ' ') {
             # Record this position for animation
-            $script:BgPositions += @{ Row = $script:LogoRow; Col = $script:LogoCol }
+            $script:BgPositions.Add(@{ Row = $script:LogoRow; Col = $script:LogoCol })
             if ((Get-Random -Minimum 0 -Maximum 12) -eq 0) {
                 $brightness = Get-Random -Minimum 220 -Maximum 255
                 $starCh = $script:StarChars[(Get-Random -Minimum 0 -Maximum $script:StarChars.Count)]
@@ -84,7 +84,7 @@ function Write-WhizbangBanner {
     )
 
     # Initialize position tracking
-    $script:BgPositions = @()
+    $script:BgPositions = [System.Collections.Generic.List[hashtable]]::new()
     $script:LogoRow = 0
     $script:LogoCol = 0
     # Save the cursor row where the banner starts
