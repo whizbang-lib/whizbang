@@ -212,22 +212,69 @@ function Write-WhizbangBanner {
 
     Write-Host ""
 
-    # Initial render — measure how many terminal lines it actually takes
-    $cursorBefore = [Console]::CursorTop
+    # Render the banner and record which buffer rows it occupies
+    $bannerStartRow = [Console]::CursorTop
     Write-BannerBody
-    $cursorAfter = [Console]::CursorTop
-    $bannerHeight = $cursorAfter - $cursorBefore
-
-    # Twinkle: move cursor back up and redraw with fresh random stars
-    if ($Animate -and $bannerHeight -gt 0) {
-        for ($frame = 0; $frame -lt 3; $frame++) {
-            Start-Sleep -Seconds 1
-            Write-Host "$([char]27)[${bannerHeight}A$([char]27)[0G" -NoNewline
-            Write-BannerBody
-        }
-    }
+    $bannerEndRow = [Console]::CursorTop
 
     Write-Host ""
+
+    # Start async star twinkle animation in a background runspace
+    # The thread writes directly to the console buffer using [Console] APIs
+    # which are thread-safe. It only touches the banner's rows.
+    if ($Animate) {
+        $script:TwinkleRunspace = [runspacefactory]::CreateRunspace()
+        $script:TwinkleRunspace.Open()
+
+        $script:TwinklePipeline = $script:TwinkleRunspace.CreatePipeline()
+        $script:TwinklePipeline.Commands.AddScript(@"
+            `$esc = [char]27
+            `$bg = "`$esc[48;2;45;55;72m"
+            `$reset = "`$esc[0m"
+            `$starChars = @('.', '·', '∙', '*', '⋅', '✦')
+            `$startRow = $bannerStartRow
+            `$endRow = $bannerEndRow
+            `$random = [System.Random]::new()
+
+            # Build a map of background positions by scanning each banner row
+            # We know the banner width is ~86 chars and art characters are non-space
+            # Rather than track exact positions, randomly pick positions in the banner area
+            `$width = [Console]::BufferWidth
+
+            for (`$frame = 0; `$frame -lt 5; `$frame++) {
+                Start-Sleep -Seconds 1
+
+                # Pick ~30 random positions in the banner area to toggle stars
+                for (`$i = 0; `$i -lt 30; `$i++) {
+                    `$row = `$random.Next(`$startRow, `$endRow)
+                    `$col = `$random.Next(0, [Math]::Min(86, `$width))
+
+                    try {
+                        # Save main cursor, move to position, write, restore
+                        `$savedTop = [Console]::CursorTop
+                        `$savedLeft = [Console]::CursorLeft
+
+                        [Console]::SetCursorPosition(`$col, `$row)
+
+                        # Read what's there — if it's a space or star char, we can replace it
+                        # We can't read the buffer easily, so just write a star or space
+                        if (`$random.Next(3) -eq 0) {
+                            `$brightness = `$random.Next(220, 256)
+                            `$star = `$starChars[`$random.Next(`$starChars.Length)]
+                            [Console]::Write("`$bg`$esc[38;2;`$brightness;`$(`$brightness+5);`$(`$brightness+10)m`$star`$reset")
+                        } else {
+                            [Console]::Write("`$bg`$esc[38;2;45;55;72m `$reset")
+                        }
+
+                        [Console]::SetCursorPosition(`$savedLeft, `$savedTop)
+                    } catch {
+                        # Cursor position may be invalid if terminal resized or scrolled
+                    }
+                }
+            }
+"@)
+        $script:TwinklePipeline.InvokeAsync()
+    }
 }
 
 function Write-WhizbangHeader {
