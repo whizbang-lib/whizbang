@@ -4,11 +4,13 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lifecycle;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Lifecycle;
 
 /// <summary>
-/// Tests for <see cref="DebugAwareStopwatch"/> — timing utility that detects debugger attachment.
+/// Tests for <see cref="DebugAwareStopwatch"/>, <see cref="StageRecord"/>,
+/// and <see cref="ServiceInstanceInfo"/> — lifecycle utility types.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-coordinator#diagnostics</docs>
 public class DebugAwareStopwatchTests {
@@ -92,4 +94,90 @@ public class DebugAwareStopwatchTests {
     await Assert.That(sw.IsRunning).IsTrue();
     sw.Stop();
   }
+
+  #region StageRecord tests
+
+  [Test]
+  public async Task StageRecord_Properties_AreAccessibleAsync() {
+    var startedAt = DateTimeOffset.UtcNow;
+    var duration = TimeSpan.FromMilliseconds(42);
+    var record = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
+
+    await Assert.That(record.Stage).IsEqualTo(LifecycleStage.PostLifecycleAsync);
+    await Assert.That(record.Duration).IsEqualTo(duration);
+    await Assert.That(record.StartedAt).IsEqualTo(startedAt);
+  }
+
+  [Test]
+  public async Task StageRecord_Equality_WorksAsync() {
+    var startedAt = DateTimeOffset.UtcNow;
+    var duration = TimeSpan.FromMilliseconds(42);
+    var record1 = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
+    var record2 = new StageRecord(LifecycleStage.PostLifecycleAsync, duration, startedAt);
+    var record3 = new StageRecord(LifecycleStage.PreOutboxAsync, duration, startedAt);
+
+    await Assert.That(record1).IsEqualTo(record2);
+    await Assert.That(record1).IsNotEqualTo(record3);
+  }
+
+  [Test]
+  public async Task StageRecord_ToString_ContainsStageAsync() {
+    var record = new StageRecord(LifecycleStage.PostPerspectiveInline, TimeSpan.FromMilliseconds(10), DateTimeOffset.UtcNow);
+    var str = record.ToString();
+    await Assert.That(str).Contains("PostPerspectiveInline");
+  }
+
+  [Test]
+  public async Task StageRecord_GetHashCode_ConsistentAsync() {
+    var startedAt = DateTimeOffset.UtcNow;
+    var record1 = new StageRecord(LifecycleStage.PostLifecycleAsync, TimeSpan.FromMilliseconds(42), startedAt);
+    var record2 = new StageRecord(LifecycleStage.PostLifecycleAsync, TimeSpan.FromMilliseconds(42), startedAt);
+
+    await Assert.That(record1.GetHashCode()).IsEqualTo(record2.GetHashCode());
+  }
+
+  #endregion
+
+  #region ServiceInstanceInfo tests
+
+  [Test]
+  public async Task ServiceInstanceInfo_Properties_AreAccessibleAsync() {
+    var info = new ServiceInstanceInfo("instance-1", "MyService");
+
+    await Assert.That(info.InstanceId).IsEqualTo("instance-1");
+    await Assert.That(info.ServiceName).IsEqualTo("MyService");
+  }
+
+  [Test]
+  public async Task ServiceInstanceInfo_ServiceName_DefaultsToNullAsync() {
+    var info = new ServiceInstanceInfo("instance-2");
+
+    await Assert.That(info.InstanceId).IsEqualTo("instance-2");
+    await Assert.That(info.ServiceName).IsNull();
+  }
+
+  [Test]
+  public async Task ServiceInstanceInfo_Equality_WorksAsync() {
+    var info1 = new ServiceInstanceInfo("id-1", "Svc");
+    var info2 = new ServiceInstanceInfo("id-1", "Svc");
+    var info3 = new ServiceInstanceInfo("id-2", "Svc");
+
+    await Assert.That(info1).IsEqualTo(info2);
+    await Assert.That(info1).IsNotEqualTo(info3);
+  }
+
+  [Test]
+  public async Task ServiceInstanceInfo_ToString_ContainsIdAsync() {
+    var info = new ServiceInstanceInfo("my-instance", "TestService");
+    await Assert.That(info.ToString()).Contains("my-instance");
+  }
+
+  [Test]
+  public async Task ServiceInstanceInfo_GetHashCode_ConsistentAsync() {
+    var info1 = new ServiceInstanceInfo("id-1", "Svc");
+    var info2 = new ServiceInstanceInfo("id-1", "Svc");
+    await Assert.That(info1.GetHashCode()).IsEqualTo(info2.GetHashCode());
+  }
+
+  #endregion
 }
