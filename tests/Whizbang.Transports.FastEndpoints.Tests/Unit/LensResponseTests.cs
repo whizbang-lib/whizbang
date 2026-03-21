@@ -27,10 +27,10 @@ public class LensResponseTests {
       new() { Id = Guid.NewGuid(), Name = "Item 1" },
       new() { Id = Guid.NewGuid(), Name = "Item 2" }
     };
-    var response = new LensResponse<TestModel>();
-
-    // Act
-    response.Data = items;
+    var response = new LensResponse<TestModel> {
+      // Act
+      Data = items
+    };
 
     // Assert
     await Assert.That(response.Data).Count().IsEqualTo(2);
@@ -39,10 +39,10 @@ public class LensResponseTests {
   [Test]
   public async Task TotalCount_ShouldBeSettableAsync() {
     // Arrange
-    var response = new LensResponse<TestModel>();
-
-    // Act
-    response.TotalCount = 100;
+    var response = new LensResponse<TestModel> {
+      // Act
+      TotalCount = 100
+    };
 
     // Assert
     await Assert.That(response.TotalCount).IsEqualTo(100);
@@ -51,10 +51,10 @@ public class LensResponseTests {
   [Test]
   public async Task Page_ShouldBeSettableAsync() {
     // Arrange
-    var response = new LensResponse<TestModel>();
-
-    // Act
-    response.Page = 5;
+    var response = new LensResponse<TestModel> {
+      // Act
+      Page = 5
+    };
 
     // Assert
     await Assert.That(response.Page).IsEqualTo(5);
@@ -63,10 +63,10 @@ public class LensResponseTests {
   [Test]
   public async Task PageSize_ShouldBeSettableAsync() {
     // Arrange
-    var response = new LensResponse<TestModel>();
-
-    // Act
-    response.PageSize = 25;
+    var response = new LensResponse<TestModel> {
+      // Act
+      PageSize = 25
+    };
 
     // Assert
     await Assert.That(response.PageSize).IsEqualTo(25);

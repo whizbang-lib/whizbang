@@ -30,11 +30,7 @@ public class DispatcherCoverageGenericTests {
   [DefaultRouting(DispatchMode.Local)]
   public record GenericEvent([property: StreamId] Guid OrderId) : IEvent;
 
-  private sealed class GenericTestDispatcher : Core.Dispatcher {
-    public GenericTestDispatcher(IServiceProvider sp)
-        : base(sp, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class GenericTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(GenericCommand) && typeof(TResult) == typeof(GenericResult)) {
         return msg => {
@@ -295,11 +291,7 @@ public class DispatcherCoverageGenericTests {
         .ThrowsExactly<ArgumentException>();
   }
 
-  private sealed class GenericSyncDispatcher : Core.Dispatcher {
-    public GenericSyncDispatcher(IServiceProvider sp)
-        : base(sp, new ServiceInstanceProvider(configuration: null)) {
-    }
-
+  private sealed class GenericSyncDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       return null;
     }
@@ -371,7 +363,7 @@ public class DispatcherCoverageGenericTests {
   public async Task LocalInvokeAsync_WithOptions_NoReceptor_ThrowsAsync() {
     var provider = _buildProvider();
     var dispatcher = new GenericSyncDispatcher(provider);
-    var unknownMsg = "unknown";
+    const string unknownMsg = "unknown";
     var options = new DispatchOptions();
 
     await Assert.That(async () => await dispatcher.LocalInvokeAsync<string>(unknownMsg, options))

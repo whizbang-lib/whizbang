@@ -113,7 +113,7 @@ public class EventStorageFailureHandlingTests {
   [Test]
   public async Task MessageFailureReason_EventStorageFailure_CanBeConvertedAsync() {
     // Arrange
-    int reasonValue = 7;
+    const int reasonValue = 7;
 
     // Act
     var reason = (MessageFailureReason)reasonValue;

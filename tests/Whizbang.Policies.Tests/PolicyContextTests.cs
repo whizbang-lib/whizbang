@@ -417,8 +417,8 @@ public class PolicyContextTests {
   }
 
   // Test helper types
-  private interface ITestService { }
-  private sealed class TestService : ITestService { }
+  private interface ITestService;
+  private sealed class TestService : ITestService;
 
   private sealed class TestServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) {
@@ -427,8 +427,8 @@ public class PolicyContextTests {
   }
 
   // Mock aggregate types for testing MatchesAggregate
-  private sealed class Order { }
-  private sealed class Customer { }
+  private sealed class Order;
+  private sealed class Customer;
 }
 
 /// <summary>

@@ -101,12 +101,11 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   private static string[] _detectScopeProperties(ITypeSymbol modelType) {
     var scopePropertyNames = new[] { "TenantId", "UserId", "OrganizationId", "ScopeId" };
 
-    return modelType.GetMembers()
+    return [.. modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
         .Where(p => scopePropertyNames.Contains(p.Name))
-        .Select(p => p.Name)
-        .ToArray();
+        .Select(p => p.Name)];
   }
 
   private static void _generateRegistry(
@@ -187,7 +186,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
   }
 
   private static void _generateRegistration(StringBuilder sb, LensInfo lens) {
-    sb.AppendLine($"    new LensRegistration {{");
+    sb.AppendLine("    new LensRegistration {");
     sb.AppendLine($"      LensType = typeof({lens.LensTypeName}),");
     sb.AppendLine($"      ModelType = typeof({lens.ModelTypeName}),");
     sb.AppendLine($"      IsInterface = {(lens.IsInterface ? "true" : "false")},");
@@ -200,7 +199,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
 
     sb.AppendLine($"      ImplementsTenantScoped = {(lens.ImplementsTenantScoped ? "true" : "false")},");
     sb.AppendLine($"      ImplementsUserScoped = {(lens.ImplementsUserScoped ? "true" : "false")}");
-    sb.AppendLine($"    }},");
+    sb.AppendLine("    },");
   }
 }
 

@@ -79,13 +79,13 @@ public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var result = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
+    var (version, amount, status) = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
         "SELECT version, (data->>'Amount')::decimal as amount, data->>'Status' as status FROM wh_per_order WHERE id = @id",
         new { id = testId });
 
-    await Assert.That(result.version).IsEqualTo(2);
-    await Assert.That(result.amount).IsEqualTo(200.00m);
-    await Assert.That(result.status).IsEqualTo("Updated");
+    await Assert.That(version).IsEqualTo(2);
+    await Assert.That(amount).IsEqualTo(200.00m);
+    await Assert.That(status).IsEqualTo("Updated");
   }
 
   /// <summary>
@@ -146,13 +146,13 @@ public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var result = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
+    var (version, amount, status) = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
         "SELECT version, (data->>'Amount')::decimal as amount, data->>'Status' as status FROM wh_per_order WHERE id = @id",
         new { id = testId });
 
-    await Assert.That(result.version).IsEqualTo(6);  // Initial + 5 updates
-    await Assert.That(result.amount).IsEqualTo(50m);  // 5 * 10
-    await Assert.That(result.status).IsEqualTo("Update5");
+    await Assert.That(version).IsEqualTo(6);  // Initial + 5 updates
+    await Assert.That(amount).IsEqualTo(50m);  // 5 * 10
+    await Assert.That(status).IsEqualTo("Update5");
   }
 
   /// <summary>
@@ -206,12 +206,12 @@ public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var result = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
+    var (version, amount, status) = await conn.QuerySingleAsync<(int version, decimal amount, string status)>(
         "SELECT version, (data->>'Amount')::decimal as amount, data->>'Status' as status FROM wh_per_order WHERE id = @id",
         new { id = testId });
 
-    await Assert.That(result.version).IsEqualTo(2);
-    await Assert.That(result.amount).IsEqualTo(150.00m);
-    await Assert.That(result.status).IsEqualTo("UpdatedViaInMemory");
+    await Assert.That(version).IsEqualTo(2);
+    await Assert.That(amount).IsEqualTo(150.00m);
+    await Assert.That(status).IsEqualTo("UpdatedViaInMemory");
   }
 }

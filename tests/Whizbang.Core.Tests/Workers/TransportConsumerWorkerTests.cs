@@ -507,12 +507,8 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public ScopeContext? GetCurrentScope() => null;
 }
 
-internal class DelayedReadinessCheck : ITransportReadinessCheck {
-  private readonly int _millisecondsDelay;
-
-  public DelayedReadinessCheck(int millisecondsDelay) {
-    _millisecondsDelay = millisecondsDelay;
-  }
+internal class DelayedReadinessCheck(int millisecondsDelay) : ITransportReadinessCheck {
+  private readonly int _millisecondsDelay = millisecondsDelay;
 
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     await Task.Delay(_millisecondsDelay, cancellationToken);

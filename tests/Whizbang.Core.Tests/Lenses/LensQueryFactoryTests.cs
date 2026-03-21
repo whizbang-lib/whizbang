@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -175,12 +176,8 @@ public class LensQueryFactoryTests {
   /// <summary>
   /// Tracks scope disposal for testing
   /// </summary>
-  private sealed class ScopeTracker : IDisposable {
-    private readonly Action _onDispose;
-
-    public ScopeTracker(Action onDispose) {
-      _onDispose = onDispose;
-    }
+  private sealed class ScopeTracker(Action onDispose) : IDisposable {
+    private readonly Action _onDispose = onDispose;
 
     public void Dispose() {
       _onDispose();
@@ -219,5 +216,9 @@ public class LensQueryFactoryTests {
       await Task.CompletedTask;
       return _models.FirstOrDefault();
     }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
   }
 }

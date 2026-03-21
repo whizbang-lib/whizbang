@@ -17,27 +17,22 @@ namespace Whizbang.Core.Messaging;
 /// Events from the same stream are processed sequentially to preserve order.
 /// Events from different streams CAN be processed in parallel (configurable).
 /// </summary>
-public partial class OrderedStreamProcessor {
-  private readonly bool _parallelizeStreams;
-  private readonly ILogger<OrderedStreamProcessor>? _logger;
-
-  /// <summary>
-  /// Creates a new OrderedStreamProcessor.
-  /// </summary>
-  /// <param name="parallelizeStreams">
-  /// When true, different streams can be processed concurrently.
-  /// When false, all streams processed sequentially (safer, simpler debugging).
-  /// </param>
-  /// <param name="logger">Optional logger</param>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
-  public OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
-    _parallelizeStreams = parallelizeStreams;
-    _logger = logger;
-  }
+/// <remarks>
+/// Creates a new OrderedStreamProcessor.
+/// </remarks>
+/// <param name="parallelizeStreams">
+/// When true, different streams can be processed concurrently.
+/// When false, all streams processed sequentially (safer, simpler debugging).
+/// </param>
+/// <param name="logger">Optional logger</param>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
+public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
+  private readonly bool _parallelizeStreams = parallelizeStreams;
+  private readonly ILogger<OrderedStreamProcessor>? _logger = logger;
 
   /// <summary>
   /// Processes inbox work maintaining stream order.
@@ -73,7 +68,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)  // NULL stream = no ordering required, group together
       .Select(g => new StreamBatch<InboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.MessageId).ToList()  // Ensure ordering by message_id (UUIDv7)
+        Messages = [.. g.OrderBy(m => m.MessageId)]  // Ensure ordering by message_id (UUIDv7)
       })
       .ToList();
 
@@ -83,9 +78,7 @@ public partial class OrderedStreamProcessor {
 
     if (_parallelizeStreams) {
       // Process different streams in parallel
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processInboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       // Process streams sequentially (safer default)
       foreach (var streamBatch in streamGroups) {
@@ -129,7 +122,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)
       .Select(g => new StreamBatch<OutboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.MessageId).ToList()  // Order by message_id (UUIDv7)
+        Messages = [.. g.OrderBy(m => m.MessageId)]  // Order by message_id (UUIDv7)
       })
       .ToList();
 
@@ -138,9 +131,7 @@ public partial class OrderedStreamProcessor {
     }
 
     if (_parallelizeStreams) {
-      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => {
-        await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token);
-      });
+      await Parallel.ForEachAsync(streamGroups, ct, async (streamBatch, token) => await _processOutboxStreamBatchAsync(streamBatch, processor, completionHandler, failureHandler, token));
     } else {
       foreach (var streamBatch in streamGroups) {
         if (ct.IsCancellationRequested) {

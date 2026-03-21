@@ -23,7 +23,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NoPerspectiveInterfaces_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -53,7 +53,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_SinglePerspectiveInterface_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -83,7 +83,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultiplePerspectivesWithSameModel_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -117,7 +117,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultiplePerspectivesWithDifferentModels_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -159,7 +159,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MixedInterfacesWithSameModel_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -200,7 +200,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MixedInterfacesWithDifferentModels_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -241,7 +241,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleEventsForSameModel_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -278,7 +278,7 @@ public class PerspectiveModelConsistencyAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ManyInterfacesWithOneInconsistentModel_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;

@@ -1,3 +1,5 @@
+#pragma warning disable CS0618
+
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -78,7 +80,7 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
     await using var scope = _scopeFactory.CreateAsyncScope();
     var lensQuery = scope.ServiceProvider.GetRequiredService<ILensQuery<TModel>>();
 
-    return await lensQuery.GetByIdAsync(id, cancellationToken);
+    return await lensQuery.DefaultScope.GetByIdAsync(id, cancellationToken);
   }
 
   /// <inheritdoc/>

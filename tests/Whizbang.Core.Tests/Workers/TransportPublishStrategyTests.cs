@@ -94,7 +94,7 @@ public class TransportPublishStrategyTests {
   public async Task IsReadyAsync_DefaultReadinessCheck_ReturnsTrueAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -110,7 +110,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -146,7 +146,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport {
       PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport unavailable"))
     };
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -179,7 +179,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
@@ -209,7 +209,7 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync() {
     // Arrange
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _ = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 

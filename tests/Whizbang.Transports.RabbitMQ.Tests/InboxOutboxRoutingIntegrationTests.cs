@@ -531,7 +531,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   ) {
     // Arrange - Both use shared topic strategy
     // Commands go to shared topic; Events go to namespace topics
-    var sharedTopic = "test.shared";
+    const string sharedTopic = "test.shared";
     var outboxStrategy = new SharedTopicOutboxStrategy(sharedTopic);
     var inboxStrategy = new SharedTopicInboxStrategy(sharedTopic);
     var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "testnamespaces.myapp.contracts.commands" };

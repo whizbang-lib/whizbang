@@ -66,7 +66,7 @@ public class ScopeDeltaIntegrationTests {
   [Test]
   public async Task Envelope_IdenticalScopes_NoScopeOnSubsequentHopsAsync() {
     // Arrange - Same scope context at each hop
-    var serviceInstance = _createServiceInstance();
+    _ = _createServiceInstance();
     var scope = _createTestScopeContext("tenant-1", "user-1", ["Admin"]);
 
     // Act - Create delta for first hop (should have full scope)
@@ -566,7 +566,7 @@ public class ScopeDeltaIntegrationTests {
     // This is what MessageHopSecurityExtractor does
     var hop = deserialized.Hops[0];
     var hasScope = hop.Scope?.Values != null &&
-                   hop.Scope.Values.TryGetValue(ScopeProp.Scope, out var scopeElement);
+                   hop.Scope.Values.TryGetValue(ScopeProp.Scope, out _);
     await Assert.That(hasScope).IsTrue();
 
     // Verify GetCurrentScope works

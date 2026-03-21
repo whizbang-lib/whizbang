@@ -34,5 +34,4 @@ namespace Whizbang.Core;
     AttributeTargets.Class,
     AllowMultiple = false,
     Inherited = false)]
-public sealed class SuppressGuidOrderingValidationAttribute : Attribute {
-}
+public sealed class SuppressGuidOrderingValidationAttribute : Attribute;

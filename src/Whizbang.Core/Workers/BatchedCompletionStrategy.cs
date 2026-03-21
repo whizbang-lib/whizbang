@@ -24,22 +24,17 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_ReportCompletionAsync_DoesNotCallCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_GetPendingCompletions_ReturnsCollectedCompletions_Async</tests>
-public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
-  private readonly CompletionTracker<PerspectiveCursorCompletion> _completions;
-  private readonly CompletionTracker<PerspectiveCursorFailure> _failures;
-
-  public BatchedCompletionStrategy(
-    TimeSpan? retryTimeout = null,
-    double backoffMultiplier = 2.0,
-    TimeSpan? maxTimeout = null
-  ) {
-    _completions = new CompletionTracker<PerspectiveCursorCompletion>(
+public sealed class BatchedCompletionStrategy(
+  TimeSpan? retryTimeout = null,
+  double backoffMultiplier = 2.0,
+  TimeSpan? maxTimeout = null
+  ) : IPerspectiveCompletionStrategy {
+  private readonly CompletionTracker<PerspectiveCursorCompletion> _completions = new CompletionTracker<PerspectiveCursorCompletion>(
       retryTimeout, backoffMultiplier, maxTimeout
     );
-    _failures = new CompletionTracker<PerspectiveCursorFailure>(
+  private readonly CompletionTracker<PerspectiveCursorFailure> _failures = new CompletionTracker<PerspectiveCursorFailure>(
       retryTimeout, backoffMultiplier, maxTimeout
     );
-  }
 
   /// <inheritdoc />
   /// <remarks>

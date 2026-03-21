@@ -162,9 +162,7 @@ public sealed class DomainOwnershipPrompt {
   /// <param name="decisions">The routing decisions to update.</param>
   public void ApplyTo(RoutingDecisions decisions) {
     decisions.OwnedDomains = [.. _selectedDomains];
-    decisions.DetectedDomains = _detectionResult.DetectedDomains
-        .Select(d => d.DomainName)
-        .ToList();
+    decisions.DetectedDomains = [.. _detectionResult.DetectedDomains.Select(d => d.DomainName)];
     decisions.Confirmed = true;
   }
 

@@ -15,7 +15,7 @@ public class SchemaInspectionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query the information_schema to see what columns exist
-    var sql = @"
+    const string sql = @"
       SELECT column_name, data_type
       FROM information_schema.columns
       WHERE table_name = 'wh_per_order'
@@ -55,7 +55,7 @@ public class SchemaInspectionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Get all Whizbang tables
-    var sql = @"
+    const string sql = @"
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'

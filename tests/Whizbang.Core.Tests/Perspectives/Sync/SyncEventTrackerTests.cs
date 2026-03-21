@@ -24,7 +24,7 @@ public class SyncEventTrackerTests {
     var eventType = typeof(TestEventA);
     var eventId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var trackedAt = DateTime.UtcNow;
 
     var tracked = new TrackedSyncEvent(eventType, eventId, streamId, perspectiveName, trackedAt);
@@ -92,7 +92,7 @@ public class SyncEventTrackerTests {
     var tracker = new SyncEventTracker();
     var targetStreamId = Guid.NewGuid();
     var otherStreamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), targetStreamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), otherStreamId, perspectiveName);
@@ -123,7 +123,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_FiltersByEventTypesAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -141,7 +141,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_NoEventTypes_ReturnsAllForStreamAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -155,7 +155,7 @@ public class SyncEventTrackerTests {
   public async Task GetPendingEvents_EmptyEventTypes_ReturnsAllForStreamAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), streamId, perspectiveName);
     tracker.TrackEvent(typeof(TestEventB), Guid.NewGuid(), streamId, perspectiveName);
@@ -320,7 +320,7 @@ public class SyncEventTrackerTests {
   public async Task ThreadSafety_ConcurrentGetPendingAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Add some events first
     for (int i = 0; i < 100; i++) {
@@ -353,7 +353,7 @@ public class SyncEventTrackerTests {
     var tracker = new SyncEventTracker();
     var stream1 = Guid.NewGuid();
     var stream2 = Guid.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), stream1, perspectiveName);
     tracker.TrackEvent(typeof(TestEventA), Guid.NewGuid(), stream2, perspectiveName);

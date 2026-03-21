@@ -82,7 +82,7 @@ public partial class DapperWorkCoordinator(
 
     // Execute the process_work_batch function (new signature after decomposition)
     var now = DateTimeOffset.UtcNow;
-    var sql = @"
+    const string sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id::uuid,
         @p_service_name::varchar,
@@ -235,6 +235,7 @@ public partial class DapperWorkCoordinator(
               MessageType = r.message_type,
               StreamId = r.work_stream_id,
               PartitionNumber = r.partition_number,
+              Attempts = r.attempts,
               Status = (MessageProcessingStatus)r.status,
               Flags = flags
             });
@@ -252,8 +253,8 @@ public partial class DapperWorkCoordinator(
 
             perspectiveWork.Add(new PerspectiveWork {
               WorkId = r.work_id,
-              StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-              PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+              StreamId = r.work_stream_id ?? throw new InvalidOperationException("Perspective work must have StreamId"),
+              PerspectiveName = r.perspective_name ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
               LastProcessedEventId = null,
               Status = (PerspectiveProcessingStatus)r.status,
               PartitionNumber = r.partition_number,
@@ -322,7 +323,7 @@ public partial class DapperWorkCoordinator(
     // Log the first message for debugging
     if (messages.Length > 0 && _logger is not null) {
       var firstMessage = messages[0];
-      var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
       LogSerializingOutboxMessage(_logger, firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType, firstMessage.Envelope.Hops?.Count ?? 0);
       LogOutboxMessageJson(_logger, jsonPreview);
     }
@@ -416,7 +417,7 @@ public partial class DapperWorkCoordinator(
 
     // Deserialize the complete envelope as MessageEnvelope<JsonElement>
     var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement>");
+      ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     // Log result for debugging
     if (_logger is not null) {
@@ -508,7 +509,7 @@ public partial class DapperWorkCoordinator(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
@@ -591,7 +592,7 @@ public partial class DapperWorkCoordinator(
           ids.Add(id);
         }
       }
-      return ids.Count > 0 ? ids.ToArray() : [];
+      return ids.Count > 0 ? [.. ids] : [];
     } catch {
       return null;
     }

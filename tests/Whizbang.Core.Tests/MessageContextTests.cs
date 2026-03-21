@@ -116,8 +116,8 @@ public class MessageContextTests {
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
     var timestamp = DateTimeOffset.UtcNow.AddHours(-1);
-    var userId = "user123";
-    var tenantId = "tenant-456";
+    const string userId = "user123";
+    const string tenantId = "tenant-456";
 
     // Act
     var context = new MessageContext {
@@ -157,8 +157,8 @@ public class MessageContextTests {
   [Test]
   public async Task New_WithScopeContext_InheritsUserIdAndTenantIdAsync() {
     // Arrange - Set scope context with security
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     var scopeContext = new TestScopeContext(testUserId, testTenantId);
     ScopeContextAccessor.CurrentContext = scopeContext;
@@ -182,7 +182,7 @@ public class MessageContextTests {
   [Test]
   public async Task New_WithScopeContextButNoUserId_InheritsTenantIdOnlyAsync() {
     // Arrange - Set scope context with only TenantId
-    var testTenantId = "test-tenant-123";
+    const string testTenantId = "test-tenant-123";
 
     var scopeContext = new TestScopeContext(userId: null, testTenantId);
     ScopeContextAccessor.CurrentContext = scopeContext;

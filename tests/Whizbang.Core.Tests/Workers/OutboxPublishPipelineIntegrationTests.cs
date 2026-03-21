@@ -330,13 +330,9 @@ public class OutboxPublishPipelineIntegrationTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class TestPublishStrategy : IMessagePublishStrategy {
-    private readonly TaskCompletionSource? _publishedTcs;
+  private sealed class TestPublishStrategy(TaskCompletionSource? publishedTcs = null) : IMessagePublishStrategy {
+    private readonly TaskCompletionSource? _publishedTcs = publishedTcs;
     public ConcurrentBag<OutboxWork> PublishedWork { get; } = [];
-
-    public TestPublishStrategy(TaskCompletionSource? publishedTcs = null) {
-      _publishedTcs = publishedTcs;
-    }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(true);

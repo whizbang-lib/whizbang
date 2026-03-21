@@ -294,7 +294,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   }
 
   private static void _generateRegistration(StringBuilder sb, AutoPopulateInfo info) {
-    sb.AppendLine($"    new AutoPopulateRegistration {{");
+    sb.AppendLine("    new AutoPopulateRegistration {");
     sb.AppendLine($"      MessageType = typeof({info.TypeFullName}),");
     sb.AppendLine($"      PropertyName = \"{info.PropertyName}\",");
     sb.AppendLine($"      PropertyType = typeof({info.PropertyTypeFullName}),");
@@ -313,7 +313,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine($"      {specificKindProperty} = {info.SpecificKind},");
     }
 
-    sb.AppendLine($"    }},");
+    sb.AppendLine("    },");
   }
 
   private static void _generatePopulator(

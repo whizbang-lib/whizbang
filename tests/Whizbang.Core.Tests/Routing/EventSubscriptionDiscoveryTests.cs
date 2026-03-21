@@ -15,7 +15,7 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task Constructor_WithNullRoutingOptions_ThrowsArgumentNullExceptionAsync() {
     // Arrange & Act
-    var action = () => new EventSubscriptionDiscovery(null!);
+    EventSubscriptionDiscovery action() => new(null!);
 
     // Assert
     await Assert.That(action).Throws<ArgumentNullException>()

@@ -426,13 +426,9 @@ public class ReceptorInvokerTests {
   /// Test registry implementation that mimics source-generated behavior.
   /// Receptors are registered at specific stages - the compile-time categorization is simulated.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly InvocationTracker _tracker;
+  private sealed class TestReceptorRegistry(ReceptorInvokerTests.InvocationTracker tracker) : IReceptorRegistry {
+    private readonly InvocationTracker _tracker = tracker;
     private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) {
       var key = (typeof(TMessage), stage);
@@ -771,19 +767,13 @@ public class ReceptorInvokerTests {
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly Action? _onEstablish;
-    private readonly IScopeContext? _returns;
-    private readonly Action<IMessageEnvelope>? _captureEnvelope;
-
-    public TestSecurityContextProvider(
-        Action? onEstablish = null,
-        IScopeContext? returns = null,
-        Action<IMessageEnvelope>? captureEnvelope = null) {
-      _onEstablish = onEstablish;
-      _returns = returns;
-      _captureEnvelope = captureEnvelope;
-    }
+  private sealed class TestSecurityContextProvider(
+      Action? onEstablish = null,
+      IScopeContext? returns = null,
+      Action<IMessageEnvelope>? captureEnvelope = null) : IMessageSecurityContextProvider {
+    private readonly Action? _onEstablish = onEstablish;
+    private readonly IScopeContext? _returns = returns;
+    private readonly Action<IMessageEnvelope>? _captureEnvelope = captureEnvelope;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -924,7 +914,7 @@ public class ReceptorInvokerTests {
     var exception = await Assert.ThrowsAsync<PerspectiveSyncTimeoutException>(async () =>
         await invoker.InvokeAsync(_wrapInEnvelope(message), LifecycleStage.PostInboxInline));
 
-    await Assert.That(exception!.PerspectiveType!).IsEqualTo(typeof(TestPerspective));
+    await Assert.That(exception!.PerspectiveType).IsEqualTo(typeof(TestPerspective));
     await Assert.That(exception.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(5000));
     await Assert.That(tracker.Invocations).Count().IsEqualTo(0); // Receptor not invoked
   }
@@ -1061,9 +1051,9 @@ public class ReceptorInvokerTests {
 
     // Assert - Options are correct
     await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
-    var call = syncAwaiter.WaitCalls[0];
-    await Assert.That(call.Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
-    await Assert.That(call.Options.Filter).IsTypeOf<EventTypeFilter>();
+    var (PerspectiveType, Options) = syncAwaiter.WaitCalls[0];
+    await Assert.That(Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
+    await Assert.That(Options.Filter).IsTypeOf<EventTypeFilter>();
   }
 
   /// <summary>
@@ -1519,10 +1509,8 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Test implementation of IStreamIdExtractor that returns a configured StreamId.
   /// </summary>
-  private sealed class TestStreamIdExtractor : IStreamIdExtractor {
-    private readonly Guid _streamId;
-
-    public TestStreamIdExtractor(Guid streamId) => _streamId = streamId;
+  private sealed class TestStreamIdExtractor(Guid streamId) : IStreamIdExtractor {
+    private readonly Guid _streamId = streamId;
 
     public Guid? ExtractStreamId(object message, Type messageType) => _streamId;
   }
@@ -1530,19 +1518,13 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Custom registry that captures SyncContext when receptor is invoked.
   /// </summary>
-  private sealed class ContextCapturingRegistry : IReceptorRegistry {
-    private readonly string _receptorId;
-    private readonly IReadOnlyList<ReceptorSyncAttributeInfo> _syncAttributes;
-    private readonly Action<SyncContext?> _contextCallback;
-
-    public ContextCapturingRegistry(
-        string receptorId,
-        IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
-        Action<SyncContext?> contextCallback) {
-      _receptorId = receptorId;
-      _syncAttributes = syncAttributes;
-      _contextCallback = contextCallback;
-    }
+  private sealed class ContextCapturingRegistry(
+      string receptorId,
+      IReadOnlyList<ReceptorSyncAttributeInfo> syncAttributes,
+      Action<SyncContext?> contextCallback) : IReceptorRegistry {
+    private readonly string _receptorId = receptorId;
+    private readonly IReadOnlyList<ReceptorSyncAttributeInfo> _syncAttributes = syncAttributes;
+    private readonly Action<SyncContext?> _contextCallback = contextCallback;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType == typeof(TestMessageWithStreamId) && stage == LifecycleStage.PostInboxInline) {
@@ -1568,23 +1550,17 @@ public class ReceptorInvokerTests {
   /// <summary>
   /// Sync awaiter that tracks calls to WaitAsync and WaitForStreamAsync separately.
   /// </summary>
-  private sealed class StreamIdTrackingSyncAwaiter : IPerspectiveSyncAwaiter {
+  private sealed class StreamIdTrackingSyncAwaiter(
+      Guid streamId,
+      bool simulateTimeout = false,
+      TimeSpan? elapsedTime = null) : IPerspectiveSyncAwaiter {
     public Guid AwaiterId { get; } = Guid.NewGuid();
-    private readonly Guid _expectedStreamId;
-    private readonly bool _simulateTimeout;
-    private readonly TimeSpan _elapsedTime;
+    private readonly Guid _expectedStreamId = streamId;
+    private readonly bool _simulateTimeout = simulateTimeout;
+    private readonly TimeSpan _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
 
     public List<(Type PerspectiveType, PerspectiveSyncOptions Options)> WaitAsyncCalls { get; } = [];
     public List<(Type PerspectiveType, Guid StreamId, Type[]? EventTypes, TimeSpan Timeout)> WaitForStreamCalls { get; } = [];
-
-    public StreamIdTrackingSyncAwaiter(
-        Guid streamId,
-        bool simulateTimeout = false,
-        TimeSpan? elapsedTime = null) {
-      _expectedStreamId = streamId;
-      _simulateTimeout = simulateTimeout;
-      _elapsedTime = elapsedTime ?? TimeSpan.FromMilliseconds(100);
-    }
 
     public Task<SyncResult> WaitAsync(
         Type perspectiveType,
@@ -1707,8 +1683,8 @@ public class ReceptorInvokerTests {
 
     var invoker = new ReceptorInvoker(registry, provider);
 
-    var expectedUserId = "user-scope-test";
-    var expectedTenantId = "tenant-scope-test";
+    const string expectedUserId = "user-scope-test";
+    const string expectedTenantId = "tenant-scope-test";
 
     // Create envelope with scope information in hops
     var envelope = new MessageEnvelope<TestMessage> {

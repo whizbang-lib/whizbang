@@ -498,10 +498,10 @@ public class ImmutableScopeContextTests {
         TenantId = tenantId ?? "test-tenant",
         UserId = userId ?? "test-user"
       },
-      Roles = roles?.ToHashSet() ?? new HashSet<string>(),
-      Permissions = permissions?.ToHashSet() ?? new HashSet<Permission>(),
-      SecurityPrincipals = principals?.ToHashSet() ?? new HashSet<SecurityPrincipalId>(),
-      Claims = claims ?? new Dictionary<string, string>(),
+      Roles = roles?.ToHashSet() ?? [],
+      Permissions = permissions?.ToHashSet() ?? [],
+      SecurityPrincipals = principals?.ToHashSet() ?? [],
+      Claims = claims ?? [],
       Source = "TestSource"
     };
   }

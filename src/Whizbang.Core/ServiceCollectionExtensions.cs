@@ -254,10 +254,8 @@ public static class ServiceCollectionExtensions {
   /// PostConfigure implementation for TracingOptions that binds from IConfiguration.
   /// Extracted to reduce cognitive complexity of AddWhizbang.
   /// </summary>
-  private sealed class TracingOptionsPostConfigure : IPostConfigureOptions<TracingOptions> {
-    private readonly IConfiguration? _config;
-
-    public TracingOptionsPostConfigure(IConfiguration? config) => _config = config;
+  private sealed class TracingOptionsPostConfigure(IConfiguration? config) : IPostConfigureOptions<TracingOptions> {
+    private readonly IConfiguration? _config = config;
 
     public void PostConfigure(string? name, TracingOptions options) {
       if (_config == null) {
@@ -453,11 +451,7 @@ public static class ServiceCollectionExtensions {
   /// <summary>
   /// Holder for the inner event store instance to enable decoration.
   /// </summary>
-  private sealed class InnerEventStoreHolder {
-    public object Instance { get; }
-
-    public InnerEventStoreHolder(object instance) {
-      Instance = instance;
-    }
+  private sealed class InnerEventStoreHolder(object instance) {
+    public object Instance { get; } = instance;
   }
 }

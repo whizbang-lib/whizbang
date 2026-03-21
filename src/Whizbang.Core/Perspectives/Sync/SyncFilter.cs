@@ -1,3 +1,5 @@
+#pragma warning disable S2436 // Fluent API with intentional generic type parameter overloads
+
 namespace Whizbang.Core.Perspectives.Sync;
 
 /// <summary>

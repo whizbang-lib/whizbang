@@ -186,7 +186,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task ProcessWorkBatch_ProcessesReturnedWorkFromCompletionsAsync() {
     // This test proves that when we report completions, if new work is returned, it gets processed
-    var testTransport = new TestTransport();
+    _ = new TestTransport();
     var instanceId = Guid.CreateVersion7();
     var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
@@ -417,14 +417,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
   }
 }
 
-internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-  public TestServiceInstanceProvider(Guid instanceId, string serviceName) {
-    InstanceId = instanceId;
-    ServiceName = serviceName;
-  }
-
-  public Guid InstanceId { get; }
-  public string ServiceName { get; }
+internal sealed class TestServiceInstanceProvider(Guid instanceId, string serviceName) : IServiceInstanceProvider {
+  public Guid InstanceId { get; } = instanceId;
+  public string ServiceName { get; } = serviceName;
   public string HostName => "test-host";
   public int ProcessId => 12345;
 
@@ -437,7 +432,7 @@ internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
 }
 
 internal sealed class TestTransport : ITransport {
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   public List<PublishedMessage> PublishedMessages { get; } = [];
 
   public bool IsInitialized => true;

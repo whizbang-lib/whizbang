@@ -13,7 +13,6 @@ public sealed class PerspectiveMetrics {
   public const string METER_NAME = "Whizbang.Perspectives";
 #pragma warning restore CA1707
 
-  private readonly Meter _meter;
 
   // Timing
   public Histogram<double> BatchDuration { get; }
@@ -35,22 +34,22 @@ public sealed class PerspectiveMetrics {
   public Histogram<int> BatchStreamGroups { get; }
 
   public PerspectiveMetrics(WhizbangMetrics whizbangMetrics) {
-    _meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    BatchDuration = _meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full _processWorkBatchAsync cycle");
-    ClaimDuration = _meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");
-    EventLoadDuration = _meter.CreateHistogram<double>("whizbang.perspective.event_load.duration", "ms", "GetEventsBetweenPolymorphicAsync query");
-    RunnerDuration = _meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
-    CheckpointDuration = _meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");
+    BatchDuration = meter.CreateHistogram<double>("whizbang.perspective.batch.duration", "ms", "Full _processWorkBatchAsync cycle");
+    ClaimDuration = meter.CreateHistogram<double>("whizbang.perspective.claim.duration", "ms", "ProcessWorkBatchAsync to claim perspective work");
+    EventLoadDuration = meter.CreateHistogram<double>("whizbang.perspective.event_load.duration", "ms", "GetEventsBetweenPolymorphicAsync query");
+    RunnerDuration = meter.CreateHistogram<double>("whizbang.perspective.runner.duration", "ms", "IPerspectiveRunner execution per stream");
+    CheckpointDuration = meter.CreateHistogram<double>("whizbang.perspective.checkpoint.duration", "ms", "GetPerspectiveCursorAsync");
 
-    EventsProcessed = _meter.CreateCounter<long>("whizbang.perspective.events_processed", description: "Events applied to perspectives");
-    BatchesProcessed = _meter.CreateCounter<long>("whizbang.perspective.batches_processed", description: "Batches completed");
-    StreamsUpdated = _meter.CreateCounter<long>("whizbang.perspective.streams_updated", description: "Unique streams updated");
-    Errors = _meter.CreateCounter<long>("whizbang.perspective.errors", description: "Processing errors");
-    EmptyBatches = _meter.CreateCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
+    EventsProcessed = meter.CreateCounter<long>("whizbang.perspective.events_processed", description: "Events applied to perspectives");
+    BatchesProcessed = meter.CreateCounter<long>("whizbang.perspective.batches_processed", description: "Batches completed");
+    StreamsUpdated = meter.CreateCounter<long>("whizbang.perspective.streams_updated", description: "Unique streams updated");
+    Errors = meter.CreateCounter<long>("whizbang.perspective.errors", description: "Processing errors");
+    EmptyBatches = meter.CreateCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
 
-    BatchWorkItems = _meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
-    BatchEventCount = _meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");
-    BatchStreamGroups = _meter.CreateHistogram<int>("whizbang.perspective.batch.stream_groups", description: "Distinct streams per batch");
+    BatchWorkItems = meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
+    BatchEventCount = meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");
+    BatchStreamGroups = meter.CreateHistogram<int>("whizbang.perspective.batch.stream_groups", description: "Distinct streams per batch");
   }
 }

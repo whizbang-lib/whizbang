@@ -11,7 +11,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsSingleStreamProjection_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -40,7 +40,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsMultiStreamProjection_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderSummaryProjection : MultiStreamProjection<OrderSummary, Guid> {
@@ -67,7 +67,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsEventTypesInProjection_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {
@@ -96,7 +96,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsDocumentStoreInjection_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderService {
@@ -120,7 +120,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsDocumentSessionUsage_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
 
       public class OrderHandler {
@@ -151,7 +151,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsAddMartenRegistration_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten;
       using Microsoft.Extensions.DependencyInjection;
 
@@ -176,7 +176,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsUseWolverineRegistration_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Microsoft.AspNetCore.Builder;
 
@@ -199,7 +199,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_IgnoresNonMartenClasses_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public void ProcessOrder(Order order) { }
       }
@@ -220,7 +220,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_CapturesLineNumber_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       namespace MyApp.Projections;
@@ -259,7 +259,7 @@ public class MartenAnalyzerTests {
   public async Task AnalyzeAsync_DetectsMultipleProjectionsInSameFile_Async() {
     // Arrange
     var analyzer = new MartenAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Marten.Events.Aggregation;
 
       public class OrderProjection : SingleStreamProjection<Order> {

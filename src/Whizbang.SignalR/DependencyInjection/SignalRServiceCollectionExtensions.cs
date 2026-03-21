@@ -49,9 +49,7 @@ public static class SignalRServiceCollectionExtensions {
   /// <docs>apis/signalr/signalr</docs>
   public static ISignalRServerBuilder AddWhizbangSignalR(this IServiceCollection services) {
     return services.AddSignalR()
-        .AddJsonProtocol(options => {
-          options.PayloadSerializerOptions = JsonContextRegistry.CreateCombinedOptions();
-        });
+        .AddJsonProtocol(options => options.PayloadSerializerOptions = JsonContextRegistry.CreateCombinedOptions());
   }
 
   /// <summary>
@@ -74,8 +72,6 @@ public static class SignalRServiceCollectionExtensions {
       this IServiceCollection services,
       Action<HubOptions> configure) {
     return services.AddSignalR(configure)
-        .AddJsonProtocol(options => {
-          options.PayloadSerializerOptions = JsonContextRegistry.CreateCombinedOptions();
-        });
+        .AddJsonProtocol(options => options.PayloadSerializerOptions = JsonContextRegistry.CreateCombinedOptions());
   }
 }

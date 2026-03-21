@@ -153,7 +153,7 @@ public class PerspectiveWorkerReceptorInvokerTests {
   #region Test Doubles
 
   private sealed class TestPerspectiveReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(LifecycleStage stage, ReceptorInfo receptor) {
       var key = (receptor.MessageType, stage);

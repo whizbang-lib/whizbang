@@ -11,8 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for EFCoreDriverSelector tests.
 /// </summary>
-public class DriverSelectorTestDbContext : DbContext {
-  public DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbContext> options) : base(options) { }
+public class DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbContext> options) : DbContext(options) {
 }
 
 /// <summary>
@@ -98,7 +97,7 @@ public class EFCoreDriverSelectorTests {
     var exception = await Assert.That(() => new EFCoreDriverSelector(services!, dbContextType))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName!).IsEqualTo("services");
+    await Assert.That(exception.ParamName).IsEqualTo("services");
   }
 
   [Test]
@@ -111,6 +110,6 @@ public class EFCoreDriverSelectorTests {
     var exception = await Assert.That(() => new EFCoreDriverSelector(services, dbContextType!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName!).IsEqualTo("dbContextType");
+    await Assert.That(exception.ParamName).IsEqualTo("dbContextType");
   }
 }

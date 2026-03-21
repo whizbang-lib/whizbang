@@ -19,7 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(MessageEnvelope<DapperWorkCoordinatorTests.TestEvent>))]
 [JsonSerializable(typeof(DapperWorkCoordinatorTests.TestEvent))]
-internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext { }
+internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Integration tests for DapperWorkCoordinator.
@@ -780,7 +780,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new outbox message with IsEvent=true
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -828,7 +828,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new inbox message with IsEvent=true
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -880,7 +880,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Try to create new inbox message (should handle version conflict)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -967,7 +967,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create all three messages in a single batch
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1021,7 +1021,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act - Create new outbox message with IsEvent=false
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1350,8 +1350,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Instance A may not claim all 10 messages initially
     await Assert.That(resultA.OutboxWork.Count).IsGreaterThan(0)
       .Because("Instance A should claim at least some work initially");
-
-    var initialWorkCount = resultA.OutboxWork.Count;
+    _ = resultA.OutboxWork.Count;
 
     // Act - Mark Instance A as stale (simulate failure)
     await _markInstanceHeartbeatOldAsync(instanceA, DateTimeOffset.UtcNow.AddHours(-2));
@@ -1626,7 +1625,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertServiceInstanceAsync(activeInstanceId, "ActiveService", "active-host", 123);
 
     // Act - Active instance calls ProcessWorkBatchAsync (triggers cleanup)
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = activeInstanceId,
             ServiceName = "ActiveService",
@@ -1669,7 +1668,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertServiceInstanceAsync(instance2, "Service2", "host2", 222);
 
     // Act - Instance 1 calls ProcessWorkBatchAsync
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = instance1,
             ServiceName = "Service1",
@@ -1726,7 +1725,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1775,7 +1774,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1820,7 +1819,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",
@@ -1865,7 +1864,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     };
 
     // Act
-    var result = await _sut.ProcessWorkBatchAsync(
+    _ = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
             ServiceName = "TestService",

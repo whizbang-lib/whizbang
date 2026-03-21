@@ -388,8 +388,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         if (string.IsNullOrWhiteSpace(r.MessageType)) {
           throw new InvalidOperationException(
             $"Inbox message {r.WorkId} has null/empty message_type. " +
-            $"This indicates the message was not properly serialized by the transport consumer. " +
-            $"Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
+            "This indicates the message was not properly serialized by the transport consumer. " +
+            "Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
         }
 
         var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
@@ -424,6 +424,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           MessageType = r.MessageType,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
+          Attempts = r.Attempts ?? 0,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
           Metadata = metadata
@@ -457,8 +458,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
         return new PerspectiveWork {
           WorkId = r.WorkId,
-          StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+          StreamId = r.StreamId ?? throw new InvalidOperationException("Perspective work must have StreamId"),
+          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
           LastProcessedEventId = null,  // No longer returned by process_work_batch
           Status = (PerspectiveProcessingStatus)r.Status,
           PartitionNumber = r.PartitionNumber,
@@ -567,7 +568,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         var hopsCount = firstMessage.Envelope.Hops?.Count ?? 0;
         _logger.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
           messageId, destination, envelopeType, hopsCount);
-        var jsonPreview = json.Length > 500 ? json.Substring(0, 500) + "..." : json;
+        var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
         _logger.LogDebug("First outbox message JSON (first 500 chars): {Json}", jsonPreview);
       }
     }
@@ -707,7 +708,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           ids.Add(id);
         }
       }
-      return ids.Count > 0 ? ids.ToArray() : [];
+      return ids.Count > 0 ? [.. ids] : [];
     } catch {
       return null;
     }
@@ -723,7 +724,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
   private IMessageEnvelope _deserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var dataPreview = envelopeDataJson.Length > 500 ? envelopeDataJson.Substring(0, 500) + "..." : envelopeDataJson;
+      var dataPreview = envelopeDataJson.Length > 500 ? envelopeDataJson[..500] + "..." : envelopeDataJson;
       _logger.LogDebug("Deserializing envelope: Type={EnvelopeType}, Data (first 500 chars)={EnvelopeData}",
         envelopeTypeName, dataPreview);
     }
@@ -954,7 +955,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);

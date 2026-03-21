@@ -169,12 +169,8 @@ public class LifecycleDeserializationTests {
 
   // Helper receptor for counting multiple events
   [FireAt(LifecycleStage.PostDistributeInline)]
-  public sealed class CustomDistributeReceptor : IReceptor<ProductCreatedEvent> {
-    private readonly Action<ProductCreatedEvent> _onReceived;
-
-    public CustomDistributeReceptor(Action<ProductCreatedEvent> onReceived) {
-      _onReceived = onReceived;
-    }
+  public sealed class CustomDistributeReceptor(Action<ProductCreatedEvent> onReceived) : IReceptor<ProductCreatedEvent> {
+    private readonly Action<ProductCreatedEvent> _onReceived = onReceived;
 
     public ValueTask HandleAsync(ProductCreatedEvent message, CancellationToken cancellationToken = default) {
       _onReceived(message);

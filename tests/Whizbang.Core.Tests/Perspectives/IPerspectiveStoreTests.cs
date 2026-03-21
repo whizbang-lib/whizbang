@@ -33,7 +33,7 @@ public class IPerspectiveStoreTests {
   public async Task UpsertByPartitionKeyAsync_WithScope_DefaultImplementation_DelegatesToWithoutScopeAsync() {
     // Arrange - Tests the default interface method on line 108 of IPerspectiveStore.cs
     var store = new TestPerspectiveStore();
-    var partitionKey = "partition-key-1";
+    const string partitionKey = "partition-key-1";
     var model = new TestModel { Name = "test" };
     var scope = new PerspectiveScope { TenantId = "tenant-1" };
 

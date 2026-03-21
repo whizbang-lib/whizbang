@@ -32,34 +32,34 @@ public static class MessageAssociationsSchema {
       new ColumnDefinition(
         Name: "id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false,
+        PrimaryKey: true,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
         Name: Columns.MESSAGE_TYPE,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.ASSOCIATION_TYPE,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 50,
         Nullable: false
-      ),
+,
+        MaxLength: 50),
       new ColumnDefinition(
         Name: Columns.TARGET_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.SERVICE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: "created_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,
@@ -76,30 +76,28 @@ public static class MessageAssociationsSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_message_associations_message_type",
-        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE)
+        Columns: [Columns.MESSAGE_TYPE]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_association_type",
-        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE)
+        Columns: [Columns.ASSOCIATION_TYPE]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_name",
-        Columns: ImmutableArray.Create(Columns.TARGET_NAME)
+        Columns: [Columns.TARGET_NAME]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_service_name",
-        Columns: ImmutableArray.Create(Columns.SERVICE_NAME)
+        Columns: [Columns.SERVICE_NAME]
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_lookup",
-        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
+        Columns: [Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME]
       )
     ),
-    UniqueConstraints: ImmutableArray.Create(
-      new UniqueConstraintDefinition(
+    UniqueConstraints: [new UniqueConstraintDefinition(
         Name: "uq_message_association",
-        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE, Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
-      )
-    )
+        Columns: [Columns.MESSAGE_TYPE, Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME]
+      )]
   );
 }

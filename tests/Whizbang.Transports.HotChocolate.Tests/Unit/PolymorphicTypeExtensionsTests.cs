@@ -40,7 +40,7 @@ public class PolymorphicTypeExtensionsTests {
     public string Name { get; set; } = "";
   }
 
-  public sealed class ConcreteType : NonPolymorphicBase { }
+  public sealed class ConcreteType : NonPolymorphicBase;
 
   [Test]
   public async Task AddPolymorphicType_WithExplicitDerivedTypes_ReturnsBuilderAsync() {

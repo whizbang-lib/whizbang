@@ -1,3 +1,4 @@
+#pragma warning disable TUnitAssertions0005
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -17,7 +18,7 @@ public class MessageKindTests {
   [Test]
   public async Task MessageKind_HasCommand_ValueAsync() {
     // Arrange & Act
-    var kind = MessageKind.Command;
+    const MessageKind kind = MessageKind.Command;
 
     // Assert
     await Assert.That(kind).IsEqualTo(MessageKind.Command);
@@ -26,7 +27,7 @@ public class MessageKindTests {
   [Test]
   public async Task MessageKind_HasEvent_ValueAsync() {
     // Arrange & Act
-    var kind = MessageKind.Event;
+    const MessageKind kind = MessageKind.Event;
 
     // Assert
     await Assert.That(kind).IsEqualTo(MessageKind.Event);
@@ -35,7 +36,7 @@ public class MessageKindTests {
   [Test]
   public async Task MessageKind_HasQuery_ValueAsync() {
     // Arrange & Act
-    var kind = MessageKind.Query;
+    const MessageKind kind = MessageKind.Query;
 
     // Assert
     await Assert.That(kind).IsEqualTo(MessageKind.Query);

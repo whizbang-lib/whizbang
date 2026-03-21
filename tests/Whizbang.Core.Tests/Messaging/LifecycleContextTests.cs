@@ -118,15 +118,11 @@ public class LifecycleContextTests {
   }
 
   // Test receptor that injects ILifecycleContext
-  internal sealed class TestReceptorWithContext : IReceptor<TestMessage> {
-    private readonly ILifecycleContext? _context;
+  internal sealed class TestReceptorWithContext(ILifecycleContext? context = null) : IReceptor<TestMessage> {
+    private readonly ILifecycleContext? _context = context;
 
     public LifecycleStage? ReceivedStage { get; private set; }
     public Type? ReceivedPerspectiveType { get; private set; }
-
-    public TestReceptorWithContext(ILifecycleContext? context = null) {
-      _context = context;
-    }
 
     public ValueTask HandleAsync(TestMessage message, CancellationToken cancellationToken = default) {
       if (_context != null) {

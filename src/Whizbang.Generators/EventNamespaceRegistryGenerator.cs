@@ -69,12 +69,10 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private static ImmutableArray<string>? _extractPerspectiveEventNamespaces(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;
     }
 
@@ -122,12 +120,10 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private static string? _extractReceptorEventNamespace(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;
     }
 

@@ -9,19 +9,15 @@ namespace Whizbang.Migrate.Journal;
 /// migration state to a JSON file for idempotent resumption.
 /// </summary>
 /// <docs>migration-guide/automated-migration</docs>
-public sealed class JsonMigrationJournal : IMigrationJournal {
+/// <remarks>
+/// Creates a new instance of <see cref="JsonMigrationJournal"/>.
+/// </remarks>
+/// <param name="filePath">Path to the journal JSON file.</param>
+public sealed class JsonMigrationJournal(string filePath) : IMigrationJournal {
   private const string JOURNAL_VERSION = "1.0.0";
 
-  private readonly string _filePath;
+  private readonly string _filePath = filePath;
   private JournalData _data = new();
-
-  /// <summary>
-  /// Creates a new instance of <see cref="JsonMigrationJournal"/>.
-  /// </summary>
-  /// <param name="filePath">Path to the journal JSON file.</param>
-  public JsonMigrationJournal(string filePath) {
-    _filePath = filePath;
-  }
 
   /// <inheritdoc />
   public JournalStatus Status => _data.Status;

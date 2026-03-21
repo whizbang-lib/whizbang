@@ -304,7 +304,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
-    var partitionKey = "tenant-123";
+    const string partitionKey = "tenant-123";
     var model = new StoreTestModel { Name = "TenantData", Value = 555 };
 
     // Create a record using string partition key
@@ -399,7 +399,7 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
-    var partitionKey = "tenant-to-delete";
+    const string partitionKey = "tenant-to-delete";
 
     // Create a record using string partition key
     await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "TenantData", Value = 777 });

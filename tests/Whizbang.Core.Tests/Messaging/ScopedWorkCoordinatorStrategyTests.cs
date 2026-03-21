@@ -188,7 +188,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush before disposal
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Manual flush should work immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)

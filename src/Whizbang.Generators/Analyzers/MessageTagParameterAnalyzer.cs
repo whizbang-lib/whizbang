@@ -28,7 +28,7 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
   private const string MESSAGE_TAG_ATTRIBUTE_NAME = "Whizbang.Core.Attributes.MessageTagAttribute";
 
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      ImmutableArray.Create(DiagnosticDescriptors.MessageTagParameterMismatch);
+      [DiagnosticDescriptors.MessageTagParameterMismatch];
 
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);

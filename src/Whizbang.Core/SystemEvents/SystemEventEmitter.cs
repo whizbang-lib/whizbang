@@ -23,23 +23,17 @@ namespace Whizbang.Core.SystemEvents;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/system-events#emitter</docs>
-public sealed class SystemEventEmitter : ISystemEventEmitter {
-  private readonly SystemEventOptions _options;
-  private readonly IEventStore _systemEventStore;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  /// <summary>
-  /// Creates a new system event emitter.
-  /// </summary>
-  /// <param name="options">System event configuration options.</param>
-  /// <param name="systemEventStore">Event store for persisting system events.</param>
-  public SystemEventEmitter(
-      IOptions<SystemEventOptions> options,
-      IEventStore systemEventStore) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
-    _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
-  }
+/// <remarks>
+/// Creates a new system event emitter.
+/// </remarks>
+/// <param name="options">System event configuration options.</param>
+/// <param name="systemEventStore">Event store for persisting system events.</param>
+public sealed class SystemEventEmitter(
+    IOptions<SystemEventOptions> options,
+    IEventStore systemEventStore) : ISystemEventEmitter {
+  private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
+  private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(

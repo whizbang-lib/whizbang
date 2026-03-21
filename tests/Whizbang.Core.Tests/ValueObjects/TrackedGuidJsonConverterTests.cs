@@ -97,7 +97,7 @@ public class TrackedGuidJsonConverterTests {
   [Test]
   public async Task Read_WithNullValue_ReturnsEmptyTrackedGuidAsync() {
     // Arrange
-    var json = "null";
+    const string json = "null";
 
     // Act
     var result = JsonSerializer.Deserialize<TrackedGuid>(json, _options);

@@ -77,7 +77,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act
     try {
@@ -130,7 +130,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -181,7 +181,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     // Use a message type matching one in our event type provider
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act - should not throw since TestCommand is not an event (no StreamId guard)
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -231,9 +231,9 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     // Create envelope WITH a valid traceparent so Activity is created
-    var traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+    const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, traceParent);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act & Assert - exception should propagate, Activity error path exercised
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -284,7 +284,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act
     try {
@@ -398,7 +398,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     // Use a non-MessageEnvelope<JsonElement> envelope
     var envelope = new NonJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act & Assert - will throw because no IEnvelopeSerializer registered, but _populateDeliveredAtTimestamp is exercised first
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -449,7 +449,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act - exercises debug logging for "Processing message", "accepted for processing", "queued completion", "successfully processed"
     try {
@@ -595,7 +595,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var invalidType = "Type]]BadOrder[[";
+    const string invalidType = "Type]]BadOrder[[";
 
     // Act & Assert
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -638,7 +638,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var emptyTypeEnvelope = "Type[[ ]]";
+    const string emptyTypeEnvelope = "Type[[ ]]";
 
     // Act & Assert
     await Assert.ThrowsAsync<InvalidOperationException>(async () => {
@@ -688,7 +688,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await Task.Delay(200);
 
     var envelope = _createJsonEnvelope(messageId);
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
     // Act
     try {
@@ -786,7 +786,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -854,7 +854,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       ]
     };
 
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -960,7 +960,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     var envelope = _createJsonEnvelope(messageId);
     // Use single-segment assembly name to avoid LastIndexOf('.') picking up assembly dot
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[My.Deep.Namespace.CreateOrderCommand, TestAssembly]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[My.Deep.Namespace.CreateOrderCommand, TestAssembly]], Whizbang.Core";
 
     // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
@@ -1134,12 +1134,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class AdditionalCoverageSelectiveFailTransport : ITransport {
-    private readonly HashSet<string> _failingTopics;
-
-    public AdditionalCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) {
-      _failingTopics = new HashSet<string>(failingTopics);
-    }
+  private sealed class AdditionalCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
+    private readonly HashSet<string> _failingTopics = [.. failingTopics];
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -1173,9 +1169,9 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       throw new NotSupportedException();
   }
 
-  private sealed class AdditionalCoverageWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    private readonly Guid _expectedMessageId;
-    private readonly bool _returnEmptyInboxWork;
+  private sealed class AdditionalCoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) : IWorkCoordinatorStrategy {
+    private readonly Guid _expectedMessageId = expectedMessageId;
+    private readonly bool _returnEmptyInboxWork = returnEmptyInboxWork;
 
     public int QueuedInboxCount { get; private set; }
     public int FlushCount { get; private set; }
@@ -1184,11 +1180,6 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     public Guid? LastQueuedStreamId { get; private set; }
     public string? LastQueuedHandlerName { get; private set; }
     public bool? LastQueuedIsEvent { get; private set; }
-
-    public AdditionalCoverageWorkCoordinatorStrategy(Guid expectedMessageId, bool returnEmptyInboxWork = false) {
-      _expectedMessageId = expectedMessageId;
-      _returnEmptyInboxWork = returnEmptyInboxWork;
-    }
 
     public void QueueInboxMessage(InboxMessage message) {
       QueuedInboxCount++;

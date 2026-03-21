@@ -12,10 +12,10 @@ public class DiagnosticEntryTests {
   [Test]
   public async Task DiagnosticEntry_Constructor_CreatesInstanceWithAllPropertiesAsync() {
     // Arrange
-    var generatorName = "TestGenerator";
-    var timestamp = "2024-01-01T00:00:00Z";
+    const string generatorName = "TestGenerator";
+    const string timestamp = "2024-01-01T00:00:00Z";
     var category = DiagnosticCategory.Dispatcher;
-    var message = "Test diagnostic message";
+    const string message = "Test diagnostic message";
 
     // Act
     var entry = new DiagnosticEntry(generatorName, timestamp, category, message);
@@ -30,10 +30,10 @@ public class DiagnosticEntryTests {
   [Test]
   public async Task DiagnosticEntry_RecordEquality_ComparesAllPropertiesAsync() {
     // Arrange
-    var generatorName = "TestGenerator";
-    var timestamp = "2024-01-01T00:00:00Z";
+    const string generatorName = "TestGenerator";
+    const string timestamp = "2024-01-01T00:00:00Z";
     var category = DiagnosticCategory.Dispatcher;
-    var message = "Test diagnostic message";
+    const string message = "Test diagnostic message";
 
     var entry1 = new DiagnosticEntry(generatorName, timestamp, category, message);
     var entry2 = new DiagnosticEntry(generatorName, timestamp, category, message);
@@ -50,10 +50,10 @@ public class DiagnosticEntryTests {
   [Test]
   public async Task DiagnosticEntry_ToString_ReturnsReadableStringAsync() {
     // Arrange
-    var generatorName = "TestGenerator";
-    var timestamp = "2024-01-01T00:00:00Z";
+    const string generatorName = "TestGenerator";
+    const string timestamp = "2024-01-01T00:00:00Z";
     var category = DiagnosticCategory.Dispatcher;
-    var message = "Test diagnostic message";
+    const string message = "Test diagnostic message";
 
     var entry = new DiagnosticEntry(generatorName, timestamp, category, message);
 

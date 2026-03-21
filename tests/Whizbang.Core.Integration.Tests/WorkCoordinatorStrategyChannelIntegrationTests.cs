@@ -103,10 +103,10 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         instanceProvider,
         opts,
         scopeFactory: scopeFactory,
-        workChannelWriter: sp.GetService<IWorkChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
-      );
+,
+        workChannelWriter: sp.GetService<IWorkChannelWriter>());
     });
     services.AddSingleton<BatchWorkCoordinatorStrategy>(sp => {
       var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
@@ -117,10 +117,10 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
         instanceProvider,
         opts,
         scopeFactory: scopeFactory,
-        workChannelWriter: sp.GetService<IWorkChannelWriter>(),
         metrics: sp.GetService<WorkCoordinatorMetrics>(),
         lifecycleMetrics: sp.GetService<LifecycleMetrics>()
-      );
+,
+        workChannelWriter: sp.GetService<IWorkChannelWriter>());
     });
 
     services.AddScoped<IWorkCoordinatorStrategy>(sp => {

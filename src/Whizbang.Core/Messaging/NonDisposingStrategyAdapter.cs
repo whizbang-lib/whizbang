@@ -14,12 +14,8 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Interval_ResolvesSingletonAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorStrategyRegistrationTests.cs:GeneratorPattern_Batch_ResolvesSingletonAsync</tests>
-public sealed class NonDisposingStrategyAdapter : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
-  private readonly IWorkCoordinatorStrategy _inner;
-
-  public NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) {
-    _inner = inner;
-  }
+public sealed class NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  private readonly IWorkCoordinatorStrategy _inner = inner;
 
   public void QueueOutboxMessage(OutboxMessage message) => _inner.QueueOutboxMessage(message);
   public void QueueInboxMessage(InboxMessage message) => _inner.QueueInboxMessage(message);

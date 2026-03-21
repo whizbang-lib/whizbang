@@ -30,7 +30,7 @@ public class DispatcherPostLifecycleCoverageTests {
   public record PostLifecycleResult(string Value);
 
   private static readonly List<string> _invocations = [];
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   private static void _track(string invocation) {
     lock (_lock) { _invocations.Add(invocation); }
@@ -48,18 +48,14 @@ public class DispatcherPostLifecycleCoverageTests {
   // Dispatcher subclass with PostLifecycle receptors registered
   // ========================================
 
-  private sealed class PostLifecycleDispatcher : Core.Dispatcher {
-    public PostLifecycleDispatcher(IServiceProvider sp)
-        : base(sp, new ServiceInstanceProvider(configuration: null),
-               receptorRegistry: sp.GetService<IReceptorRegistry>()) {
-    }
-
+  private sealed class PostLifecycleDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null),
+             receptorRegistry: sp.GetService<IReceptorRegistry>()) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(PostLifecycleWithResultCommand)) {
-        ReceptorInvoker<TResult> invoker = msg => {
+        ValueTask<TResult> invoker(object msg) {
           _track("with-result");
           return ValueTask.FromResult((TResult)(object)new PostLifecycleResult("done"));
-        };
+        }
         return invoker;
       }
 
@@ -382,7 +378,7 @@ public class DispatcherPostLifecycleCoverageTests {
   // ========================================
 
   private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(LifecycleStage stage, ReceptorInfo receptor) {
       var key = (receptor.MessageType, stage);

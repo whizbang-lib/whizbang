@@ -325,7 +325,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
             } else {
               // Fall back to scope-based sync when no stream ID extractor
               var syncOptions = syncAttr.EventTypes is { Count: > 0 }
-                  ? SyncFilter.ForEventTypes(syncAttr.EventTypes.ToArray()).WithTimeout(timeout).Build()
+                  ? SyncFilter.ForEventTypes([.. syncAttr.EventTypes]).WithTimeout(timeout).Build()
                   : SyncFilter.CurrentScope().WithTimeout(timeout).Build();
 
               syncResult = await _syncAwaiter.WaitAsync(syncAttr.PerspectiveType, syncOptions, cancellationToken).ConfigureAwait(false);

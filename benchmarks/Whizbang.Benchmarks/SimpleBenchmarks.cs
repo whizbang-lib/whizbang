@@ -118,6 +118,6 @@ public class SimpleBenchmarks {
   public async Task TraceStore_StoreAndRetrieveAsync() {
     var envelope = CreateEnvelope();
     await _traceStore.StoreAsync(envelope);
-    var retrieved = await _traceStore.GetByMessageIdAsync(envelope.MessageId);
+    _ = await _traceStore.GetByMessageIdAsync(envelope.MessageId);
   }
 }

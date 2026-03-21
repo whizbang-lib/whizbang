@@ -455,12 +455,8 @@ public class PublishedMessageRecord {
 /// <summary>
 /// Test service instance provider with fixed instance ID.
 /// </summary>
-public class TestServiceInstanceProvider : Whizbang.Core.Observability.IServiceInstanceProvider {
-  public TestServiceInstanceProvider(Guid instanceId) {
-    InstanceId = instanceId;
-  }
-
-  public Guid InstanceId { get; }
+public class TestServiceInstanceProvider(Guid instanceId) : Whizbang.Core.Observability.IServiceInstanceProvider {
+  public Guid InstanceId { get; } = instanceId;
   public string ServiceName => "BFF.API";
   public string HostName => "test-host";
   public int ProcessId => 12345;

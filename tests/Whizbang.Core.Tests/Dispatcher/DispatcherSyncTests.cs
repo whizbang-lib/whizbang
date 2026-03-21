@@ -198,12 +198,8 @@ public class DispatcherSyncTests : DiagnosticTestBase {
     }
   }
 
-  public class VoidSyncLogReceptor : ISyncReceptor<DispatcherSyncLogCommand> {
-    private readonly Action _onExecute;
-
-    public VoidSyncLogReceptor(Action onExecute) {
-      _onExecute = onExecute;
-    }
+  public class VoidSyncLogReceptor(Action onExecute) : ISyncReceptor<DispatcherSyncLogCommand> {
+    private readonly Action _onExecute = onExecute;
 
     public void Handle(DispatcherSyncLogCommand message) {
       _onExecute();
@@ -214,13 +210,8 @@ public class DispatcherSyncTests : DiagnosticTestBase {
   /// Test dispatcher that supports sync receptor invocation.
   /// This will fail until we implement GetSyncReceptorInvoker in the base Dispatcher.
   /// </summary>
-  public class TestSyncDispatcher : Core.Dispatcher {
-    private readonly List<object>? _publishedEvents;
-
-    public TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null)
-        : base(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null)) {
-      _publishedEvents = publishedEvents;
-    }
+  public class TestSyncDispatcher(IServiceProvider serviceProvider, List<object>? publishedEvents = null) : Core.Dispatcher(serviceProvider, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null)) {
+    private readonly List<object>? _publishedEvents = publishedEvents;
 
     // These abstract methods need to be implemented for the test dispatcher
     // They will delegate to the generated code patterns

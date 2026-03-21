@@ -54,12 +54,8 @@ public class WhizbangFlushStartupFilterTests {
     using var host = await new HostBuilder()
       .ConfigureWebHost(webBuilder => {
         webBuilder.UseTestServer();
-        webBuilder.ConfigureServices(services => {
-          services.AddWhizbangAspNet();
-        });
-        webBuilder.Configure(app => {
-          app.Run(_ => Task.CompletedTask);
-        });
+        webBuilder.ConfigureServices(services => services.AddWhizbangAspNet());
+        webBuilder.Configure(app => app.Run(_ => Task.CompletedTask));
       })
       .StartAsync();
 

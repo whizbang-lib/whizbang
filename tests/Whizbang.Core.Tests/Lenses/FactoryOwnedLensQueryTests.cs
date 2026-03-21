@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -247,7 +248,7 @@ public class FactoryOwnedLensQueryTests {
   /// Mock ILensQueryFactory for testing.
   /// </summary>
   private sealed class MockLensQueryFactory : ILensQueryFactory {
-    private readonly Dictionary<Type, object> _queries = new();
+    private readonly Dictionary<Type, object> _queries = [];
     public int GetQueryCallCount { get; private set; }
     public int DisposeCallCount { get; private set; }
 
@@ -308,6 +309,10 @@ public class FactoryOwnedLensQueryTests {
       LastCancellationToken = cancellationToken;
       return Task.FromResult(_models.FirstOrDefault());
     }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<TModel> DefaultScope => throw new NotImplementedException();
   }
 
   #endregion

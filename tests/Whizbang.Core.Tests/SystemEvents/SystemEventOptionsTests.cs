@@ -141,10 +141,10 @@ public class SystemEventOptionsTests {
   [Test]
   public async Task AuditMode_CanBeSetToOptIn_Async() {
     // Arrange
-    var options = new SystemEventOptions();
-
-    // Act
-    options.AuditMode = AuditMode.OptIn;
+    var options = new SystemEventOptions {
+      // Act
+      AuditMode = AuditMode.OptIn
+    };
 
     // Assert
     await Assert.That(options.AuditMode).IsEqualTo(AuditMode.OptIn);

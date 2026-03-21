@@ -25,14 +25,21 @@ namespace Whizbang.Core.Workers;
 /// AUTOMATICALLY routes commands to shared inbox topic to ensure delivery.
 /// Events use their destination directly (already namespace topics).
 /// </summary>
-public partial class TransportPublishStrategy : IMessagePublishStrategy {
+/// <remarks>
+/// Creates a new TransportPublishStrategy with a custom inbox topic.
+/// Commands are automatically routed to the specified inbox topic.
+/// </remarks>
+/// <param name="transport">The transport to publish messages to</param>
+/// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
+/// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
+public partial class TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic, ILoggerFactory? loggerFactory = null) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
-  private readonly ITransport _transport;
-  private readonly ITransportReadinessCheck _readinessCheck;
-  private readonly string _inboxTopic;
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
+  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
-  private readonly ILogger _logger;
+  private readonly ILogger _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 #pragma warning restore S4487
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping transport for event-store-only message: {MessageType}")]
@@ -49,20 +56,6 @@ public partial class TransportPublishStrategy : IMessagePublishStrategy {
   /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
   public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, ILoggerFactory? loggerFactory = null)
     : this(transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic, loggerFactory) {
-  }
-
-  /// <summary>
-  /// Creates a new TransportPublishStrategy with a custom inbox topic.
-  /// Commands are automatically routed to the specified inbox topic.
-  /// </summary>
-  /// <param name="transport">The transport to publish messages to</param>
-  /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
-  /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
-  public TransportPublishStrategy(ITransport transport, ITransportReadinessCheck readinessCheck, string inboxTopic, ILoggerFactory? loggerFactory = null) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
-    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-    _logger = loggerFactory?.CreateLogger(LOG_CATEGORY) ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
   }
 
   /// <summary>
@@ -167,8 +160,8 @@ public partial class TransportPublishStrategy : IMessagePublishStrategy {
     // Null check should never trigger due to early return in PublishAsync, but be defensive
     if (string.IsNullOrEmpty(work.Destination)) {
       throw new InvalidOperationException(
-        $"Event destination cannot be null or empty at this point. " +
-        $"Event-store-only messages should be handled by early return in PublishAsync. " +
+        "Event destination cannot be null or empty at this point. " +
+        "Event-store-only messages should be handled by early return in PublishAsync. " +
         $"MessageId: {work.MessageId}, MessageType: {work.MessageType}");
     }
 

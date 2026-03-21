@@ -13,7 +13,6 @@ public sealed class WorkCoordinatorMetrics {
   public const string METER_NAME = "Whizbang.WorkCoordinator";
 #pragma warning restore CA1707
 
-  private readonly Meter _meter;
 
   // Timing
   public Histogram<double> ProcessBatchDuration { get; }
@@ -45,29 +44,29 @@ public sealed class WorkCoordinatorMetrics {
   public Histogram<long> MaintenanceTaskRowsAffected { get; }
 
   public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
-    _meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    ProcessBatchDuration = _meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");
-    FlushDuration = _meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");
+    ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");
+    FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");
 
-    BatchOutboxMessages = _meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Outbox messages sent to process_work_batch");
-    BatchInboxMessages = _meter.CreateHistogram<int>("whizbang.work_coordinator.batch.inbox_messages", description: "Inbox messages sent");
-    BatchCompletions = _meter.CreateHistogram<int>("whizbang.work_coordinator.batch.completions", description: "Completions sent");
-    BatchFailures = _meter.CreateHistogram<int>("whizbang.work_coordinator.batch.failures", description: "Failures sent");
+    BatchOutboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.outbox_messages", description: "Outbox messages sent to process_work_batch");
+    BatchInboxMessages = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.inbox_messages", description: "Inbox messages sent");
+    BatchCompletions = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.completions", description: "Completions sent");
+    BatchFailures = meter.CreateHistogram<int>("whizbang.work_coordinator.batch.failures", description: "Failures sent");
 
-    ReturnedOutboxWork = _meter.CreateHistogram<int>("whizbang.work_coordinator.returned.outbox_work", description: "Outbox work items returned");
-    ReturnedInboxWork = _meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
-    ReturnedPerspectiveWork = _meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
+    ReturnedOutboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.outbox_work", description: "Outbox work items returned");
+    ReturnedInboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
+    ReturnedPerspectiveWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
 
-    ProcessBatchCalls = _meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
-    ProcessBatchErrors = _meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
-    FlushCalls = _meter.CreateCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
-    EmptyFlushCalls = _meter.CreateCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
+    ProcessBatchCalls = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
+    ProcessBatchErrors = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
+    FlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
+    EmptyFlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
 
-    PublisherLeaseRenewals = _meter.CreateCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
-    PublisherBufferedMessages = _meter.CreateCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");
+    PublisherLeaseRenewals = meter.CreateCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
+    PublisherBufferedMessages = meter.CreateCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");
 
-    MaintenanceTaskDuration = _meter.CreateHistogram<double>("whizbang.maintenance.task.duration", "ms", "Duration per maintenance task");
-    MaintenanceTaskRowsAffected = _meter.CreateHistogram<long>("whizbang.maintenance.task.rows_affected", description: "Rows cleaned per task");
+    MaintenanceTaskDuration = meter.CreateHistogram<double>("whizbang.maintenance.task.duration", "ms", "Duration per maintenance task");
+    MaintenanceTaskRowsAffected = meter.CreateHistogram<long>("whizbang.maintenance.task.rows_affected", description: "Rows cleaned per task");
   }
 }

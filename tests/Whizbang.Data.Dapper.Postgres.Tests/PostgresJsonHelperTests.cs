@@ -33,7 +33,7 @@ public class PostgresJsonHelperTests {
   [Test]
   public async Task JsonStringToJsonb_NullInput_CreatesNullJsonbParameterAsync() {
     // Arrange
-    string? json = null;
+    const string? json = null;
 
     // Act
     var param = PostgresJsonHelper.JsonStringToJsonb(json);

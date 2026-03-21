@@ -121,8 +121,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
       if (perspectiveScopeTypeInfo != null) {
         try {
-          var perspectiveScope = JsonSerializer.Deserialize(jsonb.ScopeJson, perspectiveScopeTypeInfo) as PerspectiveScope;
-          if (perspectiveScope != null) {
+          if (JsonSerializer.Deserialize(jsonb.ScopeJson, perspectiveScopeTypeInfo) is PerspectiveScope perspectiveScope) {
             tenantId = perspectiveScope.TenantId;
             userId = perspectiveScope.UserId;
           }
@@ -135,8 +134,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)) {
         var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
                                 ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>.");
-        var scopeDict = JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) as Dictionary<string, JsonElement?>;
-        if (scopeDict != null) {
+        if (JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
           if (scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
             tenantId = tenantElem.Value.GetString();
           }

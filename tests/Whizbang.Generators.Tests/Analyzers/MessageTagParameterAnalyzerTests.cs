@@ -23,7 +23,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ParameterMatchesProperty_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -51,7 +51,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ParameterDoesNotMatchProperty_ReportsDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -82,7 +82,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ParameterMatchesCaseInsensitive_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -110,7 +110,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleParameters_AllMustMatchAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -143,7 +143,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_BaseClassMessageTagAttribute_NotAnalyzedAsync() {
     // Arrange - test code that uses MessageTagAttribute directly
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -168,7 +168,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ParameterlessConstructor_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -194,7 +194,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ParameterMatchesInheritedProperty_NoDiagnosticAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -223,7 +223,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonMessageTagSubclass_NotAnalyzedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -252,7 +252,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_MultipleConstructors_EachCheckedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -289,7 +289,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DiagnosticMessage_SuggestsCorrectPropertyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 
@@ -321,7 +321,7 @@ public class MessageTagParameterAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_AbstractSubclass_IsAnalyzedAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
 

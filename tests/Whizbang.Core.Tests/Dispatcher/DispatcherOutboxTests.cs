@@ -244,7 +244,7 @@ public class DispatcherOutboxTests {
     var command = new CustomCommand("test");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert
     await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("my-custom-queue");
@@ -322,7 +322,7 @@ public class DispatcherOutboxTests {
     var command = new CreateProductCommand("Test Product");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert - Routing strategy should add pool suffix to "products" -> "products-pool1"
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
@@ -395,7 +395,7 @@ public class DispatcherOutboxTests {
     var command = new CustomCommand("test");
 
     // Act
-    var receipt = await dispatcher.SendAsync(command);
+    _ = await dispatcher.SendAsync(command);
 
     // Assert - Stream ID should be the message ID (since no aggregate ID extracted)
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);

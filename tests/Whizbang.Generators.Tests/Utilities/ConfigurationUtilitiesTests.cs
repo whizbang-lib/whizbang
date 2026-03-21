@@ -19,7 +19,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_CommaSeparated_ReturnsArrayAsync() {
     // Arrange
-    var input = "Model,Projection,Dto";
+    const string input = "Model,Projection,Dto";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -34,7 +34,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_WithWhitespace_TrimsValuesAsync() {
     // Arrange
-    var input = " Model , Projection , Dto ";
+    const string input = " Model , Projection , Dto ";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -49,7 +49,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_EmptyString_ReturnsEmptyArrayAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -61,7 +61,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_Null_ReturnsEmptyArrayAsync() {
     // Arrange
-    string? input = null;
+    const string? input = null;
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input!);
@@ -73,7 +73,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_WhitespaceOnly_ReturnsEmptyArrayAsync() {
     // Arrange
-    var input = "   ";
+    const string input = "   ";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -85,7 +85,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_SingleValue_ReturnsSingleElementArrayAsync() {
     // Arrange
-    var input = "Model";
+    const string input = "Model";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -98,7 +98,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_EmptyEntries_FiltersThemOutAsync() {
     // Arrange
-    var input = "Model,,Projection,,,Dto";
+    const string input = "Model,,Projection,,,Dto";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -113,7 +113,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_TrailingComma_HandlesCorrectlyAsync() {
     // Arrange
-    var input = "Model,Projection,";
+    const string input = "Model,Projection,";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -127,7 +127,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_LeadingComma_HandlesCorrectlyAsync() {
     // Arrange
-    var input = ",Model,Projection";
+    const string input = ",Model,Projection";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);
@@ -141,7 +141,7 @@ public class ConfigurationUtilitiesTests {
   [Test]
   public async Task ParseSuffixList_DefaultSuffixes_ParsesCorrectlyAsync() {
     // Arrange - The default value as it would appear in MSBuild
-    var input = "ReadModel,Model,Projection,Dto,View";
+    const string input = "ReadModel,Model,Projection,Dto,View";
 
     // Act
     var result = ConfigurationUtilities.ParseSuffixList(input);

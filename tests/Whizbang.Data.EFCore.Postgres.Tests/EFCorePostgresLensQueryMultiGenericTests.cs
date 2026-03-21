@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
@@ -42,9 +43,7 @@ public class EFCorePostgresLensQueryMultiGenericTests {
 
   #region Test DbContext
 
-  private sealed class MultiModelDbContext : DbContext {
-    public MultiModelDbContext(DbContextOptions<MultiModelDbContext> options) : base(options) { }
-
+  private sealed class MultiModelDbContext(DbContextOptions<EFCorePostgresLensQueryMultiGenericTests.MultiModelDbContext> options) : DbContext(options) {
     public DbSet<PerspectiveRow<OrderModel>> Orders => Set<PerspectiveRow<OrderModel>>();
     public DbSet<PerspectiveRow<CustomerModel>> Customers => Set<PerspectiveRow<CustomerModel>>();
     public DbSet<PerspectiveRow<ProductModel>> Products => Set<PerspectiveRow<ProductModel>>();
@@ -62,9 +61,7 @@ public class EFCorePostgresLensQueryMultiGenericTests {
       modelBuilder.Entity<PerspectiveRow<TModel>>(entity => {
         entity.HasKey(e => e.Id);
 
-        entity.OwnsOne(e => e.Data, data => {
-          data.WithOwner();
-        });
+        entity.OwnsOne(e => e.Data, data => data.WithOwner());
 
         entity.OwnsOne(e => e.Metadata, metadata => {
           metadata.WithOwner();

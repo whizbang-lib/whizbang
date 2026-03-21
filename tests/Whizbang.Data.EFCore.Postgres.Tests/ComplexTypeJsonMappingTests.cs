@@ -63,10 +63,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
   /// DbContext using current JSONB mapping pattern (compatible with EF Core 10).
   /// Uses Property().HasColumnType("jsonb") - the proven pattern for complex types.
   /// </summary>
-  private sealed class EFCore10CompatDbContext : DbContext {
-    public EFCore10CompatDbContext(DbContextOptions<EFCore10CompatDbContext> options)
-        : base(options) { }
-
+  private sealed class EFCore10CompatDbContext(DbContextOptions<ComplexTypeJsonMappingTests.EFCore10CompatDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       base.OnModelCreating(modelBuilder);
 

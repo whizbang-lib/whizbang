@@ -67,5 +67,5 @@ public class DapperEventStoreTests : EventStoreContractTests, IDisposable {
   [Skip("SQLite uses single envelope column, not 3-column JSONB model")]
   public override Task ReadPolymorphicAsync_EmptyStream_ShouldReturnEmptyAsync() => Task.CompletedTask;
 
-  private sealed class TestFixture : DapperTestBase { }
+  private sealed class TestFixture : DapperTestBase;
 }

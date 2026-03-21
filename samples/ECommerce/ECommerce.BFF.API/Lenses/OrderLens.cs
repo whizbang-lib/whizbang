@@ -12,11 +12,11 @@ public class OrderLens(ILensQuery<OrderReadModel> query, ILogger<OrderLens> logg
   private readonly ILogger<OrderLens> _logger = logger;
 
   public async Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
-    return await _query.GetByIdAsync(Guid.Parse(orderId), cancellationToken);
+    return await _query.DefaultScope.GetByIdAsync(Guid.Parse(orderId), cancellationToken);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
-    return await _query.Query
+    return await _query.DefaultScope.Query
       .Where(row => row.Scope.CustomerId == customerId)
       .OrderByDescending(row => row.CreatedAt)
       .Select(row => row.Data)
@@ -24,7 +24,7 @@ public class OrderLens(ILensQuery<OrderReadModel> query, ILogger<OrderLens> logg
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {
-    return await _query.Query
+    return await _query.DefaultScope.Query
       .Where(row => row.Scope.TenantId == tenantId)
       .OrderByDescending(row => row.CreatedAt)
       .Select(row => row.Data)
@@ -32,7 +32,7 @@ public class OrderLens(ILensQuery<OrderReadModel> query, ILogger<OrderLens> logg
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetRecentOrdersAsync(int limit = 100, CancellationToken cancellationToken = default) {
-    return await _query.Query
+    return await _query.DefaultScope.Query
       .OrderByDescending(row => row.CreatedAt)
       .Take(limit)
       .Select(row => row.Data)
@@ -40,7 +40,7 @@ public class OrderLens(ILensQuery<OrderReadModel> query, ILogger<OrderLens> logg
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByStatusAsync(string tenantId, string status, CancellationToken cancellationToken = default) {
-    return await _query.Query
+    return await _query.DefaultScope.Query
       .Where(row => row.Scope.TenantId == tenantId && row.Data.Status == status)
       .OrderByDescending(row => row.CreatedAt)
       .Select(row => row.Data)

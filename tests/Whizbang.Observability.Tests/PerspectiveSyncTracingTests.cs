@@ -25,7 +25,7 @@ namespace Whizbang.Observability.Tests;
 [NotInParallel(Order = 2)]
 public class PerspectiveSyncTracingTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // WaitAsync tracing tests

@@ -264,7 +264,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var baseSymbol = compilation.GetTypeByMetadataName(
         baseTypeFQN.Replace("global::", ""));
     if (baseSymbol is null) {
-      return new System.Collections.Generic.List<string>();
+      return [];
     }
 
     var result = new System.Collections.Generic.List<string>();
@@ -352,7 +352,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    return stages.ToArray();
+    return [.. stages];
   }
 
   /// <summary>
@@ -393,7 +393,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           }
         }
         if (eventTypesList.Count > 0) {
-          eventTypes = eventTypesList.ToArray();
+          eventTypes = [.. eventTypesList];
         }
       }
 
@@ -419,7 +419,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ));
     }
 
-    return syncAttributes.Count > 0 ? syncAttributes.ToArray() : null;
+    return syncAttributes.Count > 0 ? [.. syncAttributes] : null;
   }
 
   /// <summary>
@@ -514,9 +514,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
 
       // Capture the sync result
-      sb.AppendLine($"              var syncResult = await syncAwaiter.WaitForStreamAsync(");
+      sb.AppendLine("              var syncResult = await syncAwaiter.WaitForStreamAsync(");
       sb.AppendLine($"                typeof({attr.PerspectiveType}),");
-      sb.AppendLine($"                streamId.Value,");
+      sb.AppendLine("                streamId.Value,");
       sb.AppendLine($"                {eventTypesCode},");
       sb.AppendLine($"                global::System.TimeSpan.FromMilliseconds({timeoutMs}));");
 
@@ -525,12 +525,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // 1 = FireAlways (don't throw, let handler check SyncContext)
       // 2 = FireOnEachEvent (future streaming mode)
       if (attr.FireBehavior == 0) {
-        sb.AppendLine($"              if (syncResult.Outcome == global::Whizbang.Core.Perspectives.Sync.SyncOutcome.TimedOut) {{");
-        sb.AppendLine($"                throw new global::Whizbang.Core.Perspectives.Sync.PerspectiveSyncTimeoutException(");
+        sb.AppendLine("              if (syncResult.Outcome == global::Whizbang.Core.Perspectives.Sync.SyncOutcome.TimedOut) {");
+        sb.AppendLine("                throw new global::Whizbang.Core.Perspectives.Sync.PerspectiveSyncTimeoutException(");
         sb.AppendLine($"                  typeof({attr.PerspectiveType}),");
         sb.AppendLine($"                  global::System.TimeSpan.FromMilliseconds({timeoutMs}),");
         sb.AppendLine($"                  $\"Perspective sync timed out waiting for {{typeof({attr.PerspectiveType}).Name}} to process stream {{streamId.Value}} within {timeoutMs}ms.\");");
-        sb.AppendLine($"              }}");
+        sb.AppendLine("              }");
       }
     }
 
@@ -657,7 +657,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <returns>The type name without the trailing '?'.</returns>
   private static string _stripNullableAnnotation(string typeName) {
     return typeName.EndsWith("?", StringComparison.Ordinal)
-      ? typeName.Substring(0, typeName.Length - 1)
+      ? typeName[..^1]
       : typeName;
   }
 
@@ -685,7 +685,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <returns>The element type if it's a recognized collection, or null if not a collection.</returns>
   private static string? _extractCollectionElementType(string typeName) {
     // Collection type prefixes to check (fully qualified and simple names)
-    string[] collectionPrefixes = {
+    string[] collectionPrefixes = [
       "global::System.Collections.Generic.List<",
       "global::System.Collections.Generic.IList<",
       "global::System.Collections.Generic.IEnumerable<",
@@ -704,7 +704,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       "ICollection<",
       "IReadOnlyList<",
       "IReadOnlyCollection<"
-    };
+    ];
 
     foreach (var prefix in collectionPrefixes) {
       if (typeName.StartsWith(prefix, StringComparison.Ordinal) && typeName.EndsWith(">", StringComparison.Ordinal)) {
@@ -752,7 +752,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           // Elements may be arrays, collections, or simple types - extract element type appropriately
           if (unwrappedElement.EndsWith("[]", StringComparison.Ordinal)) {
             // Array type: Type[] - extract element type
-            var elementType = unwrappedElement.Substring(0, unwrappedElement.Length - 2);
+            var elementType = unwrappedElement[..^2];
             // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
             eventTypes.Add(_stripNullableAnnotation(elementType));
           } else {
@@ -772,7 +772,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
       // Handle array types: Type[] - extract element type
       else if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
-        var elementType = responseType.Substring(0, responseType.Length - 2);
+        var elementType = responseType[..^2];
         // Unwrap Routed<T> if present
         var unwrappedElementType = _unwrapRoutedTypeString(elementType);
         if (unwrappedElementType is not null) {
@@ -817,7 +817,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var elements = new List<string>();
 
     // Remove outer parentheses
-    var inner = tupleType.Substring(1, tupleType.Length - 2);
+    var inner = tupleType[1..^1];
 
     var current = new StringBuilder();
     var depth = 0;
@@ -1307,7 +1307,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (receptorWithRouting is not null) {
         receptorDefaultRouting.AppendLine($"      if (messageType == typeof({messageType})) {{");
         receptorDefaultRouting.AppendLine($"        return {receptorWithRouting.DefaultRouting};");
-        receptorDefaultRouting.AppendLine($"      }}");
+        receptorDefaultRouting.AppendLine("      }");
         receptorDefaultRouting.AppendLine();
       }
     }
@@ -1326,9 +1326,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      outboxCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
       outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine($"      }}");
+      outboxCascade.AppendLine("      }");
       outboxCascade.AppendLine();
     }
 
@@ -1339,10 +1339,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine($"      if (message is {eventType}) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      outboxCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
       // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
-      outboxCascade.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine($"      }}");
+      outboxCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
+      outboxCascade.AppendLine("      }");
       outboxCascade.AppendLine();
     }
 
@@ -1355,9 +1355,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      eventStoreOnlyCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
       eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine($"      }}");
+      eventStoreOnlyCascade.AppendLine("      }");
       eventStoreOnlyCascade.AppendLine();
     }
 
@@ -1367,10 +1367,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       eventStoreOnlyCascade.AppendLine($"      if (message is {eventType}) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine($"        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      eventStoreOnlyCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
       // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
-      eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine($"      }}");
+      eventStoreOnlyCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
+      eventStoreOnlyCascade.AppendLine("      }");
       eventStoreOnlyCascade.AppendLine();
     }
 
@@ -1480,10 +1480,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         .GroupBy(e => (e.RoutingMessageType, e.Stage))
         .ToList();
 
-    // Calculate handler count per (routing message type, stage) for tracing
-    var handlerCountByKey = groupedRoutingPairs
-        .ToDictionary(g => g.Key, g => g.Count());
-
     // Generate routing code for each (routingMessageType, stage) group
     var routingCode = new StringBuilder();
     foreach (var group in groupedRoutingPairs) {
@@ -1580,7 +1576,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    var entryTemplate = snippet.Substring(entryStart, entryEnd - entryStart);
+    var entryTemplate = snippet[entryStart..entryEnd];
 
     // Apply replacements
     var result = entryTemplate
@@ -1611,25 +1607,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       string syncAttributesCode) {
 
     var sb = new StringBuilder();
-    sb.AppendLine($"new global::Whizbang.Core.Messaging.ReceptorInfo(");
+    sb.AppendLine("new global::Whizbang.Core.Messaging.ReceptorInfo(");
     sb.AppendLine($"  MessageType: typeof({receptor.MessageType}),");
     sb.AppendLine($"  ReceptorId: \"{receptor.ClassName}\",");
-    sb.AppendLine($"  InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {{");
+    sb.AppendLine("  InvokeAsync: async (sp, msg, envelope, callerInfo, ct) => {");
 
     if (receptor.IsVoid) {
       sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}>>();");
       sb.AppendLine($"    await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
-      sb.AppendLine($"    return null;");
+      sb.AppendLine("    return null;");
     } else {
       sb.AppendLine($"    var receptor = sp.GetRequiredService<{StandardInterfaceNames.I_RECEPTOR}<{receptor.MessageType}, {receptor.ResponseType}>>();");
       sb.AppendLine($"    var result = await receptor.HandleAsync(({receptor.MessageType})msg, ct);");
-      sb.AppendLine($"    if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {{");
-      sb.AppendLine($"      return routedResult.Value;");
-      sb.AppendLine($"    }}");
-      sb.AppendLine($"    return result;");
+      sb.AppendLine("    if ((object)result is global::Whizbang.Core.Dispatch.IRouted routedResult) {");
+      sb.AppendLine("      return routedResult.Value;");
+      sb.AppendLine("    }");
+      sb.AppendLine("    return result;");
     }
 
-    sb.AppendLine($"  }},");
+    sb.AppendLine("  },");
     sb.AppendLine($"  SyncAttributes: {syncAttributesCode},");
     sb.AppendLine($"  FireDuringReplay: {(receptor.HasFireDuringReplayAttribute ? "true" : "false")}");
     sb.Append(')');

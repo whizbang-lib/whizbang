@@ -67,7 +67,7 @@ public class AuditOutboxMessageBuilderTests {
     var eventAuditedType = typeof(EventAudited);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: eventAuditedType.AssemblyQualifiedName!);
+      messageType: eventAuditedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true);
 
     // Act
@@ -103,7 +103,7 @@ public class AuditOutboxMessageBuilderTests {
     var excludedType = typeof(TestExcludedFromAuditEvent);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: excludedType.AssemblyQualifiedName!);
+      messageType: excludedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut);
 
     // Act
@@ -119,7 +119,7 @@ public class AuditOutboxMessageBuilderTests {
     var markedType = typeof(TestMarkedForAuditEvent);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: markedType.AssemblyQualifiedName!);
+      messageType: markedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptOut);
 
     // Act
@@ -139,7 +139,7 @@ public class AuditOutboxMessageBuilderTests {
     var unmarkedType = typeof(TestUnmarkedEvent);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: unmarkedType.AssemblyQualifiedName!);
+      messageType: unmarkedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
@@ -155,7 +155,7 @@ public class AuditOutboxMessageBuilderTests {
     var markedType = typeof(TestMarkedForAuditEvent);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: markedType.AssemblyQualifiedName!);
+      messageType: markedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
@@ -171,7 +171,7 @@ public class AuditOutboxMessageBuilderTests {
     var excludedType = typeof(TestExcludedFromAuditEvent);
     var message = _createOutboxMessage(
       isEvent: true,
-      messageType: excludedType.AssemblyQualifiedName!);
+      messageType: excludedType.AssemblyQualifiedName);
     var options = _createOptions(auditEnabled: true, auditMode: AuditMode.OptIn);
 
     // Act
@@ -260,7 +260,7 @@ public class AuditOutboxMessageBuilderTests {
   [Test]
   public async Task TryBuildAuditMessage_WithCorrelationIdInHopMetadata_ExtractsCorrelationIdAsync() {
     // Arrange
-    var correlationId = "corr-abc-123";
+    const string correlationId = "corr-abc-123";
     var message = _createOutboxMessage(
       isEvent: true,
       correlationIdInHop: correlationId);

@@ -859,7 +859,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       FROM wh_perspective_cursors
       WHERE stream_id = @streamId",
       new { streamId });
-    return results.ToList();
+    return [.. results];
   }
 
   // Lowercase properties match PostgreSQL column names (Dapper maps case-insensitively to record constructor parameters)

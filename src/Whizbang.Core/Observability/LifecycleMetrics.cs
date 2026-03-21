@@ -13,7 +13,6 @@ public sealed class LifecycleMetrics {
   public const string METER_NAME = "Whizbang.Lifecycle";
 #pragma warning restore CA1707
 
-  private readonly Meter _meter;
 
   // Stage timing
   public Histogram<double> StageDuration { get; }
@@ -33,19 +32,19 @@ public sealed class LifecycleMetrics {
   public Counter<long> TagHookErrors { get; }
 
   public LifecycleMetrics(WhizbangMetrics whizbangMetrics) {
-    _meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    StageDuration = _meter.CreateHistogram<double>("whizbang.lifecycle.stage.duration", "ms", "Time executing all receptors for a stage");
-    ReceptorDuration = _meter.CreateHistogram<double>("whizbang.lifecycle.receptor.duration", "ms", "Individual receptor invocation time");
+    StageDuration = meter.CreateHistogram<double>("whizbang.lifecycle.stage.duration", "ms", "Time executing all receptors for a stage");
+    ReceptorDuration = meter.CreateHistogram<double>("whizbang.lifecycle.receptor.duration", "ms", "Individual receptor invocation time");
 
-    StageInvocations = _meter.CreateCounter<long>("whizbang.lifecycle.stage.invocations", description: "Total invocations per lifecycle stage");
-    ReceptorInvocations = _meter.CreateCounter<long>("whizbang.lifecycle.receptor.invocations", description: "Individual receptor invocations");
-    ReceptorErrors = _meter.CreateCounter<long>("whizbang.lifecycle.receptor.errors", description: "Receptor failures per stage");
+    StageInvocations = meter.CreateCounter<long>("whizbang.lifecycle.stage.invocations", description: "Total invocations per lifecycle stage");
+    ReceptorInvocations = meter.CreateCounter<long>("whizbang.lifecycle.receptor.invocations", description: "Individual receptor invocations");
+    ReceptorErrors = meter.CreateCounter<long>("whizbang.lifecycle.receptor.errors", description: "Receptor failures per stage");
 
-    TagHookDuration = _meter.CreateHistogram<double>("whizbang.lifecycle.tag_hook.duration", "ms", "Per-hook execution time");
-    TagProcessingDuration = _meter.CreateHistogram<double>("whizbang.lifecycle.tag_processing.duration", "ms", "Total tag processing time (all hooks)");
+    TagHookDuration = meter.CreateHistogram<double>("whizbang.lifecycle.tag_hook.duration", "ms", "Per-hook execution time");
+    TagProcessingDuration = meter.CreateHistogram<double>("whizbang.lifecycle.tag_processing.duration", "ms", "Total tag processing time (all hooks)");
 
-    TagHookInvocations = _meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.invocations", description: "Hook invocations");
-    TagHookErrors = _meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.errors", description: "Hook failures");
+    TagHookInvocations = meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.invocations", description: "Hook invocations");
+    TagHookErrors = meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.errors", description: "Hook failures");
   }
 }

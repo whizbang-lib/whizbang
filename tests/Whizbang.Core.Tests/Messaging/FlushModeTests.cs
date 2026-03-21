@@ -168,7 +168,7 @@ public class FlushModeTests {
     await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
 
     // Assert - queues should be cleared, second flush should be empty
-    var result = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
+    _ = await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.Required);
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("second flush with empty queues should skip DB call");
   }
@@ -587,12 +587,8 @@ public class FlushModeTests {
       => Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class FakeWorkCoordinatorWithReturnedWork : IWorkCoordinator {
-    private readonly List<OutboxWork> _workToReturn;
-
-    public FakeWorkCoordinatorWithReturnedWork(List<OutboxWork> workToReturn) {
-      _workToReturn = workToReturn;
-    }
+  private sealed class FakeWorkCoordinatorWithReturnedWork(List<OutboxWork> workToReturn) : IWorkCoordinator {
+    private readonly List<OutboxWork> _workToReturn = workToReturn;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,

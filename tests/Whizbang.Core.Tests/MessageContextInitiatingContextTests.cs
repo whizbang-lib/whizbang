@@ -42,8 +42,8 @@ public class MessageContextInitiatingContextTests {
   [Test]
   public async Task New_WhenInitiatingContextAvailable_ShouldReadFromItAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {
       MessageId = MessageId.New(),
@@ -69,8 +69,8 @@ public class MessageContextInitiatingContextTests {
   [Test]
   public async Task New_WhenInitiatingContextNull_ShouldFallbackToCurrentContextAsync() {
     // Arrange
-    var testUserId = "scope-user@example.com";
-    var testTenantId = "scope-tenant-456";
+    const string testUserId = "scope-user@example.com";
+    const string testTenantId = "scope-tenant-456";
 
     // Only set CurrentContext, not InitiatingContext
     ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
@@ -121,10 +121,10 @@ public class MessageContextInitiatingContextTests {
   [Test]
   public async Task New_WhenBothContextsHaveValues_ShouldPrioritizeInitiatingContextAsync() {
     // Arrange
-    var initiatingUserId = "initiating-user@example.com";
-    var initiatingTenantId = "initiating-tenant-123";
-    var scopeUserId = "scope-user@example.com";
-    var scopeTenantId = "scope-tenant-456";
+    const string initiatingUserId = "initiating-user@example.com";
+    const string initiatingTenantId = "initiating-tenant-123";
+    const string scopeUserId = "scope-user@example.com";
+    const string scopeTenantId = "scope-tenant-456";
 
     // Set InitiatingContext (should win)
     ScopeContextAccessor.CurrentInitiatingContext = new MessageContext {

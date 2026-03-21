@@ -111,26 +111,21 @@ public interface IRouted {
 /// </example>
 /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
 /// <tests>tests/Whizbang.Core.Tests/Dispatch/RoutedTests.cs</tests>
-public readonly struct Routed<T> : IRouted {
+/// <remarks>
+/// Creates a new routed wrapper with the specified value and dispatch mode.
+/// </remarks>
+/// <param name="value">The value to wrap.</param>
+/// <param name="mode">The dispatch mode for routing.</param>
+public readonly struct Routed<T>(T value, DispatchMode mode) : IRouted {
   /// <summary>
   /// Gets the wrapped value.
   /// </summary>
-  public T Value { get; }
+  public T Value { get; } = value;
 
   /// <summary>
   /// Gets the dispatch mode for routing this value.
   /// </summary>
-  public DispatchMode Mode { get; }
-
-  /// <summary>
-  /// Creates a new routed wrapper with the specified value and dispatch mode.
-  /// </summary>
-  /// <param name="value">The value to wrap.</param>
-  /// <param name="mode">The dispatch mode for routing.</param>
-  public Routed(T value, DispatchMode mode) {
-    Value = value;
-    Mode = mode;
-  }
+  public DispatchMode Mode { get; } = mode;
 
   /// <summary>
   /// Gets the wrapped value as an object (explicit interface implementation).

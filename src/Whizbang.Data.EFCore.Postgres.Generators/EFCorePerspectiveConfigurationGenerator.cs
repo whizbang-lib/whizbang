@@ -176,12 +176,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Helper class for overriding PostgreSQL limits via MSBuild property.
   /// </summary>
-  private sealed class OverriddenPostgresLimits : IDbProviderLimits {
-    private readonly int _maxLength;
-
-    public OverriddenPostgresLimits(int maxLength) {
-      _maxLength = maxLength;
-    }
+  private sealed class OverriddenPostgresLimits(int maxLength) : IDbProviderLimits {
+    private readonly int _maxLength = maxLength;
 
     public int MaxTableNameBytes => _maxLength;
     public int MaxColumnNameBytes => _maxLength;
@@ -197,11 +193,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static string? _extractDbContextSchema(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -289,11 +283,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private static PerspectiveCandidate? _extractPerspectiveCandidate(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var classDecl = (ClassDeclarationSyntax)context.Node;
-    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
 
-    if (symbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(classDecl, ct) is not INamedTypeSymbol symbol) {
       return null;
     }
 
@@ -360,7 +352,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
     if (modelType is null) {
-      return ImmutableArray<PhysicalFieldInfo>.Empty;
+      return [];
     }
 
     var physicalFields = new List<PhysicalFieldInfo>();
@@ -396,7 +388,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToImmutableArray();
+    return [.. physicalFields];
   }
 
   /// <summary>
@@ -530,7 +522,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var propertyName = property.Name;
 
     // Polymorphic discriminators are always strings (type name discriminator)
-    var typeName = "global::System.String";
+    const string typeName = "global::System.String";
 
     // Extract named arguments
     string? columnName = null;
@@ -597,8 +589,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var propType = property.Type as INamedTypeSymbol;
-      if (propType == null) {
+      if (property.Type is not INamedTypeSymbol propType) {
         continue;
       }
 
@@ -733,7 +724,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         if (field.IsUnique) {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
-          sb.AppendLine($"        .IsUnique();");
+          sb.AppendLine("        .IsUnique();");
         } else {
           sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
           sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");

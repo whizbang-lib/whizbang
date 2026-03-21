@@ -9,21 +9,16 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// Message draining provides isolation between tests and test runs.
 /// The emulator is warmed up before tests run to eliminate cold-start delays.
 /// </summary>
-public sealed class ServiceBusBatchFixture : IAsyncDisposable {
+/// <remarks>
+/// Creates a fixture for the single ServiceBus emulator.
+/// </remarks>
+/// <param name="batchIndex">Zero-based batch index (always 0 for single emulator)</param>
+public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
   private DirectServiceBusEmulatorFixture? _emulator;
-  private readonly int _batchIndex;
-  private readonly int _basePort;
+  private readonly int _batchIndex = batchIndex;
+  private readonly int _basePort = 5682;
   private ServiceBusClient? _externalSharedClient;  // Client provided externally (not owned by this fixture)
   private string? _sharedConnectionString;  // Connection string when reusing shared emulator
-
-  /// <summary>
-  /// Creates a fixture for the single ServiceBus emulator.
-  /// </summary>
-  /// <param name="batchIndex">Zero-based batch index (always 0 for single emulator)</param>
-  public ServiceBusBatchFixture(int batchIndex) {
-    _batchIndex = batchIndex;
-    _basePort = 5682;  // Use 5682 to avoid conflict with Whizbang.Transports.AzureServiceBus.Tests on 5672
-  }
 
   /// <summary>
   /// Gets the Service Bus connection string for this batch's emulator instance.

@@ -64,12 +64,8 @@ public class ReceptorInvokerServiceRegistrationTests {
   /// Creates a test registry that resolves a scoped dependency during invocation.
   /// This simulates real receptor behavior where dependencies are resolved from the provider.
   /// </summary>
-  private sealed class ScopedDependencyRegistry : IReceptorRegistry {
-    private readonly Action<ScopedDependency> _onScopedDependencyResolved;
-
-    public ScopedDependencyRegistry(Action<ScopedDependency> onScopedDependencyResolved) {
-      _onScopedDependencyResolved = onScopedDependencyResolved;
-    }
+  private sealed class ScopedDependencyRegistry(Action<ReceptorInvokerServiceRegistrationTests.ScopedDependency> onScopedDependencyResolved) : IReceptorRegistry {
+    private readonly Action<ScopedDependency> _onScopedDependencyResolved = onScopedDependencyResolved;
 
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
       if (messageType != typeof(TestMessage) || stage != LifecycleStage.PostInboxInline) {

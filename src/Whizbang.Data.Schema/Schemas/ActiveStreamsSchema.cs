@@ -19,9 +19,9 @@ public static class ActiveStreamsSchema {
       new ColumnDefinition(
         Name: "stream_id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "partition_number",
         DataType: WhizbangDataType.INTEGER,
@@ -50,24 +50,26 @@ public static class ActiveStreamsSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_active_streams_instance",
-        Columns: ImmutableArray.Create("assigned_instance_id"),
-        WhereClause: "assigned_instance_id IS NOT NULL"
-      ),
+            Name: "idx_active_streams_instance",
+            Columns: ["assigned_instance_id"                                            ],
+            WhereClause: "assigned_instance_id IS NOT NULL"
+          ),
       new IndexDefinition(
         Name: "idx_active_streams_partition",
-        Columns: ImmutableArray.Create("partition_number"),
+        Columns: ["partition_number"                                    ],
         WhereClause: "assigned_instance_id IS NULL"
       ),
       new IndexDefinition(
         Name: "idx_active_streams_lease_expiry",
-        Columns: ImmutableArray.Create("lease_expiry"),
+        Columns: ["lease_expiry"                                ],
         WhereClause: "lease_expiry IS NOT NULL"
       )
-    )
-  );
+,
+    ]);
 
   /// <summary>
   /// Column name constants for type-safe access.

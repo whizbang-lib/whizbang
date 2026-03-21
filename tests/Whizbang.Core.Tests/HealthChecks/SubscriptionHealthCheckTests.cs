@@ -150,7 +150,7 @@ public class SubscriptionHealthCheckTests {
     await Assert.That(result.Data).ContainsKey("failed_destinations");
     var failedDestinations = result.Data["failed_destinations"] as IReadOnlyList<string>;
     await Assert.That(failedDestinations).IsNotNull();
-    await Assert.That(failedDestinations!).Contains("failed-queue");
+    await Assert.That(failedDestinations).Contains("failed-queue");
   }
 
   [Test]
@@ -176,7 +176,7 @@ public class SubscriptionHealthCheckTests {
     await Assert.That(result.Data).ContainsKey("recovering_destinations");
     var recoveringDestinations = result.Data["recovering_destinations"] as IReadOnlyList<string>;
     await Assert.That(recoveringDestinations).IsNotNull();
-    await Assert.That(recoveringDestinations!).Contains("recovering-queue");
+    await Assert.That(recoveringDestinations).Contains("recovering-queue");
   }
 
   [Test]

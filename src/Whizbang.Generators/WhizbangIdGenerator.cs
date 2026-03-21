@@ -407,7 +407,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Emit collision warnings
     foreach (var collisionGroup in collisionGroups) {
-      _reportCollisionWarnings(context, collisionGroup.ToList());
+      _reportCollisionWarnings(context, [.. collisionGroup]);
     }
 
     return (deduplicated, collidingTypeNames);
@@ -664,10 +664,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Converter class
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// AOT-compatible JSON converter for {id.TypeName}.");
     sb.AppendLine($"/// Serializes {id.TypeName} using Medo.Uuid7 format for time-ordered UUIDs.");
-    sb.AppendLine($"/// </summary>");
+    sb.AppendLine("/// </summary>");
     sb.AppendLine($"public sealed class {id.TypeName}JsonConverter : JsonConverter<{id.TypeName}> {{");
 
     // Read method
@@ -706,16 +706,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Factory class
-    sb.AppendLine($"/// <summary>");
+    sb.AppendLine("/// <summary>");
     sb.AppendLine($"/// Factory for creating {id.TypeName} instances through dependency injection.");
     sb.AppendLine($"/// Implements <see cref=\"global::Whizbang.Core.IWhizbangIdFactory{{T}}\" /> for {id.TypeName}.");
-    sb.AppendLine($"/// </summary>");
+    sb.AppendLine("/// </summary>");
     sb.AppendLine($"public sealed class {id.TypeName}Factory : global::Whizbang.Core.IWhizbangIdFactory<{id.TypeName}> {{");
 
     // Create method
-    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine("  /// <summary>");
     sb.AppendLine($"  /// Creates a new {id.TypeName} instance using the configured WhizbangIdProvider.");
-    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine("  /// </summary>");
     sb.AppendLine($"  /// <returns>A new {id.TypeName} instance.</returns>");
     sb.AppendLine($"  public {id.TypeName} Create() => {id.TypeName}.New();");
 

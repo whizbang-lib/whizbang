@@ -23,12 +23,12 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
   // Built-in attribute types that are handled directly by MessageTagProcessor
   // Custom attributes (those not in this set) require generated dispatchers
-  private static readonly HashSet<string> _builtInAttributeTypes = new() {
+  private static readonly HashSet<string> _builtInAttributeTypes = [
     "global::Whizbang.Core.Attributes.MessageTagAttribute",
     "global::Whizbang.Core.Attributes.SignalTagAttribute",
     "global::Whizbang.Core.Attributes.TelemetryTagAttribute",
     "global::Whizbang.Core.Attributes.MetricTagAttribute",
-  };
+  ];
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with [MessageTag] or derived attributes
@@ -285,13 +285,13 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine($"    if (attributeType == typeof({attrType})) {{");
       sb.AppendLine($"      return new TagContext<{attrType}> {{");
       sb.AppendLine($"        Attribute = ({attrType})attribute,");
-      sb.AppendLine($"        Message = message,");
-      sb.AppendLine($"        MessageType = messageType,");
-      sb.AppendLine($"        Payload = payload,");
-      sb.AppendLine($"        Scope = scope,");
-      sb.AppendLine($"        Stage = stage,");
-      sb.AppendLine($"      }};");
-      sb.AppendLine($"    }}");
+      sb.AppendLine("        Message = message,");
+      sb.AppendLine("        MessageType = messageType,");
+      sb.AppendLine("        Payload = payload,");
+      sb.AppendLine("        Scope = scope,");
+      sb.AppendLine("        Stage = stage,");
+      sb.AppendLine("      };");
+      sb.AppendLine("    }");
       sb.AppendLine();
     }
 
@@ -313,12 +313,12 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine($"    if (attributeType == typeof({attrType}) &&");
       sb.AppendLine($"        hookInstance is IMessageTagHook<{attrType}> hook_{id} &&");
       sb.AppendLine($"        context is TagContext<{attrType}> ctx_{id}) {{");
-      sb.AppendLine($"      // Establish ambient scope from TagContext so hooks can access ScopeContextAccessor.CurrentContext");
+      sb.AppendLine("      // Establish ambient scope from TagContext so hooks can access ScopeContextAccessor.CurrentContext");
       sb.AppendLine($"      if (ctx_{id}.Scope is not null) {{");
       sb.AppendLine($"        ScopeContextAccessor.CurrentContext = ctx_{id}.Scope;");
-      sb.AppendLine($"      }}");
+      sb.AppendLine("      }");
       sb.AppendLine($"      return await hook_{id}.OnTaggedMessageAsync(ctx_{id}, ct);");
-      sb.AppendLine($"    }}");
+      sb.AppendLine("    }");
       sb.AppendLine();
     }
 
@@ -347,7 +347,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   }
 
   private static void _generateRegistration(StringBuilder sb, MessageTagInfo tag) {
-    sb.AppendLine($"    new MessageTagRegistration {{");
+    sb.AppendLine("    new MessageTagRegistration {");
     sb.AppendLine($"      MessageType = typeof({tag.TypeFullName}),");
     sb.AppendLine($"      AttributeType = typeof({tag.AttributeFullName}),");
     sb.AppendLine($"      Tag = \"{_escapeString(tag.Tag)}\",");
@@ -363,9 +363,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Generate PayloadBuilder
-    sb.AppendLine($"      PayloadBuilder = msg => {{");
+    sb.AppendLine("      PayloadBuilder = msg => {");
     sb.AppendLine($"        var e = ({tag.TypeFullName})msg;");
-    sb.AppendLine($"        var dict = new Dictionary<string, object?>();");
+    sb.AppendLine("        var dict = new Dictionary<string, object?>();");
 
     // Extract specified properties, or all properties if none specified
     var propsToExtract = tag.Properties is not null && tag.Properties.Length > 0
@@ -380,24 +380,24 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
 
     // Include full event if requested
     if (tag.IncludeEvent) {
-      sb.AppendLine($"        dict[\"__event\"] = e;");
+      sb.AppendLine("        dict[\"__event\"] = e;");
     }
 
     // Merge extra JSON if present
     if (!string.IsNullOrEmpty(tag.ExtraJson)) {
       sb.AppendLine($"        // Merge extra JSON: {_escapeString(tag.ExtraJson)}");
       sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{_escapeString(tag.ExtraJson)}\"\"\");");
-      sb.AppendLine($"        foreach (var prop in extra.RootElement.EnumerateObject()) {{");
-      sb.AppendLine($"          dict[prop.Name] = prop.Value.Clone();");
-      sb.AppendLine($"        }}");
+      sb.AppendLine("        foreach (var prop in extra.RootElement.EnumerateObject()) {");
+      sb.AppendLine("          dict[prop.Name] = prop.Value.Clone();");
+      sb.AppendLine("        }");
     }
 
-    sb.AppendLine($"        return JsonSerializer.SerializeToElement(dict);");
-    sb.AppendLine($"      }},");
+    sb.AppendLine("        return JsonSerializer.SerializeToElement(dict);");
+    sb.AppendLine("      },");
 
     // Generate AttributeFactory
     sb.AppendLine($"      AttributeFactory = () => new {tag.AttributeFullName}() {{ Tag = \"{_escapeString(tag.Tag)}\" }}");
-    sb.AppendLine($"    }},");
+    sb.AppendLine("    },");
   }
 
   private static string _escapeString(string? s) {

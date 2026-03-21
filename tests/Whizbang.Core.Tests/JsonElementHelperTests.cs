@@ -10,7 +10,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromString_WithValidString_ReturnsJsonElementAsync() {
     // Arrange
-    var value = "test string";
+    const string value = "test string";
 
     // Act
     var result = JsonElementHelper.FromString(value);
@@ -48,7 +48,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromString_WithEmptyString_ReturnsEmptyJsonStringAsync() {
     // Arrange
-    var value = "";
+    const string value = "";
 
     // Act
     var result = JsonElementHelper.FromString(value);
@@ -61,7 +61,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromInt32_WithValidInt_ReturnsJsonElementAsync() {
     // Arrange
-    var value = 42;
+    const int value = 42;
 
     // Act
     var result = JsonElementHelper.FromInt32(value);
@@ -74,7 +74,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromInt32_WithZero_ReturnsZeroJsonElementAsync() {
     // Arrange
-    var value = 0;
+    const int value = 0;
 
     // Act
     var result = JsonElementHelper.FromInt32(value);
@@ -87,7 +87,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromInt32_WithNegative_ReturnsNegativeJsonElementAsync() {
     // Arrange
-    var value = -123;
+    const int value = -123;
 
     // Act
     var result = JsonElementHelper.FromInt32(value);
@@ -100,7 +100,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromBoolean_WithTrue_ReturnsJsonElementAsync() {
     // Arrange
-    var value = true;
+    const bool value = true;
 
     // Act
     var result = JsonElementHelper.FromBoolean(value);
@@ -113,7 +113,7 @@ public class JsonElementHelperTests {
   [Test]
   public async Task JsonElementHelper_FromBoolean_WithFalse_ReturnsJsonElementAsync() {
     // Arrange
-    var value = false;
+    const bool value = false;
 
     // Act
     var result = JsonElementHelper.FromBoolean(value);

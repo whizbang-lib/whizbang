@@ -2,7 +2,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 // PostgreSQL for Whizbang (shared by both services)
 // Use Session lifetime for tests to get clean state on every test run
-var postgres = builder.AddPostgres("postgres")
+_ = builder.AddPostgres("postgres")
   .WithLifetime(ContainerLifetime.Session)
   .AddDatabase("whizbang-integration-test");
 

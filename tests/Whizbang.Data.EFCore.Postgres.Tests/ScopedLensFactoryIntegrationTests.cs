@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -422,17 +423,13 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Database-backed lens query interface.
   /// </summary>
-  public interface IDatabaseOrderLensQuery : ILensQuery<Order> { }
+  public interface IDatabaseOrderLensQuery : ILensQuery<Order>;
 
   /// <summary>
   /// Database-backed lens implementation using EFCoreFilterableLensQuery.
   /// </summary>
-  private sealed class DatabaseOrderLensQuery : IDatabaseOrderLensQuery, IFilterableLens {
-    private readonly EFCoreFilterableLensQuery<Order> _inner;
-
-    public DatabaseOrderLensQuery(DbContext context) {
-      _inner = new EFCoreFilterableLensQuery<Order>(context, "wh_per_order");
-    }
+  private sealed class DatabaseOrderLensQuery(DbContext context) : IDatabaseOrderLensQuery, IFilterableLens {
+    private readonly EFCoreFilterableLensQuery<Order> _inner = new EFCoreFilterableLensQuery<Order>(context, "wh_per_order");
 
     public void ApplyFilter(ScopeFilterInfo filterInfo) {
       _inner.ApplyFilter(filterInfo);
@@ -443,6 +440,10 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     public Task<Order?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       return _inner.GetByIdAsync(id, cancellationToken);
     }
+
+    public IScopedLensAccess<Order> Scope(QueryScope scope) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => throw new NotImplementedException();
+    public IScopedLensAccess<Order> DefaultScope => throw new NotImplementedException();
   }
 
   // === Mock Test Types ===

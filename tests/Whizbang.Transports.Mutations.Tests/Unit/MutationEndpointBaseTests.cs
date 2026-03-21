@@ -312,12 +312,8 @@ public class DefaultHookEndpoint : MutationEndpointBase<TestOrderCommand, TestOr
 /// <summary>
 /// Endpoint that tracks execution order.
 /// </summary>
-public class OrderTrackingEndpoint : MutationEndpointBase<TestOrderCommand, TestOrderResult> {
-  private readonly List<string> _executionOrder;
-
-  public OrderTrackingEndpoint(List<string> executionOrder) {
-    _executionOrder = executionOrder;
-  }
+public class OrderTrackingEndpoint(List<string> executionOrder) : MutationEndpointBase<TestOrderCommand, TestOrderResult> {
+  private readonly List<string> _executionOrder = executionOrder;
 
   protected override ValueTask OnBeforeExecuteAsync(
       TestOrderCommand command,

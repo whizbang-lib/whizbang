@@ -19,7 +19,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithLensInterface_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -36,7 +36,7 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("IOrderLens");
+    await Assert.That(code).Contains("IOrderLens");
     await Assert.That(code).Contains("Order");
   }
 
@@ -47,7 +47,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleLenses_GeneratesAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -68,7 +68,7 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("IOrderLens");
+    await Assert.That(code).Contains("IOrderLens");
     await Assert.That(code).Contains("IProductLens");
     await Assert.That(code).Contains("ICustomerLens");
   }
@@ -80,7 +80,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithTenantScopedModel_DetectsScopeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -101,7 +101,7 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("TenantId");
+    await Assert.That(code).Contains("TenantId");
   }
 
   /// <summary>
@@ -111,7 +111,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithNoLenses_GeneratesEmptyRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -137,7 +137,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ProducesCompilableCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -165,7 +165,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithUserScopedModel_DetectsScopeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -186,7 +186,7 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("UserId");
+    await Assert.That(code).Contains("UserId");
   }
 
   /// <summary>
@@ -196,7 +196,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesModelTypeInfoAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -212,7 +212,7 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("typeof");
+    await Assert.That(code).Contains("typeof");
     await Assert.That(code).Contains("Order");
   }
 
@@ -223,7 +223,7 @@ public class ScopedLensFactoryGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithClassImplementingILensQuery_GeneratesRegistryAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -240,6 +240,6 @@ public class ScopedLensFactoryGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "LensRegistry.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("ProductLens");
+    await Assert.That(code).Contains("ProductLens");
   }
 }

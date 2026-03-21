@@ -31,7 +31,7 @@ public class TransportConsumerWorkerProvisioningTests {
     var services = new ServiceCollection();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(
-      new RoutingOptions().OwnDomains(ownedDomains.ToArray())));
+      new RoutingOptions().OwnDomains([.. ownedDomains])));
     var serviceProvider = services.BuildServiceProvider();
 
     var options = new TransportConsumerOptions();

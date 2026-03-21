@@ -51,13 +51,11 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
   private static PerspectiveAssociationInfo[]? _extractPerspectiveAssociationInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
 
-    if (classSymbol is null) {
+    if (semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol classSymbol) {
       return null;
     }
 
@@ -159,7 +157,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
       isFirstAssociation = false;
 
       // Generate C# code that appends JSON object
-      associations.AppendLine($"    json.Append(\"    {{\");");
+      associations.AppendLine("    json.Append(\"    {\");");
       associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{perspective.MessageTypeName}\\\", \");");
       associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
       associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspective.PerspectiveClrTypeName}\\\", \");");

@@ -109,7 +109,7 @@ public class AutoPopulatePopulatorRegistryTests {
   public async Task PopulateSent_WithNonMatchingType_ReturnsOriginalMessageAsync() {
     _ensureRegistered();
 
-    var message = "not a record";
+    const string message = "not a record";
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = new ServiceInstanceInfo {

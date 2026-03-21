@@ -18,7 +18,6 @@ public class TransportThroughputBenchmarks {
   private const string BENCHMARK_HOST = "benchmark-host";
   private const int BENCHMARK_PROCESS_ID = 12345;
 
-  private ITransportManager _transportManager = null!;
   private ITransport _transport = null!;
   private ServiceProvider _serviceProvider = null!;
 
@@ -33,7 +32,6 @@ public class TransportThroughputBenchmarks {
     services.AddSingleton<ITransport, InProcessTransport>();
 
     _serviceProvider = services.BuildServiceProvider();
-    _transportManager = _serviceProvider.GetRequiredService<ITransportManager>();
     _transport = _serviceProvider.GetRequiredService<ITransport>();
 
     // Pre-generate test envelopes

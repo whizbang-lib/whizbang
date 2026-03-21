@@ -17,7 +17,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task WhizbangIdJsonContext_WithProductId_ProvidesJsonTypeInfoAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -34,7 +34,7 @@ public class WhizbangIdJsonSerializationTests {
     await Assert.That(contextSource).IsNotNull();
 
     // Assert - Should implement IJsonTypeInfoResolver
-    await Assert.That(contextSource!).Contains("IJsonTypeInfoResolver");
+    await Assert.That(contextSource).Contains("IJsonTypeInfoResolver");
     await Assert.That(contextSource).Contains("public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options)");
 
     // Assert - Should create JsonTypeInfo using JsonMetadataServices.CreateValueInfo
@@ -55,7 +55,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task WhizbangIdJsonContext_WithMultipleIdTypes_ProvidesJsonTypeInfoForAllAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -78,7 +78,7 @@ public class WhizbangIdJsonSerializationTests {
     await Assert.That(contextSource).IsNotNull();
 
     // Assert - Should handle ProductId
-    await Assert.That(contextSource!).Contains("if (type == typeof(MyApp.Domain.ProductId))");
+    await Assert.That(contextSource).Contains("if (type == typeof(MyApp.Domain.ProductId))");
     await Assert.That(contextSource).Contains("new MyApp.Domain.ProductIdJsonConverter()");
     await Assert.That(contextSource).Contains("JsonMetadataServices.CreateValueInfo<MyApp.Domain.ProductId>");
 
@@ -100,7 +100,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task JsonConverter_Serialization_UsesUuidv7FormatAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -117,7 +117,7 @@ public class WhizbangIdJsonSerializationTests {
     await Assert.That(converterSource).IsNotNull();
 
     // Assert - Write method should convert to Uuid7
-    await Assert.That(converterSource!).Contains("public override void Write(Utf8JsonWriter writer, ProductId value, JsonSerializerOptions options)");
+    await Assert.That(converterSource).Contains("public override void Write(Utf8JsonWriter writer, ProductId value, JsonSerializerOptions options)");
     await Assert.That(converterSource).Contains("var uuid7 = new Uuid7(value.Value)");
     await Assert.That(converterSource).Contains("writer.WriteStringValue(uuid7.ToString())");
   }
@@ -129,7 +129,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task JsonConverter_Deserialization_ParsesUuidv7FormatAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -146,7 +146,7 @@ public class WhizbangIdJsonSerializationTests {
     await Assert.That(converterSource).IsNotNull();
 
     // Assert - Read method should parse Uuid7
-    await Assert.That(converterSource!).Contains("public override ProductId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)");
+    await Assert.That(converterSource).Contains("public override ProductId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)");
     await Assert.That(converterSource).Contains("var uuid7String = reader.GetString()");
     await Assert.That(converterSource).Contains("var uuid7 = Uuid7.Parse(uuid7String)");
     await Assert.That(converterSource).Contains("return ProductId.From(uuid7.ToGuid())");
@@ -159,7 +159,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task WhizbangIdJsonContext_HasRequiredUsingStatementsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -175,7 +175,7 @@ public class WhizbangIdJsonSerializationTests {
     var contextSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdJsonContext.g.cs");
     await Assert.That(contextSource).IsNotNull();
 
-    await Assert.That(contextSource!).Contains("using System;");
+    await Assert.That(contextSource).Contains("using System;");
     await Assert.That(contextSource).Contains("using System.Text.Json;");
     await Assert.That(contextSource).Contains("using System.Text.Json.Serialization;");
     await Assert.That(contextSource).Contains("using System.Text.Json.Serialization.Metadata;");
@@ -188,7 +188,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task WhizbangIdJsonContext_IsInWhizbangCoreGeneratedNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -203,7 +203,7 @@ public class WhizbangIdJsonSerializationTests {
     // Assert - Should be in Whizbang.Core.Generated namespace
     var contextSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdJsonContext.g.cs");
     await Assert.That(contextSource).IsNotNull();
-    await Assert.That(contextSource!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(contextSource).Contains("namespace TestAssembly.Generated");
   }
 
   /// <summary>
@@ -213,7 +213,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task WhizbangIdJsonContext_HasDefaultSingletonAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -228,7 +228,7 @@ public class WhizbangIdJsonSerializationTests {
     // Assert - Should have Default singleton
     var contextSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdJsonContext.g.cs");
     await Assert.That(contextSource).IsNotNull();
-    await Assert.That(contextSource!).Contains("public static WhizbangIdJsonContext Default { get; } = new()");
+    await Assert.That(contextSource).Contains("public static WhizbangIdJsonContext Default { get; } = new()");
   }
 
   /// <summary>
@@ -238,7 +238,7 @@ public class WhizbangIdJsonSerializationTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleIdTypes_GeneratesIndependentConvertersAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using Whizbang.Core;
 
             namespace MyApp.Domain;
@@ -261,7 +261,7 @@ public class WhizbangIdJsonSerializationTests {
     await Assert.That(orderConverterSource).IsNotNull();
 
     // Assert - Each converter should be type-specific
-    await Assert.That(productConverterSource!).Contains("class ProductIdJsonConverter : JsonConverter<ProductId>");
-    await Assert.That(orderConverterSource!).Contains("class OrderIdJsonConverter : JsonConverter<OrderId>");
+    await Assert.That(productConverterSource).Contains("class ProductIdJsonConverter : JsonConverter<ProductId>");
+    await Assert.That(orderConverterSource).Contains("class OrderIdJsonConverter : JsonConverter<OrderId>");
   }
 }

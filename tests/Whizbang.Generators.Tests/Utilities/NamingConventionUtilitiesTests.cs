@@ -19,27 +19,27 @@ public class NamingConventionUtilitiesTests {
   private static readonly TableNameConfig _disabledConfig = TableNameConfig.NoStripping;
   private static readonly TableNameConfig _readModelFirstConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ReadModel", "Model", "Projection", "Dto", "View" }
+      SuffixesToStrip: ["ReadModel", "Model", "Projection", "Dto", "View"]
   );
   private static readonly TableNameConfig _minimalConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Model", "Projection" }
+      SuffixesToStrip: ["Model", "Projection"]
   );
   private static readonly TableNameConfig _customSuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Aggregate", "State" }
+      SuffixesToStrip: ["Aggregate", "State"]
   );
   private static readonly TableNameConfig _singleSuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "Model" }
+      SuffixesToStrip: ["Model"]
   );
   private static readonly TableNameConfig _modelViewConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ModelView", "Model", "View" }
+      SuffixesToStrip: ["ModelView", "Model", "View"]
   );
   private static readonly TableNameConfig _emptySuffixConfig = new(
       StripSuffixes: true,
-      SuffixesToStrip: Array.Empty<string>()
+      SuffixesToStrip: []
   );
 
   #region ToSnakeCase Tests
@@ -47,7 +47,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_PascalCase_ReturnsSnakeCaseAsync() {
     // Arrange
-    var input = "OrderItem";
+    const string input = "OrderItem";
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input);
@@ -59,7 +59,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_MultipleWords_ReturnsSnakeCaseAsync() {
     // Arrange
-    var input = "ActiveJobTemplateModel";
+    const string input = "ActiveJobTemplateModel";
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input);
@@ -71,7 +71,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_EmptyString_ReturnsEmptyAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input);
@@ -83,7 +83,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_Null_ReturnsNullAsync() {
     // Arrange
-    string? input = null;
+    const string? input = null;
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input!);
@@ -95,7 +95,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_SingleWord_ReturnsLowercaseAsync() {
     // Arrange
-    var input = "Order";
+    const string input = "Order";
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input);
@@ -107,7 +107,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToSnakeCase_AllLowercase_ReturnsSameAsync() {
     // Arrange
-    var input = "order";
+    const string input = "order";
 
     // Act
     var result = NamingConventionUtilities.ToSnakeCase(input);
@@ -123,7 +123,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task Pluralize_WithoutS_AddsSAsync() {
     // Arrange
-    var input = "Order";
+    const string input = "Order";
 
     // Act
     var result = NamingConventionUtilities.Pluralize(input);
@@ -135,7 +135,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task Pluralize_WithS_ReturnsSameAsync() {
     // Arrange
-    var input = "Orders";
+    const string input = "Orders";
 
     // Act
     var result = NamingConventionUtilities.Pluralize(input);
@@ -147,7 +147,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task Pluralize_Empty_ReturnsEmptyAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = NamingConventionUtilities.Pluralize(input);
@@ -159,7 +159,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task Pluralize_Null_ReturnsNullAsync() {
     // Arrange
-    string? input = null;
+    const string? input = null;
 
     // Act
     var result = NamingConventionUtilities.Pluralize(input!);
@@ -175,7 +175,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_Model_StripsAsync() {
     // Arrange
-    var input = "OrderModel";
+    const string input = "OrderModel";
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input);
@@ -187,7 +187,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_ReadModel_StripsAsync() {
     // Arrange
-    var input = "OrderReadModel";
+    const string input = "OrderReadModel";
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input);
@@ -199,7 +199,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_Dto_StripsAsync() {
     // Arrange
-    var input = "ProductDto";
+    const string input = "ProductDto";
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input);
@@ -211,7 +211,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_NoSuffix_ReturnsSameAsync() {
     // Arrange
-    var input = "Order";
+    const string input = "Order";
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input);
@@ -223,7 +223,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_Empty_ReturnsEmptyAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input);
@@ -235,7 +235,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripCommonSuffixes_Null_ReturnsNullAsync() {
     // Arrange
-    string? input = null;
+    const string? input = null;
 
     // Act
     var result = NamingConventionUtilities.StripCommonSuffixes(input!);
@@ -251,7 +251,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToDefaultRouteName_ReturnsApiPrefixedRouteAsync() {
     // Arrange
-    var input = "OrderReadModel";
+    const string input = "OrderReadModel";
 
     // Act
     var result = NamingConventionUtilities.ToDefaultRouteName(input);
@@ -263,7 +263,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToDefaultRouteName_WithDto_StripsAndPluralizesAsync() {
     // Arrange
-    var input = "ProductDto";
+    const string input = "ProductDto";
 
     // Act
     var result = NamingConventionUtilities.ToDefaultRouteName(input);
@@ -275,7 +275,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToDefaultRouteName_AlreadyPlural_DoesNotDoublePluralizeAsync() {
     // Arrange
-    var input = "Orders";
+    const string input = "Orders";
 
     // Act
     var result = NamingConventionUtilities.ToDefaultRouteName(input);
@@ -291,7 +291,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToDefaultQueryName_ReturnsCamelCasePluralAsync() {
     // Arrange
-    var input = "OrderReadModel";
+    const string input = "OrderReadModel";
 
     // Act
     var result = NamingConventionUtilities.ToDefaultQueryName(input);
@@ -303,7 +303,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task ToDefaultQueryName_WithModel_StripsAndPluralizesAsync() {
     // Arrange
-    var input = "ProductModel";
+    const string input = "ProductModel";
 
     // Act
     var result = NamingConventionUtilities.ToDefaultQueryName(input);
@@ -319,7 +319,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WhenEnabled_StripsMatchingSuffixAsync() {
     // Arrange
-    var input = "OrderProjection";
+    const string input = "OrderProjection";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _defaultConfig);
@@ -331,7 +331,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WhenDisabled_ReturnsInputUnchangedAsync() {
     // Arrange
-    var input = "OrderProjection";
+    const string input = "OrderProjection";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _disabledConfig);
@@ -343,7 +343,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WithModel_StripsModelAsync() {
     // Arrange
-    var input = "ActivityEmbeddingModel";
+    const string input = "ActivityEmbeddingModel";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _defaultConfig);
@@ -355,7 +355,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WithReadModel_StripsReadModelAsync() {
     // Arrange - ReadModel should be checked before Model (longer suffix first)
-    var input = "OrderReadModel";
+    const string input = "OrderReadModel";
 
     // Act - Use config with ReadModel first
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _readModelFirstConfig);
@@ -367,7 +367,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WithDto_StripsDtoAsync() {
     // Arrange
-    var input = "ProductDto";
+    const string input = "ProductDto";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _defaultConfig);
@@ -379,7 +379,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_WithView_StripsViewAsync() {
     // Arrange
-    var input = "CustomerView";
+    const string input = "CustomerView";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _defaultConfig);
@@ -391,7 +391,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_NoMatchingSuffix_ReturnsUnchangedAsync() {
     // Arrange
-    var input = "OrderEntity";
+    const string input = "OrderEntity";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _defaultConfig);
@@ -403,7 +403,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_EmptyString_ReturnsEmptyAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _minimalConfig);
@@ -415,7 +415,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_Null_ReturnsNullAsync() {
     // Arrange
-    string? input = null;
+    const string? input = null;
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input!, _minimalConfig);
@@ -427,7 +427,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_EmptySuffixArray_ReturnsUnchangedAsync() {
     // Arrange
-    var input = "OrderProjection";
+    const string input = "OrderProjection";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _emptySuffixConfig);
@@ -439,7 +439,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_CustomSuffixes_StripsCustomSuffixAsync() {
     // Arrange
-    var input = "OrderAggregate";
+    const string input = "OrderAggregate";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _customSuffixConfig);
@@ -451,7 +451,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_CaseSensitive_DoesNotMatchWrongCaseAsync() {
     // Arrange - suffixes should be case-sensitive
-    var input = "OrderMODEL";
+    const string input = "OrderMODEL";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _singleSuffixConfig);
@@ -463,7 +463,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_OnlySuffix_ReturnsEmptyIfOnlySuffixAsync() {
     // Arrange - Edge case: name is only the suffix
-    var input = "Model";
+    const string input = "Model";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _singleSuffixConfig);
@@ -475,7 +475,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task StripConfigurableSuffixes_LongerSuffixMatchedFirst_StripsCorrectlyAsync() {
     // Arrange - If ModelView is in list before View, "OrderModelView" should strip "ModelView"
-    var input = "OrderModelView";
+    const string input = "OrderModelView";
 
     // Act
     var result = NamingConventionUtilities.StripConfigurableSuffixes(input, _modelViewConfig);
@@ -491,7 +491,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_WithProjection_GeneratesCorrectTableNameAsync() {
     // Arrange
-    var input = "OrderProjection";
+    const string input = "OrderProjection";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _defaultConfig);
@@ -503,7 +503,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_WithModel_GeneratesCorrectTableNameAsync() {
     // Arrange
-    var input = "ActivityEmbeddingModel";
+    const string input = "ActivityEmbeddingModel";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _defaultConfig);
@@ -515,7 +515,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_WhenStripDisabled_IncludesSuffixAsync() {
     // Arrange
-    var input = "OrderProjection";
+    const string input = "OrderProjection";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _disabledConfig);
@@ -527,7 +527,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_ComplexName_GeneratesCorrectTableNameAsync() {
     // Arrange
-    var input = "ActiveJobTemplateFieldCatalogProjection";
+    const string input = "ActiveJobTemplateFieldCatalogProjection";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _defaultConfig);
@@ -539,7 +539,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_NoMatchingSuffix_UsesFullNameAsync() {
     // Arrange
-    var input = "OrderEntity";
+    const string input = "OrderEntity";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _defaultConfig);
@@ -551,7 +551,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_SingleWord_GeneratesCorrectTableNameAsync() {
     // Arrange
-    var input = "Order";
+    const string input = "Order";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _minimalConfig);
@@ -563,7 +563,7 @@ public class NamingConventionUtilitiesTests {
   [Test]
   public async Task GenerateTableName_EmptyString_ReturnsJustPrefixAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
 
     // Act
     var result = NamingConventionUtilities.GenerateTableName(input, _minimalConfig);

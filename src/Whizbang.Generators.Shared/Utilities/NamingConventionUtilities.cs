@@ -69,13 +69,13 @@ public static class NamingConventionUtilities {
     }
 
     if (name.EndsWith("ReadModel", StringComparison.Ordinal)) {
-      return name.Substring(0, name.Length - 9);
+      return name[..^9];
     }
     if (name.EndsWith("Model", StringComparison.Ordinal)) {
-      return name.Substring(0, name.Length - 5);
+      return name[..^5];
     }
     if (name.EndsWith("Dto", StringComparison.Ordinal)) {
-      return name.Substring(0, name.Length - 3);
+      return name[..^3];
     }
 
     return name;
@@ -89,7 +89,7 @@ public static class NamingConventionUtilities {
   public static string ToDefaultRouteName(string modelTypeName) {
     var name = StripCommonSuffixes(modelTypeName);
     var pluralized = Pluralize(name);
-    var lowercased = char.ToLowerInvariant(pluralized[0]) + pluralized.Substring(1);
+    var lowercased = char.ToLowerInvariant(pluralized[0]) + pluralized[1..];
     return "/api/" + lowercased;
   }
 
@@ -101,7 +101,7 @@ public static class NamingConventionUtilities {
   public static string ToDefaultQueryName(string modelTypeName) {
     var name = StripCommonSuffixes(modelTypeName);
     var pluralized = Pluralize(name);
-    return char.ToLowerInvariant(pluralized[0]) + pluralized.Substring(1);
+    return char.ToLowerInvariant(pluralized[0]) + pluralized[1..];
   }
 
   /// <summary>
@@ -133,7 +133,7 @@ public static class NamingConventionUtilities {
       }
 
       if (name.EndsWith(suffix, StringComparison.Ordinal)) {
-        return name.Substring(0, name.Length - suffix.Length);
+        return name[..^suffix.Length];
       }
     }
 

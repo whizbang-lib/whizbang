@@ -35,8 +35,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
   [Test]
   public async Task PublisherLoop_EstablishesSecurityContext_BeforeInvokingReceptorsAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
 
     // Use capturing accessor to verify value is set (AsyncLocal behavior requires this)
     var capturingAccessor = new CapturingScopeContextAccessor();
@@ -51,7 +51,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -65,7 +65,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      }
+      ]
     };
 
     // Act - establish security context using helper
@@ -88,8 +88,8 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
   [Test]
   public async Task PublisherLoop_SetsMessageContext_WithUserIdAndTenantIdAsync() {
     // Arrange
-    var testUserId = "test-user@example.com";
-    var testTenantId = "test-tenant-123";
+    const string testUserId = "test-user@example.com";
+    const string testTenantId = "test-tenant-123";
     var testMessageId = MessageId.New();
 
     // Use capturing accessor to verify message context is set
@@ -105,7 +105,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = testMessageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -119,7 +119,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
             TenantId = testTenantId
           })
         }
-      }
+      ]
     };
 
     // Act
@@ -155,7 +155,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.New(),
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -166,7 +166,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ]
     };
 
     // Act - should not throw
@@ -209,7 +209,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = testMessageId,
       Payload = JsonDocument.Parse("{}").RootElement,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Timestamp = DateTimeOffset.UtcNow,
           ServiceInstance = new ServiceInstanceInfo {
@@ -220,7 +220,7 @@ public class WorkCoordinatorPublisherWorkerSecurityContextTests {
           },
           Scope = null  // No security context
         }
-      }
+      ]
     };
 
     // Act

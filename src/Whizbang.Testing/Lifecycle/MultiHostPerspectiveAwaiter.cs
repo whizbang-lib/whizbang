@@ -91,19 +91,14 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
   /// <summary>
   /// Internal receptor that counts completions and signals when expected count is reached.
   /// </summary>
-  private sealed class CountingReceptor : IReceptor<TEvent>, IAcceptsLifecycleContext {
-    private readonly TaskCompletionSource<bool> _tcs;
-    private readonly int _expected;
+  private sealed class CountingReceptor(TaskCompletionSource<bool> tcs, int expected) : IReceptor<TEvent>, IAcceptsLifecycleContext {
+    private readonly TaskCompletionSource<bool> _tcs = tcs;
+    private readonly int _expected = expected;
     private readonly ConcurrentDictionary<string, byte> _completedPerspectives = new();
     private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
     public int Expected => _expected;
     public int Count => _completedPerspectives.Count;
-
-    public CountingReceptor(TaskCompletionSource<bool> tcs, int expected) {
-      _tcs = tcs;
-      _expected = expected;
-    }
 
     public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
       var context = _asyncLocalContext.Value;

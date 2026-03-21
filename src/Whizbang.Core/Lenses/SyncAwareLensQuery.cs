@@ -1,3 +1,5 @@
+#pragma warning disable CS0618
+
 using Whizbang.Core.Perspectives.Sync;
 
 namespace Whizbang.Core.Lenses;
@@ -51,14 +53,14 @@ public sealed class SyncAwareLensQuery<TModel> : ISyncAwareLensQuery<TModel> whe
   }
 
   /// <inheritdoc />
-  public IQueryable<PerspectiveRow<TModel>> Query => _innerQuery.Query;
+  public IQueryable<PerspectiveRow<TModel>> Query => _innerQuery.DefaultScope.Query;
 
   /// <inheritdoc />
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     // Wait for sync before querying
     await _awaiter.WaitAsync(_perspectiveType, _options, cancellationToken);
 
-    // Delegate to inner query
-    return await _innerQuery.GetByIdAsync(id, cancellationToken);
+    // Delegate to inner query via DefaultScope
+    return await _innerQuery.DefaultScope.GetByIdAsync(id, cancellationToken);
   }
 }

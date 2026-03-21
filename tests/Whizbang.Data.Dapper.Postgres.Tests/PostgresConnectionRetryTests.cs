@@ -44,7 +44,7 @@ public class PostgresConnectionRetryTests {
       RetryIndefinitely = false
     };
     var retry = new PostgresConnectionRetry(options, NullLogger<PostgresConnectionRetry>.Instance);
-    var invalidConnectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
+    const string invalidConnectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
 
     // Act & Assert
     await Assert.That(async () => await retry.WaitForConnectionAsync(invalidConnectionString))

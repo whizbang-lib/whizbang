@@ -13,19 +13,14 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
+/// <remarks>
+/// Initializes a new instance of AzureServiceBusSubscription.
+/// </remarks>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Subscription lifecycle logging - infrequent pause/resume/dispose operations")]
-public sealed class AzureServiceBusSubscription : ISubscription {
-  private readonly ServiceBusProcessor _processor;
-  private readonly ILogger _logger;
+public sealed class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) : ISubscription {
+  private readonly ServiceBusProcessor _processor = processor ?? throw new ArgumentNullException(nameof(processor));
+  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private bool _isDisposed;
-
-  /// <summary>
-  /// Initializes a new instance of AzureServiceBusSubscription.
-  /// </summary>
-  public AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) {
-    _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
 
   /// <inheritdoc />
   /// <remarks>

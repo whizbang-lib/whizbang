@@ -15,18 +15,20 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithTopicAttribute_GeneratesRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Events;
 
-      [Topic(""products"")]
+      [Topic("products")]
       public record ProductCreatedEvent : IEvent;
 
-      [Topic(""inventory"")]
+      [Topic("inventory")]
       public record InventoryRestockedEvent : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -47,7 +49,7 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithConventionBasedRouting_GeneratesRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       using Whizbang.Core;
 
       namespace MyApp.Events;
@@ -84,18 +86,20 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithCommandTypes_GeneratesRegistryAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Commands;
 
-      [Topic(""products"")]
+      [Topic("products")]
       public record CreateProductCommand : ICommand;
 
       // Convention-based (Product* → products)
       public record UpdateProductCommand : ICommand;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -116,21 +120,23 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithPrivateTypes_SkipsThemAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Events;
 
-      [Topic(""products"")]
+      [Topic("products")]
       public record ProductCreatedEvent : IEvent;
 
-      [Topic(""internal-event"")]
+      [Topic("internal-event")]
       internal record InternalEvent : IEvent;
 
-      [Topic(""private-event"")]
+      [Topic("private-event")]
       private record PrivateEvent : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -151,17 +157,19 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithAbstractTypes_SkipsThemAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Events;
 
-      [Topic(""products"")]
+      [Topic("products")]
       public abstract record BaseEvent : IEvent;
 
       public record ProductCreatedEvent : BaseEvent;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -182,7 +190,7 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithNoMessageTypes_GeneratesNothingAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
       namespace MyApp;
 
       public class SomeClass {
@@ -205,15 +213,17 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_GeneratesAddTopicRegistryExtensionAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Events;
 
-      [Topic(""products"")]
+      [Topic("products")]
       public record ProductCreatedEvent : IEvent;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -230,17 +240,19 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithFallbackConvention_RemovesEventSuffixAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
 
       namespace MyApp.Events;
 
       // Type doesn't match Product/Inventory/Order convention
-      // Should fall back to: Remove ""Event"" suffix, lowercase
+      // Should fall back to: Remove "Event" suffix, lowercase
       public record SomethingHappenedEvent : IEvent;
 
       public record AnotherThingCommand : ICommand;
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);
@@ -262,22 +274,24 @@ public class TopicRegistryGeneratorTests {
   [Test]
   public async Task Generator_WithMixedAttributeAndConvention_UsesBothAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
       using Whizbang.Core;
       using Whizbang.Core.Attributes;
 
       namespace MyApp.Events;
 
-      [Topic(""custom-topic"")]
+      [Topic("custom-topic")]
       public record ExplicitTopicEvent : IEvent;
 
       public record ProductCreatedEvent : IEvent;  // Convention: products
 
-      [Topic(""another-custom"")]
+      [Topic("another-custom")]
       public record InventoryRestockedEvent : IEvent;
 
       public record OrderCreatedEvent : IEvent;  // Convention: orders
-    ";
+    
+""";
 
     // Act
     var result = GeneratorTestHelper.RunGenerator<TopicRegistryGenerator>(source);

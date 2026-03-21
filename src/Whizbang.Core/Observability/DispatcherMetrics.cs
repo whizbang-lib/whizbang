@@ -13,8 +13,6 @@ public sealed class DispatcherMetrics {
   public const string METER_NAME = "Whizbang.Dispatcher";
 #pragma warning restore CA1707
 
-  private readonly Meter _meter;
-
   // Dispatch timing (end-to-end per dispatch pattern)
   public Histogram<double> SendDuration { get; }
   public Histogram<double> PublishDuration { get; }
@@ -44,30 +42,30 @@ public sealed class DispatcherMetrics {
   public Histogram<int> SendManyBatchSize { get; }
 
   public DispatcherMetrics(WhizbangMetrics whizbangMetrics) {
-    _meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    SendDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.send.duration", "ms", "SendAsync: envelope creation → receptor → cascade → lifecycle");
-    PublishDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.publish.duration", "ms", "PublishAsync: local handlers → outbox queue → flush");
-    LocalInvokeDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.local_invoke.duration", "ms", "LocalInvokeAsync: receptor invocation only");
-    LocalInvokeAndSyncDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.local_invoke_and_sync.duration", "ms", "LocalInvokeAndSyncAsync: invoke + perspective wait");
-    CascadeDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.cascade.duration", "ms", "CascadeMessageAsync: extraction → routing → outbox/local");
-    SendManyDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.send_many.duration", "ms", "SendManyAsync: batch dispatch total");
+    SendDuration = meter.CreateHistogram<double>("whizbang.dispatcher.send.duration", "ms", "SendAsync: envelope creation → receptor → cascade → lifecycle");
+    PublishDuration = meter.CreateHistogram<double>("whizbang.dispatcher.publish.duration", "ms", "PublishAsync: local handlers → outbox queue → flush");
+    LocalInvokeDuration = meter.CreateHistogram<double>("whizbang.dispatcher.local_invoke.duration", "ms", "LocalInvokeAsync: receptor invocation only");
+    LocalInvokeAndSyncDuration = meter.CreateHistogram<double>("whizbang.dispatcher.local_invoke_and_sync.duration", "ms", "LocalInvokeAndSyncAsync: invoke + perspective wait");
+    CascadeDuration = meter.CreateHistogram<double>("whizbang.dispatcher.cascade.duration", "ms", "CascadeMessageAsync: extraction → routing → outbox/local");
+    SendManyDuration = meter.CreateHistogram<double>("whizbang.dispatcher.send_many.duration", "ms", "SendManyAsync: batch dispatch total");
 
-    ReceptorDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.receptor.duration", "ms", "Time in receptor delegate invocation");
-    CascadeExtractionDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.cascade_extraction.duration", "ms", "MessageExtractor.ExtractMessagesWithRouting");
-    PerspectiveSyncDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.perspective_sync.duration", "ms", "_awaitPerspectiveSyncIfNeededAsync wait time");
-    PerspectiveWaitDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.perspective_wait.duration", "ms", "_waitForPerspectivesIfNeededAsync (post-dispatch)");
-    SerializationDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.serialization.duration", "ms", "_serializeToNewOutboxMessage JSON serialization");
-    TagProcessingDuration = _meter.CreateHistogram<double>("whizbang.dispatcher.tag_processing.duration", "ms", "_processTagsIfEnabledAsync execution");
+    ReceptorDuration = meter.CreateHistogram<double>("whizbang.dispatcher.receptor.duration", "ms", "Time in receptor delegate invocation");
+    CascadeExtractionDuration = meter.CreateHistogram<double>("whizbang.dispatcher.cascade_extraction.duration", "ms", "MessageExtractor.ExtractMessagesWithRouting");
+    PerspectiveSyncDuration = meter.CreateHistogram<double>("whizbang.dispatcher.perspective_sync.duration", "ms", "_awaitPerspectiveSyncIfNeededAsync wait time");
+    PerspectiveWaitDuration = meter.CreateHistogram<double>("whizbang.dispatcher.perspective_wait.duration", "ms", "_waitForPerspectivesIfNeededAsync (post-dispatch)");
+    SerializationDuration = meter.CreateHistogram<double>("whizbang.dispatcher.serialization.duration", "ms", "_serializeToNewOutboxMessage JSON serialization");
+    TagProcessingDuration = meter.CreateHistogram<double>("whizbang.dispatcher.tag_processing.duration", "ms", "_processTagsIfEnabledAsync execution");
 
-    MessagesDispatched = _meter.CreateCounter<long>("whizbang.dispatcher.messages_dispatched", description: "Total messages dispatched");
-    EventsCascaded = _meter.CreateCounter<long>("whizbang.dispatcher.events_cascaded", description: "Events cascaded from receptor results");
-    MessagesSerialized = _meter.CreateCounter<long>("whizbang.dispatcher.messages_serialized", description: "Messages serialized for outbox");
-    DuplicatesDetected = _meter.CreateCounter<long>("whizbang.dispatcher.duplicates_detected", description: "Inbox dedup rejections");
-    PerspectiveSyncTimeouts = _meter.CreateCounter<long>("whizbang.dispatcher.perspective_sync_timeouts", description: "Perspective sync wait timeouts");
-    Errors = _meter.CreateCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
+    MessagesDispatched = meter.CreateCounter<long>("whizbang.dispatcher.messages_dispatched", description: "Total messages dispatched");
+    EventsCascaded = meter.CreateCounter<long>("whizbang.dispatcher.events_cascaded", description: "Events cascaded from receptor results");
+    MessagesSerialized = meter.CreateCounter<long>("whizbang.dispatcher.messages_serialized", description: "Messages serialized for outbox");
+    DuplicatesDetected = meter.CreateCounter<long>("whizbang.dispatcher.duplicates_detected", description: "Inbox dedup rejections");
+    PerspectiveSyncTimeouts = meter.CreateCounter<long>("whizbang.dispatcher.perspective_sync_timeouts", description: "Perspective sync wait timeouts");
+    Errors = meter.CreateCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
 
-    CascadeEventCount = _meter.CreateHistogram<int>("whizbang.dispatcher.cascade.event_count", description: "Events extracted per cascade");
-    SendManyBatchSize = _meter.CreateHistogram<int>("whizbang.dispatcher.send_many.batch_size", description: "Messages per SendMany call");
+    CascadeEventCount = meter.CreateHistogram<int>("whizbang.dispatcher.cascade.event_count", description: "Events extracted per cascade");
+    SendManyBatchSize = meter.CreateHistogram<int>("whizbang.dispatcher.send_many.batch_size", description: "Messages per SendMany call");
   }
 }

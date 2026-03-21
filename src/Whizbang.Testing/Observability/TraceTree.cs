@@ -355,7 +355,7 @@ public sealed class TraceTree {
       Tags = Span?.Tags
         .Where(kvp => !_isVolatileTag(kvp.Key))
         .ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.ToString()),
-      Children = Children.Select(c => c._toSnapshotModel()).ToList()
+      Children = [.. Children.Select(c => c._toSnapshotModel())]
     };
   }
 
@@ -375,7 +375,7 @@ public sealed class TraceTree {
           ? status
           : System.Diagnostics.ActivityStatusCode.Unset,
         Tags = model.Tags?.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value)
-          ?? new Dictionary<string, object?>(),
+          ?? [],
         Events = [],
         SourceName = "snapshot",
         StartTime = DateTimeOffset.MinValue

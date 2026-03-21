@@ -87,11 +87,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["stringValue"].GetString()).IsEqualTo("test");
     await Assert.That(hopMetadata["intValue"].GetInt32()).IsEqualTo(42);
@@ -130,7 +126,7 @@ public class JsonMessageSerializerTests {
 
     // Assert
     // Note: Metadata is intentionally nullable - testing that it IS null
-    await Assert.That(deserialized.Hops[0].Metadata!).IsNull();
+    await Assert.That(deserialized.Hops[0].Metadata).IsNull();
   }
 
   [Test]
@@ -151,11 +147,13 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     // Use short property names to match actual serialization format
-    var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
-        ""id"": ""invalid-guid"",
-        ""p"": { ""Content"": ""test"", ""Value"": 1 },
-        ""h"": []
-      }");
+    var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes("""
+{
+        "id": "invalid-guid",
+        "p": { "Content": "test", "Value": 1 },
+        "h": []
+      }
+""");
 
     // Act & Assert - AOT serialization throws FormatException for invalid GUID
     await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidMessageId))
@@ -168,11 +166,13 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     // Use short property names to match actual serialization format
-    var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
-        ""id"": null,
-        ""p"": { ""Content"": ""test"", ""Value"": 1 },
-        ""h"": []
-      }");
+    var jsonWithNullMessageId = Encoding.UTF8.GetBytes("""
+{
+        "id": null,
+        "p": { "Content": "test", "Value": 1 },
+        "h": []
+      }
+""");
 
     // Act & Assert - AOT serialization throws ArgumentNullException for null MessageId
     await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithNullMessageId))
@@ -186,16 +186,18 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Use short property names to match actual serialization format
-    var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""id"": ""{messageId.Value}"",
-        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""h"": [{{
-          ""ty"": 0,
-          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
-          ""ts"": ""2025-01-01T00:00:00Z"",
-          ""co"": ""invalid-guid""
-        }}]
-      }}");
+    var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($$"""
+{
+        "id": "{{messageId.Value}}",
+        "p": { "Content": "test", "Value": 1 },
+        "h": [{
+          "ty": 0,
+          "si": { "sn": "Test", "ii": "{{Guid.NewGuid()}}", "hn": "test-host", "pi": 12345 },
+          "ts": "2025-01-01T00:00:00Z",
+          "co": "invalid-guid"
+        }]
+      }
+""");
 
     // Act & Assert - AOT serialization throws FormatException for invalid GUID
     await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidCorrelationId))
@@ -209,16 +211,18 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Use short property names to match actual serialization format
-    var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""id"": ""{messageId.Value}"",
-        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""h"": [{{
-          ""ty"": 0,
-          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
-          ""ts"": ""2025-01-01T00:00:00Z"",
-          ""co"": null
-        }}]
-      }}");
+    var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($$"""
+{
+        "id": "{{messageId.Value}}",
+        "p": { "Content": "test", "Value": 1 },
+        "h": [{
+          "ty": 0,
+          "si": { "sn": "Test", "ii": "{{Guid.NewGuid()}}", "hn": "test-host", "pi": 12345 },
+          "ts": "2025-01-01T00:00:00Z",
+          "co": null
+        }]
+      }
+""");
 
     // Act
     var deserialized = await serializer.DeserializeAsync<TestMessage>(jsonWithNullCorrelationId);
@@ -287,16 +291,18 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Metadata is an array instead of object - use short property names
-    var json = $@"{{
-        ""id"": ""{messageId.Value}"",
-        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""h"": [{{
-          ""ty"": 0,
-          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
-          ""ts"": ""2025-01-01T00:00:00Z"",
-          ""md"": []
-        }}]
-      }}";
+    var json = $$"""
+{
+        "id": "{{messageId.Value}}",
+        "p": { "Content": "test", "Value": 1 },
+        "h": [{
+          "ty": 0,
+          "si": { "sn": "Test", "ii": "{{Guid.NewGuid()}}", "hn": "test-host", "pi": 12345 },
+          "ts": "2025-01-01T00:00:00Z",
+          "md": []
+        }]
+      }
+""";
     var jsonWithInvalidMetadata = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
@@ -311,16 +317,18 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed metadata - value without property name
-    var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": ""value"", 123 }}
-        }}]
-      }}";
+    var json = $$"""
+{
+        "MessageId": "{{messageId.Value}}",
+        "Payload": { "Content": "test", "Value": 1 },
+        "Hops": [{
+          "Type": 0,
+          "ServiceName": "Test",
+          "Timestamp": "2025-01-01T00:00:00Z",
+          "Metadata": { "key": "value", 123 }
+        }]
+      }
+""";
     var jsonWithMalformedMetadata = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
@@ -336,16 +344,18 @@ public class JsonMessageSerializerTests {
     var messageId = MessageId.New();
     // Array value in metadata - now supported as JsonElement
     // Use short property names to match actual serialization format
-    var json = $@"{{
-        ""id"": ""{messageId.Value}"",
-        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""h"": [{{
-          ""ty"": 0,
-          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
-          ""ts"": ""2025-01-01T00:00:00Z"",
-          ""md"": {{ ""key"": [""array"", ""value""] }}
-        }}]
-      }}";
+    var json = $$"""
+{
+        "id": "{{messageId.Value}}",
+        "p": { "Content": "test", "Value": 1 },
+        "h": [{
+          "ty": 0,
+          "si": { "sn": "Test", "ii": "{{Guid.NewGuid()}}", "hn": "test-host", "pi": 12345 },
+          "ts": "2025-01-01T00:00:00Z",
+          "md": { "key": ["array", "value"] }
+        }]
+      }
+""";
     var jsonWithArrayValue = Encoding.UTF8.GetBytes(json);
 
     // Act
@@ -353,11 +363,7 @@ public class JsonMessageSerializerTests {
 
     // Assert - Array values are now supported via JsonElement
     // Defensive null check before assertion
-    var hopMetadata = deserialized.Hops[0].Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = deserialized.Hops[0].Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["key"].ValueKind).IsEqualTo(JsonValueKind.Array);
   }
@@ -397,11 +403,7 @@ public class JsonMessageSerializerTests {
 
     // Assert
     // Defensive null check before assertion
-    var hopMetadata = deserialized.Hops[0].Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = deserialized.Hops[0].Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["dateTime"].ValueKind).IsEqualTo(JsonValueKind.String);
   }
@@ -415,16 +417,18 @@ public class JsonMessageSerializerTests {
     // Malformed JSON with null property name (this is unlikely in practice but tests the null check)
     // We'll test the ReadValue path for null by using a valid metadata with null value
     // Use short property names to match actual serialization format
-    var json = $@"{{
-        ""id"": ""{messageId.Value}"",
-        ""p"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""h"": [{{
-          ""ty"": 0,
-          ""si"": {{ ""sn"": ""Test"", ""ii"": ""{Guid.NewGuid()}"", ""hn"": ""test-host"", ""pi"": 12345 }},
-          ""ts"": ""2025-01-01T00:00:00Z"",
-          ""md"": {{ ""key"": null }}
-        }}]
-      }}";
+    var json = $$"""
+{
+        "id": "{{messageId.Value}}",
+        "p": { "Content": "test", "Value": 1 },
+        "h": [{
+          "ty": 0,
+          "si": { "sn": "Test", "ii": "{{Guid.NewGuid()}}", "hn": "test-host", "pi": 12345 },
+          "ts": "2025-01-01T00:00:00Z",
+          "md": { "key": null }
+        }]
+      }
+""";
     var jsonWithNullMetadataValue = Encoding.UTF8.GetBytes(json);
 
     // Act - This should succeed (null is a valid metadata value)
@@ -474,11 +478,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["pi"].GetDouble()).IsEqualTo(3.14159265359);
     await Assert.That(hopMetadata["negativeFloat"].GetDouble()).IsEqualTo(-42.5);
@@ -492,7 +492,7 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     // Use a value larger than int32.MaxValue to ensure it's read as long
-    var largeValue = (long)int.MaxValue + 1000L;
+    const long largeValue = (long)int.MaxValue + 1000L;
     var metadata = new Dictionary<string, JsonElement> {
       ["largeNumber"] = JsonSerializer.SerializeToElement(largeValue)
     };
@@ -523,11 +523,7 @@ public class JsonMessageSerializerTests {
     var hop = deserialized.Hops[0];
 
     // Defensive null check before assertion
-    var hopMetadata = hop.Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
-
+    var hopMetadata = hop.Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata).IsNotNull();
     await Assert.That(hopMetadata["largeNumber"].GetInt64()).IsEqualTo(largeValue);
   }

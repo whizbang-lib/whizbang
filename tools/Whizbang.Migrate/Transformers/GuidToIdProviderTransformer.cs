@@ -69,8 +69,7 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
   }
 
   private static SyntaxNode _ensureWhizbangCoreUsing(SyntaxNode root, List<CodeChange> changes) {
-    var compilationUnit = root as CompilationUnitSyntax;
-    if (compilationUnit == null) {
+    if (root is not CompilationUnitSyntax compilationUnit) {
       return root;
     }
 
@@ -122,14 +121,9 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that adds IWhizbangIdProvider to primary constructor parameters.
   /// </summary>
-  private sealed class ConstructorParameterRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-    private readonly List<string> _warnings;
-
-    public ConstructorParameterRewriter(List<CodeChange> changes, List<string> warnings) {
-      _changes = changes;
-      _warnings = warnings;
-    }
+  private sealed class ConstructorParameterRewriter(List<CodeChange> changes, List<string> warnings) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
+    private readonly List<string> _warnings = warnings;
 
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node) {
       // Check if this class has Guid generation calls
@@ -241,12 +235,8 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
   /// <summary>
   /// Rewriter that transforms Guid.NewGuid()/Guid.CreateVersion7() to idProvider.NewGuid().
   /// </summary>
-  private sealed class GuidCallRewriter : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public GuidCallRewriter(List<CodeChange> changes) {
-      _changes = changes;
-    }
+  private sealed class GuidCallRewriter(List<CodeChange> changes) : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes = changes;
 
     public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node) {
       var expr = node.Expression.ToString();

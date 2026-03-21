@@ -156,10 +156,10 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
             SimpleName: simpleName,
             ClrTypeName: clrTypeName,
             InterfaceTypeArguments: typeArguments,
-            EventTypes: eventTypes.ToArray(),
+            EventTypes: [.. eventTypes],
             MessageTypeNames: messageTypeNames,
             StreamIdPropertyName: streamKeyPropertyName,
-            EventStreamIds: eventStreamIds.Count > 0 ? eventStreamIds.ToArray() : null,
+            EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
             MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
             EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null,
             PhysicalFields: physicalFields.Length > 0 ? physicalFields : null
@@ -237,8 +237,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
-    var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
-    var eventReturnTypes = perspective.EventReturnTypes ?? Array.Empty<EventReturnTypeInfo>();
+    var mustExistEvents = perspective.MustExistEventTypes ?? [];
+    var eventReturnTypes = perspective.EventReturnTypes ?? [];
     var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
@@ -250,8 +250,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
       applyCases.AppendLine($"        case {eventType} typedEvent:");
       if (isMustExist) {
-        applyCases.AppendLine($"          if (currentModel == null)");
-        applyCases.AppendLine($"            throw new global::System.InvalidOperationException(");
+        applyCases.AppendLine("          if (currentModel == null)");
+        applyCases.AppendLine("            throw new global::System.InvalidOperationException(");
         applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
       }
 
@@ -263,25 +263,25 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         case ApplyReturnType.Model:
           // Standard return: TModel - wrap with None action
           // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.NullableModel:
           // Nullable return: TModel? - null means no change, wrap with None action
           // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
-          applyCases.AppendLine($"          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          applyCases.AppendLine("          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
           break;
 
         case ApplyReturnType.Action:
           // Action return: ModelAction - keep current model, return the action
           // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
-          applyCases.AppendLine($"          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
+          applyCases.AppendLine("          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
           break;
 
         case ApplyReturnType.Tuple:
           // Tuple return: (TModel?, ModelAction) - return as-is
           // Use ! because Apply(TModel current, TEvent) expects existing model
-          applyCases.AppendLine($"          return perspective.Apply(currentModel!, typedEvent);");
+          applyCases.AppendLine("          return perspective.Apply(currentModel!, typedEvent);");
           break;
 
         case ApplyReturnType.ApplyResult:
@@ -309,12 +309,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var extractStreamIdMethods = new StringBuilder();
     if (perspective.EventStreamIds != null) {
       foreach (var eventStreamId in perspective.EventStreamIds) {
-        extractStreamIdMethods.AppendLine($"  /// <summary>");
+        extractStreamIdMethods.AppendLine("  /// <summary>");
         extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamId.EventTypeName)} event.");
-        extractStreamIdMethods.AppendLine($"  /// </summary>");
+        extractStreamIdMethods.AppendLine("  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamId.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamId.StreamIdPropertyName}.ToString();");
-        extractStreamIdMethods.AppendLine($"  }}");
+        extractStreamIdMethods.AppendLine("  }");
         extractStreamIdMethods.AppendLine();
       }
     }
@@ -409,28 +409,26 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts single-stream IPerspectiveFor interfaces from a class symbol.
   /// </summary>
   private static List<INamedTypeSymbol> _extractSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
   /// Extracts global IGlobalPerspectiveFor interfaces from a class symbol.
   /// </summary>
   private static List<INamedTypeSymbol> _extractGlobalInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
@@ -438,14 +436,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// These interfaces return ApplyResult&lt;TModel&gt; instead of TModel, supporting Delete/Purge operations.
   /// </summary>
   private static List<INamedTypeSymbol> _extractWithActionsInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Match IPerspectiveWithActionsFor<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
-        })
-        .ToList();
+        })];
   }
 
   /// <summary>
@@ -535,7 +532,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Builds message type names in database format (TypeName, AssemblyName).
   /// </summary>
   private static string[] _buildMessageTypeNames(List<ITypeSymbol> eventTypeSymbols) {
-    return eventTypeSymbols
+    return [.. eventTypeSymbols
         .Select(t => {
           var typeName = t.ToDisplayString(new SymbolDisplayFormat(
               typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
@@ -543,8 +540,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           ));
           var assemblyName = t.ContainingAssembly.Name;
           return $"{typeName}, {assemblyName}";
-        })
-        .ToArray();
+        })];
   }
 
   /// <summary>
@@ -570,7 +566,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
-    return mustExistEvents.ToArray();
+    return [.. mustExistEvents];
   }
 
   /// <summary>
@@ -583,7 +579,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       ITypeSymbol modelType) {
 
     var returnTypes = new List<EventReturnTypeInfo>();
-    var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Use shared utility to include inherited Apply methods from base classes
     foreach (var method in classSymbol.GetAllMethodsByName("Apply")) {
@@ -601,7 +596,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
     }
 
-    return returnTypes.ToArray();
+    return [.. returnTypes];
   }
 
   /// <summary>
@@ -661,19 +656,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Use shared utility to include inherited properties from base model classes
     if (modelType is not INamedTypeSymbol namedModelType) {
-      return physicalFields.ToArray();
+      return [.. physicalFields];
     }
 
     foreach (var property in namedModelType.GetAllProperties()) {
 
       string? columnName = null;
-      bool isVectorField = false;
-
       foreach (var attribute in property.GetAttributes()) {
         var attrClassName = attribute.AttributeClass?.ToDisplayString();
 
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE || attrClassName == VECTOR_FIELD_ATTRIBUTE) {
-          isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
+          var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
 
           // Extract ColumnName from named argument if provided
           foreach (var namedArg in attribute.NamedArguments) {
@@ -696,7 +689,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       }
     }
 
-    return physicalFields.ToArray();
+    return [.. physicalFields];
   }
 
 }

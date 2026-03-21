@@ -17,8 +17,14 @@ namespace Whizbang.Core.Routing;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-routing</docs>
-public sealed class NamespaceRoutingStrategy : ITopicRoutingStrategy {
-  private readonly Func<Type, string> _typeToTopic;
+/// <remarks>
+/// Creates a namespace routing strategy with custom extraction logic.
+/// </remarks>
+/// <param name="typeToTopic">Function that extracts topic from message type.
+/// Receives the full Type, allowing access to namespace, name, and attributes.</param>
+/// <exception cref="ArgumentNullException">Thrown when typeToTopic is null.</exception>
+public sealed class NamespaceRoutingStrategy(Func<Type, string> typeToTopic) : ITopicRoutingStrategy {
+  private readonly Func<Type, string> _typeToTopic = typeToTopic ?? throw new ArgumentNullException(nameof(typeToTopic));
 
   /// <summary>
   /// Creates a namespace routing strategy with default extraction.
@@ -28,16 +34,6 @@ public sealed class NamespaceRoutingStrategy : ITopicRoutingStrategy {
   /// </remarks>
   public NamespaceRoutingStrategy()
       : this(DefaultTypeToTopic) { }
-
-  /// <summary>
-  /// Creates a namespace routing strategy with custom extraction logic.
-  /// </summary>
-  /// <param name="typeToTopic">Function that extracts topic from message type.
-  /// Receives the full Type, allowing access to namespace, name, and attributes.</param>
-  /// <exception cref="ArgumentNullException">Thrown when typeToTopic is null.</exception>
-  public NamespaceRoutingStrategy(Func<Type, string> typeToTopic) {
-    _typeToTopic = typeToTopic ?? throw new ArgumentNullException(nameof(typeToTopic));
-  }
 
   /// <summary>
   /// Resolves the topic for a message type based on its namespace.

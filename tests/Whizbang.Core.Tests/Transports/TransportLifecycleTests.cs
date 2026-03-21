@@ -146,7 +146,7 @@ internal sealed class TestTransport : ITransport {
 /// </summary>
 internal sealed class FailingInitializationTransport : ITransport {
 #pragma warning disable CS0649 // Field is never assigned to, and will always have its default value - intentional for test
-  private bool _isInitialized; // Intentionally never set - initialization always fails
+  private readonly bool _isInitialized; // Intentionally never set - initialization always fails
 #pragma warning restore CS0649
 
   public bool IsInitialized => _isInitialized;

@@ -853,7 +853,7 @@ public class DispatcherSecurityBuilderTests {
   [NotInParallel]
   public async Task GetSecurityFromAmbient_DuringCascade_ReturnsSystemContextNotInitiatingContextAsync() {
     // Arrange
-    var scopeContextAccessor = new ScopeContextAccessor();
+    _ = new ScopeContextAccessor();
 
     // CRITICAL: Simulate being INSIDE a message handler with InitiatingContext set
     var handlerScope = new PerspectiveScope { UserId = "handler-user@example.com", TenantId = "handler-tenant" };
@@ -1169,8 +1169,8 @@ public record DispatcherSecurityBuilderVoidCommand(string Data);
 /// Uses static capture fields so the source-generator-discovered receptor can capture context
 /// during execution for later verification by tests.
 /// </summary>
-public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<DispatcherSecurityBuilderTestCommand, DispatcherSecurityBuilderTestResult> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class DispatcherSecurityBuilderTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<DispatcherSecurityBuilderTestCommand, DispatcherSecurityBuilderTestResult> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   /// <summary>
   /// Static captured context - set during HandleAsync for test verification.
@@ -1181,10 +1181,6 @@ public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<Dispatcher
   /// Resets the captured context between tests.
   /// </summary>
   public static void ResetCapture() => CapturedContext = null;
-
-  public DispatcherSecurityBuilderTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
 
   public ValueTask<DispatcherSecurityBuilderTestResult> HandleAsync(
     DispatcherSecurityBuilderTestCommand message,
@@ -1201,15 +1197,11 @@ public class DispatcherSecurityBuilderTestCommandReceptor : IReceptor<Dispatcher
 /// <summary>
 /// Void receptor for LocalInvokeAsync void tests.
 /// </summary>
-public class DispatcherSecurityBuilderVoidReceptor : IReceptor<DispatcherSecurityBuilderVoidCommand> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class DispatcherSecurityBuilderVoidReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<DispatcherSecurityBuilderVoidCommand> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedContext { get; private set; }
   public static void ResetCapture() => CapturedContext = null;
-
-  public DispatcherSecurityBuilderVoidReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
 
   public ValueTask HandleAsync(
     DispatcherSecurityBuilderVoidCommand message,
@@ -1261,15 +1253,11 @@ public class SecurityBuilderCascadeTestReceptor
 /// Event receptor that captures the scope context when handling the cascaded event.
 /// This allows us to verify that cascaded events inherit the explicit SYSTEM context.
 /// </summary>
-public class SecurityBuilderCascadeEventReceptor : IReceptor<SecurityBuilderCascadeTestEvent> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class SecurityBuilderCascadeEventReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<SecurityBuilderCascadeTestEvent> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedScope { get; private set; }
   public static void ResetCapture() => CapturedScope = null;
-
-  public SecurityBuilderCascadeEventReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
-  }
 
   public ValueTask HandleAsync(SecurityBuilderCascadeTestEvent message, CancellationToken cancellationToken = default) {
     // Capture the scope context during cascaded event handling
@@ -1294,18 +1282,14 @@ public record SecurityBuilderPublishTestEvent(string Data, [property: StreamId] 
 /// This allows us to verify that AsSystem().PublishAsync() sets SYSTEM context.
 /// Note: Must return a response type to be invoked by typed PublishAsync (void receptors only invoked in cascade).
 /// </summary>
-public class SecurityBuilderPublishTestEventReceptor : IReceptor<SecurityBuilderPublishTestEvent, object> {
-  private readonly IScopeContextAccessor _scopeContextAccessor;
+public class SecurityBuilderPublishTestEventReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<SecurityBuilderPublishTestEvent, object> {
+  private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
   public static IScopeContext? CapturedScope { get; private set; }
   public static bool WasInvoked { get; private set; }
   public static void ResetCapture() {
     CapturedScope = null;
     WasInvoked = false;
-  }
-
-  public SecurityBuilderPublishTestEventReceptor(IScopeContextAccessor scopeContextAccessor) {
-    _scopeContextAccessor = scopeContextAccessor;
   }
 
   public ValueTask<object> HandleAsync(SecurityBuilderPublishTestEvent message, CancellationToken cancellationToken = default) {

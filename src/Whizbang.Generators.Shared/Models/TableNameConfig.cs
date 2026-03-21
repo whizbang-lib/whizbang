@@ -19,7 +19,7 @@ public sealed record TableNameConfig(
   /// </summary>
   public static TableNameConfig Default { get; } = new(
       StripSuffixes: true,
-      SuffixesToStrip: new[] { "ReadModel", "Model", "Projection", "Dto", "View" }
+      SuffixesToStrip: ["ReadModel", "Model", "Projection", "Dto", "View"]
   );
 
   /// <summary>
@@ -27,6 +27,6 @@ public sealed record TableNameConfig(
   /// </summary>
   public static TableNameConfig NoStripping { get; } = new(
       StripSuffixes: false,
-      SuffixesToStrip: Array.Empty<string>()
+      SuffixesToStrip: []
   );
 }

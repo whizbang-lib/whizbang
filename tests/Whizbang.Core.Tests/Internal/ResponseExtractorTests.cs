@@ -569,8 +569,7 @@ public class ResponseExtractorTests {
     // Arrange - Three-way union: (success, validation_error, system_error)
     var validationError = new PaymentProcessed { Amount = 0 };  // Using as validation error
     var tuple = (
-      success: (OrderCreated?)null,
-      validationError: validationError,
+      success: (OrderCreated?)null, validationError,
       systemError: (CacheInvalidated?)null
     );
 

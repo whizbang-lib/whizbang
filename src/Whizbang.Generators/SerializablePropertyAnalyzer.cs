@@ -23,12 +23,14 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
-  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
-      DiagnosticDescriptors.NonSerializablePropertyObject,
-      DiagnosticDescriptors.NonSerializablePropertyDynamic,
-      DiagnosticDescriptors.NonSerializablePropertyInterface,
-      DiagnosticDescriptors.NonSerializableNestedProperty
-  );
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+  [
+    DiagnosticDescriptors.NonSerializablePropertyObject,
+    DiagnosticDescriptors.NonSerializablePropertyDynamic,
+    DiagnosticDescriptors.NonSerializablePropertyInterface,
+    DiagnosticDescriptors.NonSerializableNestedProperty
+,
+  ];
 
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);

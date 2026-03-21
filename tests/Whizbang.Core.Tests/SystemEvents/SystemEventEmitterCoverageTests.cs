@@ -702,7 +702,7 @@ public class SystemEventEmitterCoverageTests {
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     public string? UserId { get; set; }
     public string? TenantId { get; set; }
-    public Dictionary<string, object> Metadata { get; } = new();
+    public Dictionary<string, object> Metadata { get; } = [];
     public Core.Security.IScopeContext? ScopeContext => null;
     public ICallerInfo? CallerInfo => null;
 

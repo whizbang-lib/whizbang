@@ -35,8 +35,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenReceptorReturnsEvent_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-123";
-    var expectedUserId = "test-user-456";
+    const string expectedTenantId = "test-tenant-123";
+    const string expectedUserId = "test-user-456";
 
     // Security context returned by provider - MUST be ImmutableScopeContext with ShouldPropagate=true
     // This matches what DefaultMessageSecurityContextProvider returns
@@ -91,8 +91,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsNull_ButEnvelopeHasScopeInHops_GetSecurityFromAmbientShouldReturnScopeAsync() {
     // Arrange
-    var expectedTenantId = "hop-tenant-from-bff";
-    var expectedUserId = "hop-user-from-bff";
+    const string expectedTenantId = "hop-tenant-from-bff";
+    const string expectedUserId = "hop-user-from-bff";
 
     // Security provider returns NULL - simulating no JWT/token extraction
     var securityProvider = new TestSecurityContextProvider(returns: null);
@@ -142,8 +142,8 @@ public class ReceptorInvokerScopePropagationTests {
   [Test]
   public async Task InvokeAsync_WhenSecurityProviderReturnsContext_MessageContextShouldHaveScopeContextAsync() {
     // Arrange
-    var expectedTenantId = "test-tenant-789";
-    var expectedUserId = "test-user-abc";
+    const string expectedTenantId = "test-tenant-789";
+    const string expectedUserId = "test-user-abc";
 
     // Security context returned by provider - matches DefaultMessageSecurityContextProvider
     var testScopeContext = new TestScopeContext(expectedTenantId, expectedUserId);
@@ -222,12 +222,8 @@ public class ReceptorInvokerScopePropagationTests {
     };
   }
 
-  private sealed class TestSecurityContextProvider : IMessageSecurityContextProvider {
-    private readonly IScopeContext? _returns;
-
-    public TestSecurityContextProvider(IScopeContext? returns = null) {
-      _returns = returns;
-    }
+  private sealed class TestSecurityContextProvider(IScopeContext? returns = null) : IMessageSecurityContextProvider {
+    private readonly IScopeContext? _returns = returns;
 
     public ValueTask<IScopeContext?> EstablishContextAsync(
         IMessageEnvelope envelope,
@@ -281,12 +277,8 @@ public class ReceptorInvokerScopePropagationTests {
     }
   }
 
-  private sealed class TestEventCascader : IEventCascader {
-    private readonly System.Action? _onCascade;
-
-    public TestEventCascader(System.Action? onCascade = null) {
-      _onCascade = onCascade;
-    }
+  private sealed class TestEventCascader(System.Action? onCascade = null) : IEventCascader {
+    private readonly System.Action? _onCascade = onCascade;
 
     public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
       _onCascade?.Invoke();
@@ -294,13 +286,9 @@ public class ReceptorInvokerScopePropagationTests {
     }
   }
 
-  private sealed class TestMessageContextAccessor : IMessageContextAccessor {
-    private readonly System.Action<IMessageContext?>? _onSet;
+  private sealed class TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) : IMessageContextAccessor {
+    private readonly System.Action<IMessageContext?>? _onSet = onSet;
     private IMessageContext? _current;
-
-    public TestMessageContextAccessor(System.Action<IMessageContext?>? onSet = null) {
-      _onSet = onSet;
-    }
 
     public IMessageContext? Current {
       get => _current;
@@ -324,13 +312,9 @@ public class ReceptorInvokerScopePropagationTests {
   /// <summary>
   /// Test receptor registry that allows registering receptors that return events.
   /// </summary>
-  private sealed class TestReceptorRegistry : IReceptorRegistry {
+  private sealed class TestReceptorRegistry(ReceptorInvokerScopePropagationTests.InvocationTracker tracker) : IReceptorRegistry {
     private readonly Dictionary<(System.Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
-    private readonly InvocationTracker _tracker;
-
-    public TestReceptorRegistry(InvocationTracker tracker) {
-      _tracker = tracker;
-    }
+    private readonly InvocationTracker _tracker = tracker;
 
     public void RegisterReceptor<TMessage>(string receptorId, LifecycleStage stage) where TMessage : notnull {
       var key = (typeof(TMessage), stage);

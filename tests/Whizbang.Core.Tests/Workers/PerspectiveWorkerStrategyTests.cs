@@ -139,12 +139,12 @@ public class PerspectiveWorkerStrategyTests {
     // Arrange - Set up handler to suppress unobserved task exceptions from this test
     // The test intentionally throws an exception from the worker, which may not be observed
     // before GC runs during parallel test execution
-    EventHandler<UnobservedTaskExceptionEventArgs> handler = (s, e) => {
+    void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is InvalidOperationException ioe &&
           ioe.Message == "Test exception") {
         e.SetObserved();
       }
-    };
+    }
     TaskScheduler.UnobservedTaskException += handler;
 
     try {

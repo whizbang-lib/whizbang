@@ -133,7 +133,7 @@ public class AccessDeniedExceptionTests {
       "Order");
 
     // Assert
-    await Assert.That(exception is Exception).IsTrue();
+    await Assert.That(exception is not null).IsTrue();
   }
 
   [Test]

@@ -17,7 +17,7 @@ public class ITransportWithRecoveryTests {
   public async Task SetRecoveryHandler_WithValidHandler_DoesNotThrowAsync() {
     // Arrange
     var transport = new TestTransportWithRecovery();
-    Func<CancellationToken, Task> handler = _ => Task.CompletedTask;
+    Task handler(CancellationToken _) => Task.CompletedTask;
 
     // Act & Assert - should not throw
     transport.SetRecoveryHandler(handler);
@@ -31,7 +31,7 @@ public class ITransportWithRecoveryTests {
     transport.SetRecoveryHandler(_ => Task.CompletedTask);
 
     // Act - setting null clears the handler
-    transport.SetRecoveryHandler(null!);
+    transport.SetRecoveryHandler(null);
 
     // Assert
     await Assert.That(transport.RecoveryHandler).IsNull();
@@ -42,8 +42,8 @@ public class ITransportWithRecoveryTests {
     // Arrange
     var transport = new TestTransportWithRecovery();
     var callCount = 0;
-    Func<CancellationToken, Task> handler1 = _ => { callCount = 1; return Task.CompletedTask; };
-    Func<CancellationToken, Task> handler2 = _ => { callCount = 2; return Task.CompletedTask; };
+    Task handler1(CancellationToken _) { callCount = 1; return Task.CompletedTask; }
+    Task handler2(CancellationToken _) { callCount = 2; return Task.CompletedTask; }
 
     // Act
     transport.SetRecoveryHandler(handler1);

@@ -18,7 +18,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query for all Whizbang tables
-    var sql = @"
+    const string sql = @"
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
@@ -52,7 +52,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query perspective table columns
-    var sql = @"
+    const string sql = @"
       SELECT column_name, data_type, is_nullable
       FROM information_schema.columns
       WHERE table_name = 'wh_per_order'
@@ -103,7 +103,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query constraint information
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -137,7 +137,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query foreign key constraints
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -176,7 +176,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query foreign key constraints
-    var sql = @"
+    const string sql = @"
       SELECT
         tc.constraint_name,
         kcu.column_name,
@@ -215,7 +215,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query unique indexes
-    var sql = @"
+    const string sql = @"
       SELECT
         i.indexname,
         i.indexdef
@@ -244,7 +244,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query partial indexes
-    var sql = @"
+    const string sql = @"
       SELECT
         i.indexname,
         i.tablename,
@@ -283,7 +283,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Act - Query indexes on wh_per_order
-    var sql = @"
+    const string sql = @"
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'wh_per_order'
@@ -342,7 +342,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    var sql = @"
+    const string sql = @"
       SELECT COUNT(*)
       FROM information_schema.tables
       WHERE table_schema = 'public'

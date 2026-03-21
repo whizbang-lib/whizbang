@@ -35,5 +35,5 @@ public class DapperPostgresSequenceProviderTests : SequenceProviderContractTests
     return new DapperPostgresSequenceProvider(_testBase.ConnectionFactory, _testBase.Executor);
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

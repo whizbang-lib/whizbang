@@ -54,10 +54,10 @@ public class WhizbangCoreOptionsTests {
   [Test]
   public async Task EnableTagProcessing_CanBeSetToFalse_Async() {
     // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.EnableTagProcessing = false;
+    var options = new WhizbangCoreOptions {
+      // Act
+      EnableTagProcessing = false
+    };
 
     // Assert
     await Assert.That(options.EnableTagProcessing).IsFalse();
@@ -66,8 +66,9 @@ public class WhizbangCoreOptionsTests {
   [Test]
   public async Task EnableTagProcessing_CanBeSetToTrue_Async() {
     // Arrange
-    var options = new WhizbangCoreOptions();
-    options.EnableTagProcessing = false;
+    var options = new WhizbangCoreOptions {
+      EnableTagProcessing = false
+    };
 
     // Act
     options.EnableTagProcessing = true;
@@ -92,10 +93,10 @@ public class WhizbangCoreOptionsTests {
   [Test]
   public async Task TagProcessingMode_CanBeSetToAsLifecycleStage_Async() {
     // Arrange
-    var options = new WhizbangCoreOptions();
-
-    // Act
-    options.TagProcessingMode = TagProcessingMode.AsLifecycleStage;
+    var options = new WhizbangCoreOptions {
+      // Act
+      TagProcessingMode = TagProcessingMode.AsLifecycleStage
+    };
 
     // Assert
     await Assert.That(options.TagProcessingMode).IsEqualTo(TagProcessingMode.AsLifecycleStage);
@@ -104,8 +105,9 @@ public class WhizbangCoreOptionsTests {
   [Test]
   public async Task TagProcessingMode_CanBeSetBackToAfterReceptorCompletion_Async() {
     // Arrange
-    var options = new WhizbangCoreOptions();
-    options.TagProcessingMode = TagProcessingMode.AsLifecycleStage;
+    var options = new WhizbangCoreOptions {
+      TagProcessingMode = TagProcessingMode.AsLifecycleStage
+    };
 
     // Act
     options.TagProcessingMode = TagProcessingMode.AfterReceptorCompletion;

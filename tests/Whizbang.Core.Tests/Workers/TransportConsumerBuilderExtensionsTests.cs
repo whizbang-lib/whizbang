@@ -490,24 +490,16 @@ public class TransportConsumerBuilderExtensionsTests {
     }
   }
 
-  private sealed class TestEventNamespaceRegistry : IEventNamespaceRegistry {
-    private readonly HashSet<string> _namespaces;
-
-    public TestEventNamespaceRegistry(IEnumerable<string> namespaces) {
-      _namespaces = new HashSet<string>(namespaces, StringComparer.OrdinalIgnoreCase);
-    }
+  private sealed class TestEventNamespaceRegistry(IEnumerable<string> namespaces) : IEventNamespaceRegistry {
+    private readonly HashSet<string> _namespaces = new(namespaces, StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlySet<string> GetPerspectiveEventNamespaces() => _namespaces;
     public IReadOnlySet<string> GetReceptorEventNamespaces() => new HashSet<string>();
     public IReadOnlySet<string> GetAllEventNamespaces() => _namespaces;
   }
 
-  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-    public TestServiceInstanceProvider(string serviceName) {
-      ServiceName = serviceName;
-    }
-
-    public string ServiceName { get; }
+  private sealed class TestServiceInstanceProvider(string serviceName) : IServiceInstanceProvider {
+    public string ServiceName { get; } = serviceName;
     public string InstanceId => Guid.NewGuid().ToString("N")[..8];
 
     public string HostName => throw new NotImplementedException();
