@@ -476,6 +476,18 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 }
 
+# Ctrl+C handler — kill dotnet child processes cleanly
+trap {
+    Write-Host ""
+    Write-Host "  ⚠️  Interrupted — stopping test processes..." -ForegroundColor Yellow
+    # Kill any dotnet test processes spawned by this script
+    Get-Process -Name "dotnet" -ErrorAction SilentlyContinue |
+        Where-Object { $_.StartTime -gt $script:runStartTime } |
+        ForEach-Object { try { $_.Kill($true) } catch { } }
+    Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
+    exit 130
+}
+
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
