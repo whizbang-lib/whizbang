@@ -794,6 +794,39 @@ function Invoke-Monitor {
 # Main Execution
 # ============================================================================
 
+# Register Ctrl+C handler for clean shutdown
+$script:interrupted = $false
+$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    $script:interrupted = $true
+}
+
+# Track child processes so we can kill them on Ctrl+C
+$script:childProcesses = @()
+
+trap {
+    $script:interrupted = $true
+    Write-Host ""
+    Write-Host "  ⚠️  Interrupted — cleaning up..." -ForegroundColor Yellow
+
+    # Kill any child dotnet processes we spawned
+    foreach ($proc in $script:childProcesses) {
+        if (-not $proc.HasExited) {
+            try { $proc.Kill($true) } catch { }
+        }
+    }
+
+    # Clean up progress bars
+    Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
+    Write-Progress -Id 1 -Activity "x" -Completed -ErrorAction SilentlyContinue
+    Write-Progress -Id 0 -Activity "x" -Completed -ErrorAction SilentlyContinue
+
+    # Stop transcript
+    try { Stop-Transcript | Out-Null } catch { }
+
+    Write-Host "  Log saved to: $effectiveLogFile" -ForegroundColor DarkGray
+    exit 130
+}
+
 $result = @{ Passed = $true }
 $prNumber = $PrNumber
 $prUrl = ""
