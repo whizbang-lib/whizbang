@@ -202,7 +202,7 @@ function Write-WhizbangBanner {
     # W! - https://whizba.ng/ tagline
     Write-LogoSeg "                                " 45 55 72
     Write-LogoSeg "W! - https://whizba.ng/" 200 210 220
-    Write-LogoSeg "                               " 45 55 72
+    Write-LogoSeg "                             " 45 55 72
     Write-LogoEOL
 
     Write-Host ""

@@ -203,7 +203,7 @@ public static partial class WhizbangBanner {
     // W! - https://whizba.ng/ tagline
     Seg("                                ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
     Seg("W! - https://whizba.ng/", 200, 210, 220);
-    Seg("                               ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
+    Seg("                             ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
     Eol();
 
     sb.AppendLine();
