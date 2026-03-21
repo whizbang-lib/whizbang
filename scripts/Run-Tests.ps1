@@ -283,6 +283,8 @@ param(
     [ValidateSet("Text", "Json")]
     [string]$OutputFormat = "Text",  # Output format: Text (human-readable) or Json (machine-readable)
 
+    [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -467,13 +469,15 @@ try {
     }
 
     if (-not $useAiOutput) {
-        # Branded header
-        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
-        if ($Coverage) { $headerParams["Coverage"] = "On" }
-        if ($FailFast) { $headerParams["FailFast"] = "On" }
-        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
-        if ($Tag) { $headerParams["Tag"] = $Tag }
-        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
+        # Branded header (suppressed when called from Run-PR.ps1)
+        if (-not $NoHeader) {
+            $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+            if ($Coverage) { $headerParams["Coverage"] = "On" }
+            if ($FailFast) { $headerParams["FailFast"] = "On" }
+            if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+            if ($Tag) { $headerParams["Tag"] = $Tag }
+            Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
+        }
 
         Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
         Write-Host "Mode: $Mode" -ForegroundColor Yellow
@@ -499,13 +503,15 @@ try {
         }
         Write-Host ""
     } else {
-        # Branded header (AI mode)
-        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
-        if ($Coverage) { $headerParams["Coverage"] = "On" }
-        if ($FailFast) { $headerParams["FailFast"] = "On" }
-        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
-        if ($Tag) { $headerParams["Tag"] = $Tag }
-        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
+        # Branded header (AI mode, suppressed when called from Run-PR.ps1)
+        if (-not $NoHeader) {
+            $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+            if ($Coverage) { $headerParams["Coverage"] = "On" }
+            if ($FailFast) { $headerParams["FailFast"] = "On" }
+            if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+            if ($Tag) { $headerParams["Tag"] = $Tag }
+            Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
+        }
 
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
         Write-Host "Mode: $Mode" -ForegroundColor Gray
