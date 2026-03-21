@@ -508,9 +508,15 @@ function Invoke-Prepare {
             $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.token=$sonarToken", "/d:sonar.host.url=$sonarUrl")
             if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
             if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
-            & dotnet-sonarscanner @beginArgs 2>&1 | Out-Null
+            $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
             if ($LASTEXITCODE -eq 0) {
                 $script:sonarStarted = $true
+                Write-Host "    SonarScanner begin: ✅" -ForegroundColor DarkGray
+            } else {
+                Write-AiLine "    SonarScanner begin failed:" -ForegroundColor Red
+                $beginOutput -split "`n" | Select-Object -Last 5 | ForEach-Object {
+                    Write-Host "      $_" -ForegroundColor DarkGray
+                }
             }
             Pop-Location
         }
@@ -582,8 +588,14 @@ function Invoke-Prepare {
         $continue = Run-Step -Name "SonarQube Analysis" -FailureType "SonarFailure" -Action {
             Push-Location $repoRoot
             try {
-                & dotnet-sonarscanner end /d:sonar.token="$sonarToken" 2>&1 | Out-Null
+                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.token="$sonarToken" 2>&1 | Out-String
                 $exitCode = $LASTEXITCODE
+                if ($exitCode -ne 0) {
+                    Write-AiLine "    sonarscanner end failed:" -ForegroundColor Red
+                    $sonarEndOutput -split "`n" | Select-Object -Last 10 | ForEach-Object {
+                        Write-Host "      $_" -ForegroundColor DarkGray
+                    }
+                }
 
                 # Query results from local SonarQube
                 if ($exitCode -eq 0) {
