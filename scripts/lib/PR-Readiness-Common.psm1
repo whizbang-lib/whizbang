@@ -203,79 +203,14 @@ function Write-BannerBody {
 function Write-WhizbangBanner {
     <#
     .SYNOPSIS
-        Prints the Whizbang ASCII art banner with true-color gradient, random stars, and optional twinkle animation.
-    .PARAMETER Animate
-        When true, redraws the banner 3 times for a twinkling star effect. Default: true.
+        Prints the Whizbang ASCII art banner with true-color gradient and random stars.
     #>
     [CmdletBinding()]
-    param([bool]$Animate = $true)
+    param()
 
     Write-Host ""
-
-    # Render the banner and record which buffer rows it occupies
-    $bannerStartRow = [Console]::CursorTop
     Write-BannerBody
-    $bannerEndRow = [Console]::CursorTop
-
     Write-Host ""
-
-    # Async twinkle: uses ANSI save/restore cursor (\e[s/\e[u) and absolute
-    # positioning (\e[row;colH) to update stars without interfering with main output.
-    # The background thread uses a lock object to coordinate cursor access.
-    if ($Animate) {
-        # Shared lock so background thread and main thread don't write simultaneously
-        $script:ConsoleLock = [System.Threading.Mutex]::new($false, "WhizbangTwinkle_$$")
-
-        $script:TwinkleRunspace = [runspacefactory]::CreateRunspace()
-        $script:TwinkleRunspace.Open()
-
-        $script:TwinklePipeline = $script:TwinkleRunspace.CreatePipeline()
-        $script:TwinklePipeline.Commands.AddScript(@"
-            `$esc = [char]27
-            `$bg = "`$esc[48;2;45;55;72m"
-            `$reset = "`$esc[0m"
-            `$starChars = @('.', '·', '∙', '*', '⋅', '✦')
-            `$startRow = $bannerStartRow + 1  # 1-based for ANSI
-            `$endRow = $bannerEndRow          # 1-based for ANSI
-            `$random = [System.Random]::new()
-            `$mutex = [System.Threading.Mutex]::OpenExisting("WhizbangTwinkle_$$")
-
-            for (`$frame = 0; `$frame -lt 5; `$frame++) {
-                Start-Sleep -Seconds 1
-
-                if (`$mutex.WaitOne(100)) {
-                    try {
-                        # Save cursor, do updates, restore cursor
-                        [Console]::Write("`$esc[s")
-
-                        for (`$i = 0; `$i -lt 25; `$i++) {
-                            `$row = `$random.Next(`$startRow, `$endRow)
-                            `$col = `$random.Next(1, [Math]::Min(87, [Console]::BufferWidth))
-
-                            [Console]::Write("`$esc[`${row};`${col}H")
-
-                            if (`$random.Next(3) -eq 0) {
-                                `$b = `$random.Next(220, 256)
-                                `$s = `$starChars[`$random.Next(`$starChars.Length)]
-                                [Console]::Write("`$bg`$esc[38;2;`${b};`$(`$b+5);`$(`$b+10)m`$s`$reset")
-                            } else {
-                                [Console]::Write("`$bg`$esc[38;2;45;55;72m `$reset")
-                            }
-                        }
-
-                        # Restore cursor to where the main script left it
-                        [Console]::Write("`$esc[u")
-                        [Console]::Out.Flush()
-                    } finally {
-                        `$mutex.ReleaseMutex()
-                    }
-                }
-            }
-
-            `$mutex.Dispose()
-"@)
-        $script:TwinklePipeline.InvokeAsync()
-    }
 }
 
 function Write-WhizbangHeader {
