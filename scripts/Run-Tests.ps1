@@ -285,6 +285,10 @@ param(
 
     [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
 
+    [switch]$CleanLogs,     # Remove log files and coverage reports before running
+    [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
+    [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -295,6 +299,16 @@ Set-StrictMode -Version Latest
 
 # Import shared PR readiness module
 Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+
+# Handle cleanup flags
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ($CleanAll) {
+    Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
+    Invoke-CleanAll -RepoRoot $repoRoot
+} elseif ($CleanLogs -or $CleanMetrics) {
+    if ($CleanLogs) { Invoke-CleanLogs -RepoRoot $repoRoot }
+    if ($CleanMetrics) { Invoke-CleanMetrics -RepoRoot $repoRoot }
+}
 
 # Handle legacy parameters (for backward compatibility)
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {

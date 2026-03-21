@@ -723,6 +723,99 @@ function Format-Duration {
 }
 
 # ============================================================================
+# Cleanup
+# ============================================================================
+
+function Invoke-CleanLogs {
+    <#
+    .SYNOPSIS
+        Removes log files and coverage reports.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepoRoot
+    )
+
+    $logsDir = Join-Path $RepoRoot "logs"
+    $coverageReportDir = Join-Path $RepoRoot "coverage-report"
+
+    $cleaned = @()
+
+    # Clean log files (pr-run-*.log, pr-unit-tests.log, pr-integration-tests.log)
+    if (Test-Path $logsDir) {
+        $logFiles = Get-ChildItem -Path $logsDir -Filter "*.log" -ErrorAction SilentlyContinue
+        if ($logFiles) {
+            $logFiles | Remove-Item -Force
+            $cleaned += "$($logFiles.Count) log file(s)"
+        }
+    }
+
+    # Clean coverage reports (HTML reports from reportgenerator)
+    if (Test-Path $coverageReportDir) {
+        Remove-Item -Path $coverageReportDir -Recurse -Force
+        $cleaned += "coverage-report/"
+    }
+
+    # Clean cobertura XML files from test output
+    $coberturaFiles = Get-ChildItem -Path (Join-Path $RepoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue
+    if ($coberturaFiles) {
+        $coberturaFiles | Remove-Item -Force
+        $cleaned += "$($coberturaFiles.Count) cobertura XML file(s)"
+    }
+
+    if ($cleaned.Count -gt 0) {
+        Write-Host "  Cleaned: $($cleaned -join ', ')" -ForegroundColor Green
+    } else {
+        Write-Host "  Nothing to clean" -ForegroundColor Gray
+    }
+}
+
+function Invoke-CleanMetrics {
+    <#
+    .SYNOPSIS
+        Removes JSONL history/metrics files.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepoRoot
+    )
+
+    $logsDir = Join-Path $RepoRoot "logs"
+    $cleaned = @()
+
+    if (Test-Path $logsDir) {
+        $jsonlFiles = Get-ChildItem -Path $logsDir -Filter "*.jsonl" -ErrorAction SilentlyContinue
+        if ($jsonlFiles) {
+            $jsonlFiles | Remove-Item -Force
+            $cleaned += "$($jsonlFiles.Count) metrics file(s)"
+        }
+    }
+
+    if ($cleaned.Count -gt 0) {
+        Write-Host "  Cleaned: $($cleaned -join ', ')" -ForegroundColor Green
+    } else {
+        Write-Host "  Nothing to clean" -ForegroundColor Gray
+    }
+}
+
+function Invoke-CleanAll {
+    <#
+    .SYNOPSIS
+        Removes all logs, metrics, and coverage reports.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepoRoot
+    )
+
+    Invoke-CleanLogs -RepoRoot $RepoRoot
+    Invoke-CleanMetrics -RepoRoot $RepoRoot
+}
+
+# ============================================================================
 # Exports
 # ============================================================================
 
@@ -738,4 +831,7 @@ Export-ModuleMember -Function @(
     'Get-CheckEstimate'
     'Write-AiInstructions'
     'Format-Duration'
+    'Invoke-CleanLogs'
+    'Invoke-CleanMetrics'
+    'Invoke-CleanAll'
 )
