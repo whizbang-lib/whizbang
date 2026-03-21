@@ -69,7 +69,9 @@ param(
     [ValidateSet("All", "Ai")]
     [string]$LogMode = "",
 
-    [switch]$FailFast
+    [switch]$FailFast,
+
+    [switch]$NoHeader  # Suppress the branded header (used when called from Run-PR.ps1)
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,10 +96,12 @@ $historyFile = Join-Path $PSScriptRoot ".." "logs" "sonar-runs.jsonl"
 $estimate = Get-RunEstimate -FilePath $historyFile
 $estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
-# Branded header
-$headerParams = @{ Mode = $Mode }
-if ($SkipBuild) { $headerParams["SkipBuild"] = "On" }
-Write-WhizbangHeader -ScriptName "Sonar Runner" -Params $headerParams -Estimate $estimateStr
+# Branded header (suppressed when called from Run-PR.ps1)
+if (-not $NoHeader) {
+    $headerParams = @{ Mode = $Mode }
+    if ($SkipBuild) { $headerParams["SkipBuild"] = "On" }
+    Write-WhizbangHeader -ScriptName "Sonar Runner" -Params $headerParams -Estimate $estimateStr
+}
 
 # Configuration (must match Run-SonarAnalysis.ps1)
 $ProjectKey = "whizbang-lib_whizbang"

@@ -255,7 +255,7 @@ function Invoke-Prepare {
     $coveragePct = $null
     $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -Action {
         $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-        $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild 2>&1 | Out-String
+        $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-String
         $exitCode = $LASTEXITCODE
 
         # Parse JSON output for coverage
@@ -280,7 +280,7 @@ function Invoke-Prepare {
     if (-not $SkipIntegration) {
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild 2>&1 | Out-Null
+            & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-Null
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
@@ -290,7 +290,7 @@ function Invoke-Prepare {
     if (-not $SkipSonar) {
         $continue = Run-Step -Name "SonarCloud Analysis" -FailureType "SonarFailure" -Action {
             $sonarScript = Join-Path $PSScriptRoot "Run-Sonar.ps1"
-            & $sonarScript -Mode Ai -OutputFormat Json -SkipBuild 2>&1 | Out-Null
+            & $sonarScript -Mode Ai -OutputFormat Json -SkipBuild -NoHeader 2>&1 | Out-Null
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
