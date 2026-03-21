@@ -21,6 +21,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- System.CommandLine for CLI parsing -->
     <PackageReference Include="System.CommandLine" />
     <!-- Roslyn for code analysis and transformation -->

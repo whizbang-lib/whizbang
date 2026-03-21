@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Migrate.Analysis;
 using Whizbang.Migrate.Commands;
 using Whizbang.Migrate.Wizard;
@@ -13,6 +14,9 @@ public static class Program {
   /// Main entry point.
   /// </summary>
   public static async Task<int> Main(string[] args) {
+    // Show branded banner
+    WhizbangBanner.Print();
+
     var rootCommand = new RootCommand("Migration tool for converting Marten/Wolverine projects to Whizbang");
 
     // analyze command

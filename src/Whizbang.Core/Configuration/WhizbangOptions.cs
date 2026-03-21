@@ -18,6 +18,12 @@ public class WhizbangOptions {
   public GuidOrderingSeverity GuidOrderingViolationSeverity { get; set; } = GuidOrderingSeverity.Warning;
 
   /// <summary>
+  /// When true, the Whizbang ASCII art banner is displayed on service startup.
+  /// Default: true
+  /// </summary>
+  public bool ShowBanner { get; set; } = true;
+
+  /// <summary>
   /// When true, Whizbang will automatically generate a StreamId for events that implement
   /// IHasStreamId when their StreamId is Guid.Empty. This prevents events from being stored
   /// with empty StreamIds, which can cause perspective worker issues.

@@ -1,10 +1,14 @@
 using System.Globalization;
+using Whizbang.Core.Diagnostics;
 using Whizbang.Data.Dapper.Sqlite.Schema;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 using Whizbang.Migrate.Commands;
 
 const string version = "0.1.0";
+
+// Show branded banner
+WhizbangBanner.Print();
 
 // Parse command-line arguments
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h") {
