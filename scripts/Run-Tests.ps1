@@ -1979,7 +1979,8 @@ try {
 
         # Emit AI instructions if there are failures
         if ($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) {
-            Write-AiInstructions -Type TestFailure
+            $aiIndent = if ($NoHeader) { "    " } else { "" }
+            Write-AiInstructions -Type TestFailure -Indent $aiIndent
         }
 
         Write-Host ""

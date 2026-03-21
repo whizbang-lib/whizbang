@@ -630,12 +630,17 @@ function Write-AiInstructions {
 
     .PARAMETER Type
         The type of failure: TestFailure, SonarFailure, BuildFailure, FormatFailure
+
+    .PARAMETER Indent
+        Optional indent prefix for each line (e.g., "    " when called from a child script).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [ValidateSet("TestFailure", "SonarFailure", "BuildFailure", "FormatFailure")]
-        [string]$Type
+        [string]$Type,
+
+        [string]$Indent = ""
     )
 
     $instructions = switch ($Type) {
@@ -702,7 +707,11 @@ Format check failed. Fix:
         }
     }
 
-    Write-Host $instructions -ForegroundColor Yellow
+    if ($Indent) {
+        $instructions -split "`n" | ForEach-Object { Write-Host "${Indent}$_" -ForegroundColor Yellow }
+    } else {
+        Write-Host $instructions -ForegroundColor Yellow
+    }
 }
 
 # ============================================================================
