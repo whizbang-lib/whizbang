@@ -436,3 +436,6 @@ coverage_files.txt
 .sonarqube/
 .mcp.json
 coverage-report/
+
+# PR readiness script history files
+logs/
