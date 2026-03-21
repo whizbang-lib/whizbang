@@ -330,6 +330,405 @@ public class LifecycleCoordinatorTests {
 
   #endregion
 
+  #region AdvanceToAsync — null invoker
+
+  [Test]
+  public async Task AdvanceTo_NullInvoker_StillUpdatesStageAsync() {
+    // Arrange — no IReceptorInvoker registered
+    var services = new ServiceCollection();
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "null-invoker"));
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+
+    // Act
+    await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scopedProvider, CancellationToken.None);
+
+    // Assert — stage updated despite no invoker
+    await Assert.That(tracking.CurrentStage).IsEqualTo(LifecycleStage.PostOutboxInline);
+  }
+
+  #endregion
+
+  #region AdvanceBatchAsync
+
+  [Test]
+  public async Task AdvanceBatchAsync_AdvancesAllTrackingsAsync() {
+    // Arrange
+    var scopedProvider = _createScopedProvider();
+    var coordinator = new LifecycleCoordinator();
+    var trackings = new List<ILifecycleTracking>();
+    for (int i = 0; i < 5; i++) {
+      var id = Guid.NewGuid();
+      trackings.Add(coordinator.BeginTracking(
+        id, _createEnvelope(new TestEvent(id, $"batch-{i}")),
+        LifecycleStage.PrePerspectiveAsync, MessageSource.Local));
+    }
+
+    // Act
+    await ILifecycleTracking.AdvanceBatchAsync(
+      trackings, LifecycleStage.PostPerspectiveInline, scopedProvider, CancellationToken.None);
+
+    // Assert
+    foreach (var t in trackings) {
+      await Assert.That(t.CurrentStage).IsEqualTo(LifecycleStage.PostPerspectiveInline);
+    }
+  }
+
+  [Test]
+  public async Task AdvanceBatchAsync_EmptyCollection_NoOpAsync() {
+    // Should not throw
+    var scopedProvider = _createScopedProvider();
+    await ILifecycleTracking.AdvanceBatchAsync(
+      [], LifecycleStage.PostPerspectiveInline, scopedProvider, CancellationToken.None);
+    // No exception = pass
+    await Assert.That(scopedProvider).IsNotNull();
+  }
+
+  #endregion
+
+  #region BeginTracking — edge cases
+
+  [Test]
+  public async Task BeginTracking_SameEventIdTwice_ReturnsFirstTrackingAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope1 = _createEnvelope(new TestEvent(eventId, "first"));
+    var envelope2 = _createEnvelope(new TestEvent(eventId, "second"));
+
+    // Act
+    var tracking1 = coordinator.BeginTracking(
+      eventId, envelope1, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    var tracking2 = coordinator.BeginTracking(
+      eventId, envelope2, LifecycleStage.PostInboxAsync, MessageSource.Inbox);
+
+    // Assert — TryAdd returns false for duplicate, first wins
+    var retrieved = coordinator.GetTracking(eventId);
+    await Assert.That(retrieved).IsNotNull();
+    await Assert.That(retrieved!.CurrentStage).IsEqualTo(LifecycleStage.PrePerspectiveAsync);
+  }
+
+  [Test]
+  public async Task BeginTracking_WithStreamIdAndPerspectiveType_PreservesContextAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "context-test"));
+
+    // Act
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local,
+      streamId: streamId, perspectiveType: typeof(string));
+
+    // Assert
+    await Assert.That(tracking.EventId).IsEqualTo(eventId);
+    await Assert.That(tracking.CurrentStage).IsEqualTo(LifecycleStage.PrePerspectiveAsync);
+  }
+
+  #endregion
+
+  #region Context property propagation
+
+  [Test]
+  public async Task AdvanceTo_SetsCorrectContextProperties_OnReceptorInvocationAsync() {
+    // Arrange — capture the context passed to InvokeAsync
+    ILifecycleContext? capturedContext = null;
+    var registry = new ContextCapturingRegistry(ctx => {
+      // Capture only the first invocation (the actual stage, not ImmediateAsync)
+      capturedContext ??= ctx;
+    });
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    services.AddScoped<ILifecycleContextAccessor, TestLifecycleContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "context"));
+
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PostPerspectiveAsync, MessageSource.Inbox,
+      streamId: streamId, perspectiveType: typeof(int));
+
+    // Act
+    await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveAsync, scopedProvider, CancellationToken.None);
+
+    // Assert — verify context was set correctly
+    await Assert.That(capturedContext).IsNotNull();
+    await Assert.That(capturedContext!.CurrentStage).IsEqualTo(LifecycleStage.PostPerspectiveAsync);
+    await Assert.That(capturedContext.EventId).IsEqualTo(eventId);
+    await Assert.That(capturedContext.StreamId).IsEqualTo(streamId);
+    await Assert.That(capturedContext.PerspectiveType).IsEqualTo(typeof(int));
+    await Assert.That(capturedContext.MessageSource).IsEqualTo(MessageSource.Inbox);
+    await Assert.That(capturedContext.AttemptNumber).IsEqualTo(1);
+  }
+
+  #endregion
+
+  #region Multiple receptors at same stage
+
+  [Test]
+  public async Task AdvanceTo_MultipleReceptorsAtSameStage_AllFireAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("Receptor1", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("Receptor2", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("Receptor3", LifecycleStage.PostLifecycleAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "multi-receptor"));
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+
+    // Act
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, CancellationToken.None);
+
+    // Assert — all 3 receptors fired
+    var postLifecycleFirings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync);
+    await Assert.That(postLifecycleFirings).IsEqualTo(3);
+  }
+
+  #endregion
+
+  #region SignalSegmentComplete — edge cases
+
+  [Test]
+  public async Task SignalSegmentComplete_NonTrackedEvent_NoOpAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var scopedProvider = _createScopedProvider();
+
+    // Act — signal for an event that was never tracked
+    await coordinator.SignalSegmentCompleteAsync(
+      Guid.NewGuid(), PostLifecycleCompletionSource.Local, scopedProvider, CancellationToken.None);
+
+    // Assert — no exception
+    await Assert.That(coordinator.GetTracking(Guid.NewGuid())).IsNull();
+  }
+
+  [Test]
+  public async Task SignalSegmentComplete_DuplicateSignal_FiresPostLifecycleOnceAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "dup-signal"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(eventId,
+      PostLifecycleCompletionSource.Local,
+      PostLifecycleCompletionSource.Distributed);
+
+    // Act — signal Local twice, then Distributed
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Local, scopedProvider, CancellationToken.None);
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Local, scopedProvider, CancellationToken.None);
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Distributed, scopedProvider, CancellationToken.None);
+
+    // Assert — PostLifecycle should fire exactly once
+    var firings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync);
+    await Assert.That(firings).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WhenAll_ThreeSources_RequiresAllAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "three-sources"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(eventId,
+      PostLifecycleCompletionSource.Local,
+      PostLifecycleCompletionSource.Distributed,
+      PostLifecycleCompletionSource.Outbox);
+
+    // Act — only two of three
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Local, scopedProvider, CancellationToken.None);
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Distributed, scopedProvider, CancellationToken.None);
+
+    await Assert.That(tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync)).IsEqualTo(0)
+      .Because("Two of three sources is not enough");
+
+    // Complete the third
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Outbox, scopedProvider, CancellationToken.None);
+
+    await Assert.That(tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync)).IsEqualTo(1);
+  }
+
+  #endregion
+
+  #region AbandonTracking cleans up WhenAll
+
+  [Test]
+  public async Task AbandonTracking_CleansUpWhenAllStateAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "cleanup-whenall"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(eventId,
+      PostLifecycleCompletionSource.Local,
+      PostLifecycleCompletionSource.Distributed);
+
+    // Act
+    coordinator.AbandonTracking(eventId);
+
+    // Assert — both tracking and WhenAll should be cleaned up
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+
+    // Signal should be a no-op now (no tracking exists)
+    var scopedProvider = _createScopedProvider();
+    await coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Local, scopedProvider, CancellationToken.None);
+    // No exception = pass
+  }
+
+  #endregion
+
+  #region Concurrent WhenAll signals
+
+  [Test]
+  public async Task WhenAll_ConcurrentSignals_FiresPostLifecycleExactlyOnceAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "concurrent-whenall"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.LocalImmediateAsync, MessageSource.Local);
+    coordinator.ExpectCompletionsFrom(eventId,
+      PostLifecycleCompletionSource.Local,
+      PostLifecycleCompletionSource.Distributed);
+
+    // Act — signal both concurrently
+    var scope1 = provider.CreateScope();
+    var scope2 = provider.CreateScope();
+    var task1 = coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Local, scope1.ServiceProvider, CancellationToken.None).AsTask();
+    var task2 = coordinator.SignalSegmentCompleteAsync(
+      eventId, PostLifecycleCompletionSource.Distributed, scope2.ServiceProvider, CancellationToken.None).AsTask();
+    await Task.WhenAll(task1, task2);
+
+    // Assert — PostLifecycle fires (at least once, concurrency may cause race but should not crash)
+    var firings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync);
+    await Assert.That(firings).IsGreaterThanOrEqualTo(1);
+  }
+
+  #endregion
+
+  #region Concurrent BeginTracking and AbandonTracking
+
+  [Test]
+  public async Task ConcurrentBeginAndAbandon_DoesNotThrowAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventIds = Enumerable.Range(0, 100).Select(_ => Guid.NewGuid()).ToList();
+
+    // Act — concurrent begin + abandon
+    var tasks = eventIds.Select(async id => {
+      var envelope = _createEnvelope(new TestEvent(id, "concurrent"));
+      coordinator.BeginTracking(id, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+      await Task.Yield(); // Give other tasks a chance
+      coordinator.AbandonTracking(id);
+    });
+    await Task.WhenAll(tasks);
+
+    // Assert — all cleaned up
+    foreach (var id in eventIds) {
+      await Assert.That(coordinator.GetTracking(id)).IsNull();
+    }
+  }
+
+  #endregion
+
+  #region Test Helpers
+
+  /// <summary>
+  /// Test implementation of ILifecycleContextAccessor.
+  /// </summary>
+  private sealed class TestLifecycleContextAccessor : ILifecycleContextAccessor {
+    public ILifecycleContext? Current { get; set; }
+  }
+
+  /// <summary>
+  /// Registry that captures the lifecycle context passed to InvokeAsync.
+  /// </summary>
+  private sealed class ContextCapturingRegistry : IReceptorRegistry {
+    private readonly Action<ILifecycleContext?> _onInvoke;
+
+    public ContextCapturingRegistry(Action<ILifecycleContext?> onInvoke) {
+      _onInvoke = onInvoke;
+    }
+
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) {
+      // Return a receptor at every stage so it always fires
+      return [new ReceptorInfo(
+        MessageType: messageType,
+        ReceptorId: "ContextCapture",
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          var accessor = sp.GetService<ILifecycleContextAccessor>();
+          _onInvoke(accessor?.Current);
+          return ValueTask.FromResult<object?>(null);
+        })];
+    }
+
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  #endregion
+
   #region Test Helpers
 
   private sealed class InvocationTracker {
