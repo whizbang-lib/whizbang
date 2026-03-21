@@ -147,11 +147,24 @@ if (-not $sonarToken) {
     }
 }
 
+# If no token found and running non-interactively (from Run-PR.ps1), skip gracefully
+if (-not $sonarToken) {
+    Write-Host "No SonarCloud token configured. Skipping analysis." -ForegroundColor Yellow
+    Write-Host "  To configure: set SONAR_TOKEN env var, or run Run-SonarAnalysis.ps1 directly for guided setup." -ForegroundColor DarkGray
+
+    if ($OutputFormat -eq "Json") {
+        ConvertTo-JsonResult -Result @{ status = "skipped"; reason = "no_token" }
+    }
+
+    # Still count as passed — missing token shouldn't fail the PR
+    exit 0
+}
+
 # Run the actual SonarCloud analysis
 $analysisScript = Join-Path $PSScriptRoot "Run-SonarAnalysis.ps1"
 
 $splatParams = @{}
-if ($Token) { $splatParams["Token"] = $Token }
+if ($sonarToken) { $splatParams["Token"] = $sonarToken }
 if ($SkipBuild) { $splatParams["SkipBuild"] = $true }
 
 $analysisExitCode = 0
