@@ -9,14 +9,11 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// Handles DeleteProductCommand and publishes ProductDeletedEvent
 /// </summary>
 public class DeleteProductReceptor(IDispatcher dispatcher, ILogger<DeleteProductReceptor> logger) : IReceptor<DeleteProductCommand, ProductDeletedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<DeleteProductReceptor> _logger = logger;
-
   public async ValueTask<ProductDeletedEvent> HandleAsync(
     DeleteProductCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Deleting product {ProductId}",
       message.ProductId);
 
@@ -27,9 +24,9 @@ public class DeleteProductReceptor(IDispatcher dispatcher, ILogger<DeleteProduct
     };
 
     // Publish the event
-    await _dispatcher.PublishAsync(productDeleted);
+    await dispatcher.PublishAsync(productDeleted);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Product {ProductId} deleted successfully",
       message.ProductId);
 

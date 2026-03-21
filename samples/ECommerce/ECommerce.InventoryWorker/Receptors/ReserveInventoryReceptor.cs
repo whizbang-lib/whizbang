@@ -8,14 +8,11 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// Handles ReserveInventoryCommand and publishes InventoryReservedEvent
 /// </summary>
 public class ReserveInventoryReceptor(IDispatcher dispatcher, ILogger<ReserveInventoryReceptor> logger) : IReceptor<ReserveInventoryCommand, InventoryReservedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<ReserveInventoryReceptor> _logger = logger;
-
   public async ValueTask<InventoryReservedEvent> HandleAsync(
     ReserveInventoryCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Reserving {Quantity} units of product {ProductId} for order {OrderId}",
       message.Quantity,
       message.ProductId,
@@ -33,9 +30,9 @@ public class ReserveInventoryReceptor(IDispatcher dispatcher, ILogger<ReserveInv
     };
 
     // Publish the event
-    await _dispatcher.PublishAsync(inventoryReserved);
+    await dispatcher.PublishAsync(inventoryReserved);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Inventory reserved for product {ProductId} in order {OrderId}",
       message.ProductId,
       message.OrderId);

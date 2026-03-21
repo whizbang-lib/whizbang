@@ -15,12 +15,9 @@ public class ProductSeedService(
   IDispatcher dispatcher,
   IProductLens productLens,
   ILogger<ProductSeedService> logger) : IHostedService {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly IProductLens _productLens = productLens;
-  private readonly ILogger<ProductSeedService> _logger = logger;
 
   public async Task StartAsync(CancellationToken cancellationToken) {
-    _logger.LogInformation("ProductSeedService: Checking if seeding is needed...");
+    logger.LogInformation("ProductSeedService: Checking if seeding is needed...");
 
     // Generate deterministic UUIDv7 IDs for the 12 products
     var prod1 = Guid.CreateVersion7();
@@ -43,16 +40,16 @@ public class ProductSeedService(
       prod9, prod10, prod11, prod12
     };
 
-    var existingProducts = await _productLens.GetByIdsAsync(productIds, cancellationToken);
+    var existingProducts = await productLens.GetByIdsAsync(productIds, cancellationToken);
 
     if (existingProducts.Count > 0) {
-      _logger.LogInformation(
+      logger.LogInformation(
         "ProductSeedService: Products already exist ({Count} found), skipping seed",
         existingProducts.Count);
       return;
     }
 
-    _logger.LogInformation("ProductSeedService: Seeding 12 products...");
+    logger.LogInformation("ProductSeedService: Seeding 12 products...");
 
     // Seed all 12 products with stock levels matching frontend mocks
     var createProductCommands = new[] {
@@ -157,21 +154,21 @@ public class ProductSeedService(
     // Dispatch all create product commands sequentially
     foreach (var command in createProductCommands) {
       try {
-        await _dispatcher.SendAsync(command);
-        _logger.LogInformation(
+        await dispatcher.SendAsync(command);
+        logger.LogInformation(
           "ProductSeedService: Created product {ProductId} ({Name}) with {Stock} units",
           command.ProductId,
           command.Name,
           command.InitialStock);
       } catch (Exception ex) {
-        _logger.LogError(ex,
+        logger.LogError(ex,
           "ProductSeedService: Failed to create product {ProductId}",
           command.ProductId);
         throw;
       }
     }
 
-    _logger.LogInformation("ProductSeedService: Product seeding complete");
+    logger.LogInformation("ProductSeedService: Product seeding complete");
   }
 
   public Task StopAsync(CancellationToken cancellationToken) {
