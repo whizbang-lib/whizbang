@@ -287,6 +287,13 @@ param(
 
     [switch]$NoReport,  # Skip coverage report generation (used when Run-PR handles it)
 
+    # Parent progress context (passed by Run-PR.ps1 for progress bar updates)
+    [double]$ParentStartTime = 0,    # Parent start time as Unix epoch seconds
+    [double]$ParentTotalEstSec = 0,  # Total estimated seconds for all parent steps
+    [double]$StepEstSec = 0,         # Estimated seconds for this step
+    [int]$ParentStepNumber = 0,      # Current step number in parent
+    [int]$ParentTotalSteps = 0,      # Total steps in parent
+
     [switch]$CleanLogs,     # Remove log files and coverage reports before running
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
     [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
@@ -593,6 +600,34 @@ try {
 
         Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr -Details $details
         [Console]::Out.Flush()
+    }
+
+    # Progress bar updater — called from periodic progress checkpoints
+    # Updates parent progress bars (timing overall + timing step) when running under Run-PR
+    $script:parentEpochStart = if ($ParentStartTime -gt 0) { [DateTimeOffset]::FromUnixTimeSeconds([long]$ParentStartTime).UtcDateTime } else { $null }
+    function Update-ParentProgress {
+        if (-not $script:parentEpochStart -or $ParentTotalEstSec -le 0) { return }
+
+        $elapsed = ([DateTime]::UtcNow - $script:parentEpochStart).TotalSeconds
+
+        # Id 0: Overall step progress
+        if ($ParentTotalSteps -gt 0) {
+            $stepPct = [math]::Round(($ParentStepNumber / $ParentTotalSteps) * 100)
+            Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${ParentStepNumber}/${ParentTotalSteps}: $Mode Tests" -PercentComplete $stepPct
+        }
+
+        # Id 1: Total elapsed vs remaining
+        $timePct = [math]::Min(100, [math]::Round(($elapsed / $ParentTotalEstSec) * 100))
+        $remaining = [math]::Max(0, $ParentTotalEstSec - $elapsed)
+        Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
+
+        # Id 3: Step elapsed vs remaining
+        if ($StepEstSec -gt 0) {
+            $stepElapsed = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+            $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $StepEstSec) * 100))
+            $stepRemain = [math]::Max(0, $StepEstSec - $stepElapsed)
+            Write-Progress -Id 3 -ParentId 0 -Activity "$Mode Tests: $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepTimePct
+        }
     }
 
     # Indentation: when called as child from Run-PR.ps1, indent all output to align
@@ -1315,6 +1350,12 @@ try {
                 $silentSeconds = ($now - $lastOutputTime).TotalSeconds
                 $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
 
+                # Update parent progress bars every 2 seconds (realtime ticking)
+                if (-not $script:lastParentProgressUpdate -or ($now - $script:lastParentProgressUpdate).TotalSeconds -ge 2) {
+                    Update-ParentProgress
+                    $script:lastParentProgressUpdate = $now
+                }
+
                 # Time-based progress update (even when no output)
                 if ($elapsedSinceLastProgress -ge $ProgressInterval) {
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
@@ -1329,6 +1370,7 @@ try {
                     } else {
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
+                    Update-ParentProgress
                     $lastProgressTime = $now
                 }
 
@@ -1443,6 +1485,7 @@ try {
                     # Show heartbeat (building/not yet testing)
                     Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                 }
+                Update-ParentProgress
 
                 $lastProgressTime = $now
                 $lastTotalTests = $totalTests
