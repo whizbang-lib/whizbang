@@ -265,10 +265,15 @@ function Invoke-Prepare {
 
     # Step 3: Unit tests + coverage
     $coveragePct = $null
+    $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
     $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
         $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-        $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-String
+        $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
         $exitCode = $LASTEXITCODE
+
+        if ($exitCode -ne 0) {
+            Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
+        }
 
         # Parse JSON output for coverage
         $details = $null
@@ -290,10 +295,15 @@ function Invoke-Prepare {
 
     # Step 4: Integration tests (unless skipped)
     if (-not $SkipIntegration) {
+        $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-Null
-            @{ ExitCode = $LASTEXITCODE; Details = $null }
+            & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+                Write-Host "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
+            }
+            @{ ExitCode = $exitCode; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
