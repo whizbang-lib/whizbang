@@ -176,14 +176,36 @@ try {
 
     # Begin analysis
     Write-Info "Step 1/3: Begin analysis configuration..."
+    # Load shared exclusion config (single source of truth with CI)
+    $exclusionConfigPath = Join-Path $PSScriptRoot ".." "sonar-exclusions.config"
+    $sonarExclusions = ""
+    $sonarCpdExclusions = ""
+    $sonarCoverageExclusions = ""
+    if (Test-Path $exclusionConfigPath) {
+        Get-Content $exclusionConfigPath | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
+            $parts = $_ -split "=", 2
+            switch ($parts[0].Trim()) {
+                "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
+                "sonar.cpd.exclusions" { $sonarCpdExclusions = $parts[1].Trim() }
+                "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
+            }
+        }
+        Write-Info "Loaded exclusions from sonar-exclusions.config"
+    } else {
+        Write-Warning2 "sonar-exclusions.config not found, using defaults"
+        $sonarExclusions = "**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**"
+        $sonarCoverageExclusions = "**/samples/**,**/benchmarks/**,**/tests/**"
+    }
+
     $beginArgs = @(
         "begin",
         "/k:$ProjectKey",
         "/o:$Organization",
         "/d:sonar.token=$sonarToken",
         "/d:sonar.host.url=$SonarHostUrl",
-        "/d:sonar.exclusions=**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**",
-        "/d:sonar.coverage.exclusions=**/samples/**,**/benchmarks/**,**/tests/**",
+        "/d:sonar.exclusions=$sonarExclusions",
+        "/d:sonar.cpd.exclusions=$sonarCpdExclusions",
+        "/d:sonar.coverage.exclusions=$sonarCoverageExclusions",
         "/d:sonar.issue.ignore.multicriteria=e1,e2,e3,e4,e5,e6",
         "/d:sonar.issue.ignore.multicriteria.e1.ruleKey=csharpsquid:S1192",
         "/d:sonar.issue.ignore.multicriteria.e1.resourceKey=src/Whizbang.Generators/**",
