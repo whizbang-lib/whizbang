@@ -56,7 +56,7 @@ jobs:
           git tag --list | head -20
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        uses: gittools/actions/gitversion/setup@5e921e851881443c3f3ae9108d9fb33f528f13d5 # v4.3.0
         with:
           versionSpec: '6.0.x'
 
@@ -69,7 +69,7 @@ jobs:
 
       - name: Determine Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        uses: gittools/actions/gitversion/execute@5e921e851881443c3f3ae9108d9fb33f528f13d5 # v4.3.0
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
