@@ -298,8 +298,9 @@ function Invoke-Prepare {
         $timingStr = Format-StepTiming -StepName $Name
 
         # Calculate total estimated time from all step P85 estimates
-        $totalEstSec = 0
-        foreach ($s in $script:stepStats.Values) { $totalEstSec += $s.P85 }
+        $script:totalEstSec = 0
+        foreach ($s in $script:stepStats.Values) { $script:totalEstSec += $s.P85 }
+        $totalEstSec = $script:totalEstSec
         $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
 
         # Update step-based progress bar
@@ -313,16 +314,22 @@ function Invoke-Prepare {
             Write-Host $stepLabel -ForegroundColor Cyan -NoNewline
         }
 
-        # Update time-based progress bar (only if we have estimates)
-        if ($totalEstSec -gt 0) {
-            $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
-            $remaining = [math]::Max(0, $totalEstSec - $elapsed)
-            Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $(Format-Duration -Seconds $elapsed)" -Status "Remaining: ~$(Format-Duration -Seconds $remaining)" -PercentComplete $timePct
-        }
+        # Step estimate for per-step progress
+        $script:stepEstSec = if ($script:stepStats.ContainsKey($Name)) { $script:stepStats[$Name].P85 } else { 0 }
+        $stepEstSec = $script:stepEstSec
 
         try {
             $result = & $Action
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
+
+            # Update progress bars after step completion
+            $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+            if ($totalEstSec -gt 0) {
+                $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
+                $remaining = [math]::Max(0, $totalEstSec - $elapsed)
+                Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
+            }
+            Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
 
             if ($result.ExitCode -ne 0) {
                 $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
@@ -349,13 +356,8 @@ function Invoke-Prepare {
             return $false
         }
         finally {
-            # Update time-based progress after step completion
-            if ($totalEstSec -gt 0) {
-                $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
-                $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
-                $remaining = [math]::Max(0, $totalEstSec - $elapsed)
-                Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $(Format-Duration -Seconds $elapsed)" -Status "Remaining: ~$(Format-Duration -Seconds $remaining)" -PercentComplete $timePct
-            }
+            Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
+            Update-ProgressBars
         }
     }
 
@@ -414,7 +416,8 @@ function Invoke-Prepare {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-Null
+            $parentEpoch = [DateTimeOffset]::new($startTime).ToUnixTimeSeconds()
+            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $unitTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
@@ -433,7 +436,8 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
+            $parentEpoch = [DateTimeOffset]::new($startTime).ToUnixTimeSeconds()
+            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -NoReport -LogFile $integrationTestLogFile -LogMode All -ParentStartTime $parentEpoch -ParentTotalEstSec $script:totalEstSec -StepEstSec $script:stepEstSec -ParentStepNumber $script:stepNumber -ParentTotalSteps $script:totalSteps 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-AiLine "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
