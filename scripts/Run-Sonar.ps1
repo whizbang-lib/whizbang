@@ -137,23 +137,134 @@ if (-not $NoHeader) {
 $ProjectKey = "whizbang-local"
 $SonarHostUrl = "http://localhost:9000"
 $sonarRepoRoot = Split-Path -Parent $PSScriptRoot
+$composeFile = Join-Path $sonarRepoRoot "docker-compose.sonarqube.yml"
+$tokenFile = Join-Path $sonarRepoRoot ".sonarqube-local.token"
 
-# Run the local SonarQube analysis via Run-LocalSonarAnalysis.ps1
+# ── Preflight checks ────────────────────────────────────────────────────────
+
+# 1. Check Docker is installed
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+if (-not $dockerCmd) {
+    Write-Host "❌ Docker is not installed or not in PATH." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  SonarQube analysis requires Docker. Install it from:" -ForegroundColor Yellow
+    Write-Host "    macOS:   https://docs.docker.com/desktop/install/mac-install/" -ForegroundColor Gray
+    Write-Host "    Windows: https://docs.docker.com/desktop/install/windows-install/" -ForegroundColor Gray
+    Write-Host "    Linux:   https://docs.docker.com/engine/install/" -ForegroundColor Gray
+    Write-Host ""
+    if ($OutputFormat -eq "Json") {
+        ConvertTo-JsonResult -Result @{ status = "skipped"; reason = "docker_not_installed" }
+    }
+    exit 1
+}
+
+# 2. Check Docker daemon is running
+$dockerRunning = docker info 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Docker daemon is not running." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Start Docker Desktop, then re-run this script." -ForegroundColor Yellow
+    Write-Host ""
+    if ($OutputFormat -eq "Json") {
+        ConvertTo-JsonResult -Result @{ status = "skipped"; reason = "docker_not_running" }
+    }
+    exit 1
+}
+
+# 3. Check docker-compose file exists
+if (-not (Test-Path $composeFile)) {
+    Write-Host "❌ docker-compose.sonarqube.yml not found at: $composeFile" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  This file defines the local SonarQube container setup." -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+
+# 4. Check dotnet-sonarscanner is available
+$scannerInstalled = dotnet tool list 2>$null | Select-String "dotnet-sonarscanner"
+$scannerGlobal = dotnet tool list -g 2>$null | Select-String "dotnet-sonarscanner"
+if (-not $scannerInstalled -and -not $scannerGlobal) {
+    Write-Host "Installing dotnet-sonarscanner..." -ForegroundColor Yellow
+    dotnet tool restore 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "❌ Failed to restore dotnet-sonarscanner from tool manifest." -ForegroundColor Red
+        Write-Host "  Try: dotnet tool install -g dotnet-sonarscanner" -ForegroundColor Gray
+        exit 1
+    }
+}
+
+# 5. Check if SonarQube container is running, start if not
+$sonarContainer = docker ps --filter "name=whizbang-sonarqube" --format "{{.Status}}" 2>$null
+if (-not $sonarContainer) {
+    Write-Host "Starting SonarQube container (first run may take 1-2 minutes)..." -ForegroundColor Yellow
+    docker compose -f $composeFile up -d 2>&1 | Out-Null
+
+    # Wait for SonarQube to be ready
+    Write-Host "Waiting for SonarQube to be ready..." -ForegroundColor Gray -NoNewline
+    $maxWait = 180
+    $waited = 0
+    $ready = $false
+    while ($waited -lt $maxWait) {
+        try {
+            $response = Invoke-RestMethod -Uri "$SonarHostUrl/api/system/status" -TimeoutSec 3 -ErrorAction SilentlyContinue
+            if ($response.status -eq "UP") {
+                $ready = $true
+                break
+            }
+        } catch { }
+        Start-Sleep -Seconds 5
+        $waited += 5
+        Write-Host "." -NoNewline
+    }
+    Write-Host ""
+
+    if (-not $ready) {
+        Write-Host "❌ SonarQube did not start within $maxWait seconds." -ForegroundColor Red
+        Write-Host "  Check logs: docker compose -f $composeFile logs sonarqube" -ForegroundColor Gray
+        exit 1
+    }
+    Write-Host "✅ SonarQube is ready" -ForegroundColor Green
+} else {
+    Write-Host "SonarQube container already running" -ForegroundColor Gray
+}
+
+# 6. Ensure we have a local token
+if (-not (Test-Path $tokenFile)) {
+    Write-Host "Generating SonarQube token..." -ForegroundColor Yellow
+    try {
+        $authHeader = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin"))
+        $tokenResponse = Invoke-RestMethod -Uri "$SonarHostUrl/api/user_tokens/generate" `
+            -Method Post `
+            -Headers @{ Authorization = "Basic $authHeader" } `
+            -Body @{ name = "whizbang-local-$(Get-Date -Format 'yyyyMMdd-HHmmss')" } `
+            -ErrorAction Stop
+        $tokenResponse.token | Out-File -FilePath $tokenFile -NoNewline -Encoding utf8
+        Write-Host "✅ Token generated and cached" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠️  Could not auto-generate token (admin password may have been changed)" -ForegroundColor Yellow
+        Write-Host "  Generate one manually at: $SonarHostUrl/account/security" -ForegroundColor Gray
+        Write-Host "  Then save it to: $tokenFile" -ForegroundColor Gray
+        exit 1
+    }
+}
+
+# ── Run analysis ─────────────────────────────────────────────────────────────
+
 $analysisScript = Join-Path $PSScriptRoot "Run-LocalSonarAnalysis.ps1"
 
-$splatParams = @{}
-if ($SkipBuild) { $splatParams["SkipTests"] = $true }  # SkipBuild maps to SkipTests in local (build already done by Run-PR)
+$splatParams = @{ SkipDocker = $true }  # We already handled Docker above
+if ($SkipBuild) { $splatParams["SkipTests"] = $true }
 
 $analysisExitCode = 0
 try {
     if ($useAiOutput) {
-        Write-Host "Running local SonarQube analysis (Docker)..." -ForegroundColor Gray
+        Write-Host "Running SonarQube analysis..." -ForegroundColor Gray
         & $analysisScript @splatParams 2>&1 | ForEach-Object {
             $line = $_.ToString()
             if ($LogFile) {
                 $line | Out-File -FilePath $LogFile -Append -Encoding utf8
             }
-            if ($line -match "\[OK\]|\[ERR\]|\[INFO\].*Starting|\[INFO\].*Finishing|\[INFO\].*Dashboard|Analysis complete" -and $useAiOutput) {
+            if ($line -match "\[OK\]|\[ERR\]|\[INFO\].*Starting|\[INFO\].*Finishing|\[INFO\].*Dashboard|Analysis complete") {
                 Write-Host "  $line" -ForegroundColor DarkGray
             }
         }
@@ -164,7 +275,7 @@ try {
     $analysisExitCode = $LASTEXITCODE
 }
 catch {
-    Write-Host "Local SonarQube analysis failed: $_" -ForegroundColor Red
+    Write-Host "SonarQube analysis failed: $_" -ForegroundColor Red
     $analysisExitCode = 1
 }
 
@@ -174,12 +285,8 @@ $newIssues = @()
 $measures = @{}
 $apiError = $null
 
-# Resolve local token for API calls
-$sonarToken = $null
-$tokenFilePath = Join-Path $sonarRepoRoot ".sonarqube-local.token"
-if (Test-Path $tokenFilePath) {
-    $sonarToken = (Get-Content $tokenFilePath -Raw).Trim()
-}
+# Read local token for API queries
+$sonarToken = if (Test-Path $tokenFile) { (Get-Content $tokenFile -Raw).Trim() } else { $null }
 
 if ($sonarToken -and $analysisExitCode -eq 0) {
     $authHeader = @{ Authorization = "Bearer $sonarToken" }
