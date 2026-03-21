@@ -227,6 +227,7 @@ function Invoke-Prepare {
     $script:steps = @()
     $script:overallPassed = $true
     $script:stepNumber = 0
+    $script:failureTypes = @()
 
     # Calculate total steps (dynamic based on flags)
     # Steps: Format, Build, Unit Tests, Integration Tests, Coverage Report, Sonar, Coverage Threshold
@@ -332,7 +333,7 @@ function Invoke-Prepare {
                 Write-AiLine "$prefix ❌ Failed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
                 $script:steps += @{ name = $Name; status = "failed"; duration_s = [math]::Round($stepDuration, 1); details = $result.Details }
                 $script:overallPassed = $false
-                Write-AiInstructions -Type $FailureType
+                if (-not ($script:failureTypes -contains $FailureType)) { $script:failureTypes += $FailureType }
                 return $false
             }
             else {
@@ -550,6 +551,14 @@ function Invoke-Prepare {
         steps = $script:steps
         total_duration_s = [math]::Round(([DateTime]::UtcNow - $startTime).TotalSeconds, 1)
         passed = $script:overallPassed
+    }
+
+    # Show AI instructions once at the end (deduplicated by failure type)
+    if ($script:failureTypes.Count -gt 0) {
+        Write-Host ""
+        foreach ($ft in ($script:failureTypes | Select-Object -Unique)) {
+            Write-AiInstructions -Type $ft
+        }
     }
 
     return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
@@ -845,7 +854,6 @@ function Invoke-Monitor {
                 $failedLogs -split "`n" | Select-Object -Last 30 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
             }
         }
-        Write-AiInstructions -Type TestFailure
     }
     elseif (-not $allComplete) {
         Write-Host "  ⏰ Monitoring timed out after 60 minutes" -ForegroundColor Yellow
