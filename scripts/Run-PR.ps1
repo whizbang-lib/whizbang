@@ -225,6 +225,32 @@ function Invoke-Prepare {
     if (-not $SkipSonar) { $script:totalSteps++ }
     $script:totalSteps++  # Coverage threshold
 
+    # Load per-step estimates from history
+    $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
+    $script:stepEstimates = @{}
+    if (Test-Path $stepHistoryFile) {
+        $entries = Get-Content $stepHistoryFile -ErrorAction SilentlyContinue |
+            Where-Object { $_.Trim() } |
+            ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } } |
+            Where-Object { $_ -ne $null -and $_.steps }
+        if ($entries.Count -ge 2) {
+            # Average durations per step name across all runs
+            $stepDurations = @{}
+            foreach ($entry in $entries) {
+                foreach ($step in $entry.steps) {
+                    if ($step.duration_s -gt 0) {
+                        if (-not $stepDurations.ContainsKey($step.name)) { $stepDurations[$step.name] = @() }
+                        $stepDurations[$step.name] += [double]$step.duration_s
+                    }
+                }
+            }
+            foreach ($name in $stepDurations.Keys) {
+                $avg = ($stepDurations[$name] | Measure-Object -Average).Average
+                $script:stepEstimates[$name] = [math]::Round($avg)
+            }
+        }
+    }
+
     function Run-Step {
         param(
             [string]$Name,
@@ -236,14 +262,32 @@ function Invoke-Prepare {
         $script:stepNumber++
         $pct = [math]::Round(($script:stepNumber / $script:totalSteps) * 100)
 
-        # Update overall progress bar
-        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): $Name" -PercentComplete $pct
+        # Build status with estimate
+        $estStr = ""
+        if ($script:stepEstimates.ContainsKey($Name)) {
+            $estStr = " (~$(Format-Duration -Seconds $script:stepEstimates[$Name]) est.)"
+        }
+
+        # Calculate total estimated time from all step estimates
+        $totalEstSec = 0
+        foreach ($v in $script:stepEstimates.Values) { $totalEstSec += $v }
+        $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+
+        # Update step-based progress bar
+        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): $Name$estStr" -PercentComplete $pct
+
+        # Update time-based progress bar (only if we have estimates)
+        if ($totalEstSec -gt 0) {
+            $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
+            $remaining = [math]::Max(0, $totalEstSec - $elapsed)
+            Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $(Format-Duration -Seconds $elapsed)" -Status "Remaining: ~$(Format-Duration -Seconds $remaining)" -PercentComplete $timePct
+        }
 
         $stepStart = [DateTime]::UtcNow
         if ($ShowOutput) {
-            Write-Host "  ▶ $Name..." -ForegroundColor Cyan
+            Write-Host "  ▶ $Name...$estStr" -ForegroundColor Cyan
         } else {
-            Write-Host "  ▶ $Name..." -ForegroundColor Cyan -NoNewline
+            Write-Host "  ▶ $Name...$estStr" -ForegroundColor Cyan -NoNewline
         }
 
         try {
@@ -379,8 +423,17 @@ function Invoke-Prepare {
         }
     }
 
-    # Complete the progress bar
+    # Complete the progress bars
+    Write-Progress -Id 1 -Activity "Time" -Completed
     Write-Progress -Id 0 -Activity "Preparing PR" -Completed
+
+    # Save per-step history for future estimation
+    $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
+    Write-HistoryEntry -FilePath $stepHistoryFile -Entry @{
+        steps = $script:steps
+        total_duration_s = [math]::Round(([DateTime]::UtcNow - $startTime).TotalSeconds, 1)
+        passed = $script:overallPassed
+    }
 
     return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
 }
