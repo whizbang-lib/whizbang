@@ -441,6 +441,10 @@ function ConvertTo-JsonResult {
 # History & Estimation
 # ============================================================================
 
+# Current schema version for JSONL history entries.
+# Increment when the entry format changes so readers can ignore incompatible versions.
+$script:HistorySchemaVersion = 1
+
 function Write-HistoryEntry {
     <#
     .SYNOPSIS
@@ -450,7 +454,7 @@ function Write-HistoryEntry {
         Path to the JSONL history file (e.g., logs/test-runs.jsonl).
 
     .PARAMETER Entry
-        Hashtable containing the entry data. A timestamp field is added automatically.
+        Hashtable containing the entry data. Timestamp and schema version are added automatically.
     #>
     [CmdletBinding()]
     param(
@@ -467,9 +471,12 @@ function Write-HistoryEntry {
         New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     }
 
-    # Add timestamp if not present
+    # Add metadata if not present
     if (-not $Entry.ContainsKey("timestamp")) {
         $Entry["timestamp"] = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    if (-not $Entry.ContainsKey("v")) {
+        $Entry["v"] = $script:HistorySchemaVersion
     }
 
     $json = $Entry | ConvertTo-Json -Depth 5 -Compress
@@ -504,12 +511,12 @@ function Get-RunEstimate {
 
     if (-not (Test-Path $FilePath)) { return $null }
 
-    $entries = Get-Content $FilePath -ErrorAction SilentlyContinue |
+    $entries = @(Get-Content $FilePath -ErrorAction SilentlyContinue |
         Where-Object { $_.Trim() } |
         ForEach-Object {
             try { $_ | ConvertFrom-Json } catch { $null }
         } |
-        Where-Object { $_ -ne $null }
+        Where-Object { $_ -ne $null -and ($_.v -eq $script:HistorySchemaVersion -or -not $_.v) })
 
     # Apply filter if specified
     if ($FilterKey -and $FilterValue) {
@@ -565,12 +572,12 @@ function Get-CheckEstimate {
 
     if (-not (Test-Path $FilePath)) { return $null }
 
-    $entries = Get-Content $FilePath -ErrorAction SilentlyContinue |
+    $entries = @(Get-Content $FilePath -ErrorAction SilentlyContinue |
         Where-Object { $_.Trim() } |
         ForEach-Object {
             try { $_ | ConvertFrom-Json } catch { $null }
         } |
-        Where-Object { $_ -ne $null -and $_.checks }
+        Where-Object { $_ -ne $null -and $_.checks -and ($_.v -eq $script:HistorySchemaVersion -or -not $_.v) })
 
     if ($entries.Count -lt 2) { return $null }
 
