@@ -224,6 +224,9 @@ function Write-WhizbangHeader {
 
     .PARAMETER Estimate
         Optional estimation string (e.g., "~50s (avg 48.3s, p85 55.1s)")
+
+    .PARAMETER Details
+        Optional array of detail strings to display as additional lines in the config box.
     #>
     [CmdletBinding()]
     param(
@@ -234,7 +237,9 @@ function Write-WhizbangHeader {
 
         [hashtable]$Params = @{},
 
-        [string]$Estimate = ""
+        [string]$Estimate = "",
+
+        [string[]]$Details = @()
     )
 
     # Print the ASCII art banner
@@ -261,6 +266,12 @@ function Write-WhizbangHeader {
     if ($configLine) {
         Write-Host "  ║" -ForegroundColor Cyan -NoNewline
         Write-Host "$("  $configLine".PadRight($innerWidth))" -ForegroundColor White -NoNewline
+        Write-Host "║" -ForegroundColor Cyan
+    }
+
+    foreach ($detail in $Details) {
+        Write-Host "  ║" -ForegroundColor Cyan -NoNewline
+        Write-Host "$("  $detail".PadRight($innerWidth))" -ForegroundColor Gray -NoNewline
         Write-Host "║" -ForegroundColor Cyan
     }
 
