@@ -196,6 +196,13 @@ function Get-PrTitleFromBranch {
 function Invoke-Prepare {
     $script:steps = @()
     $script:overallPassed = $true
+    $script:stepNumber = 0
+
+    # Calculate total steps (dynamic based on flags)
+    $script:totalSteps = 3  # Format, Build, Unit Tests
+    if (-not $SkipIntegration) { $script:totalSteps++ }
+    if (-not $SkipSonar) { $script:totalSteps++ }
+    $script:totalSteps++  # Coverage threshold
 
     function Run-Step {
         param(
@@ -204,6 +211,12 @@ function Invoke-Prepare {
             [string]$FailureType = "BuildFailure",
             [switch]$ShowOutput  # When set, child output is shown (newline after name, result on separate line)
         )
+
+        $script:stepNumber++
+        $pct = [math]::Round(($script:stepNumber / $script:totalSteps) * 100)
+
+        # Update overall progress bar
+        Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): $Name" -PercentComplete $pct
 
         $stepStart = [DateTime]::UtcNow
         if ($ShowOutput) {
@@ -331,6 +344,8 @@ function Invoke-Prepare {
     }
 
     # Step 6: Coverage threshold
+    $script:stepNumber++
+    Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
     if ($null -ne $coveragePct) {
         if ($coveragePct -lt $CoverageThreshold) {
             Write-Host "  ▶ Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}%" -ForegroundColor Red
@@ -342,6 +357,9 @@ function Invoke-Prepare {
             $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
         }
     }
+
+    # Complete the progress bar
+    Write-Progress -Id 0 -Activity "Preparing PR" -Completed
 
     return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
 }
