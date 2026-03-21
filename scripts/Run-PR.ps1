@@ -313,42 +313,11 @@ function Invoke-Prepare {
             Write-Host $stepLabel -ForegroundColor Cyan -NoNewline
         }
 
-        # Start a realtime timer that updates the time-based progress bar every 5 seconds
-        $script:progressTimer = $null
-        $script:progressTimerEvent = $null
+        # Update time-based progress bar (only if we have estimates)
         if ($totalEstSec -gt 0) {
-            $script:progressTimer = [System.Timers.Timer]::new(5000)
-            $timerState = @{
-                StartTime    = $startTime
-                TotalEstSec  = $totalEstSec
-                StepNumber   = $script:stepNumber
-                TotalSteps   = $script:totalSteps
-                StepName     = $Name
-                StepStart    = $stepStart
-                StepEstSec   = if ($script:stepStats.ContainsKey($Name)) { $script:stepStats[$Name].P85 } else { 0 }
-            }
-            $script:progressTimerEvent = Register-ObjectEvent -InputObject $script:progressTimer -EventName Elapsed -MessageData $timerState -Action {
-                $s = $Event.MessageData
-                $elapsed = ([DateTime]::UtcNow - $s.StartTime).TotalSeconds
-                $timePct = [math]::Min(100, [math]::Round(($elapsed / $s.TotalEstSec) * 100))
-                $remaining = [math]::Max(0, $s.TotalEstSec - $elapsed)
-                $elapsedStr = if ($elapsed -lt 60) { "$([math]::Round($elapsed))s" } elseif ($elapsed -lt 3600) { "$([math]::Floor($elapsed/60))m$([math]::Round($elapsed%60))s" } else { "$([math]::Floor($elapsed/3600))h$([math]::Round(($elapsed%3600)/60))m" }
-                $remainStr = if ($remaining -lt 60) { "$([math]::Round($remaining))s" } elseif ($remaining -lt 3600) { "$([math]::Floor($remaining/60))m$([math]::Round($remaining%60))s" } else { "$([math]::Floor($remaining/3600))h$([math]::Round(($remaining%3600)/60))m" }
-
-                Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($s.StepNumber)/$($s.TotalSteps): $($s.StepName)" -PercentComplete ([math]::Round(($s.StepNumber / $s.TotalSteps) * 100))
-                Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $elapsedStr" -Status "Remaining: ~$remainStr" -PercentComplete $timePct
-
-                # Step-level progress bar
-                if ($s.StepEstSec -gt 0) {
-                    $stepElapsed = ([DateTime]::UtcNow - $s.StepStart).TotalSeconds
-                    $stepPct = [math]::Min(100, [math]::Round(($stepElapsed / $s.StepEstSec) * 100))
-                    $stepElStr = if ($stepElapsed -lt 60) { "$([math]::Round($stepElapsed))s" } else { "$([math]::Floor($stepElapsed/60))m$([math]::Round($stepElapsed%60))s" }
-                    $stepRemain = [math]::Max(0, $s.StepEstSec - $stepElapsed)
-                    $stepRemStr = if ($stepRemain -lt 60) { "$([math]::Round($stepRemain))s" } else { "$([math]::Floor($stepRemain/60))m$([math]::Round($stepRemain%60))s" }
-                    Write-Progress -Id 3 -ParentId 0 -Activity "$($s.StepName): $stepElStr elapsed" -Status "~$stepRemStr remaining" -PercentComplete $stepPct
-                }
-            }
-            $script:progressTimer.Start()
+            $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
+            $remaining = [math]::Max(0, $totalEstSec - $elapsed)
+            Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $(Format-Duration -Seconds $elapsed)" -Status "Remaining: ~$(Format-Duration -Seconds $remaining)" -PercentComplete $timePct
         }
 
         try {
@@ -380,17 +349,13 @@ function Invoke-Prepare {
             return $false
         }
         finally {
-            # Stop the realtime progress timer
-            if ($script:progressTimer) {
-                $script:progressTimer.Stop()
-                $script:progressTimer.Dispose()
-                $script:progressTimer = $null
+            # Update time-based progress after step completion
+            if ($totalEstSec -gt 0) {
+                $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
+                $timePct = [math]::Min(100, [math]::Round(($elapsed / $totalEstSec) * 100))
+                $remaining = [math]::Max(0, $totalEstSec - $elapsed)
+                Write-Progress -Id 1 -ParentId 0 -Activity "Elapsed: $(Format-Duration -Seconds $elapsed)" -Status "Remaining: ~$(Format-Duration -Seconds $remaining)" -PercentComplete $timePct
             }
-            if ($script:progressTimerEvent) {
-                Unregister-Event -SourceIdentifier $script:progressTimerEvent.Name -ErrorAction SilentlyContinue
-                $script:progressTimerEvent = $null
-            }
-            Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
         }
     }
 
@@ -935,10 +900,7 @@ catch {
 finally {
     $duration = ([DateTime]::UtcNow - $startTime).TotalSeconds
 
-    # Clean up progress bars and timer
-    if ($script:progressTimer) { $script:progressTimer.Stop(); $script:progressTimer.Dispose() }
-    if ($script:progressTimerEvent) { Unregister-Event -SourceIdentifier $script:progressTimerEvent.Name -ErrorAction SilentlyContinue }
-    Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
+    # Clean up progress bars
     Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
     Write-Progress -Id 1 -Activity "x" -Completed -ErrorAction SilentlyContinue
     Write-Progress -Id 0 -Activity "x" -Completed -ErrorAction SilentlyContinue
