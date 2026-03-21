@@ -219,10 +219,11 @@ function Write-WhizbangBanner {
 
     Write-Host ""
 
-    # Start async star twinkle animation in a background runspace
-    # The thread writes directly to the console buffer using [Console] APIs
-    # which are thread-safe. It only touches the banner's rows.
+    # Start async star twinkle animation in a background runspace.
+    # Uses ANSI save/restore cursor + relative movement to avoid scroll issues.
     if ($Animate) {
+        $bannerHeight = $bannerEndRow - $bannerStartRow
+
         $script:TwinkleRunspace = [runspacefactory]::CreateRunspace()
         $script:TwinkleRunspace.Open()
 
@@ -232,43 +233,40 @@ function Write-WhizbangBanner {
             `$bg = "`$esc[48;2;45;55;72m"
             `$reset = "`$esc[0m"
             `$starChars = @('.', '·', '∙', '*', '⋅', '✦')
-            `$startRow = $bannerStartRow
-            `$endRow = $bannerEndRow
+            `$bannerHeight = $bannerHeight
             `$random = [System.Random]::new()
-
-            # Build a map of background positions by scanning each banner row
-            # We know the banner width is ~86 chars and art characters are non-space
-            # Rather than track exact positions, randomly pick positions in the banner area
-            `$width = [Console]::BufferWidth
 
             for (`$frame = 0; `$frame -lt 5; `$frame++) {
                 Start-Sleep -Seconds 1
 
-                # Pick ~30 random positions in the banner area to toggle stars
-                for (`$i = 0; `$i -lt 30; `$i++) {
-                    `$row = `$random.Next(`$startRow, `$endRow)
-                    `$col = `$random.Next(0, [Math]::Min(86, `$width))
+                # Calculate how far above current cursor the banner is
+                `$currentRow = [Console]::CursorTop
+                `$bannerTopNow = `$currentRow - `$bannerHeight - 1  # -1 for the blank line after banner
+
+                # If banner has scrolled too far up, stop animating
+                if (`$bannerTopNow -lt 0) { break }
+
+                for (`$i = 0; `$i -lt 25; `$i++) {
+                    `$targetRow = `$random.Next(`$bannerTopNow, `$bannerTopNow + `$bannerHeight)
+                    `$targetCol = `$random.Next(0, [Math]::Min(86, [Console]::BufferWidth))
 
                     try {
-                        # Save main cursor, move to position, write, restore
                         `$savedTop = [Console]::CursorTop
                         `$savedLeft = [Console]::CursorLeft
 
-                        [Console]::SetCursorPosition(`$col, `$row)
+                        [Console]::SetCursorPosition(`$targetCol, `$targetRow)
 
-                        # Read what's there — if it's a space or star char, we can replace it
-                        # We can't read the buffer easily, so just write a star or space
                         if (`$random.Next(3) -eq 0) {
-                            `$brightness = `$random.Next(220, 256)
-                            `$star = `$starChars[`$random.Next(`$starChars.Length)]
-                            [Console]::Write("`$bg`$esc[38;2;`$brightness;`$(`$brightness+5);`$(`$brightness+10)m`$star`$reset")
+                            `$b = `$random.Next(220, 256)
+                            `$s = `$starChars[`$random.Next(`$starChars.Length)]
+                            [Console]::Write("`$bg`$esc[38;2;`${b};`$(`$b+5);`$(`$b+10)m`$s`$reset")
                         } else {
                             [Console]::Write("`$bg`$esc[38;2;45;55;72m `$reset")
                         }
 
                         [Console]::SetCursorPosition(`$savedLeft, `$savedTop)
                     } catch {
-                        # Cursor position may be invalid if terminal resized or scrolled
+                        break
                     }
                 }
             }
