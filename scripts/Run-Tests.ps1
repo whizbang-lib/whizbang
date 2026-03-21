@@ -275,6 +275,14 @@ param(
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
 
+    [string]$LogFile = "",  # Tee output to file (verbose to file, sparse to console)
+
+    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$LogMode = "",  # Log file verbosity (defaults to -Mode if not specified)
+
+    [ValidateSet("Text", "Json")]
+    [string]$OutputFormat = "Text",  # Output format: Text (human-readable) or Json (machine-readable)
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -282,6 +290,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Import shared PR readiness module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
 
 # Handle legacy parameters (for backward compatibility)
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
@@ -307,6 +318,20 @@ $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 if ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
     $FailFast = $true
 }
+
+# Initialize tee logging if -LogFile is specified
+if ($LogFile) {
+    $effectiveLogMode = if ($LogMode) { $LogMode } else { $Mode }
+    Initialize-TeeLogging -LogFile $LogFile -ConsoleMode $Mode -LogMode $effectiveLogMode
+}
+
+# Track start time for history logging
+$script:runStartTime = [DateTime]::UtcNow
+
+# Show run estimation from history
+$historyFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+$estimate = Get-RunEstimate -FilePath $historyFile -FilterKey "mode" -FilterValue $Mode
+$estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
 # Handle -CleanupOnly: just clean up containers and exit
 if ($CleanupOnly) {
@@ -442,11 +467,14 @@ try {
     }
 
     if (-not $useAiOutput) {
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host "  Whizbang Test Suite Runner" -ForegroundColor Cyan
-        Write-Host "  (Parallel Execution via dotnet test)" -ForegroundColor Cyan
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host ""
+        # Branded header
+        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+        if ($Coverage) { $headerParams["Coverage"] = "On" }
+        if ($FailFast) { $headerParams["FailFast"] = "On" }
+        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+        if ($Tag) { $headerParams["Tag"] = $Tag }
+        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
+
         Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
         Write-Host "Mode: $Mode" -ForegroundColor Yellow
         if ($onlyIntegrationTests) {
@@ -471,17 +499,13 @@ try {
         }
         Write-Host ""
     } else {
-        Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
-
-        # Display actual command line that was used
-        $cmdLine = $MyInvocation.Line
-        if ([string]::IsNullOrWhiteSpace($cmdLine)) {
-            $cmdLine = "$($MyInvocation.MyCommand.Path) -Mode $Mode"
-            if ($FailFast) { $cmdLine += " -FailFast" }
-            if ($ProjectFilter) { $cmdLine += " -ProjectFilter '$ProjectFilter'" }
-            if ($TestFilter) { $cmdLine += " -TestFilter '$TestFilter'" }
-        }
-        Write-Host "Command: $cmdLine" -ForegroundColor DarkGray
+        # Branded header (AI mode)
+        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+        if ($Coverage) { $headerParams["Coverage"] = "On" }
+        if ($FailFast) { $headerParams["FailFast"] = "On" }
+        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+        if ($Tag) { $headerParams["Tag"] = $Tag }
+        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr
 
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
         Write-Host "Mode: $Mode" -ForegroundColor Gray
@@ -769,11 +793,16 @@ try {
         Write-Host ""
         Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
-        # Auto-install reportgenerator if not present
+        # Auto-install reportgenerator: try local manifest first, fall back to global
         $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        if (-not $rgInstalled) {
-            Write-Host "Installing reportgenerator global tool..." -ForegroundColor Yellow
-            dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+        $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+        if (-not $rgInstalled -and -not $rgLocal) {
+            Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+            dotnet tool restore 2>&1 | Out-Null
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgLocal) {
+                dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+            }
         }
 
         # Find all cobertura XML files from test output
@@ -854,7 +883,7 @@ try {
                     if ($file.StartsWith($repoRoot)) {
                         $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
                     }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object) -join ", "
+                    $lineNums = ($uncoveredByFile[$file] | Sort-Object -Unique) -join ", "
                     Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
                     Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
                 }
@@ -1932,6 +1961,11 @@ try {
             $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
         }
 
+        # Emit AI instructions if there are failures
+        if ($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) {
+            Write-AiInstructions -Type TestFailure
+        }
+
         Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
@@ -1970,11 +2004,16 @@ try {
         Write-Host ""
         Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
-        # Auto-install reportgenerator if not present
+        # Auto-install reportgenerator: try local manifest first, fall back to global
         $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        if (-not $rgInstalled) {
-            Write-Host "Installing reportgenerator global tool..." -ForegroundColor Yellow
-            dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+        $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+        if (-not $rgInstalled -and -not $rgLocal) {
+            Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+            dotnet tool restore 2>&1 | Out-Null
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgLocal) {
+                dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+            }
         }
 
         # Find all cobertura XML files from test output
@@ -2057,7 +2096,7 @@ try {
                     if ($file.StartsWith($repoRoot)) {
                         $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
                     }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object) -join ", "
+                    $lineNums = ($uncoveredByFile[$file] | Sort-Object -Unique) -join ", "
                     Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
                     Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
                 }
@@ -2069,6 +2108,53 @@ try {
         } else {
             Write-Host "No cobertura XML files found. Ensure tests ran with --coverage." -ForegroundColor Yellow
         }
+    }
+
+    # Calculate run duration
+    $runDuration = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+
+    # Calculate coverage percentage if available
+    $coveragePct = $null
+    if ($Coverage -and $totalLines -gt 0) {
+        $coveragePct = [math]::Round(($totalCovered / $totalLines) * 100, 2)
+    }
+
+    # Write history entry
+    $historyEntry = @{
+        mode        = $Mode
+        duration_s  = [math]::Round($runDuration, 1)
+        total       = $totalPassed + $totalFailed + $totalSkipped
+        passed      = $totalPassed
+        failed      = $totalFailed
+        skipped     = $totalSkipped
+    }
+    if ($null -ne $coveragePct) { $historyEntry["coverage_pct"] = $coveragePct }
+    if ($failedTests.Count -gt 0) { $historyEntry["failed_tests"] = @($failedTests) }
+    $histFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+    Write-HistoryEntry -FilePath $histFile -Entry $historyEntry
+
+    # Stop tee logging
+    if ($LogFile) { Stop-TeeLogging }
+
+    # JSON output mode
+    if ($OutputFormat -eq "Json") {
+        $jsonResult = @{
+            status       = if (-not $hasErrors) { "passed" } else { "failed" }
+            mode         = $Mode
+            duration_s   = [math]::Round($runDuration, 1)
+            total        = $totalPassed + $totalFailed + $totalSkipped
+            passed       = $totalPassed
+            failed       = $totalFailed
+            skipped      = $totalSkipped
+            failed_tests = @($failedTests)
+        }
+        if ($null -ne $coveragePct) { $jsonResult["coverage_pct"] = $coveragePct }
+        if ($Coverage) {
+            $htmlReport = Join-Path (Join-Path $repoRoot "coverage-report") "index.html"
+            if (Test-Path $htmlReport) { $jsonResult["coverage_report"] = $htmlReport }
+        }
+        ConvertTo-JsonResult -Result $jsonResult
+        exit $(if (-not $hasErrors) { 0 } else { 1 })
     }
 
     if (-not $hasErrors) {
