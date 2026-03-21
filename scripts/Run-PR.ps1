@@ -353,7 +353,7 @@ function Invoke-Prepare {
         }
         finally {
             Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
-            Update-ProgressBars
+            Update-StepProgress
         }
     }
 
