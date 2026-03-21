@@ -228,13 +228,14 @@ function Invoke-Prepare {
     $script:stepNumber = 0
 
     # Calculate total steps (dynamic based on flags)
+    # Steps: Format, Build, Unit Tests, Integration Tests, Coverage Report, Sonar, Coverage Threshold
     $script:totalSteps = 0
     if (-not $SkipFormat) { $script:totalSteps++ }
     if (-not $SkipBuild) { $script:totalSteps++ }
     if (-not $SkipUnitTests) { $script:totalSteps++ }
     if (-not $SkipIntegration) { $script:totalSteps++ }
+    if (-not $SkipCoverage) { $script:totalSteps += 2 }  # Coverage Report + Coverage Threshold
     if (-not $SkipSonar) { $script:totalSteps++ }
-    if (-not $SkipCoverage) { $script:totalSteps++ }
     if ($script:totalSteps -eq 0) { $script:totalSteps = 1 }  # avoid div by zero
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
@@ -393,43 +394,27 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 3: Unit tests + coverage
+    # Step 3: Unit tests (with coverage collection)
     $coveragePct = $null
     if ($SkipUnitTests) {
         $script:stepNumber++
-        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests + Coverage... ⏭️ Skipped $(Format-StepTiming 'Unit Tests + Coverage')" -ForegroundColor DarkGray
-        $script:steps += @{ name = "Unit Tests + Coverage"; status = "skipped"; duration_s = 0 }
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Unit Tests... ⏭️ Skipped $(Format-StepTiming 'Unit Tests')" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Unit Tests"; status = "skipped"; duration_s = 0 }
     } else {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
-        $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
+        $continue = Run-Step -Name "Unit Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-String
+            & $testScript -Mode AiUnit -Coverage -FailFast -NoBuild -NoHeader -LogFile $unitTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
-
             if ($exitCode -ne 0) {
                 Write-Host "    Full output: $unitTestLogFile" -ForegroundColor DarkYellow
             }
-
-            # Parse JSON output for coverage
-            $details = $null
-            try {
-                $jsonStart = $testOutput.IndexOf("{")
-                if ($jsonStart -ge 0) {
-                    $jsonStr = $testOutput.Substring($jsonStart)
-                    $details = $jsonStr | ConvertFrom-Json
-                    if ($details.coverage_pct) {
-                        $script:coveragePct = $details.coverage_pct
-                    }
-                }
-            }
-            catch { }
-
-            @{ ExitCode = $exitCode; Details = $details }
+            @{ ExitCode = $exitCode; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 4: Integration tests (unless skipped)
+    # Step 4: Integration tests (with coverage collection)
     if ($SkipIntegration) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped $(Format-StepTiming 'Integration Tests')" -ForegroundColor DarkGray
@@ -438,7 +423,7 @@ function Invoke-Prepare {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
-            & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild -NoHeader -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
+            & $testScript -Mode AiIntegrations -Coverage -FailFast -NoBuild -NoHeader -LogFile $integrationTestLogFile -LogMode All 2>&1 | Out-Null
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0) {
                 Write-Host "    Full output: $integrationTestLogFile" -ForegroundColor DarkYellow
@@ -460,6 +445,36 @@ function Invoke-Prepare {
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
+    }
+
+    # Step 5b: Coverage report (combined from unit + integration test coverage)
+    if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
+        $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
+            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+
+            if ($coberturaFiles.Count -gt 0) {
+                # Use Invoke-CoverageReport from Run-Tests.ps1 module or do it inline
+                $reportDir = Join-Path $repoRoot "coverage-report"
+                $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
+
+                $summaryFile = Join-Path $reportDir "Summary.txt"
+                if (Test-Path $summaryFile) {
+                    $summaryText = Get-Content $summaryFile -Raw
+                    if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $script:coveragePct = [double]$Matches[1] }
+                    $totalCovered = 0; $totalLines = 0
+                    if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+                    if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
+                    Write-Host "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
+                    Write-Host "    HTML report: $(Join-Path $reportDir 'index.html')" -ForegroundColor DarkCyan
+                }
+                @{ ExitCode = 0; Details = $null }
+            } else {
+                Write-Host "    No coverage data collected" -ForegroundColor Yellow
+                @{ ExitCode = 0; Details = $null }
+            }
+        }
     }
 
     # Step 6: Coverage threshold
