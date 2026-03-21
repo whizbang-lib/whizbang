@@ -796,6 +796,6 @@ public class StreamIdGenerator : IIncrementalGenerator {
         a.AttributeClass is not null &&
         TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
 
-    return attr is not null ? _extractOnlyIfEmptyFromAttribute(attr) : false;
+    return attr is not null && _extractOnlyIfEmptyFromAttribute(attr);
   }
 }

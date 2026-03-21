@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
-public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
+public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly TimeSpan _interval;
   private readonly Task _flushTask;
   private readonly CancellationTokenSource _disposeCts = new();
