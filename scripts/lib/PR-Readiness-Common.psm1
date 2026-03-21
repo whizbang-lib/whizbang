@@ -23,113 +23,190 @@ Set-StrictMode -Version Latest
 # ASCII Art Logo & Branded Header
 # ============================================================================
 
-# The Whizbang ASCII art wordmark with per-letter gradient coloring.
-# Brand details:
-#   - "W" is a flowing sine-wave shape (matching the W! logo mark)
-#   - "ba" forms an infinity symbol (∞)
-#   - "n" has a dot on its foot
-#   - Each letter is colored to match the logo gradient:
-#     W=Cyan, h=Blue, i=Magenta, z=DarkMagenta, b=Red, a=DarkYellow, n=Yellow, g=Yellow
+# True-color ASCII art banner rendered with ANSI escape codes.
+# Uses the actual Whizbang logo colors extracted from the brand assets.
+# Dark navy background (#2d3748) with gradient-colored foreground characters.
 
-# Each entry: array of strings (one per line), and the ForegroundColor for that letter
-$script:LogoLetters = @(
-    @{
-        # W - flowing sine-wave shape
-        Lines = @(
-            " __        __ "
-            " \ \      / / "
-            "  \ \    / /  "
-            "   \ \/\/ /   "
-            "    \    /    "
-            "     \/\/     "
-        )
-        Color = "Cyan"
+$script:Esc = [char]27
+$script:BgColor = "${script:Esc}[48;2;45;55;72m"
+$script:Reset = "${script:Esc}[0m"
+
+$script:StarChars = @('.', '·', '∙', '*', '⋅', '✦')
+
+function Write-LogoSeg {
+    <# Write a segment of text with true RGB foreground on dark background.
+       Background spaces randomly get bright star characters. #>
+    param([string]$Text, [int]$R, [int]$G, [int]$B)
+    $isBg = ($R -eq 45 -and $G -eq 55 -and $B -eq 72)
+    foreach ($ch in $Text.ToCharArray()) {
+        if ($isBg -and $ch -eq ' ' -and (Get-Random -Minimum 0 -Maximum 12) -eq 0) {
+            $brightness = Get-Random -Minimum 220 -Maximum 255
+            $starCh = $script:StarChars[(Get-Random -Minimum 0 -Maximum $script:StarChars.Count)]
+            Write-Host "${script:BgColor}${script:Esc}[38;2;${brightness};$($brightness + 5);$($brightness + 10)m${starCh}${script:Reset}" -NoNewline
+        } else {
+            Write-Host "${script:BgColor}${script:Esc}[38;2;${R};${G};${B}m${ch}${script:Reset}" -NoNewline
+        }
     }
-    @{
-        # h
-        Lines = @(
-            " _      "
-            "| |     "
-            "| |__   "
-            "| '_ \  "
-            "| | | | "
-            "|_| |_| "
-        )
-        Color = "Blue"
-    }
-    @{
-        # i
-        Lines = @(
-            " _  "
-            "(_) "
-            " _  "
-            "| | "
-            "| | "
-            "|_| "
-        )
-        Color = "Magenta"
-    }
-    @{
-        # z
-        Lines = @(
-            "      "
-            " ____ "
-            "|_  / "
-            " / /  "
-            "/ /__ "
-            "/____| "
-        )
-        Color = "DarkMagenta"
-    }
-    @{
-        # b - left half of infinity
-        Lines = @(
-            " _      "
-            "| |     "
-            "| |__   "
-            "| '_ \  "
-            "| |_) | "
-            "|_.__/  "
-        )
-        Color = "Red"
-    }
-    @{
-        # a - right half of infinity
-        Lines = @(
-            "       "
-            "  __ _ "
-            " / _` |"
-            "| (_| |"
-            " \__,_|"
-            "       "
-        )
-        Color = "DarkYellow"
-    }
-    @{
-        # n - with dot on foot
-        Lines = @(
-            "        "
-            " _ __   "
-            "| '_ \  "
-            "| | | | "
-            "|_| |_| "
-            "    .   "
-        )
-        Color = "Yellow"
-    }
-    @{
-        # g
-        Lines = @(
-            "        "
-            "  __ _  "
-            " / _` | "
-            "| (_| | "
-            " \__, | "
-            " |___/  "
-        )
-        Color = "Yellow"
-    }
-)
+}
+
+function Write-LogoEOL {
+    Write-Host "${script:BgColor}  ${script:Reset}"
+}
+
+function Write-WhizbangBanner {
+    <#
+    .SYNOPSIS
+        Prints the Whizbang ASCII art banner with true-color gradient.
+    #>
+    [CmdletBinding()]
+    param()
+
+    Write-Host ""
+
+    # Background line above
+    Write-LogoSeg "                                                                                    " 45 55 72
+    Write-LogoEOL
+
+    # Line 1
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "Φ" 70 158 174; Write-LogoSeg "▌" 56 155 181; Write-LogoSeg "▌     " 57 144 176
+    Write-LogoSeg ",▄▄" 108 101 131
+    Write-LogoSeg "         " 45 55 72
+    Write-LogoSeg "▌▌" 190 60 105; Write-LogoSeg "H" 154 100 108
+    Write-LogoSeg "      " 45 55 72
+    Write-LogoSeg "╒" 144 126 110; Write-LogoSeg "██" 234 124 16; Write-LogoSeg "⌐" 148 129 106
+    Write-LogoSeg "         " 45 55 72
+    Write-LogoSeg "▓▓" 150 152 154; Write-LogoSeg "L" 165 167 169
+    Write-LogoSeg "                                     " 45 55 72
+    Write-LogoEOL
+
+    # Line 2
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "██" 19 161 206; Write-LogoSeg "W" 94 128 148; Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "█████" 66 52 143
+    Write-LogoSeg "    " 45 55 72
+    Write-LogoSeg "▄▄" 173 70 133; Write-LogoSeg "m " 161 92 125
+    Write-LogoSeg "▓█" 210 42 88; Write-LogoSeg "▄▄▌▌▄" 175 90 70
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "▄▄" 186 131 66
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "▄▄▄▄▄▄" 181 146 71; Write-LogoSeg "╕" 158 138 95
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "██▌▌▌▌▄" 140 142 144; Write-LogoSeg "_" 170 170 170
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg ",▄▌▌▄▄▄⌐" 155 157 159
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "╔▄▄▄▌▌▄" 155 157 159
+    Write-LogoSeg "    " 45 55 72
+    Write-LogoSeg "²▌▌▌▄▄▄" 150 152 154
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoEOL
+
+    # Line 3
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "▀" 53 142 178; Write-LogoSeg "██" 24 131 191
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "▌" 80 89 141; Write-LogoSeg "██" 45 45 143
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "╟" 115 84 134; Write-LogoSeg "██" 121 36 141
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "▐▓▓" 156 90 131
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "▓█▓" 208 43 62; Write-LogoSeg '"' 160 101 94; Write-LogoSeg "'" 157 110 97
+    Write-LogoSeg "▀██" 195 100 55
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "██" 239 130 11
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg '""' 172 143 80; Write-LogoSeg "╠▓▓" 187 165 64; Write-LogoSeg "▀" 213 157 36
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "███" 140 142 144; Write-LogoSeg "╙" 160 162 164; Write-LogoSeg '"' 165 167 169; Write-LogoSeg "╨██" 135 137 139
+    Write-LogoSeg "╕" 165 167 169
+    Write-LogoSeg "▄██▀" 138 140 142; Write-LogoSeg "╙╙" 165 167 169; Write-LogoSeg "▀██" 130 132 134; Write-LogoSeg "M" 160 162 164
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "▓██▀" 145 147 149; Write-LogoSeg "²" 165 167 169; Write-LogoSeg "▀██" 130 132 134
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "┌██▀" 170 172 174; Write-LogoSeg '"' 165 167 169; Write-LogoSeg "╙▓██" 145 147 149
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoEOL
+
+    # Line 4
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "██" 27 102 180; Write-LogoSeg "▄▄" 97 113 140; Write-LogoSeg "██" 42 54 147
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██▌" 132 56 137; Write-LogoSeg "_" 132 122 128; Write-LogoSeg "▓▓" 205 26 137; Write-LogoSeg "Ñ" 181 71 123
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "▓█" 206 44 55; Write-LogoSeg "H" 165 98 89
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██" 239 103 12
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "██" 239 143 10
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "_" 137 131 117; Write-LogoSeg "Φ▓▌" 199 166 52
+    Write-LogoSeg "    " 45 55 72
+    Write-LogoSeg "██▌" 140 142 144
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "▄▓██▌▓▄" 143 145 147
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██M" 138 140 142
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "╫▓▌" 155 157 159
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██" 130 132 134
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "▐██" 160 162 164
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "╓██" 170 172 174
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoEOL
+
+    # Line 5
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "╙" 99 122 142; Write-LogoSeg "████" 35 81 157
+    Write-LogoSeg "     " 45 55 72
+    Write-LogoSeg "▀██▓▀" 152 49 137
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "▓█" 204 47 51; Write-LogoSeg "M" 167 98 87
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██" 239 108 12
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "██" 239 148 10
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "▐▓▓▓▓▓▓▌" 200 180 80
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "███████▌" 140 142 144; Write-LogoSeg '"' 165 167 169
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "'" 170 172 174; Write-LogoSeg "▓██████" 143 145 147; Write-LogoSeg "M" 160 162 164
+    Write-LogoSeg " " 45 55 72
+    Write-LogoSeg "▓█▌" 210 212 214
+    Write-LogoSeg "   " 45 55 72
+    Write-LogoSeg "██" 130 132 134
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoSeg "╨███████" 138 140 142
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoEOL
+
+    # Line 6: g descender
+    Write-LogoSeg "                                                                          " 45 55 72
+    Write-LogoSeg "▓█▌▄▄▓█▌" 150 152 154
+    Write-LogoSeg "  " 45 55 72
+    Write-LogoEOL
+
+    # Background line below
+    Write-LogoSeg "                                                                                    " 45 55 72
+    Write-LogoEOL
+
+    # W! - Whizbang tagline
+    Write-LogoSeg "                                    " 45 55 72
+    Write-LogoSeg "W! - Whizbang" 200 210 220
+    Write-LogoSeg "                                   " 45 55 72
+    Write-LogoEOL
+
+    Write-Host ""
+}
 
 function Write-WhizbangHeader {
     <#
@@ -160,25 +237,8 @@ function Write-WhizbangHeader {
         [string]$Estimate = ""
     )
 
-    Write-Host ""
-
-    # Print "W!" in large text
-    Write-Host "                W" -ForegroundColor Cyan -NoNewline
-    Write-Host "!" -ForegroundColor DarkMagenta
-    Write-Host ""
-
-    # Print ASCII art wordmark with per-letter gradient coloring
-    $lineCount = $script:LogoLetters[0].Lines.Count
-    for ($row = 0; $row -lt $lineCount; $row++) {
-        Write-Host "  " -NoNewline
-        foreach ($letter in $script:LogoLetters) {
-            $line = if ($row -lt $letter.Lines.Count) { $letter.Lines[$row] } else { " " * $letter.Lines[0].Length }
-            Write-Host $line -ForegroundColor $letter.Color -NoNewline
-        }
-        Write-Host ""
-    }
-
-    Write-Host ""
+    # Print the ASCII art banner
+    Write-WhizbangBanner
 
     # Build config line
     $configParts = @()
@@ -657,6 +717,7 @@ function Format-Duration {
 # ============================================================================
 
 Export-ModuleMember -Function @(
+    'Write-WhizbangBanner'
     'Write-WhizbangHeader'
     'Initialize-TeeLogging'
     'Write-TeeHost'
