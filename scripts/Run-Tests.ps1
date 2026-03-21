@@ -741,7 +741,7 @@ try {
             $resultIndex++
             if ($NoHeader) {
                 $pct = [math]::Round(($resultIndex / $totalTestProjects) * 100)
-                Write-Progress -Id 2 -ParentId 0 -Activity "Test Results" -Status "$resultIndex/$totalTestProjects: $($result.ProjectName)" -PercentComplete $pct
+                Write-Progress -Id 2 -ParentId 0 -Activity "Test Results" -Status "${resultIndex}/${totalTestProjects}: $($result.ProjectName)" -PercentComplete $pct
             }
 
             if ($result.ExitCode -eq 0) {
