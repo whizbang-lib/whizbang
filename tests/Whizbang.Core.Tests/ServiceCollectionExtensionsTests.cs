@@ -10,6 +10,7 @@ using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Diagnostics;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
@@ -60,6 +61,41 @@ public class ServiceCollectionExtensionsTests {
     // Note: This test verifies that AddWhizbang() actually registers services
     // The specific services it registers will be determined during implementation
     await Assert.That(services.Count).IsGreaterThan(0);
+  }
+
+  // ==========================================================================
+  // Lifecycle Coordinator Registration Tests
+  // ==========================================================================
+
+  [Test]
+  public async Task AddWhizbang_RegistersLifecycleCoordinator_AsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+    var coordinator = provider.GetService<ILifecycleCoordinator>();
+
+    // Assert
+    await Assert.That(coordinator).IsNotNull();
+    await Assert.That(coordinator).IsTypeOf<LifecycleCoordinator>();
+  }
+
+  [Test]
+  public async Task AddWhizbang_LifecycleCoordinator_IsSingletonAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang();
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var first = provider.GetService<ILifecycleCoordinator>();
+    var second = provider.GetService<ILifecycleCoordinator>();
+
+    // Assert - singleton should return same instance
+    await Assert.That(first).IsNotNull();
+    await Assert.That(ReferenceEquals(first, second)).IsTrue();
   }
 
   // ==========================================================================
