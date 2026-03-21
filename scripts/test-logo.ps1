@@ -175,10 +175,10 @@ Write-EOL
 Write-Seg "                                                                                    " 45 55 72
 Write-EOL
 
-# W! - Whizbang tagline
-Write-Seg "                                    " 45 55 72
-Write-Seg "W! - Whizbang" 200 210 220
-Write-Seg "                                   " 45 55 72
+# W! - https://whizba.ng/ tagline
+Write-Seg "                                " 45 55 72
+Write-Seg "W! - https://whizba.ng/" 200 210 220
+Write-Seg "                               " 45 55 72
 Write-EOL
 
 Write-Host ""
