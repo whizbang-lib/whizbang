@@ -197,14 +197,29 @@ if ($coverageFiles) {
 Write-Info "Starting SonarQube analysis..."
 Push-Location $RepoRoot
 try {
+    # Load shared exclusion config (single source of truth with CI)
+    $exclusionConfigPath = Join-Path $RepoRoot "sonar-exclusions.config"
+    $sonarExclusions = "**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**"
+    $sonarCoverageExclusions = "**/samples/**,**/benchmarks/**,**/tests/**"
+    if (Test-Path $exclusionConfigPath) {
+        Get-Content $exclusionConfigPath | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
+            $parts = $_ -split "=", 2
+            switch ($parts[0].Trim()) {
+                "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
+                "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
+            }
+        }
+        Write-Info "Loaded exclusions from sonar-exclusions.config"
+    }
+
     $beginArgs = @(
         "begin",
         "/k:$ProjectKey",
         "/n:$ProjectName",
         "/d:sonar.token=$Token",
         "/d:sonar.host.url=$SonarUrl",
-        "/d:sonar.exclusions=**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**",
-        "/d:sonar.coverage.exclusions=**/samples/**,**/benchmarks/**,**/tests/**",
+        "/d:sonar.exclusions=$sonarExclusions",
+        "/d:sonar.coverage.exclusions=$sonarCoverageExclusions",
         "/d:sonar.cs.opencover.reportsPaths=$coveragePaths"
     )
 

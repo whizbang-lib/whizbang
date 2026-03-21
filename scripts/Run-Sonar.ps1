@@ -133,51 +133,27 @@ if (-not $NoHeader) {
     Write-WhizbangHeader -ScriptName "Sonar Runner" -Params $headerParams -Estimate $estimateStr
 }
 
-# Configuration (must match Run-SonarAnalysis.ps1)
-$ProjectKey = "whizbang-lib_whizbang"
-$SonarHostUrl = "https://sonarcloud.io"
+# Local SonarQube configuration (Docker-based, "Sonar way" defaults)
+$ProjectKey = "whizbang-local"
+$SonarHostUrl = "http://localhost:9000"
+$sonarRepoRoot = Split-Path -Parent $PSScriptRoot
 
-# Resolve token for API calls (same priority as Run-SonarAnalysis.ps1)
-$sonarToken = $Token
-if (-not $sonarToken) { $sonarToken = $env:SONAR_TOKEN }
-if (-not $sonarToken) {
-    $tokenFilePath = Join-Path $PSScriptRoot ".." ".sonarcloud.token"
-    if (Test-Path $tokenFilePath) {
-        $sonarToken = (Get-Content $tokenFilePath -Raw).Trim()
-    }
-}
-
-# If no token found and running non-interactively (from Run-PR.ps1), skip gracefully
-if (-not $sonarToken) {
-    Write-Host "No SonarCloud token configured. Skipping analysis." -ForegroundColor Yellow
-    Write-Host "  To configure: set SONAR_TOKEN env var, or run Run-SonarAnalysis.ps1 directly for guided setup." -ForegroundColor DarkGray
-
-    if ($OutputFormat -eq "Json") {
-        ConvertTo-JsonResult -Result @{ status = "skipped"; reason = "no_token" }
-    }
-
-    # Still count as passed — missing token shouldn't fail the PR
-    exit 0
-}
-
-# Run the actual SonarCloud analysis
-$analysisScript = Join-Path $PSScriptRoot "Run-SonarAnalysis.ps1"
+# Run the local SonarQube analysis via Run-LocalSonarAnalysis.ps1
+$analysisScript = Join-Path $PSScriptRoot "Run-LocalSonarAnalysis.ps1"
 
 $splatParams = @{}
-if ($sonarToken) { $splatParams["Token"] = $sonarToken }
-if ($SkipBuild) { $splatParams["SkipBuild"] = $true }
+if ($SkipBuild) { $splatParams["SkipTests"] = $true }  # SkipBuild maps to SkipTests in local (build already done by Run-PR)
 
 $analysisExitCode = 0
 try {
     if ($useAiOutput) {
-        Write-Host "Running SonarCloud analysis..." -ForegroundColor Gray
+        Write-Host "Running local SonarQube analysis (Docker)..." -ForegroundColor Gray
         & $analysisScript @splatParams 2>&1 | ForEach-Object {
-            # In AI mode, only show key lines; write everything to log
             $line = $_.ToString()
             if ($LogFile) {
                 $line | Out-File -FilePath $LogFile -Append -Encoding utf8
             }
-            if ($line -match "Step \d/\d|completed successfully|failed|error" -and $useAiOutput) {
+            if ($line -match "\[OK\]|\[ERR\]|\[INFO\].*Starting|\[INFO\].*Finishing|\[INFO\].*Dashboard|Analysis complete" -and $useAiOutput) {
                 Write-Host "  $line" -ForegroundColor DarkGray
             }
         }
@@ -188,18 +164,28 @@ try {
     $analysisExitCode = $LASTEXITCODE
 }
 catch {
-    Write-Host "SonarCloud analysis failed: $_" -ForegroundColor Red
+    Write-Host "Local SonarQube analysis failed: $_" -ForegroundColor Red
     $analysisExitCode = 1
 }
 
-# Query SonarCloud API for quality gate status and metrics
+# Query local SonarQube API for quality gate status and metrics
 $qualityGateStatus = $null
 $newIssues = @()
 $measures = @{}
 $apiError = $null
 
+# Resolve local token for API calls
+$sonarToken = $null
+$tokenFilePath = Join-Path $sonarRepoRoot ".sonarqube-local.token"
+if (Test-Path $tokenFilePath) {
+    $sonarToken = (Get-Content $tokenFilePath -Raw).Trim()
+}
+
 if ($sonarToken -and $analysisExitCode -eq 0) {
     $authHeader = @{ Authorization = "Bearer $sonarToken" }
+
+    # Wait a moment for SonarQube to process results
+    Start-Sleep -Seconds 3
 
     try {
         # Quality gate status
@@ -207,13 +193,13 @@ if ($sonarToken -and $analysisExitCode -eq 0) {
             -Headers $authHeader -ErrorAction Stop
         $qualityGateStatus = $qgResponse.projectStatus.status
 
-        # New issues (since leak period)
-        $issuesResponse = Invoke-RestMethod -Uri "$SonarHostUrl/api/issues/search?projectKeys=$ProjectKey&sinceLeakPeriod=true&ps=100&statuses=OPEN,CONFIRMED" `
+        # Issues
+        $issuesResponse = Invoke-RestMethod -Uri "$SonarHostUrl/api/issues/search?projectKeys=$ProjectKey&ps=100&statuses=OPEN,CONFIRMED" `
             -Headers $authHeader -ErrorAction Stop
         $newIssues = @($issuesResponse.issues)
 
         # Measures
-        $metricsKeys = "coverage,new_coverage,bugs,vulnerabilities,code_smells,ncloc"
+        $metricsKeys = "coverage,bugs,vulnerabilities,code_smells,ncloc"
         $measuresResponse = Invoke-RestMethod -Uri "$SonarHostUrl/api/measures/component?component=$ProjectKey&metricKeys=$metricsKeys" `
             -Headers $authHeader -ErrorAction Stop
         foreach ($m in $measuresResponse.component.measures) {
@@ -223,7 +209,7 @@ if ($sonarToken -and $analysisExitCode -eq 0) {
     catch {
         $apiError = $_.Exception.Message
         if (-not $useAiOutput) {
-            Write-Host "Warning: Could not fetch SonarCloud API data: $apiError" -ForegroundColor Yellow
+            Write-Host "Warning: Could not fetch SonarQube API data: $apiError" -ForegroundColor Yellow
         }
     }
 }
@@ -262,15 +248,11 @@ if ($OutputFormat -ne "Json") {
     }
 
     if ($measures.ContainsKey("coverage")) {
-        $covStr = "  Coverage: $($measures["coverage"])%"
-        if ($measures.ContainsKey("new_coverage")) {
-            $covStr += " (new code: $($measures["new_coverage"])%)"
-        }
-        Write-Host $covStr -ForegroundColor Cyan
+        Write-Host "  Coverage: $($measures["coverage"])%" -ForegroundColor Cyan
     }
 
     Write-Host "  Duration: $(Format-Duration -Seconds $duration)" -ForegroundColor Gray
-    Write-Host "  Dashboard: $SonarHostUrl/project/overview?id=$ProjectKey" -ForegroundColor DarkCyan
+    Write-Host "  Dashboard: $SonarHostUrl/dashboard?id=$ProjectKey" -ForegroundColor DarkCyan
     Write-Host ""
 
     if ($hasErrors) {
@@ -298,10 +280,9 @@ if ($OutputFormat -eq "Json") {
         duration_s    = [math]::Round($duration, 1)
         quality_gate  = $qualityGateStatus
         new_issues    = $newIssues.Count
-        dashboard_url = "$SonarHostUrl/project/overview?id=$ProjectKey"
+        dashboard_url = "$SonarHostUrl/dashboard?id=$ProjectKey"
     }
     if ($measures.ContainsKey("coverage")) { $jsonResult["coverage_pct"] = [double]$measures["coverage"] }
-    if ($measures.ContainsKey("new_coverage")) { $jsonResult["new_coverage_pct"] = [double]$measures["new_coverage"] }
     if ($newIssues.Count -gt 0) {
         $jsonResult["issues_by_type"] = @{
             bugs            = @($newIssues | Where-Object { $_.type -eq "BUG" }).Count
