@@ -441,9 +441,12 @@ function ConvertTo-JsonResult {
 # History & Estimation
 # ============================================================================
 
-# Current schema version for JSONL history entries.
-# Increment when the entry format changes so readers can ignore incompatible versions.
+# Schema version for JSONL history entries (increment ONLY when entry format changes).
+# This is NOT the script version — it controls data compatibility filtering.
 $script:HistorySchemaVersion = 1
+
+# Script version (tracks feature changes, shown in headers)
+$script:ScriptVersion = "1.0.0"
 
 function Write-HistoryEntry {
     <#
@@ -477,6 +480,9 @@ function Write-HistoryEntry {
     }
     if (-not $Entry.ContainsKey("v")) {
         $Entry["v"] = $script:HistorySchemaVersion
+    }
+    if (-not $Entry.ContainsKey("script_version")) {
+        $Entry["script_version"] = $script:ScriptVersion
     }
 
     $json = $Entry | ConvertTo-Json -Depth 5 -Compress
