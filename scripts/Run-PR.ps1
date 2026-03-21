@@ -176,8 +176,8 @@ function Get-PrTitleFromBranch {
 # ============================================================================
 
 function Invoke-Prepare {
-    $steps = @()
-    $overallPassed = $true
+    $script:steps = @()
+    $script:overallPassed = $true
 
     function Run-Step {
         param(
@@ -229,7 +229,7 @@ function Invoke-Prepare {
         }
         finally { Pop-Location }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $steps } }
+    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 2: Build
     $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
@@ -240,7 +240,7 @@ function Invoke-Prepare {
         }
         finally { Pop-Location }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $steps } }
+    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 3: Unit tests + coverage
     $coveragePct = $null
@@ -265,7 +265,7 @@ function Invoke-Prepare {
 
         @{ ExitCode = $exitCode; Details = $details }
     }
-    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $steps } }
+    if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
 
     # Step 4: Integration tests (unless skipped)
     if (-not $SkipIntegration) {
@@ -274,7 +274,7 @@ function Invoke-Prepare {
             & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild 2>&1 | Out-Null
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
-        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $steps } }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
     # Step 5: Sonar (unless skipped)
@@ -284,23 +284,23 @@ function Invoke-Prepare {
             & $sonarScript -Mode Ai -OutputFormat Json -SkipBuild 2>&1 | Out-Null
             @{ ExitCode = $LASTEXITCODE; Details = $null }
         }
-        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $steps } }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
     # Step 6: Coverage threshold
     if ($null -ne $coveragePct) {
         if ($coveragePct -lt $CoverageThreshold) {
             Write-Host "  ▶ Coverage Threshold... ❌ ${coveragePct}% < ${CoverageThreshold}%" -ForegroundColor Red
-            $steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
-            $overallPassed = $false
+            $script:steps += @{ name = "Coverage Threshold"; status = "failed"; duration_s = 0; details = "Coverage ${coveragePct}% below threshold ${CoverageThreshold}%" }
+            $script:overallPassed = $false
         }
         else {
             Write-Host "  ▶ Coverage Threshold... ✅ ${coveragePct}% >= ${CoverageThreshold}%" -ForegroundColor Green
-            $steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
+            $script:steps += @{ name = "Coverage Threshold"; status = "passed"; duration_s = 0; details = "Coverage ${coveragePct}%" }
         }
     }
 
-    return @{ Passed = $overallPassed; Steps = $steps; CoveragePct = $coveragePct }
+    return @{ Passed = $script:overallPassed; Steps = $script:steps; CoveragePct = $coveragePct }
 }
 
 # ============================================================================
