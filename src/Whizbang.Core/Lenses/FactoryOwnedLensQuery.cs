@@ -1,3 +1,5 @@
+#pragma warning disable CS0618
+
 namespace Whizbang.Core.Lenses;
 
 /// <summary>
@@ -22,6 +24,16 @@ public sealed class FactoryOwnedLensQuery<TModel> : ILensQuery<TModel>, IAsyncDi
     _factory = factory ?? throw new ArgumentNullException(nameof(factory));
     _inner = factory.GetQuery<TModel>();
   }
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> Scope(QueryScope scope) => _inner.Scope(scope);
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) =>
+      _inner.ScopeOverride(scope, overrideValues);
+
+  /// <inheritdoc />
+  public IScopedLensAccess<TModel> DefaultScope => _inner.DefaultScope;
 
   /// <inheritdoc />
   public IQueryable<PerspectiveRow<TModel>> Query => _inner.Query;

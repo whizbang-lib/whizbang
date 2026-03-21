@@ -21,7 +21,7 @@ public abstract class SequenceProviderContractTests {
   public async Task GetNextAsync_FirstCall_ShouldReturnZeroAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
 
     // Act
     var sequence = await provider.GetNextAsync(streamKey);
@@ -34,7 +34,7 @@ public abstract class SequenceProviderContractTests {
   public async Task GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
 
     // Act
     var seq1 = await provider.GetNextAsync(streamKey);
@@ -51,8 +51,8 @@ public abstract class SequenceProviderContractTests {
   public async Task GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey1 = "stream-1";
-    var streamKey2 = "stream-2";
+    const string streamKey1 = "stream-1";
+    const string streamKey2 = "stream-2";
 
     // Act
     var seq1_1 = await provider.GetNextAsync(streamKey1);
@@ -71,7 +71,7 @@ public abstract class SequenceProviderContractTests {
   public async Task GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
 
     // Act
     var current = await provider.GetCurrentAsync(streamKey);
@@ -84,7 +84,7 @@ public abstract class SequenceProviderContractTests {
   public async Task GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
     await provider.GetNextAsync(streamKey); // 0
     await provider.GetNextAsync(streamKey); // 1
     await provider.GetNextAsync(streamKey); // 2
@@ -100,7 +100,7 @@ public abstract class SequenceProviderContractTests {
   public async Task GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
     await provider.GetNextAsync(streamKey); // 0
 
     // Act
@@ -118,7 +118,7 @@ public abstract class SequenceProviderContractTests {
   public async Task ResetAsync_WithDefaultValue_ShouldResetToZeroAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
     await provider.GetNextAsync(streamKey); // 0
     await provider.GetNextAsync(streamKey); // 1
     await provider.GetNextAsync(streamKey); // 2
@@ -135,7 +135,7 @@ public abstract class SequenceProviderContractTests {
   public async Task ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
     await provider.GetNextAsync(streamKey); // 0
 
     // Act
@@ -150,7 +150,7 @@ public abstract class SequenceProviderContractTests {
   public async Task ResetAsync_MultipleTimes_ShouldAlwaysResetAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
 
     // Act & Assert
     await provider.GetNextAsync(streamKey);
@@ -168,8 +168,8 @@ public abstract class SequenceProviderContractTests {
   public async Task GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
-    var concurrency = 100;
+    const string streamKey = "test-stream";
+    const int concurrency = 100;
 
     // Act - Fire 100 concurrent GetNext calls
     var tasks = Enumerable.Range(0, concurrency)
@@ -188,8 +188,8 @@ public abstract class SequenceProviderContractTests {
   public async Task GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
-    var count = 1000;
+    const string streamKey = "test-stream";
+    const int count = 1000;
 
     // Act - Sequential calls
     var sequences = new long[count];
@@ -209,7 +209,7 @@ public abstract class SequenceProviderContractTests {
   public async Task CancellationToken_WhenCancelled_ShouldThrowAsync() {
     // Arrange
     var provider = CreateProvider();
-    var streamKey = "test-stream";
+    const string streamKey = "test-stream";
     var cts = new CancellationTokenSource();
     cts.Cancel(); // Already cancelled
 

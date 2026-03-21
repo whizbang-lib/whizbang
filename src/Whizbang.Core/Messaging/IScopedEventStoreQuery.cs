@@ -57,25 +57,20 @@ public interface IEventStoreQueryFactory {
 /// Ensures proper scope and DbContext disposal.
 /// </summary>
 /// <tests>Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs</tests>
-public sealed class EventStoreQueryScope : IDisposable {
-  private readonly IServiceScope _scope;
-
-  /// <summary>
-  /// Creates a new event store query scope wrapper.
-  /// </summary>
-  /// <param name="scope">The service scope to manage.</param>
-  /// <param name="eventStoreQuery">The scoped event store query instance.</param>
-  public EventStoreQueryScope(IServiceScope scope, IEventStoreQuery eventStoreQuery) {
-    _scope = scope ?? throw new ArgumentNullException(nameof(scope));
-    Value = eventStoreQuery ?? throw new ArgumentNullException(nameof(eventStoreQuery));
-  }
+/// <remarks>
+/// Creates a new event store query scope wrapper.
+/// </remarks>
+/// <param name="scope">The service scope to manage.</param>
+/// <param name="eventStoreQuery">The scoped event store query instance.</param>
+public sealed class EventStoreQueryScope(IServiceScope scope, IEventStoreQuery eventStoreQuery) : IDisposable {
+  private readonly IServiceScope _scope = scope ?? throw new ArgumentNullException(nameof(scope));
 
   /// <summary>
   /// The scoped IEventStoreQuery instance.
   /// Valid until Dispose() is called.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Messaging/IScopedEventStoreQueryTests.cs:EventStoreQueryScope_HasValuePropertyAsync</tests>
-  public IEventStoreQuery Value { get; }
+  public IEventStoreQuery Value { get; } = eventStoreQuery ?? throw new ArgumentNullException(nameof(eventStoreQuery));
 
   /// <summary>
   /// Disposes the service scope and releases the DbContext.

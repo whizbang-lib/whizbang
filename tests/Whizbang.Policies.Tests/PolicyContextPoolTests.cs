@@ -22,7 +22,7 @@ public class PolicyContextPoolTests {
     // Arrange
     var message = new TestMessage();
     var envelope = _createTestEnvelope();
-    var environment = "test";
+    const string environment = "test";
 
     // Act
     var context = PolicyContextPool.Rent(message, envelope, null, environment);

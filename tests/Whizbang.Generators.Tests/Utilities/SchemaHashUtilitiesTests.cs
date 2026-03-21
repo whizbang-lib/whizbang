@@ -19,7 +19,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_EmptyString_ReturnsKnownSha256HashAsync() {
     // Arrange
-    var input = "";
+    const string input = "";
     // SHA-256 of empty string is known: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
     // Act
@@ -35,7 +35,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_AnyInput_ReturnsLowercaseHex64CharactersAsync() {
     // Arrange
-    var input = "test";
+    const string input = "test";
 
     // Act
     var hash = SchemaHashUtilities.ComputeHash(input);
@@ -51,7 +51,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_SameInput_ReturnsSameHashAsync() {
     // Arrange
-    var input = "{\"columns\":[{\"name\":\"id\",\"type\":\"uuid\"}]}";
+    const string input = "{\"columns\":[{\"name\":\"id\",\"type\":\"uuid\"}]}";
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeHash(input);
@@ -67,8 +67,8 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_DifferentInputs_ReturnsDifferentHashesAsync() {
     // Arrange
-    var input1 = "{\"columns\":[{\"name\":\"id\"}]}";
-    var input2 = "{\"columns\":[{\"name\":\"data\"}]}";
+    const string input1 = "{\"columns\":[{\"name\":\"id\"}]}";
+    const string input2 = "{\"columns\":[{\"name\":\"data\"}]}";
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeHash(input1);
@@ -84,7 +84,7 @@ public class SchemaHashUtilitiesTests {
   [Test]
   public async Task ComputeHash_Utf8Input_ReturnsValidHashAsync() {
     // Arrange - Japanese characters for "hello"
-    var input = "こんにちは";
+    const string input = "こんにちは";
 
     // Act
     var hash = SchemaHashUtilities.ComputeHash(input);

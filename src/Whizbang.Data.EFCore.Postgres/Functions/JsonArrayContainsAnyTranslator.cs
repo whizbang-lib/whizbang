@@ -20,17 +20,13 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// </remarks>
 /// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>Whizbang.Data.EFCore.Postgres.Tests/Functions/JsonArrayContainsAnyTranslatorTests.cs</tests>
-public class JsonArrayContainsAnyTranslator : IMethodCallTranslator {
+public class JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpressionFactory) : IMethodCallTranslator {
   private static readonly MethodInfo _allowedPrincipalsContainsAnyMethod =
     typeof(WhizbangJsonDbFunctions).GetMethod(
       nameof(WhizbangJsonDbFunctions.AllowedPrincipalsContainsAny),
       [typeof(DbFunctions), typeof(PerspectiveScope), typeof(string[])])!;
 
-  private readonly NpgsqlSqlExpressionFactory _sqlExpressionFactory;
-
-  public JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpressionFactory) {
-    _sqlExpressionFactory = sqlExpressionFactory;
-  }
+  private readonly NpgsqlSqlExpressionFactory _sqlExpressionFactory = sqlExpressionFactory;
 
   public SqlExpression? Translate(
       SqlExpression? instance,

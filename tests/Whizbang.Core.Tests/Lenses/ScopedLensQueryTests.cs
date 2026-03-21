@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -326,12 +327,8 @@ public class ScopedLensQueryTests {
   /// <summary>
   /// Tracks scope disposal for testing
   /// </summary>
-  private sealed class ScopeTracker : IDisposable {
-    private readonly Action _onDispose;
-
-    public ScopeTracker(Action onDispose) {
-      _onDispose = onDispose;
-    }
+  private sealed class ScopeTracker(Action onDispose) : IDisposable {
+    private readonly Action _onDispose = onDispose;
 
     public void Dispose() {
       _onDispose();
@@ -374,6 +371,18 @@ public class ScopedLensQueryTests {
     public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       await Task.CompletedTask;
       return _models.FirstOrDefault();
+    }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> DefaultScope => new MockScopedAccess(this);
+
+    private sealed class MockScopedAccess(MockLensQuery<TModel> inner) : IScopedLensAccess<TModel> {
+      public IQueryable<PerspectiveRow<TModel>> Query => inner.Query;
+      public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
+        await Task.CompletedTask;
+        return inner._models.FirstOrDefault();
+      }
     }
   }
 }

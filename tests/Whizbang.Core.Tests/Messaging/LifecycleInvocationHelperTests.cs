@@ -633,14 +633,14 @@ public class LifecycleInvocationHelperTests {
 
   private sealed class FakeLifecycleInvoker : IReceptorInvoker {
     private readonly List<LifecycleInvocation> _invocations = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public bool ThrowOnAsyncStage { get; set; }
 
     public List<LifecycleInvocation> Invocations {
       get {
         lock (_lock) {
-          return _invocations.ToList();
+          return [.. _invocations];
         }
       }
     }
@@ -669,7 +669,7 @@ public class LifecycleInvocationHelperTests {
 
   private sealed class FakeLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
     private int _callCount;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public int CallCount {
       get {
@@ -704,7 +704,7 @@ public class LifecycleInvocationHelperTests {
 
   private sealed class FakeLogger : ILogger {
     private int _errorCount;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly TaskCompletionSource _errorLogged = new();
 
     public int ErrorCount {

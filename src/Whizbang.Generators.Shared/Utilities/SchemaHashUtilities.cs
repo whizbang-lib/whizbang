@@ -57,7 +57,7 @@ public static class SchemaHashUtilities {
   public static string ToCanonicalJson(PerspectiveTableSchema schema) {
     // Create canonical representation with sorted columns and indexes
     var canonicalSchema = new CanonicalSchema {
-      Columns = schema.Columns
+      Columns = [.. schema.Columns
           .Select(c => new CanonicalColumn {
             IsPrimaryKey = c.IsPrimaryKey ? true : null,
             IsVector = c.IsVector ? true : null,
@@ -66,17 +66,15 @@ public static class SchemaHashUtilities {
             Type = c.Type.ToLowerInvariant(),
             VectorDimensions = c.VectorDimensions
           })
-          .OrderBy(c => c.Name, StringComparer.Ordinal)
-          .ToList(),
-      Indexes = schema.Indexes
+          .OrderBy(c => c.Name, StringComparer.Ordinal)],
+      Indexes = [.. schema.Indexes
           .Select(i => new CanonicalIndex {
-            Columns = i.Columns.OrderBy(c => c, StringComparer.Ordinal).ToList(),
+            Columns = [.. i.Columns.OrderBy(c => c, StringComparer.Ordinal)],
             IsUnique = i.IsUnique ? true : null,
             Name = i.Name,
             Type = i.Type.ToLowerInvariant()
           })
-          .OrderBy(i => i.Name, StringComparer.Ordinal)
-          .ToList()
+          .OrderBy(i => i.Name, StringComparer.Ordinal)]
     };
 
     return JsonSerializer.Serialize(canonicalSchema, _canonicalJsonOptions);

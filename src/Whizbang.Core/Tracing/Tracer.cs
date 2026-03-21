@@ -27,27 +27,22 @@ namespace Whizbang.Core.Tracing;
 /// <docs>operations/observability/tracing#tracer</docs>
 /// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
-public sealed partial class Tracer : ITracer {
+/// <remarks>
+/// Initializes a new instance of the <see cref="Tracer"/> class.
+/// </remarks>
+/// <param name="logger">Logger for structured logging output.</param>
+/// <param name="options">Tracing options monitor for runtime configuration.</param>
+public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<TracingOptions> options) : ITracer {
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
-  private readonly ILogger<Tracer> _logger;
+  private readonly ILogger<Tracer> _logger = logger;
 #pragma warning restore S4487
-  private readonly IOptionsMonitor<TracingOptions> _options;
+  private readonly IOptionsMonitor<TracingOptions> _options = options;
 
   // Thread-local storage for current activity (to match Begin/End calls)
   private static readonly AsyncLocal<Activity?> _currentActivity = new();
 
   // Thread-local storage to track if current trace is explicit (elevated)
   private static readonly AsyncLocal<bool> _isExplicitTrace = new();
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="Tracer"/> class.
-  /// </summary>
-  /// <param name="logger">Logger for structured logging output.</param>
-  /// <param name="options">Tracing options monitor for runtime configuration.</param>
-  public Tracer(ILogger<Tracer> logger, IOptionsMonitor<TracingOptions> options) {
-    _logger = logger;
-    _options = options;
-  }
 
   public void BeginHandlerTrace(string handlerName, string messageTypeName, int handlerCount, bool isExplicit) {
     var options = _options.CurrentValue;

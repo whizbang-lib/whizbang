@@ -258,7 +258,7 @@ public class TrackedGuidTests {
   [Test]
   public async Task TrackedGuid_TryParse_WithInvalidGuid_ReturnsFalseAsync() {
     // Arrange
-    var invalidString = "not-a-guid";
+    const string invalidString = "not-a-guid";
 
     // Act
     var success = TrackedGuid.TryParse(invalidString, out var tracked);

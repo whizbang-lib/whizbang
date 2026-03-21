@@ -216,7 +216,7 @@ public class NamespaceRoutingIntegrationTests {
     await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
     var destination = strategy.QueuedOutboxMessages[0].Destination;
     await Assert.That(destination).IsNotNull();
-    await Assert.That(destination!).IsEqualTo(destination.ToLowerInvariant());
+    await Assert.That(destination).IsEqualTo(destination.ToLowerInvariant());
     await Assert.That(destination).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 

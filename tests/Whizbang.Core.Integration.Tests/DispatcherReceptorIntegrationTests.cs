@@ -322,7 +322,7 @@ public class DispatcherReceptorIntegrationTests {
     var provider = services.BuildServiceProvider();
     var dispatcher = provider.GetRequiredService<IDispatcher>();
 
-    var email = "user@example.com";
+    const string email = "user@example.com";
 
     // Act - Step 1: Create user
     var userCreated = await dispatcher.LocalInvokeAsync<UserCreated>(

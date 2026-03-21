@@ -47,7 +47,7 @@ public sealed class CategoryBatch {
     return new CategoryBatch {
       Category = category,
       DisplayName = GetDisplayName(category),
-      Items = items.ToList()
+      Items = [.. items]
     };
   }
 
@@ -120,26 +120,29 @@ public enum MigrationCategory {
 /// <summary>
 /// Represents a single item to be migrated.
 /// </summary>
-public sealed class MigrationItem {
+/// <remarks>
+/// Creates a new migration item.
+/// </remarks>
+public sealed class MigrationItem(string filePath, string displayName, MigrationItemType itemType, int lineNumber = 0) {
   /// <summary>
   /// Path to the file containing this item.
   /// </summary>
-  public string FilePath { get; init; }
+  public string FilePath { get; init; } = filePath;
 
   /// <summary>
   /// Display name for the item (e.g., class name).
   /// </summary>
-  public string DisplayName { get; init; }
+  public string DisplayName { get; init; } = displayName;
 
   /// <summary>
   /// Type of migration item.
   /// </summary>
-  public MigrationItemType ItemType { get; init; }
+  public MigrationItemType ItemType { get; init; } = itemType;
 
   /// <summary>
   /// Line number where the item is defined.
   /// </summary>
-  public int LineNumber { get; init; }
+  public int LineNumber { get; init; } = lineNumber;
 
   /// <summary>
   /// Whether this item has been processed.
@@ -160,16 +163,6 @@ public sealed class MigrationItem {
   /// Transformed source code snippet.
   /// </summary>
   public string? TransformedCode { get; set; }
-
-  /// <summary>
-  /// Creates a new migration item.
-  /// </summary>
-  public MigrationItem(string filePath, string displayName, MigrationItemType itemType, int lineNumber = 0) {
-    FilePath = filePath;
-    DisplayName = displayName;
-    ItemType = itemType;
-    LineNumber = lineNumber;
-  }
 }
 
 /// <summary>

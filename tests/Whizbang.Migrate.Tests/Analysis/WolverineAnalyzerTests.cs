@@ -11,7 +11,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsIHandleInterface_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -37,7 +37,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsIHandleWithResult_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class GetOrderHandler : IHandle<GetOrderQuery, OrderResult> {
@@ -63,7 +63,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsWolverineHandlerAttribute_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       [WolverineHandler]
@@ -89,7 +89,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsConventionBasedHandler_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderHandlers {
         public static Task Handle(CreateOrderCommand command) {
           return Task.CompletedTask;
@@ -117,7 +117,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsMultipleHandlersInSameFile_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -148,7 +148,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_IgnoresNonHandlerClasses_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public Task ProcessOrder(Order order) {
           return Task.CompletedTask;
@@ -171,7 +171,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_CapturesLineNumber_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       namespace MyApp.Handlers;
@@ -194,7 +194,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_CapturesFullyQualifiedName_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       namespace MyApp.Handlers;
@@ -232,7 +232,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlesInvalidSyntax_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = "this is not valid C# code { } class";
+    const string sourceCode = "this is not valid C# code { } class";
 
     // Act
     var result = await analyzer.AnalyzeAsync(sourceCode, "Invalid.cs");
@@ -245,7 +245,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_DetectsInstanceHandler_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderHandler {
         private readonly IOrderRepository _repository;
 
@@ -276,7 +276,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_FiltersOutPrivateHandleMethods_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderHandler {
         public Task Handle(CreateOrderCommand command) => _handleInternal(command);
 
@@ -301,7 +301,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithCustomBaseClass_GeneratesWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       namespace MyApp.Handlers;
@@ -334,7 +334,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithIHandleInterface_DoesNotGenerateBaseClassWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -355,7 +355,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithMultipleBaseTypes_WarnsOnlyForUnknown_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public interface ICustomLogger {
@@ -387,7 +387,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_NonHandlerClassWithBaseClass_DoesNotGenerateWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       public abstract class BaseService {
         protected void DoSomething() { }
       }
@@ -411,7 +411,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithUnknownInterfaceParameter_GeneratesWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public interface IEventStoreContext {
@@ -441,7 +441,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithKnownWolverineParameters_DoesNotGenerateWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CreateOrderHandler : IHandle<CreateOrderCommand> {
@@ -464,7 +464,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithKnownMartenParameters_DoesNotGenerateWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using Marten;
 
@@ -488,7 +488,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithCustomContextParameter_GeneratesContextWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public class CustomContext {
@@ -519,7 +519,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithCancellationToken_DoesNotGenerateWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
       using System.Threading;
 
@@ -543,7 +543,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_HandlerWithMultipleUnknownParameters_GeneratesMultipleWarnings_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public interface ICustomLogger { }
@@ -571,7 +571,7 @@ public class WolverineAnalyzerTests {
   public async Task AnalyzeAsync_NestedHandlerClass_GeneratesNestedClassWarning_Async() {
     // Arrange
     var analyzer = new WolverineAnalyzer();
-    var sourceCode = """
+    const string sourceCode = """
       using Wolverine;
 
       public static class OrderHandlers {

@@ -17,7 +17,8 @@ public class AttributeUtilitiesTests {
   [Test]
   public async Task GetStringValue_ExistingProperty_ReturnsValueAsync() {
     // Arrange - Create a compilation with an attribute that has a string property
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -25,8 +26,9 @@ public class TestAttribute : Attribute {
     public string? Route { get; set; }
 }
 
-[Test(Route = ""/api/orders"")]
-public class TestClass { }";
+[Test(Route = "/api/orders")]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -42,7 +44,7 @@ public class TestClass { }";
   [Test]
   public async Task GetStringValue_MissingProperty_ReturnsNullAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -67,7 +69,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringValue_NonExistentProperty_ReturnsNullAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -75,8 +78,9 @@ public class TestAttribute : Attribute {
     public string? Route { get; set; }
 }
 
-[Test(Route = ""/api/orders"")]
-public class TestClass { }";
+[Test(Route = "/api/orders")]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -92,7 +96,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringValue_ConstructorArgument_ReturnsValueAsync() {
     // Arrange - Attribute with constructor parameter
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -101,8 +106,9 @@ public class TestAttribute : Attribute {
     public TestAttribute(string tag) { Tag = tag; }
 }
 
-[Test(""tenants"")]
-public class TestClass { }";
+[Test("tenants")]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -118,7 +124,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringValue_BothPresent_NamedTakesPrecedenceAsync() {
     // Arrange - Attribute with both constructor and named argument
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -127,8 +134,9 @@ public class TestAttribute : Attribute {
     public TestAttribute(string tag) { Tag = tag; }
 }
 
-[Test(""constructor-value"", Tag = ""named-value"")]
-public class TestClass { }";
+[Test("constructor-value", Tag = "named-value")]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -144,7 +152,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringValue_CaseInsensitiveMatch_ReturnsValueAsync() {
     // Arrange - Constructor param "tag" should match property "Tag"
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -153,8 +162,9 @@ public class TestAttribute : Attribute {
     public TestAttribute(string tag) { Tag = tag; }
 }
 
-[Test(""my-tag"")]
-public class TestClass { }";
+[Test("my-tag")]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -174,7 +184,7 @@ public class TestClass { }";
   [Test]
   public async Task GetBoolValue_ExistingProperty_ReturnsValueAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -199,7 +209,7 @@ public class TestClass { }";
   [Test]
   public async Task GetBoolValue_MissingProperty_ReturnsDefaultAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -224,7 +234,7 @@ public class TestClass { }";
   [Test]
   public async Task GetBoolValue_FalseValue_ReturnsFalseAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -249,7 +259,7 @@ public class TestClass { }";
   [Test]
   public async Task GetBoolValue_ConstructorArgument_ReturnsValueAsync() {
     // Arrange - Attribute with constructor parameter
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -275,7 +285,7 @@ public class TestClass { }";
   [Test]
   public async Task GetBoolValue_BothPresent_NamedTakesPrecedenceAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -305,7 +315,7 @@ public class TestClass { }";
   [Test]
   public async Task GetIntValue_ExistingProperty_ReturnsValueAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -330,7 +340,7 @@ public class TestClass { }";
   [Test]
   public async Task GetIntValue_MissingProperty_ReturnsDefaultAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -355,7 +365,7 @@ public class TestClass { }";
   [Test]
   public async Task GetIntValue_ZeroValue_ReturnsZeroAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -380,7 +390,7 @@ public class TestClass { }";
   [Test]
   public async Task GetIntValue_ConstructorArgument_ReturnsValueAsync() {
     // Arrange - Attribute with constructor parameter
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -406,7 +416,7 @@ public class TestClass { }";
   [Test]
   public async Task GetIntValue_BothPresent_NamedTakesPrecedenceAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -436,7 +446,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringArrayValue_NamedArgument_ReturnsValuesAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -444,8 +455,9 @@ public class TestAttribute : Attribute {
     public string[]? Properties { get; set; }
 }
 
-[Test(Properties = new[] { ""Id"", ""Name"", ""Email"" })]
-public class TestClass { }";
+[Test(Properties = new[] { "Id", "Name", "Email" })]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -456,7 +468,7 @@ public class TestClass { }";
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Count().IsEqualTo(3);
+    await Assert.That(result).Count().IsEqualTo(3);
     await Assert.That(result[0]).IsEqualTo("Id");
     await Assert.That(result[1]).IsEqualTo("Name");
     await Assert.That(result[2]).IsEqualTo("Email");
@@ -465,7 +477,8 @@ public class TestClass { }";
   [Test]
   public async Task GetStringArrayValue_ConstructorArgument_ReturnsValuesAsync() {
     // Arrange - Attribute with constructor parameter
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -474,8 +487,9 @@ public class TestAttribute : Attribute {
     public TestAttribute(string[] properties) { Properties = properties; }
 }
 
-[Test(new[] { ""TenantId"", ""UserId"" })]
-public class TestClass { }";
+[Test(new[] { "TenantId", "UserId" })]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -486,7 +500,7 @@ public class TestClass { }";
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Count().IsEqualTo(2);
+    await Assert.That(result).Count().IsEqualTo(2);
     await Assert.That(result[0]).IsEqualTo("TenantId");
     await Assert.That(result[1]).IsEqualTo("UserId");
   }
@@ -494,7 +508,7 @@ public class TestClass { }";
   [Test]
   public async Task GetStringArrayValue_MissingProperty_ReturnsNullAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -519,7 +533,7 @@ public class TestClass { }";
   [Test]
   public async Task GetStringArrayValue_EmptyArray_ReturnsEmptyArrayAsync() {
     // Arrange
-    var source = @"
+    const string source = @"
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -539,13 +553,14 @@ public class TestClass { }";
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).IsEmpty();
+    await Assert.That(result).IsEmpty();
   }
 
   [Test]
   public async Task GetStringArrayValue_BothPresent_NamedTakesPrecedenceAsync() {
     // Arrange
-    var source = @"
+    const string source = """
+
 using System;
 
 [AttributeUsage(AttributeTargets.Class)]
@@ -554,8 +569,9 @@ public class TestAttribute : Attribute {
     public TestAttribute(string[] properties) { Properties = properties; }
 }
 
-[Test(new[] { ""FromCtor"" }, Properties = new[] { ""FromNamed"" })]
-public class TestClass { }";
+[Test(new[] { "FromCtor" }, Properties = new[] { "FromNamed" })]
+public class TestClass { }
+""";
 
     var compilation = GeneratorTestHelper.CreateCompilation(source);
     var typeSymbol = compilation.GetTypeByMetadataName("TestClass")!;
@@ -566,7 +582,7 @@ public class TestClass { }";
 
     // Assert - Named argument should take precedence
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!).Count().IsEqualTo(1);
+    await Assert.That(result).Count().IsEqualTo(1);
     await Assert.That(result[0]).IsEqualTo("FromNamed");
   }
 

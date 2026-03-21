@@ -232,12 +232,12 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("  private static readonly PerspectiveRegistrationInfo[] _registeredPerspectives = [");
     foreach (var perspective in perspectives.OrderBy(p => p.ClrTypeName)) {
       var eventTypesArray = string.Join(", ", perspective.EventTypes.Select(e => $"\"{e}\""));
-      source.AppendLine($"    new PerspectiveRegistrationInfo(");
+      source.AppendLine("    new PerspectiveRegistrationInfo(");
       source.AppendLine($"      \"{perspective.ClrTypeName}\",");
       source.AppendLine($"      \"{perspective.ClassName}\",");
       source.AppendLine($"      \"{perspective.ModelType}\",");
       source.AppendLine($"      [{eventTypesArray}]");
-      source.AppendLine($"    ),");
+      source.AppendLine("    ),");
     }
     source.AppendLine("  ];");
     source.AppendLine();

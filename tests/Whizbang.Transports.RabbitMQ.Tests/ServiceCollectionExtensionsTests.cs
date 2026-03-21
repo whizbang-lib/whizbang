@@ -18,7 +18,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddRabbitMQTransport_RegistersTransport_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var connectionString = "amqp://guest:guest@localhost:5672/";
+    const string connectionString = "amqp://guest:guest@localhost:5672/";
 
     // Register a fake connection for testing
     services.AddSingleton<IConnection>(sp => {
@@ -43,7 +43,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddRabbitMQTransport_ReusesExistingConnection_IfRegisteredAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var connectionString = "amqp://guest:guest@localhost:5672/";
+    const string connectionString = "amqp://guest:guest@localhost:5672/";
 
     // Pre-register a connection
     var existingConnection = new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel()));
@@ -62,7 +62,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddRabbitMQTransport_InitializesTransport_DuringRegistrationAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var connectionString = "amqp://guest:guest@localhost:5672/";
+    const string connectionString = "amqp://guest:guest@localhost:5672/";
 
     // Register a fake connection that reports as open
     services.AddSingleton<IConnection>(sp => {
@@ -104,7 +104,7 @@ public class ServiceCollectionExtensionsTests {
   public async Task AddRabbitMQTransport_RegistersMessagePublishStrategy_AsSingletonAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var connectionString = "amqp://guest:guest@localhost:5672/";
+    const string connectionString = "amqp://guest:guest@localhost:5672/";
 
     services.AddSingleton<IConnection>(sp => {
       var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel()));

@@ -556,12 +556,8 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class SlowWorkCoordinator : IWorkCoordinator {
-    private readonly int _delayMs;
-
-    public SlowWorkCoordinator(int delayMs) {
-      _delayMs = delayMs;
-    }
+  private sealed class SlowWorkCoordinator(int delayMs) : IWorkCoordinator {
+    private readonly int _delayMs = delayMs;
 
     public async Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -612,7 +608,7 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
   }
 
   private sealed class RecordingLogger<T> : ILogger<T> {
-    private readonly ConcurrentBag<string> _messages = new();
+    private readonly ConcurrentBag<string> _messages = [];
 
     public IReadOnlyCollection<string> Messages => _messages;
 

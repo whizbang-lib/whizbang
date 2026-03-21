@@ -38,8 +38,9 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync() {
     // Arrange
-    var scopeContextAccessor = new ScopeContextAccessor();
-    scopeContextAccessor.Current = null; // No ambient context
+    var scopeContextAccessor = new ScopeContextAccessor {
+      Current = null // No ambient context
+    };
 
     var mockDispatcher = new MockDispatcher();
     var systemBuilder = new SystemDispatcherBuilder(
@@ -128,7 +129,7 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_KeepTenant_PreservesAmbientTenantIdAsync() {
     // Arrange
-    var ambientTenantId = "ambient-tenant-456";
+    const string ambientTenantId = "ambient-tenant-456";
     var mockDispatcher = new MockDispatcher();
     var systemBuilder = new SystemDispatcherBuilder(
         mockDispatcher,

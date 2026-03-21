@@ -27,9 +27,7 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Minimal DbContext for turnkey vector tests.
   /// </summary>
-  private sealed class TurnkeyVectorTestDbContext : DbContext {
-    public TurnkeyVectorTestDbContext(DbContextOptions<TurnkeyVectorTestDbContext> options)
-        : base(options) { }
+  private sealed class TurnkeyVectorTestDbContext(DbContextOptions<TurnkeyVectorIntegrationTests.TurnkeyVectorTestDbContext> options) : DbContext(options) {
   }
 
   // ========================================
@@ -440,11 +438,9 @@ public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   }
 
   // Dummy DbContext classes for negative tests
-  private sealed class UnregisteredTestDbContext : DbContext {
-    public UnregisteredTestDbContext(DbContextOptions<UnregisteredTestDbContext> options) : base(options) { }
+  private sealed class UnregisteredTestDbContext(DbContextOptions<TurnkeyVectorIntegrationTests.UnregisteredTestDbContext> options) : DbContext(options) {
   }
 
-  private sealed class DoubleInvokeTestDbContext : DbContext {
-    public DoubleInvokeTestDbContext(DbContextOptions<DoubleInvokeTestDbContext> options) : base(options) { }
+  private sealed class DoubleInvokeTestDbContext(DbContextOptions<TurnkeyVectorIntegrationTests.DoubleInvokeTestDbContext> options) : DbContext(options) {
   }
 }

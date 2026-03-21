@@ -190,7 +190,7 @@ public static class JsonContextRegistry {
   /// <param name="discriminator">Optional type discriminator for JSON serialization. Defaults to type name.</param>
   public static void RegisterDerivedType<TBase, TDerived>(string? discriminator = null)
     where TDerived : TBase {
-    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => new ConcurrentBag<(Type, string)>());
+    var bag = _derivedTypes.GetOrAdd(typeof(TBase), _ => []);
     var actualDiscriminator = discriminator ?? typeof(TDerived).Name;
 
     // Avoid duplicate registrations
@@ -207,7 +207,7 @@ public static class JsonContextRegistry {
   /// <returns>Collection of registered derived types</returns>
   public static IEnumerable<Type> GetRegisteredDerivedTypes<TBase>() {
     if (_derivedTypes.TryGetValue(typeof(TBase), out var bag)) {
-      return bag.Select(x => x.derivedType).ToArray();
+      return [.. bag.Select(x => x.derivedType)];
     }
     return [];
   }
@@ -268,7 +268,7 @@ public static class JsonContextRegistry {
       JsonMetadataServices.CreateListInfo<List<TBase>, TBase>(
         options,
         collectionInfo: new JsonCollectionInfoValues<List<TBase>> {
-          ObjectCreator = () => new List<TBase>(),
+          ObjectCreator = () => [],
           ElementInfo = elementTypeInfo
         }));
     return (JsonTypeInfo<List<TBase>>)cached;

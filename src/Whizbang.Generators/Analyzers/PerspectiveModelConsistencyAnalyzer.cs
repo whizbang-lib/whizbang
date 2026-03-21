@@ -57,7 +57,7 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
   );
 
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-      ImmutableArray.Create(InconsistentModelTypes);
+      [InconsistentModelTypes];
 
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);

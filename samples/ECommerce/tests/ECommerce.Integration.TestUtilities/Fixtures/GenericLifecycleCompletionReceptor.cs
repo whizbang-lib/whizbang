@@ -44,13 +44,24 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </code>
 /// </remarks>
 /// <docs>testing/lifecycle-synchronization</docs>
-public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMessage>, IAcceptsLifecycleContext
+/// <remarks>
+/// Creates a new generic lifecycle completion receptor.
+/// </remarks>
+/// <param name="completionSource">Task completion source to signal when processing completes.</param>
+/// <param name="expectedStage">Optional lifecycle stage to validate (null = any stage).</param>
+/// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
+/// <param name="messageFilter">Optional predicate to filter which messages signal completion.</param>
+public sealed class GenericLifecycleCompletionReceptor<TMessage>(
+  TaskCompletionSource<bool> completionSource,
+  LifecycleStage? expectedStage = null,
+  string? perspectiveName = null,
+  Func<TMessage, bool>? messageFilter = null) : IReceptor<TMessage>, IAcceptsLifecycleContext
   where TMessage : IMessage {
 
-  private readonly TaskCompletionSource<bool> _completionSource;
-  private readonly LifecycleStage? _expectedStage;
-  private readonly string? _perspectiveName;
-  private readonly Func<TMessage, bool>? _messageFilter;
+  private readonly TaskCompletionSource<bool> _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
+  private readonly LifecycleStage? _expectedStage = expectedStage;
+  private readonly string? _perspectiveName = perspectiveName;
+  private readonly Func<TMessage, bool>? _messageFilter = messageFilter;
   private int _invocationCount;
   private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
@@ -69,25 +80,6 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
   /// Gets the last message received by this receptor.
   /// </summary>
   public TMessage? LastMessage { get; private set; }
-
-  /// <summary>
-  /// Creates a new generic lifecycle completion receptor.
-  /// </summary>
-  /// <param name="completionSource">Task completion source to signal when processing completes.</param>
-  /// <param name="expectedStage">Optional lifecycle stage to validate (null = any stage).</param>
-  /// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
-  /// <param name="messageFilter">Optional predicate to filter which messages signal completion.</param>
-  public GenericLifecycleCompletionReceptor(
-    TaskCompletionSource<bool> completionSource,
-    LifecycleStage? expectedStage = null,
-    string? perspectiveName = null,
-    Func<TMessage, bool>? messageFilter = null) {
-
-    _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
-    _expectedStage = expectedStage;
-    _perspectiveName = perspectiveName;
-    _messageFilter = messageFilter;
-  }
 
   /// <summary>
   /// Handles the message by signaling completion.

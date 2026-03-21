@@ -403,10 +403,7 @@ public class JsonMessageSerializerTests {
     await Assert.That(deserialized.Hops[0].CorrelationId).IsEqualTo(correlationId);
     await Assert.That(deserialized.Hops[0].ServiceInstance.ServiceName).IsEqualTo("TestService");
 
-    var hopMetadata = deserialized.Hops[0].Metadata;
-    if (hopMetadata == null) {
-      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
-    }
+    var hopMetadata = deserialized.Hops[0].Metadata ?? throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
     await Assert.That(hopMetadata["key1"].GetString()).IsEqualTo("value1");
     await Assert.That(hopMetadata["key2"].GetInt32()).IsEqualTo(123);
   }
@@ -439,7 +436,7 @@ public class JsonMessageSerializerTests {
     var deserialized = await serializer.DeserializeAsync<SerializerTestCommand>(bytes);
 
     // Assert - Metadata should remain null after round-trip
-    await Assert.That(deserialized.Hops[0].Metadata!).IsNull();
+    await Assert.That(deserialized.Hops[0].Metadata).IsNull();
   }
 
   // ===========================
@@ -740,7 +737,7 @@ public class JsonMessageSerializerTests {
   public async Task CorrelationIdConverter_Read_WithNullValue_ShouldThrowJsonExceptionAsync() {
     // Arrange
     var converter = new CorrelationIdConverter();
-    var json = "null";
+    const string json = "null";
     var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json));
     reader.Read();
 

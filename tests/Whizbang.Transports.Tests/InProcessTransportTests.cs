@@ -529,9 +529,7 @@ public class InProcessTransportTests {
     );
 
     await transport.SubscribeAsync(
-      handler: (env, envelopeType, ct) => {
-        return Task.CompletedTask;
-      },
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination
     );
 

@@ -142,5 +142,4 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(List<ICommand>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-public partial class InfrastructureJsonContext : JsonSerializerContext {
-}
+public partial class InfrastructureJsonContext : JsonSerializerContext;

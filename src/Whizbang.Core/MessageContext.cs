@@ -111,12 +111,12 @@ public class MessageContext : IMessageContext {
   /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_CapturesScopeContextFromInitiatingContextAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/MessageContextInitiatingContextTests.cs</tests>
   public static MessageContext New() {
-    // Capture the current scope context - the message will OWN and CARRY it
-    IScopeContext? scopeContext = null;
     string? userId = null;
     string? tenantId = null;
 
     var initiatingContext = ScopeContextAccessor.CurrentInitiatingContext;
+    // Capture the current scope context - the message will OWN and CARRY it
+    IScopeContext? scopeContext;
     if (initiatingContext is not null) {
       // InitiatingContext is the source of truth - capture its scope
       scopeContext = initiatingContext.ScopeContext;

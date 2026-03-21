@@ -35,7 +35,7 @@ public class DispatcherSingletonTrackerTests {
     // Arrange - Shared singleton tracker (simulates DI singleton)
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
-    var perspectiveName = "MyApp.Perspectives.ActivityProjection";
+    const string perspectiveName = "MyApp.Perspectives.ActivityProjection";
     var eventType = typeof(SingletonTestStartedEvent);
 
     var singletonTracker = new SyncEventTracker();
@@ -219,8 +219,8 @@ public class DispatcherSingletonTrackerTests {
   [Test]
   public async Task TrackedEventTypeRegistry_GetPerspectiveNames_ReturnsCorrectPerspectivesAsync() {
     // Arrange
-    var perspective1 = "MyApp.Perspectives.ActivityProjection";
-    var perspective2 = "MyApp.Perspectives.ReportingProjection";
+    const string perspective1 = "MyApp.Perspectives.ActivityProjection";
+    const string perspective2 = "MyApp.Perspectives.ReportingProjection";
 
     var registry = new TrackedEventTypeRegistry(new Dictionary<Type, string[]> {
       { typeof(SingletonTestStartedEvent), [perspective1, perspective2] },  // Same event, two perspectives

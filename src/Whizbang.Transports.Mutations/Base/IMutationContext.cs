@@ -24,17 +24,14 @@ public interface IMutationContext {
 /// </summary>
 /// <docs>apis/mutations/hooks#context</docs>
 /// <tests>tests/Whizbang.Transports.Mutations.Tests/Unit/MutationContextTests.cs</tests>
-public sealed class MutationContext : IMutationContext {
-  /// <summary>
-  /// Creates a new mutation context.
-  /// </summary>
-  /// <param name="cancellationToken">The cancellation token for the request.</param>
-  public MutationContext(CancellationToken cancellationToken) {
-    CancellationToken = cancellationToken;
-  }
+/// <remarks>
+/// Creates a new mutation context.
+/// </remarks>
+/// <param name="cancellationToken">The cancellation token for the request.</param>
+public sealed class MutationContext(CancellationToken cancellationToken) : IMutationContext {
 
   /// <inheritdoc />
-  public CancellationToken CancellationToken { get; }
+  public CancellationToken CancellationToken { get; } = cancellationToken;
 
   /// <inheritdoc />
   public IDictionary<string, object?> Items { get; } = new Dictionary<string, object?>();

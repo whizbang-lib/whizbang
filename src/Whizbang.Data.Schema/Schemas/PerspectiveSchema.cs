@@ -26,7 +26,7 @@ public static class PerspectiveSchema {
     return new TableDefinition(
       Name: name,
       Columns: columns,
-      Indexes: indexes ?? ImmutableArray<IndexDefinition>.Empty
+      Indexes: indexes ?? []
     );
   }
 
@@ -47,16 +47,16 @@ public static class PerspectiveSchema {
     var idColumn = new ColumnDefinition(
       Name: "id",
       DataType: WhizbangDataType.UUID,
-      PrimaryKey: true,
       Nullable: false
-    );
+,
+      PrimaryKey: true);
 
     var allColumns = ImmutableArray.Create(idColumn).AddRange(additionalColumns);
 
     return new TableDefinition(
       Name: name,
       Columns: allColumns,
-      Indexes: indexes ?? ImmutableArray<IndexDefinition>.Empty
+      Indexes: indexes ?? []
     );
   }
 
@@ -72,9 +72,9 @@ public static class PerspectiveSchema {
     public static readonly ColumnDefinition Id = new(
       Name: "id",
       DataType: WhizbangDataType.UUID,
-      PrimaryKey: true,
       Nullable: false
-    );
+,
+      PrimaryKey: true);
 
     /// <summary>
     /// Timestamp column for when the record was created.

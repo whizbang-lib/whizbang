@@ -45,7 +45,7 @@ inputs:
     description: 'Notification message'
     required: true
   status:
-    description: 'Status: success, failure, cancelled, deployed, deploy-failed, pr-created, pr-merged, or custom'
+    description: 'Status: success, failure, cancelled, deployed, deploy-failed, approval-needed, pr-created, pr-merged, or custom'
     required: false
     default: 'success'
   url:
@@ -75,6 +75,10 @@ inputs:
     description: 'Sound for failed deployments'
     required: false
     default: 'siren'
+  sound-approval-needed:
+    description: 'Sound for approval requests'
+    required: false
+    default: 'persistent'
   sound-pr-created:
     description: 'Sound for new pull requests'
     required: false
@@ -115,6 +119,7 @@ runs:
         SOUND_CANCELLED: ${{ inputs.sound-cancelled }}
         SOUND_DEPLOYED: ${{ inputs.sound-deployed }}
         SOUND_DEPLOY_FAILED: ${{ inputs.sound-deploy-failed }}
+        SOUND_APPROVAL_NEEDED: ${{ inputs.sound-approval-needed }}
         SOUND_PR_CREATED: ${{ inputs.sound-pr-created }}
         SOUND_PR_MERGED: ${{ inputs.sound-pr-merged }}
         PRIORITY_OVERRIDE: ${{ inputs.priority }}
@@ -139,6 +144,10 @@ runs:
             ;;
           deploy-failed)
             SOUND="$SOUND_DEPLOY_FAILED"
+            PRIORITY="${PRIORITY_OVERRIDE:-1}"
+            ;;
+          approval-needed)
+            SOUND="$SOUND_APPROVAL_NEEDED"
             PRIORITY="${PRIORITY_OVERRIDE:-1}"
             ;;
           pr-created)

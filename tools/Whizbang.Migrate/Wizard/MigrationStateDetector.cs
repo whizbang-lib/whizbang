@@ -46,7 +46,7 @@ public static class MigrationStateDetector {
         StartedAt = decisionFile.State.StartedAt,
         LastUpdatedAt = decisionFile.State.LastUpdatedAt,
         GitCommitBefore = decisionFile.State.GitCommitBefore,
-        CompletedCategories = decisionFile.State.CompletedCategories.ToList(),
+        CompletedCategories = [.. decisionFile.State.CompletedCategories],
         CurrentCategory = decisionFile.State.CurrentCategory,
         CurrentItem = decisionFile.State.CurrentItem
       };

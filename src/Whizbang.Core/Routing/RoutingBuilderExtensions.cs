@@ -7,12 +7,12 @@ namespace Whizbang.Core.Routing;
 /// Marker interface to indicate that <see cref="RoutingBuilderExtensions.WithRouting"/> was called.
 /// Used by <c>AddTransportConsumer</c> to verify routing is configured.
 /// </summary>
-internal interface IRoutingConfigured { }
+internal interface IRoutingConfigured;
 
 /// <summary>
 /// Internal implementation of <see cref="IRoutingConfigured"/> marker.
 /// </summary>
-internal sealed class RoutingConfiguredMarker : IRoutingConfigured { }
+internal sealed class RoutingConfiguredMarker : IRoutingConfigured;
 
 /// <summary>
 /// Extension methods for configuring message routing on <see cref="WhizbangBuilder"/>.

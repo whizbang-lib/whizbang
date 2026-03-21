@@ -13,13 +13,9 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// using the stored EnvelopeType field.
 /// </summary>
 [FireAt(LifecycleStage.PostDistributeInline)]
-public sealed class DistributeStageTestReceptor : IReceptor<ProductCreatedEvent>, IAcceptsLifecycleContext {
-  private readonly TaskCompletionSource<ProductCreatedEvent> _completionSource;
+public sealed class DistributeStageTestReceptor(TaskCompletionSource<ProductCreatedEvent> completionSource) : IReceptor<ProductCreatedEvent>, IAcceptsLifecycleContext {
+  private readonly TaskCompletionSource<ProductCreatedEvent> _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
   private ILifecycleContext? _context;
-
-  public DistributeStageTestReceptor(TaskCompletionSource<ProductCreatedEvent> completionSource) {
-    _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
-  }
 
   public void SetLifecycleContext(ILifecycleContext context) {
     _context = context;

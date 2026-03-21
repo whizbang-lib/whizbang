@@ -105,14 +105,19 @@ public sealed class LifecycleStageAwaiter<TMessage> : IAwaiterIdentity, IDisposa
 /// <summary>
 /// Internal receptor that signals completion when invoked.
 /// </summary>
-internal sealed class LifecycleCompletionReceptor<TMessage> : IReceptor<TMessage>, IAcceptsLifecycleContext
+internal sealed class LifecycleCompletionReceptor<TMessage>(
+  TaskCompletionSource<TMessage> tcs,
+  string? perspectiveName = null,
+  Func<TMessage, bool>? messageFilter = null,
+  LifecycleStage? expectedStage = null,
+  bool skipInboxForDistributeStages = true) : IReceptor<TMessage>, IAcceptsLifecycleContext
   where TMessage : IMessage {
 
-  private readonly TaskCompletionSource<TMessage> _tcs;
-  private readonly string? _perspectiveName;
-  private readonly Func<TMessage, bool>? _messageFilter;
-  private readonly LifecycleStage? _expectedStage;
-  private readonly bool _skipInboxForDistributeStages;
+  private readonly TaskCompletionSource<TMessage> _tcs = tcs;
+  private readonly string? _perspectiveName = perspectiveName;
+  private readonly Func<TMessage, bool>? _messageFilter = messageFilter;
+  private readonly LifecycleStage? _expectedStage = expectedStage;
+  private readonly bool _skipInboxForDistributeStages = skipInboxForDistributeStages;
   private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
   private int _invocationCount;
 
@@ -122,20 +127,8 @@ internal sealed class LifecycleCompletionReceptor<TMessage> : IReceptor<TMessage
   // CA1822: Uses static AsyncLocal but needs instance access for interface pattern
 #pragma warning disable CA1822
   public ILifecycleContext? LastLifecycleContext => _asyncLocalContext.Value;
-#pragma warning restore CA1822
 
-  public LifecycleCompletionReceptor(
-    TaskCompletionSource<TMessage> tcs,
-    string? perspectiveName = null,
-    Func<TMessage, bool>? messageFilter = null,
-    LifecycleStage? expectedStage = null,
-    bool skipInboxForDistributeStages = true) {
-    _tcs = tcs;
-    _perspectiveName = perspectiveName;
-    _messageFilter = messageFilter;
-    _expectedStage = expectedStage;
-    _skipInboxForDistributeStages = skipInboxForDistributeStages;
-  }
+#pragma warning restore CA1822
 
   public ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default) {
     LastMessage = message;

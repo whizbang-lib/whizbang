@@ -88,7 +88,7 @@ public class ApplyCommandTests {
 
     try {
       var sourceFile = Path.Combine(tempDir, "Handler.cs");
-      var originalContent = """
+      const string originalContent = """
         using Wolverine;
 
         public class CreateOrderHandler : IHandle<CreateOrderCommand> {

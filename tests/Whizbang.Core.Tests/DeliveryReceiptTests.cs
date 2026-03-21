@@ -16,7 +16,7 @@ public class DeliveryReceiptTests {
   public async Task Accepted_CreatesReceiptWithAcceptedStatusAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestReceptor";
+    const string destination = "TestReceptor";
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
 
@@ -36,7 +36,7 @@ public class DeliveryReceiptTests {
   public async Task Queued_CreatesReceiptWithQueuedStatusAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestQueue";
+    const string destination = "TestQueue";
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
 
@@ -56,7 +56,7 @@ public class DeliveryReceiptTests {
   public async Task Delivered_CreatesReceiptWithDeliveredStatusAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
 
     // Act
     var receipt = DeliveryReceipt.Delivered(messageId, destination);
@@ -71,7 +71,7 @@ public class DeliveryReceiptTests {
   public async Task Failed_CreatesReceiptWithFailedStatusAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "FailedHandler";
+    const string destination = "FailedHandler";
     var exception = new InvalidOperationException("Test error");
 
     // Act
@@ -90,7 +90,7 @@ public class DeliveryReceiptTests {
   public async Task Metadata_IsEmptyByDefault_WhenNoMetadataProvidedAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
 
     // Act
     var receipt = DeliveryReceipt.Accepted(messageId, destination);
@@ -104,7 +104,7 @@ public class DeliveryReceiptTests {
   public async Task Timestamp_IsSetToCurrentTime_WhenReceiptCreatedAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var before = DateTimeOffset.UtcNow;
 
     // Act
@@ -135,7 +135,7 @@ public class DeliveryReceiptTests {
   public async Task Constructor_WithMetadata_CopiesMetadataDictionaryAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var originalMetadata = new Dictionary<string, JsonElement> {
       ["Key1"] = JsonSerializer.SerializeToElement("Value1"),
       ["Key2"] = JsonSerializer.SerializeToElement(42)
@@ -163,7 +163,7 @@ public class DeliveryReceiptTests {
   public async Task AllProperties_AreAccessible_ThroughInterfaceAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
 
@@ -188,7 +188,7 @@ public class DeliveryReceiptTests {
   public async Task Accepted_WithStreamId_IncludesStreamIdAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestReceptor";
+    const string destination = "TestReceptor";
     var streamId = Guid.NewGuid();
 
     // Act
@@ -204,7 +204,7 @@ public class DeliveryReceiptTests {
   public async Task Queued_WithStreamId_IncludesStreamIdAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestQueue";
+    const string destination = "TestQueue";
     var streamId = Guid.NewGuid();
 
     // Act
@@ -220,7 +220,7 @@ public class DeliveryReceiptTests {
   public async Task Delivered_WithStreamId_IncludesStreamIdAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var streamId = Guid.NewGuid();
 
     // Act
@@ -236,7 +236,7 @@ public class DeliveryReceiptTests {
   public async Task Failed_WithStreamId_IncludesStreamIdAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "FailedHandler";
+    const string destination = "FailedHandler";
     var streamId = Guid.NewGuid();
     var exception = new InvalidOperationException("Test error");
 
@@ -253,7 +253,7 @@ public class DeliveryReceiptTests {
   public async Task FactoryMethods_WithoutStreamId_StreamIdIsNullAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
 
     // Act - Create receipts without streamId parameter
     var accepted = DeliveryReceipt.Accepted(messageId, destination);
@@ -272,7 +272,7 @@ public class DeliveryReceiptTests {
   public async Task Constructor_WithStreamId_SetsStreamIdPropertyAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var streamId = Guid.NewGuid();
 
     // Act
@@ -292,7 +292,7 @@ public class DeliveryReceiptTests {
   public async Task StreamId_IsAccessible_ThroughInterfaceAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var destination = "TestHandler";
+    const string destination = "TestHandler";
     var streamId = Guid.NewGuid();
 
     // Act

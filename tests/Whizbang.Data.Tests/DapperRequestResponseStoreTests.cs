@@ -35,5 +35,5 @@ public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests
     GC.SuppressFinalize(this);
   }
 
-  private sealed class TestFixture : DapperTestBase { }
+  private sealed class TestFixture : DapperTestBase;
 }

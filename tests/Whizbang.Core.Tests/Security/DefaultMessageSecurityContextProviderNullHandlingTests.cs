@@ -207,8 +207,8 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   [Test]
   public async Task EstablishContextAsync_WithJsonElementPayload_AndSecurityInHops_ExtractsContextAsync() {
     // Arrange - JsonElement payload WITH security in hops
-    var testUserId = "test-user";
-    var testTenantId = "test-tenant";
+    const string testUserId = "test-user";
+    const string testTenantId = "test-tenant";
 
     var provider = new DefaultMessageSecurityContextProvider(
       extractors: [new TestScopeExtractor(testUserId, testTenantId)],
@@ -239,14 +239,9 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   /// <summary>
   /// Test extractor that always returns a fixed security extraction.
   /// </summary>
-  private sealed class TestScopeExtractor : ISecurityContextExtractor {
-    private readonly string _userId;
-    private readonly string _tenantId;
-
-    public TestScopeExtractor(string userId, string tenantId) {
-      _userId = userId;
-      _tenantId = tenantId;
-    }
+  private sealed class TestScopeExtractor(string userId, string tenantId) : ISecurityContextExtractor {
+    private readonly string _userId = userId;
+    private readonly string _tenantId = tenantId;
 
     public int Priority => 1;
 
@@ -268,14 +263,10 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   /// <summary>
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullPayload : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullPayload(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;
@@ -289,14 +280,10 @@ public class DefaultMessageSecurityContextProviderNullHandlingTests {
   /// <summary>
   /// Test envelope with null Hops to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullHops : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullHops(MessageId messageId) : IMessageEnvelope {
+    public MessageId MessageId { get; } = messageId;
     public object Payload => new { };
     public List<MessageHop> Hops => null!; // Simulates null Hops from bad deserialization
-
-    public TestEnvelopeWithNullHops(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

@@ -99,7 +99,7 @@ public abstract class MutationEndpointBase<TCommand, TResult>
       TRequest request,
       CancellationToken ct) where TRequest : notnull {
     throw new NotImplementedException(
-        $"When using a custom RequestType, you must override MapRequestToCommandAsync " +
+        "When using a custom RequestType, you must override MapRequestToCommandAsync " +
         $"in your partial class to map {typeof(TRequest).Name} to {typeof(TCommand).Name}.");
   }
 

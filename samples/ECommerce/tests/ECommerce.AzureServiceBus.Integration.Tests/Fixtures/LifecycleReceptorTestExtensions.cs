@@ -146,7 +146,7 @@ public static class LifecycleReceptorTestExtensions {
         // Register using reflection (since we don't know TEvent at compile time)
         var registerMethod = typeof(IReceptorRegistry).GetMethod(nameof(IReceptorRegistry.Register))!
           .MakeGenericMethod(eventType);
-        registerMethod.Invoke(registry, new[] { receptor, LifecycleStage.PostPerspectiveInline });
+        registerMethod.Invoke(registry, [receptor, LifecycleStage.PostPerspectiveInline]);
       }
 
       // Wait for all completions with timeout
@@ -161,7 +161,7 @@ public static class LifecycleReceptorTestExtensions {
 
         var unregisterMethod = typeof(IReceptorRegistry).GetMethod(nameof(IReceptorRegistry.Unregister))!
           .MakeGenericMethod(eventType);
-        unregisterMethod.Invoke(registry, new[] { receptor, LifecycleStage.PostPerspectiveInline });
+        unregisterMethod.Invoke(registry, [receptor, LifecycleStage.PostPerspectiveInline]);
       }
     }
   }

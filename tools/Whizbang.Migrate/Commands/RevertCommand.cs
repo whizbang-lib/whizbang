@@ -93,14 +93,12 @@ public static class RevertCommand {
       // Non-fatal - reset succeeded but clean failed
       return new RevertResult(
           true,
-          WarningMessage: "Reset succeeded but failed to clean untracked files. Some generated files may remain.",
-          GitCommitReverted: decisionFile.State.GitCommitBefore);
+          GitCommitReverted: decisionFile.State.GitCommitBefore,
+          WarningMessage: "Reset succeeded but failed to clean untracked files. Some generated files may remain.");
     }
 
     // Update decision file status
-    decisionFile.UpdateState(s => {
-      s.Status = MigrationStatus.Reverted;
-    });
+    decisionFile.UpdateState(s => s.Status = MigrationStatus.Reverted);
 
     // Save updated decision file or delete
     if (deleteDecisionFile) {

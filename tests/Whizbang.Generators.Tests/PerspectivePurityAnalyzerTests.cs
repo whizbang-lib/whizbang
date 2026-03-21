@@ -23,7 +23,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPureServiceInjection_ReportsWHIZ105WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -75,7 +75,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_PureServiceInjection_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -129,7 +129,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NoDependencies_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -168,7 +168,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ValueTypeParameter_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -212,7 +212,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_ClassImplementingPureServiceInterface_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Attributes;
             using Whizbang.Core.Perspectives;
@@ -267,7 +267,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_NonPerspectiveClass_NoWarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
 
             namespace TestApp;
@@ -305,7 +305,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_GlobalPerspectiveWithNonPureService_ReportsWHIZ105Async() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 
@@ -358,7 +358,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_AsyncApplyMethod_ReportsWHIZ100ErrorAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using System.Threading.Tasks;
             using Whizbang.Core.Perspectives;
@@ -401,7 +401,7 @@ public class PerspectivePurityAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Analyzer_DateTimeUtcNowUsage_ReportsWHIZ104WarningAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Perspectives;
 

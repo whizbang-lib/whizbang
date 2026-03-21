@@ -36,7 +36,7 @@ public class PerspectiveSyncAwaiterTests {
   [Test]
   public async Task SyncResult_StoresAllPropertiesAsync() {
     var outcome = SyncOutcome.Synced;
-    var eventsAwaited = 5;
+    const int eventsAwaited = 5;
     var elapsed = TimeSpan.FromMilliseconds(100);
 
     var result = new SyncResult(outcome, eventsAwaited, elapsed);

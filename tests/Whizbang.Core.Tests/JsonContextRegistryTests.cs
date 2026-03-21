@@ -37,7 +37,7 @@ public partial class JsonContextRegistryTests {
   public async Task RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync() {
     // Arrange
     var converter = new TestIdJsonConverter();
-    var initialCount = JsonContextRegistry.RegisteredCount;
+    _ = JsonContextRegistry.RegisteredCount;
 
     // Act
     JsonContextRegistry.RegisterConverter(converter);
@@ -135,7 +135,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithValidArguments_RegistersSuccessfullyAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     var initialCount = JsonContextRegistry.RegisteredTypeNameCount;
 
@@ -164,7 +164,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithNullType_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
 
     // Act & Assert
@@ -178,7 +178,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task RegisterTypeName_WithNullResolver_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
 
     // Act & Assert
     var exception = await Assert.That(() =>
@@ -191,7 +191,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithRegisteredType_ReturnsJsonTypeInfoAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
@@ -207,13 +207,13 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesShortFormToFullFormAsync() {
     // Arrange - Register with short form
-    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(shortForm, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with full AssemblyQualifiedName (includes Version, Culture, PublicKeyToken)
-    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
 
     // Assert - Should match despite different formats
@@ -224,13 +224,13 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesFullFormToShortFormAsync() {
     // Arrange - Register with full AssemblyQualifiedName
-    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var resolver = TestMessageJsonContext.Default;
     JsonContextRegistry.RegisterTypeName(fullForm, typeof(TestMessage), resolver);
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with short form
-    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(shortForm, options);
 
     // Assert - Should match despite different formats
@@ -241,7 +241,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithUnregisteredType_ReturnsNullAsync() {
     // Arrange
-    var typeName = "SomeUnregisteredType, SomeAssembly";
+    const string typeName = "SomeUnregisteredType, SomeAssembly";
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act
@@ -278,7 +278,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithNullOptions_ReturnsNullAsync() {
     // Arrange
-    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    const string typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
 
     // Act
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, null!);
@@ -308,8 +308,8 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task GetTypeInfoByName_WithEnvelopeType_ReturnsEnvelopeJsonTypeInfoAsync() {
     // Arrange - Register both payload type and envelope type (simulating MessageJsonContextGenerator)
-    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     // Register the resolver itself (needed for CreateCombinedOptions to include it)
@@ -337,8 +337,8 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task EnvelopeType_CanBeDeserializedFromJson_WithRegisteredTypeInfoAsync() {
     // Arrange - Register both payload type and envelope type
-    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     // Register the resolver itself (needed for CreateCombinedOptions to include it)
@@ -376,7 +376,7 @@ public partial class JsonContextRegistryTests {
   [Test]
   public async Task EnvelopeType_WithFullAssemblyQualifiedName_MatchesFuzzilyAsync() {
     // Arrange - Register with short form (what generator produces)
-    var shortForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    const string shortForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
     JsonContextRegistry.RegisterTypeName(
@@ -388,7 +388,7 @@ public partial class JsonContextRegistryTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - Lookup with full AssemblyQualifiedName (what AzureServiceBusTransport sends)
-    var fullForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string fullForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
     var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
 
     // Assert - Should match despite different formats (fuzzy matching)
@@ -1128,7 +1128,7 @@ public partial class JsonContextRegistryTests {
   public async Task GetTypeInfoByName_WithInterfaceEnvelopeTypeName_ReturnsNullAsync() {
     // Arrange - The exact type name sent by transports for interface-typed envelopes
     // This simulates what happens when a service publishes MessageEnvelope<IEvent>
-    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+    const string interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Act - GetTypeInfoByName won't find MessageEnvelope<IEvent> because only concrete types are registered
@@ -1180,7 +1180,7 @@ public partial class JsonContextRegistryTests {
     await Assert.That(json).Contains("\"$type\":\"PolymorphicFallbackTestEvent\"");
 
     // Simulate transport fallback: GetTypeInfoByName returns null...
-    var interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core]], Whizbang.Core";
+    const string interfaceEnvelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core]], Whizbang.Core";
     var directLookup = JsonContextRegistry.GetTypeInfoByName(interfaceEnvelopeTypeName, options);
     await Assert.That(directLookup).IsNull(); // Confirms fallback is needed
 
@@ -1258,7 +1258,7 @@ public partial class JsonContextRegistryTests {
     var eventId = Guid.NewGuid();
     var messageId = MessageId.New();
     var payload = new PolymorphicFallbackTestEvent("test-data", eventId);
-    var envelope = new MessageEnvelope<IEvent>(messageId, payload, []);
+    _ = new MessageEnvelope<IEvent>(messageId, payload, []);
 
     // BROKEN: Serialize using CONCRETE type info (no $type discriminator)
     var concreteTypeInfo = options.GetTypeInfo(typeof(MessageEnvelope<PolymorphicFallbackTestEvent>));
@@ -1333,7 +1333,7 @@ public partial class JsonContextRegistryTests {
     var options = JsonContextRegistry.CreateCombinedOptions();
 
     // Simulate outbox storing the interface envelope type name
-    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
+    const string envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.IEvent, Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=0.9.3.0, Culture=neutral, PublicKeyToken=null";
 
     // Create envelope with concrete payload
     var eventId = Guid.NewGuid();

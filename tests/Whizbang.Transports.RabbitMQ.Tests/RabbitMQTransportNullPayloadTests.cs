@@ -34,7 +34,7 @@ public class RabbitMQTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithMissingPayloadField_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with all fields except "p" (Payload)
-    var jsonWithoutPayload = """
+    const string jsonWithoutPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "h": []
@@ -71,7 +71,7 @@ public class RabbitMQTransportNullPayloadTests {
   [Test]
   public async Task Deserialize_WithExplicitNullPayload_ReturnsEnvelopeWithNullPayloadAsync() {
     // Arrange - JSON with explicit null for "p" (Payload)
-    var jsonWithNullPayload = """
+    const string jsonWithNullPayload = """
       {
         "id": "01234567-89ab-cdef-0123-456789abcdef",
         "p": null,
@@ -211,14 +211,10 @@ public class RabbitMQTransportNullPayloadTests {
   /// <summary>
   /// Test envelope with null Payload to simulate deserialization edge case.
   /// </summary>
-  private sealed class TestEnvelopeWithNullPayload : IMessageEnvelope {
-    public MessageId MessageId { get; }
+  private sealed class TestEnvelopeWithNullPayload(MessageId messageId) : IMessageEnvelope {
+    public MessageId MessageId { get; } = messageId;
     public object Payload => null!; // Simulates null payload from bad deserialization
     public List<MessageHop> Hops { get; } = [];
-
-    public TestEnvelopeWithNullPayload(MessageId messageId) {
-      MessageId = messageId;
-    }
 
     public CorrelationId? GetCorrelationId() => null;
     public MessageId? GetCausationId() => null;

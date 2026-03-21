@@ -27,7 +27,7 @@ public class ReceptorNotFoundException(Type messageType) : Exception(_formatMess
   /// <summary>
   /// The type of message that has no receptor.
   /// </summary>
-  public Type MessageType { get; } = messageType;
+  public Type MessageType => messageType;
 
   private static string _formatMessage(Type messageType) {
     return $@"No receptor found for message type '{messageType.FullName}'.

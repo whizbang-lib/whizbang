@@ -18,15 +18,14 @@ public class SubscriptionNameDerivationTests {
   [Test]
   public async Task DeriveSubscriptionNameWithSubscriberNameMetadataUsesServiceNameAndTopicAsync() {
     // Arrange
-    var subscriberName = "bff-service";
-    var topicName = "jdx.contracts.chat";
+    const string subscriberName = "bff-service";
+    const string topicName = "jdx.contracts.chat";
 
     // Create metadata with SubscriberName
     var metadata = new Dictionary<string, JsonElement> {
       ["SubscriberName"] = JsonSerializer.SerializeToElement(subscriberName)
     };
-
-    var destination = new TransportDestination(topicName, "#", metadata);
+    _ = new TransportDestination(topicName, "#", metadata);
 
     // Act - Derive subscription name (testing the helper directly since _deriveSubscriptionName is private)
     var derivedName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -38,9 +37,9 @@ public class SubscriptionNameDerivationTests {
   [Test]
   public async Task DeriveSubscriptionNameWithHashWildcardDoesNotUseAsSubscriptionNameAsync() {
     // Arrange - wildcard routing key should NOT be used as subscription name
-    var subscriberName = "order-service";
-    var topicName = "domain.events";
-    var routingKey = "#"; // This is the wildcard pattern
+    const string subscriberName = "order-service";
+    const string topicName = "domain.events";
+    const string routingKey = "#"; // This is the wildcard pattern
 
     // Generate what the subscription name SHOULD be
     var expectedSubscriptionName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(subscriberName, topicName);
@@ -53,8 +52,8 @@ public class SubscriptionNameDerivationTests {
   [Test]
   public async Task DeriveSubscriptionNameWithCommaSeparatedPatternDoesNotUseAsSubscriptionNameAsync() {
     // Arrange - comma-separated patterns should NOT be used as subscription name
-    var subscriberName = "inventory-service";
-    var topicName = "shared.inbox";
+    const string subscriberName = "inventory-service";
+    const string topicName = "shared.inbox";
     const string invalidRoutingKey = "ns1.#,ns2.#,ns3.#"; // Multiple patterns - would be invalid
 
     // Generate what the subscription name SHOULD be (using helper, not routing key)
@@ -72,8 +71,8 @@ public class SubscriptionNameDerivationTests {
   [Test]
   public async Task DeriveSubscriptionNameWithAsteriskWildcardDoesNotUseAsSubscriptionNameAsync() {
     // Arrange - asterisk wildcard should NOT be used as subscription name
-    var subscriberName = "payment-service";
-    var topicName = "payment.events";
+    const string subscriberName = "payment-service";
+    const string topicName = "payment.events";
     const string invalidRoutingKey = "payment.*"; // Single-level wildcard - would be invalid
 
     // Generate what the subscription name SHOULD be (using helper, not routing key)

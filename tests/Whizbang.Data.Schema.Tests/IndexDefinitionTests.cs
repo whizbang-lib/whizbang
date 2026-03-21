@@ -16,7 +16,7 @@ public class IndexDefinitionTests {
     // Arrange & Act
     var index = new IndexDefinition(
       Name: "idx_created_at",
-      Columns: ImmutableArray.Create("created_at")
+      Columns: ["created_at"]
     );
 
     // Assert
@@ -31,7 +31,7 @@ public class IndexDefinitionTests {
     // Arrange & Act
     var index = new IndexDefinition(
       Name: "test_idx",
-      Columns: ImmutableArray.Create("col1")
+      Columns: ["col1"]
     );
 
     // Assert - Verify default values
@@ -43,7 +43,7 @@ public class IndexDefinitionTests {
     // Arrange & Act
     var index = new IndexDefinition(
       Name: "idx_composite",
-      Columns: ImmutableArray.Create("tenant_id", "user_id", "created_at")
+      Columns: ["tenant_id", "user_id", "created_at"]
     );
 
     // Assert
@@ -58,7 +58,7 @@ public class IndexDefinitionTests {
     // Arrange & Act
     var index = new IndexDefinition(
       Name: "idx_unique_email",
-      Columns: ImmutableArray.Create("email"),
+      Columns: ["email"],
       Unique: true
     );
 
@@ -71,13 +71,13 @@ public class IndexDefinitionTests {
     // Arrange
     var index1 = new IndexDefinition(
       Name: "idx_test",
-      Columns: ImmutableArray.Create("col1", "col2"),
+      Columns: ["col1", "col2"],
       Unique: true
     );
 
     var index2 = new IndexDefinition(
       Name: "idx_test",
-      Columns: ImmutableArray.Create("col1", "col2"),
+      Columns: ["col1", "col2"],
       Unique: true
     );
 
@@ -92,8 +92,8 @@ public class IndexDefinitionTests {
   [Test]
   public async Task IndexDefinition_DifferentName_AreNotEqualAsync() {
     // Arrange
-    var index1 = new IndexDefinition("idx1", ImmutableArray.Create("col1"));
-    var index2 = new IndexDefinition("idx2", ImmutableArray.Create("col1"));
+    var index1 = new IndexDefinition("idx1", ["col1"]);
+    var index2 = new IndexDefinition("idx2", ["col1"]);
 
     // Act & Assert
     await Assert.That(index1).IsNotEqualTo(index2);
@@ -102,8 +102,8 @@ public class IndexDefinitionTests {
   [Test]
   public async Task IndexDefinition_DifferentColumns_AreNotEqualAsync() {
     // Arrange
-    var index1 = new IndexDefinition("idx", ImmutableArray.Create("col1"));
-    var index2 = new IndexDefinition("idx", ImmutableArray.Create("col2"));
+    var index1 = new IndexDefinition("idx", ["col1"]);
+    var index2 = new IndexDefinition("idx", ["col2"]);
 
     // Act & Assert
     await Assert.That(index1).IsNotEqualTo(index2);
@@ -112,8 +112,8 @@ public class IndexDefinitionTests {
   [Test]
   public async Task IndexDefinition_DifferentUnique_AreNotEqualAsync() {
     // Arrange
-    var index1 = new IndexDefinition("idx", ImmutableArray.Create("col1"), Unique: true);
-    var index2 = new IndexDefinition("idx", ImmutableArray.Create("col1"), Unique: false);
+    var index1 = new IndexDefinition("idx", ["col1"], Unique: true);
+    var index2 = new IndexDefinition("idx", ["col1"], Unique: false);
 
     // Act & Assert
     await Assert.That(index1).IsNotEqualTo(index2);

@@ -169,7 +169,7 @@ public class NotifiableResult {
   public Guid OrderId { get; init; }
 }
 
-public class RecoverableCommand : ICommand { }
+public class RecoverableCommand : ICommand;
 
 public class RecoveryResult {
   public bool Recovered { get; init; }
@@ -201,9 +201,9 @@ public class CreateOrderResult {
   public string ProductId { get; init; } = string.Empty;
 }
 
-public class CancellableCommand : ICommand { }
+public class CancellableCommand : ICommand;
 
-public class CancellableResult { }
+public class CancellableResult;
 
 public class LoggableCommand : ICommand {
   public string Action { get; init; } = string.Empty;

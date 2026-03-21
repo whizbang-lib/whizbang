@@ -32,5 +32,5 @@ public class DapperSequenceProviderTests : SequenceProviderContractTests, IDispo
     GC.SuppressFinalize(this);
   }
 
-  private sealed class TestFixture : DapperTestBase { }
+  private sealed class TestFixture : DapperTestBase;
 }

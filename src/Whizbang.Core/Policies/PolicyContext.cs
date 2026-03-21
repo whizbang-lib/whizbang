@@ -275,7 +275,7 @@ public class PolicyContext {
 
     throw new InvalidOperationException(
         $"Message type {MessageType.Name} does not have a property marked with [StreamId] attribute. " +
-        $"Add [StreamId] to a Guid property to enable stream ID extraction."
+        "Add [StreamId] to a Guid property to enable stream ID extraction."
     );
   }
 }

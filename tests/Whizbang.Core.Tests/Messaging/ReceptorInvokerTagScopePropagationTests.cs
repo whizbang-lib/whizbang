@@ -351,13 +351,9 @@ public class ReceptorInvokerTagScopePropagationTests {
   /// Hook that receives IScopeContextAccessor via DI injection (like production hooks).
   /// Verifies that a NEW DI scope's accessor instance still reads the same AsyncLocal.
   /// </summary>
-  private sealed class AccessorInjectedHook : IMessageTagHook<SignalTagAttribute> {
-    private readonly IScopeContextAccessor _accessor;
+  private sealed class AccessorInjectedHook(IScopeContextAccessor accessor) : IMessageTagHook<SignalTagAttribute> {
+    private readonly IScopeContextAccessor _accessor = accessor;
     public static Action<IScopeContext?>? OnInvoked { get; set; }
-
-    public AccessorInjectedHook(IScopeContextAccessor accessor) {
-      _accessor = accessor;
-    }
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> context,
@@ -368,7 +364,7 @@ public class ReceptorInvokerTagScopePropagationTests {
   }
 
   private sealed class TestReceptorRegistry : IReceptorRegistry {
-    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = new();
+    private readonly Dictionary<(Type, LifecycleStage), List<ReceptorInfo>> _receptors = [];
 
     public void AddReceptor(LifecycleStage stage, ReceptorInfo receptor) {
       var key = (receptor.MessageType, stage);

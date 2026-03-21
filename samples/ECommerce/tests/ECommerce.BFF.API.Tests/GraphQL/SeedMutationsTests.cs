@@ -92,12 +92,8 @@ public class SeedMutationsTests {
   /// <summary>
   /// Test double for IProductCatalogLens that returns configurable products
   /// </summary>
-  private class TestProductCatalogLens : IProductCatalogLens {
-    private readonly List<ProductDto> _products;
-
-    public TestProductCatalogLens(List<ProductDto> products) {
-      _products = products;
-    }
+  private class TestProductCatalogLens(List<ProductDto> products) : IProductCatalogLens {
+    private readonly List<ProductDto> _products = products;
 
     public Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {

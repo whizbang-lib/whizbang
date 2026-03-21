@@ -54,8 +54,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task MixedOperations_GetNextAndReset_ShouldBeThreadSafeAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "mixed-ops-stream";
-    var getNextCount = 50;
+    const string streamKey = "mixed-ops-stream";
+    const int getNextCount = 50;
     var getTasks = new Task<long>[getNextCount];
 
     // Act - Mix GetNext calls with a Reset in the middle
@@ -184,8 +184,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task ResetDuringConcurrentAccess_ShouldNotCorruptAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "reset-concurrent-stream";
-    var callCount = 100;
+    const string streamKey = "reset-concurrent-stream";
+    const int callCount = 100;
     var allTasks = new List<Task>();
 
     // Act - Mix GetNext and Reset calls concurrently
@@ -296,7 +296,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task UnusedStreams_ShouldReturnMinusOneAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var neverUsedStreamId = "never-used-stream";
+    const string neverUsedStreamId = "never-used-stream";
 
     // Act - Get current for a stream that was never initialized
     var current = await provider.GetCurrentAsync(neverUsedStreamId);
@@ -309,7 +309,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "get-current-test-stream";
+    const string streamKey = "get-current-test-stream";
 
     // Act
     await provider.GetNextAsync(streamKey); // 0
@@ -325,7 +325,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   public async Task CancellationToken_Cancelled_ShouldThrowAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var streamKey = "cancellation-test-stream";
+    const string streamKey = "cancellation-test-stream";
     var cts = new CancellationTokenSource();
     cts.Cancel();
 

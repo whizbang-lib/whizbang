@@ -46,13 +46,11 @@ public class TopicRegistryGenerator : IIncrementalGenerator {
   private static TopicInfo? _extractTopicInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
-
     var typeDeclaration = (TypeDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
     // Get type symbol
-    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (typeSymbol is null || typeSymbol.IsAbstract) {
+    if (semanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol typeSymbol || typeSymbol.IsAbstract) {
       return null;  // Early exit - Roslyn returned null or abstract type
     }
 

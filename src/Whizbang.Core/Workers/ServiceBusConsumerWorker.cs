@@ -321,7 +321,7 @@ public partial class ServiceBusConsumerWorker(
     if (string.IsNullOrWhiteSpace(envelopeTypeFromTransport)) {
       throw new InvalidOperationException(
         $"EnvelopeType is required from transport but was null/empty. MessageId: {envelope.MessageId}. " +
-        $"This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
+        "This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
     }
 
     // Extract message type from envelope type string
@@ -347,9 +347,9 @@ public partial class ServiceBusConsumerWorker(
       throw new InvalidOperationException(
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"This indicates double-serialization or incorrect envelope creation. " +
-        $"Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
-        $"not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
+        "This indicates double-serialization or incorrect envelope creation. " +
+        "Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
+        "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
       var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
@@ -362,7 +362,7 @@ public partial class ServiceBusConsumerWorker(
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
       var boundMethod = genericEnvelopeMethod!.MakeGenericMethod(payloadType);
-      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, [envelope])!;
       jsonEnvelope = serialized.JsonEnvelope;
 
       // NOTE: We use envelopeTypeFromTransport instead of serialized.EnvelopeType
@@ -424,7 +424,7 @@ public partial class ServiceBusConsumerWorker(
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
     }
 
     var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);

@@ -120,7 +120,7 @@ public class RestMutationEndpointBaseTests {
     var command = new TestCommand { Value = "specific-value" };
 
     // Act
-    var result = await endpoint.TestExecuteAsync(command, CancellationToken.None);
+    _ = await endpoint.TestExecuteAsync(command, CancellationToken.None);
 
     // Assert
     await Assert.That(endpoint.LastDispatchedCommand).IsEqualTo(command);

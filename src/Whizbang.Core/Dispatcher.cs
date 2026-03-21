@@ -120,9 +120,9 @@ public abstract partial class Dispatcher(
   // Owned domains for routing decisions - resolved from RoutingOptions if available
   private readonly HashSet<string> _ownedDomains = _resolveOwnedDomains(serviceProvider);
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
-#pragma warning disable S4487 // Pre-resolved for use by subclasses and future features
+#pragma warning disable S4487, S1144 // Pre-resolved for use by subclasses and future features
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
-#pragma warning restore S4487
+#pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
@@ -130,9 +130,9 @@ public abstract partial class Dispatcher(
   // Auto-populate processor - populates message properties from envelope context
   private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
-#pragma warning disable S4487 // Pre-resolved for use by subclasses and future features
+#pragma warning disable S4487, S1144 // Pre-resolved for use by subclasses and future features
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions ?? serviceProvider.GetService<IOptionsMonitor<TracingOptions>>();
-#pragma warning restore S4487
+#pragma warning restore S4487, S1144
   // Cascade context factory for unified context propagation
   private readonly CascadeContextFactory _cascadeContextFactory = cascadeContextFactory ?? serviceProvider.GetService<CascadeContextFactory>() ?? new CascadeContextFactory(null);
   // Event completion awaiter for waiting on all perspectives to process events (RPC waiting)
@@ -3392,12 +3392,10 @@ public abstract partial class Dispatcher(
     }
 
     // Try both AggregateId (generated key) and aggregateId (legacy key)
-    if (metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement)) {
-      if (aggIdElement.ValueKind == JsonValueKind.String) {
-        if (Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
-          return guidValue;
-        }
-      }
+    if ((metadata.TryGetValue("AggregateId", out var aggIdElement) || metadata.TryGetValue("aggregateId", out aggIdElement))
+        && aggIdElement.ValueKind == JsonValueKind.String
+        && Guid.TryParse(aggIdElement.GetString(), out var guidValue)) {
+      return guidValue;
     }
 
     return null;
@@ -4407,12 +4405,12 @@ public abstract partial class Dispatcher(
     // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
     if (typeof(TMessage) == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
+        "BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
         $"Envelope type: {envelope.GetType().FullName}. " +
         $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
         $"PayloadType parameter: {payloadType.FullName}. " +
-        $"This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
+        "This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
     }
 
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
@@ -4441,7 +4439,7 @@ public abstract partial class Dispatcher(
         $"TMessage type parameter: {typeof(TMessage).FullName}. " +
         $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
         $"PayloadType parameter: {payloadType.FullName}. " +
-        $"The serializer defensive checks should have caught this!");
+        "The serializer defensive checks should have caught this!");
     }
 
     var outboxMessage = new OutboxMessage {
@@ -4463,16 +4461,16 @@ public abstract partial class Dispatcher(
     if (outboxMessage.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase) ||
         outboxMessage.EnvelopeType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
       throw new InvalidOperationException(
-        $"FINAL CHECK FAILED: OutboxMessage contains JsonElement in type metadata. " +
+        "FINAL CHECK FAILED: OutboxMessage contains JsonElement in type metadata. " +
         $"MessageId={outboxMessage.MessageId}, " +
         $"MessageType={outboxMessage.MessageType}, " +
         $"EnvelopeType={outboxMessage.EnvelopeType}, " +
         $"TMessage={typeof(TMessage).FullName}, " +
         $"PayloadType={payloadType.FullName}, " +
         $"Payload runtime type={payload?.GetType().FullName ?? "null"}. " +
-        $"This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
-        $"(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
-        $"All these cases should have been caught by earlier checks!");
+        "This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
+        "(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
+        "All these cases should have been caught by earlier checks!");
     }
 
     return outboxMessage;

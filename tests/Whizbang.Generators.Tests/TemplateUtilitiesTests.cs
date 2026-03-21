@@ -19,7 +19,7 @@ public class TemplateUtilitiesTests {
   [Test]
   public async Task ReplaceRegion_WithValidRegion_ReplacesContentAsync() {
     // Arrange
-    var template = @"
+    const string template = @"
 namespace Test;
 
 #region ROUTING
@@ -28,7 +28,7 @@ namespace Test;
 
 public class Test { }";
 
-    var replacement = "// Generated routing code\nif (true) { }";
+    const string replacement = "// Generated routing code\nif (true) { }";
 
     // Act
     var result = TemplateUtilities.ReplaceRegion(template, "ROUTING", replacement);
@@ -41,14 +41,14 @@ public class Test { }";
   [Test]
   public async Task ReplaceRegion_WithNonExistentRegion_ReturnsOriginalAsync() {
     // Arrange - Tests the match.Success == false branch
-    var template = @"
+    const string template = @"
 namespace Test;
 
 #region ROUTING
 // Placeholder
 #endregion";
 
-    var replacement = "// Generated code";
+    const string replacement = "// Generated code";
 
     // Act
     var result = TemplateUtilities.ReplaceRegion(template, "NONEXISTENT", replacement);
@@ -61,14 +61,14 @@ namespace Test;
   [Test]
   public async Task ReplaceRegion_PreservesIndentationAsync() {
     // Arrange
-    var template = @"
+    const string template = @"
 public class Test {
   #region METHODS
   // Placeholder
   #endregion
 }";
 
-    var replacement = "public void DoSomething() {\n  return;\n}";
+    const string replacement = "public void DoSomething() {\n  return;\n}";
 
     // Act
     var result = TemplateUtilities.ReplaceRegion(template, "METHODS", replacement);
@@ -81,7 +81,7 @@ public class Test {
   [Test]
   public async Task IndentCode_WithNullCode_ReturnsNullAsync() {
     // Arrange - Tests string.IsNullOrEmpty(code) branch
-    string? code = null;
+    const string? code = null;
 
     // Act
     var result = TemplateUtilities.IndentCode(code!, "  ");
@@ -93,7 +93,7 @@ public class Test {
   [Test]
   public async Task IndentCode_WithEmptyCode_ReturnsEmptyAsync() {
     // Arrange - Tests string.IsNullOrEmpty(code) branch
-    var code = "";
+    const string code = "";
 
     // Act
     var result = TemplateUtilities.IndentCode(code, "  ");
@@ -105,7 +105,7 @@ public class Test {
   [Test]
   public async Task IndentCode_WithWhitespaceLine_PreservesItAsync() {
     // Arrange - Tests string.IsNullOrWhiteSpace(line) branch
-    var code = "line1\n   \nline2";
+    const string code = "line1\n   \nline2";
 
     // Act
     var result = TemplateUtilities.IndentCode(code, "  ");
@@ -117,7 +117,7 @@ public class Test {
   [Test]
   public async Task IndentCode_WithNonEmptyLines_IndentsThemAsync() {
     // Arrange
-    var code = "line1\nline2\nline3";
+    const string code = "line1\nline2\nline3";
 
     // Act
     var result = TemplateUtilities.IndentCode(code, "  ");
@@ -129,7 +129,7 @@ public class Test {
   [Test]
   public async Task IndentCode_WithMixedLineEndings_HandlesAllTypesAsync() {
     // Arrange - Tests all line ending types: \r\n, \r, \n
-    var code = "line1\r\nline2\rline3\nline4";
+    const string code = "line1\r\nline2\rline3\nline4";
 
     // Act
     var result = TemplateUtilities.IndentCode(code, "  ");
@@ -206,7 +206,7 @@ public class Test {
   [RequiresAssemblyFiles()]
   public async Task ReplaceHeaderRegion_ReplacesTimestampAsync() {
     // Arrange
-    var template = @"
+    const string template = @"
 #region HEADER
 // Old header
 #endregion
@@ -226,7 +226,7 @@ namespace Test;";
   [Test]
   public async Task RemoveIndentation_WithNullCode_ReturnsNullAsync() {
     // Arrange - Tests string.IsNullOrEmpty(code) branch in RemoveIndentation
-    string? code = null;
+    const string? code = null;
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
@@ -242,7 +242,7 @@ namespace Test;";
   [Test]
   public async Task RemoveIndentation_WithEmptyIndentation_ReturnsOriginalAsync() {
     // Arrange - Tests string.IsNullOrEmpty(indentationToRemove) branch
-    var code = "  line1\n  line2";
+    const string code = "  line1\n  line2";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
@@ -258,7 +258,7 @@ namespace Test;";
   [Test]
   public async Task RemoveIndentation_WithWhitespaceLine_PreservesItAsync() {
     // Arrange - Tests string.IsNullOrWhiteSpace(line) branch in RemoveIndentation
-    var code = "  line1\n   \n  line2";
+    const string code = "  line1\n   \n  line2";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
@@ -274,7 +274,7 @@ namespace Test;";
   [Test]
   public async Task RemoveIndentation_WithMatchingIndentation_RemovesItAsync() {
     // Arrange - Tests line.StartsWith(indentationToRemove) == true branch
-    var code = "  line1\n  line2\n  line3";
+    const string code = "  line1\n  line2\n  line3";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
@@ -290,7 +290,7 @@ namespace Test;";
   [Test]
   public async Task RemoveIndentation_WithNonMatchingIndentation_KeepsLineAsync() {
     // Arrange - Tests line.StartsWith(indentationToRemove) == false branch
-    var code = "  line1\nline2\n  line3";
+    const string code = "  line1\nline2\n  line3";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(

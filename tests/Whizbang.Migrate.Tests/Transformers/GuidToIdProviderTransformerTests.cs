@@ -16,7 +16,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_G01_GuidNewGuid_TransformsToIdProviderNewGuidAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -39,7 +39,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_G01_GuidCreateVersion7_TransformsToIdProviderNewGuidAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -61,7 +61,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_G01_SystemGuidNewGuid_TransformsToIdProviderNewGuidAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService(ILogger logger) {
         public System.Guid CreateOrder() {
           return System.Guid.NewGuid();
@@ -81,7 +81,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_G01_SystemGuidCreateVersion7_TransformsToIdProviderNewGuidAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService(ILogger logger) {
         public System.Guid CreateOrder() {
           return System.Guid.CreateVersion7();
@@ -105,7 +105,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_ClassWithPrimaryConstructor_AddsIdProviderParameterAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -129,7 +129,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_RecordWithPrimaryConstructor_AddsIdProviderParameterAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public record OrderService(ILogger Logger) {
@@ -152,7 +152,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_ClassWithoutPrimaryConstructor_EmitsWarningAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -182,7 +182,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_ClassAlreadyHasIdProvider_DoesNotDuplicateAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Whizbang.Core;
 
@@ -210,7 +210,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_AddsWhizbangCoreUsingDirectiveAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -232,7 +232,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_ExistingWhizbangCoreUsing_DoesNotDuplicateAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Whizbang.Core;
 
@@ -259,7 +259,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_NoGuidGeneration_ReturnsUnchangedAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -281,7 +281,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_GuidParseNotTransformed_OnlyGenerationCallsAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -307,7 +307,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_MultipleGuidCalls_TransformsAllAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -337,7 +337,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_TracksAllChangesAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -364,7 +364,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_GuidInFieldInitializer_TransformsAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {
@@ -386,7 +386,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_GuidInLambda_TransformsAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using System.Collections.Generic;
       using System.Linq;
@@ -412,7 +412,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_PreservesNamespaceAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       namespace MyApp.Services;
@@ -435,7 +435,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_EmptyPrimaryConstructor_AddsFirstParameterAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService() {
@@ -457,7 +457,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_NestedClass_TransformsCorrectlyAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public static class OrderHandlers {
@@ -481,7 +481,7 @@ public class GuidToIdProviderTransformerTests {
   public async Task TransformAsync_MultipleClasses_TransformsBothAsync() {
     // Arrange
     var transformer = new GuidToIdProviderTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService(ILogger logger) {

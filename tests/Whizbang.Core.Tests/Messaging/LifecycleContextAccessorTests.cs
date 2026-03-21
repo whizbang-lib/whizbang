@@ -41,8 +41,9 @@ public class LifecycleContextAccessorTests {
 
     // Act - set and get in the same async context
     await Task.Run(() => {
-      var accessor = new TestableAccessor();
-      accessor.Current = context;
+      var accessor = new TestableAccessor {
+        Current = context
+      };
       captured = accessor.Current;
     });
 
@@ -65,8 +66,9 @@ public class LifecycleContextAccessorTests {
 
     // Act - set a value, then clear it
     await Task.Run(() => {
-      var accessor = new TestableAccessor();
-      accessor.Current = context;
+      var accessor = new TestableAccessor {
+        Current = context
+      };
       accessor.Current = null;
       captured = accessor.Current;
     });
@@ -90,15 +92,17 @@ public class LifecycleContextAccessorTests {
 
     // Act - set different contexts in separate async scopes
     var task1 = Task.Run(() => {
-      var accessor = new TestableAccessor();
-      accessor.Current = context1;
+      var accessor = new TestableAccessor {
+        Current = context1
+      };
       Thread.Sleep(50); // Ensure overlap
       captured1 = accessor.Current;
     });
 
     var task2 = Task.Run(() => {
-      var accessor = new TestableAccessor();
-      accessor.Current = context2;
+      var accessor = new TestableAccessor {
+        Current = context2
+      };
       Thread.Sleep(50); // Ensure overlap
       captured2 = accessor.Current;
     });
@@ -133,8 +137,9 @@ public class LifecycleContextAccessorTests {
 
     // Act
     await Task.Run(() => {
-      var accessor = new TestableAccessor();
-      accessor.Current = context;
+      var accessor = new TestableAccessor {
+        Current = context
+      };
       captured = accessor.Current;
     });
 

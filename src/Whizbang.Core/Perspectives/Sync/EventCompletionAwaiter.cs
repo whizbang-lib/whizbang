@@ -19,20 +19,16 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/event-completion</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/EventCompletionAwaiterTests.cs</tests>
-public sealed class EventCompletionAwaiter : IEventCompletionAwaiter {
+/// <remarks>
+/// Initializes a new instance of the <see cref="EventCompletionAwaiter"/> class.
+/// </remarks>
+/// <param name="syncEventTracker">The sync event tracker to use for waiting.</param>
+/// <exception cref="ArgumentNullException">Thrown when <paramref name="syncEventTracker"/> is null.</exception>
+public sealed class EventCompletionAwaiter(ISyncEventTracker syncEventTracker) : IEventCompletionAwaiter {
   /// <inheritdoc />
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly ISyncEventTracker _syncEventTracker;
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="EventCompletionAwaiter"/> class.
-  /// </summary>
-  /// <param name="syncEventTracker">The sync event tracker to use for waiting.</param>
-  /// <exception cref="ArgumentNullException">Thrown when <paramref name="syncEventTracker"/> is null.</exception>
-  public EventCompletionAwaiter(ISyncEventTracker syncEventTracker) {
-    _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
-  }
+  private readonly ISyncEventTracker _syncEventTracker = syncEventTracker ?? throw new ArgumentNullException(nameof(syncEventTracker));
 
   /// <inheritdoc />
   public Task<bool> WaitForEventsAsync(

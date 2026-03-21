@@ -608,26 +608,18 @@ public class MessageSecurityContextProviderTests {
   /// <summary>
   /// Test double for ISecurityContextExtractor.
   /// </summary>
-  private sealed class TestExtractor : ISecurityContextExtractor {
-    private readonly Action? _onExtract;
-    private readonly Func<CancellationToken, Task>? _onExtractAsync;
-    private readonly Action<IMessageEnvelope, MessageSecurityOptions>? _onExtractWithContext;
-    private readonly SecurityExtraction? _extraction;
+  private sealed class TestExtractor(
+    int priority,
+    SecurityExtraction? extraction = null,
+    Action? onExtract = null,
+    Func<CancellationToken, Task>? onExtractAsync = null,
+    Action<IMessageEnvelope, MessageSecurityOptions>? onExtractWithContext = null) : ISecurityContextExtractor {
+    private readonly Action? _onExtract = onExtract;
+    private readonly Func<CancellationToken, Task>? _onExtractAsync = onExtractAsync;
+    private readonly Action<IMessageEnvelope, MessageSecurityOptions>? _onExtractWithContext = onExtractWithContext;
+    private readonly SecurityExtraction? _extraction = extraction;
 
-    public int Priority { get; }
-
-    public TestExtractor(
-      int priority,
-      SecurityExtraction? extraction = null,
-      Action? onExtract = null,
-      Func<CancellationToken, Task>? onExtractAsync = null,
-      Action<IMessageEnvelope, MessageSecurityOptions>? onExtractWithContext = null) {
-      Priority = priority;
-      _extraction = extraction;
-      _onExtract = onExtract;
-      _onExtractAsync = onExtractAsync;
-      _onExtractWithContext = onExtractWithContext;
-    }
+    public int Priority { get; } = priority;
 
     public async ValueTask<SecurityExtraction?> ExtractAsync(
       IMessageEnvelope envelope,
@@ -647,12 +639,8 @@ public class MessageSecurityContextProviderTests {
   /// <summary>
   /// Test double for ISecurityContextCallback.
   /// </summary>
-  private sealed class TestCallback : ISecurityContextCallback {
-    private readonly Action<IScopeContext>? _onCallback;
-
-    public TestCallback(Action<IScopeContext>? onCallback = null) {
-      _onCallback = onCallback;
-    }
+  private sealed class TestCallback(Action<IScopeContext>? onCallback = null) : ISecurityContextCallback {
+    private readonly Action<IScopeContext>? _onCallback = onCallback;
 
     public ValueTask OnContextEstablishedAsync(
       IScopeContext context,

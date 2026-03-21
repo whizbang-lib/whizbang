@@ -85,7 +85,7 @@ public static class WhizbangIdProviderRegistry {
       if (!_factories.TryGetValue(typeof(TId), out var factory)) {
         throw new InvalidOperationException(
           $"No provider factory registered for {typeof(TId).Name}. " +
-          $"Ensure the WhizbangIdGenerator has processed this type. " +
+          "Ensure the WhizbangIdGenerator has processed this type. " +
           $"Add the [WhizbangId] attribute to the {typeof(TId).Name} struct declaration.");
       }
 
@@ -118,7 +118,7 @@ public static class WhizbangIdProviderRegistry {
   /// <returns>Collection of all registered ID types</returns>
   public static IEnumerable<Type> GetRegisteredIdTypes() {
     lock (_lock) {
-      return _factories.Keys.ToArray();
+      return [.. _factories.Keys];
     }
   }
 

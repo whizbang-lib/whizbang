@@ -38,17 +38,13 @@ namespace Whizbang.SignalR.Hooks;
 /// <docs>apis/signalr/notification-hooks</docs>
 /// <tests>Whizbang.SignalR.Tests/Hooks/SignalRNotificationHookTests.cs</tests>
 /// <typeparam name="THub">The SignalR hub type to use for notifications.</typeparam>
-public sealed class SignalRNotificationHook<THub> : IMessageTagHook<SignalTagAttribute>
+/// <remarks>
+/// Creates a new SignalR notification hook.
+/// </remarks>
+/// <param name="hubContext">The SignalR hub context for sending notifications.</param>
+public sealed class SignalRNotificationHook<THub>(IHubContext<THub> hubContext) : IMessageTagHook<SignalTagAttribute>
     where THub : Hub {
-  private readonly IHubContext<THub> _hubContext;
-
-  /// <summary>
-  /// Creates a new SignalR notification hook.
-  /// </summary>
-  /// <param name="hubContext">The SignalR hub context for sending notifications.</param>
-  public SignalRNotificationHook(IHubContext<THub> hubContext) {
-    _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
-  }
+  private readonly IHubContext<THub> _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
 
   /// <summary>
   /// Sends a SignalR notification for the tagged message.

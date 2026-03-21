@@ -13,12 +13,12 @@ public class InventoryLens(ILensQuery<InventoryLevelDto> query) : IInventoryLens
 
   /// <inheritdoc />
   public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    return await _query.GetByIdAsync(productId, cancellationToken);
+    return await _query.DefaultScope.GetByIdAsync(productId, cancellationToken);
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetAllAsync(CancellationToken cancellationToken = default) {
-    var results = await _query.Query
+    var results = await _query.DefaultScope.Query
       .AsNoTracking()
       .Select(row => row.Data)
       .ToListAsync(cancellationToken);
@@ -28,7 +28,7 @@ public class InventoryLens(ILensQuery<InventoryLevelDto> query) : IInventoryLens
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetLowStockAsync(int threshold = 10, CancellationToken cancellationToken = default) {
-    var results = await _query.Query
+    var results = await _query.DefaultScope.Query
       .AsNoTracking()
       .Where(row => row.Data.Quantity - row.Data.Reserved <= threshold)
       .Select(row => row.Data)

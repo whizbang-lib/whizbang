@@ -96,8 +96,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       // Wait for emulator to be ready
       Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
       var containerName = $"whizbang-test-servicebus-{_port}";
-      var maxWaitSeconds = 180;
-      var pollIntervalSeconds = 5;
+      const int maxWaitSeconds = 180;
+      const int pollIntervalSeconds = 5;
       var elapsed = 0;
 
       while (elapsed < maxWaitSeconds) {
@@ -260,19 +260,20 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     // Mounts Config.json which defines:
     // - topic-00 with sub-00-a subscription
     // - topic-01 with sub-01-a subscription
-    return $@"services:
+    return $"""
+services:
   servicebus-emulator:
     container_name: whizbang-test-servicebus-{_port}
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     ports:
-      - ""{_port}:5672""
+      - "{_port}:5672"
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
       - SQL_SERVER=mssql
       - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
     volumes:
-      - ""{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro""
+      - "{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro"
     depends_on:
       - mssql
     mem_limit: 4g
@@ -281,12 +282,13 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     container_name: whizbang-test-mssql-{_port}
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports:
-      - ""{_port + 10000}:1433""
+      - "{_port + 10000}:1433"
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
     mem_limit: 4g
-";
+
+""";
   }
 
   private async Task _warmupAsync(CancellationToken cancellationToken = default) {
@@ -297,8 +299,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     Console.WriteLine("[ServiceBusEmulator] Warming up...");
 
     // Warmup topic-00
-    var topicName = "topic-00";
-    var subscriptionName = "sub-00-a";
+    const string topicName = "topic-00";
+    const string subscriptionName = "sub-00-a";
 
     var sender = _client.CreateSender(topicName);
     var receiver = _client.CreateReceiver(topicName, subscriptionName);
@@ -349,11 +351,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi);
-    if (process == null) {
-      throw new InvalidOperationException("Failed to start docker compose process");
-    }
-
+    using var process = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start docker compose process");
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {

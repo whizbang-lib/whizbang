@@ -86,7 +86,7 @@ public class LocalEventStorageTests : EFCoreTestBase {
   /// </summary>
   public static class LocalEventTracker {
     private static readonly List<object> _events = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {

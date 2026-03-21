@@ -79,7 +79,7 @@ public class StreamIdCascadeFromLocalInvokeTests {
 
   public static class CascadeStreamIdEventTracker {
     private static readonly List<IEvent> _publishedEvents = [];
-    private static readonly object _lock = new();
+    private static readonly Lock _lock = new();
 
     public static void Reset() {
       lock (_lock) {
@@ -95,7 +95,7 @@ public class StreamIdCascadeFromLocalInvokeTests {
 
     public static IReadOnlyList<IEvent> GetPublishedEvents() {
       lock (_lock) {
-        return _publishedEvents.ToList();
+        return [.. _publishedEvents];
       }
     }
 

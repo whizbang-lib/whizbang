@@ -46,7 +46,7 @@ public class SystemTimeProviderTests {
   [Test]
   public async Task Constructor_WithNullTimeProvider_ThrowsArgumentNullExceptionAsync() {
     // Arrange & Act & Assert
-    var action = () => new SystemTimeProvider(null!);
+    SystemTimeProvider action() => new(null!);
 
     await Assert.That(action).ThrowsExactly<ArgumentNullException>()
         .WithParameterName("timeProvider");

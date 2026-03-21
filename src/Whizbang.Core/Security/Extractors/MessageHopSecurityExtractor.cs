@@ -21,16 +21,12 @@ namespace Whizbang.Core.Security.Extractors;
 /// </remarks>
 /// <docs>fundamentals/security/message-security#message-hop-extractor</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/MessageHopSecurityExtractorTests.cs</tests>
-public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtractor {
-  private readonly ILogger<MessageHopSecurityExtractor>? _logger;
-
-  /// <summary>
-  /// Creates a new instance of MessageHopSecurityExtractor.
-  /// </summary>
-  /// <param name="logger">Optional logger for diagnostics.</param>
-  public MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) {
-    _logger = logger;
-  }
+/// <remarks>
+/// Creates a new instance of MessageHopSecurityExtractor.
+/// </remarks>
+/// <param name="logger">Optional logger for diagnostics.</param>
+public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecurityExtractor>? logger = null) : ISecurityContextExtractor {
+  private readonly ILogger<MessageHopSecurityExtractor>? _logger = logger;
 
   /// <summary>
   /// Default priority for MessageHopSecurityExtractor.
@@ -179,18 +175,6 @@ public sealed partial class MessageHopSecurityExtractor : ISecurityContextExtrac
     public static void HopScopeValuesNull(ILogger? logger, ValueObjects.MessageId messageId) {
       if (logger != null) {
         HopScopeValuesNullInternal(logger, messageId);
-      }
-    }
-
-    [LoggerMessage(
-      EventId = 6,
-      Level = LogLevel.Warning,
-      Message = "MessageHopSecurityExtractor: ScopeProp.Scope not found in Values. MessageId={MessageId}, AvailableKeys=[{AvailableKeys}]")]
-    private static partial void ScopePropNotFoundInternal(ILogger logger, ValueObjects.MessageId messageId, string availableKeys);
-
-    public static void ScopePropNotFound(ILogger? logger, ValueObjects.MessageId messageId, string availableKeys) {
-      if (logger != null) {
-        ScopePropNotFoundInternal(logger, messageId, availableKeys);
       }
     }
 

@@ -33,8 +33,14 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
-# Minimal top-level permissions; write permissions are declared at job level
-permissions: read-all
+# Grant permissions needed across jobs; jobs restrict further as needed
+permissions:
+  contents: write    # Required for tag creation and GitHub releases
+  id-token: write    # Required for NuGet OIDC trusted publishing
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   # Only run if this is a merged release PR or a manual dry run
@@ -51,34 +57,35 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_MERGED: ${{ github.event.pull_request.merged }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
-            DRY_RUN="${{ inputs.dry_run }}"
             if [ "$DRY_RUN" == "true" ]; then
               echo "Manual trigger - dry run mode"
-              echo "should_release=false" >> $GITHUB_OUTPUT
-              echo "version=" >> $GITHUB_OUTPUT
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "version=" >> "$GITHUB_OUTPUT"
             else
               echo "Manual trigger - release mode"
-              echo "should_release=true" >> $GITHUB_OUTPUT
-              echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
             fi
           elif [ "$PR_MERGED" == "true" ]; then
             # Check if PR title matches release pattern
             if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
               echo "Release PR merged - version: $VERSION"
-              echo "should_release=true" >> $GITHUB_OUTPUT
-              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             else
               echo "PR merged but not a release PR"
-              echo "should_release=false" >> $GITHUB_OUTPUT
-              echo "version=" >> $GITHUB_OUTPUT
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "version=" >> "$GITHUB_OUTPUT"
             fi
           else
             echo "PR not merged, skipping"
-            echo "should_release=false" >> $GITHUB_OUTPUT
-            echo "version=" >> $GITHUB_OUTPUT
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
           fi
 
   version:
@@ -127,16 +134,16 @@ jobs:
           echo "::warning::GitVersion failed, using fallback version extraction"
           # Try to extract from inputs.version first
           if [ -n "$INPUT_VERSION" ]; then
-            echo "major=0" >> $GITHUB_OUTPUT
-            echo "minor=0" >> $GITHUB_OUTPUT
-            echo "patch=0" >> $GITHUB_OUTPUT
-            echo "preReleaseTag=" >> $GITHUB_OUTPUT
+            echo "major=0" >> "$GITHUB_OUTPUT"
+            echo "minor=0" >> "$GITHUB_OUTPUT"
+            echo "patch=0" >> "$GITHUB_OUTPUT"
+            echo "preReleaseTag=" >> "$GITHUB_OUTPUT"
           else
             # Default fallback
-            echo "major=0" >> $GITHUB_OUTPUT
-            echo "minor=9" >> $GITHUB_OUTPUT
-            echo "patch=99" >> $GITHUB_OUTPUT
-            echo "preReleaseTag=fallback" >> $GITHUB_OUTPUT
+            echo "major=0" >> "$GITHUB_OUTPUT"
+            echo "minor=9" >> "$GITHUB_OUTPUT"
+            echo "patch=99" >> "$GITHUB_OUTPUT"
+            echo "preReleaseTag=fallback" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Calculate Final Version
@@ -216,12 +223,12 @@ jobs:
             fi
           fi
 
-          echo "semver=$SEMVER" >> $GITHUB_OUTPUT
-          echo "fullsemver=$FULLSEMVER" >> $GITHUB_OUTPUT
-          echo "major=$MAJOR" >> $GITHUB_OUTPUT
-          echo "minor=$MINOR" >> $GITHUB_OUTPUT
-          echo "patch=$PATCH" >> $GITHUB_OUTPUT
-          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "fullsemver=$FULLSEMVER" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
           echo "Final version: $SEMVER"
 
@@ -238,32 +245,83 @@ jobs:
           GV_BRANCH: ${{ steps.gitversion.outputs.branchName }}
           GV_SHA: ${{ steps.gitversion.outputs.sha }}
         run: |
-          echo "## Version Information (Dry Run)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| SemVer | \`$SEMVER\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| FullSemVer | \`$FULLSEMVER\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Major | $V_MAJOR |" >> $GITHUB_STEP_SUMMARY
-          echo "| Minor | $V_MINOR |" >> $GITHUB_STEP_SUMMARY
-          echo "| Patch | $V_PATCH |" >> $GITHUB_STEP_SUMMARY
-          echo "| PreRelease | $V_PRERELEASE |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | $GV_BRANCH |" >> $GITHUB_STEP_SUMMARY
-          echo "| SHA | $GV_SHA |" >> $GITHUB_STEP_SUMMARY
+          echo "## Version Information (Dry Run)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Property | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SemVer | \`$SEMVER\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| FullSemVer | \`$FULLSEMVER\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Major | $V_MAJOR |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Minor | $V_MINOR |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Patch | $V_PATCH |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PreRelease | $V_PRERELEASE |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Branch | $GV_BRANCH |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SHA | $GV_SHA |" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$INPUT_VERSION" ]; then
-            echo "| Version Source | Explicit: \`$INPUT_VERSION\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Version Source | Explicit: \`$INPUT_VERSION\` |" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "| Version Source | Auto-calculated ($INPUT_RELEASE_TYPE) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Version Source | Auto-calculated ($INPUT_RELEASE_TYPE) |" >> "$GITHUB_STEP_SUMMARY"
           fi
 
           echo ""
           echo "Calculated version: $SEMVER"
           echo "Full SemVer: $FULLSEMVER"
 
-  release:
-    name: Create Release
+  # ============================================================================
+  # Approval Flow - Notify and gate on human approval early
+  # ============================================================================
+
+  notify-approval-needed:
+    name: Notify Approval Needed
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true' && vars.PUSHOVER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Send Approval Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+          title: "🔑 Release v${{ needs.check-release.outputs.version }} needs approval"
+          message: "Release v${{ needs.check-release.outputs.version }} is ready for approval"
+          status: approval-needed
+          url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          url-title: "Approve Release"
+
+  approve:
+    name: Approve Release
     needs: check-release
     if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    environment: release-approval
+    steps:
+      - name: Release approved
+        env:
+          VERSION: ${{ needs.check-release.outputs.version }}
+        run: echo "Release v$VERSION approved"
+
+  # ============================================================================
+  # Release - Create tag and GitHub Release
+  # ============================================================================
+
+  release:
+    name: Create Release
+    needs: [check-release, approve]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -306,7 +364,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Version $VERSION is available for release"
+          echo "Version $VERSION is available for release"
 
       # Note: Version update is handled by start-release.yml before PR merge
       # Directory.Build.props already contains the correct version
@@ -322,7 +380,7 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
-      # Create release as DRAFT so nuget-publish.yml can add assets before publishing
+      # Create release as DRAFT so upload-release-assets can add assets before publishing
       - name: Create GitHub Release (stable only)
         if: ${{ !contains(needs.check-release.outputs.version, '-') }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -348,24 +406,129 @@ jobs:
           RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
-          echo "## Release Created" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v$RELEASE_VERSION" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: [v$RELEASE_VERSION](https://github.com/$REPO/releases/tag/v$RELEASE_VERSION)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The NuGet publish workflow will be triggered next." >> $GITHUB_STEP_SUMMARY
+          echo "## Release Created" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version**: v$RELEASE_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag**: [v$RELEASE_VERSION](https://github.com/$REPO/releases/tag/v$RELEASE_VERSION)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Build and pack will run next, followed by NuGet publish." >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # Build, Pack, and Publish
+  # ============================================================================
+
+  build-and-pack:
+    name: Build and Pack
+    needs: [check-release, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact-name: nuget-packages-${{ github.run_id }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: v${{ needs.check-release.outputs.version }}
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Packages.props') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        env:
+          VERSION: ${{ needs.check-release.outputs.version }}
+        run: dotnet build --configuration Release --no-restore -maxcpucount:1 -p:Version="$VERSION"
+
+      - name: Pack NuGet packages
+        env:
+          VERSION: ${{ needs.check-release.outputs.version }}
+        run: |
+          # NU5017 false positive for analyzer packages in .NET 10 SDK
+          dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
+
+      - name: Verify expected packages
+        run: |
+          # NOTE: Internal packages excluded (IsPackable=false):
+          #   - Whizbang.Generators.Shared (ILMerged into generator packages)
+          #   - Whizbang.Testing (empty placeholder)
+          EXPECTED_PACKAGES=(
+            "SoftwareExtravaganza.Whizbang.Core"
+            "SoftwareExtravaganza.Whizbang.Generators"
+            "SoftwareExtravaganza.Whizbang.Data.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.Schema"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
+            "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
+            "SoftwareExtravaganza.Whizbang.Observability"
+            "SoftwareExtravaganza.Whizbang.SignalR"
+            "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
+            "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
+            "SoftwareExtravaganza.Whizbang.Transports.Mutations"
+            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
+            "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
+            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
+            "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
+            "SoftwareExtravaganza.Whizbang.Hosting.AspNet"
+            "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
+            "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
+            "SoftwareExtravaganza.Whizbang.Migrate"
+            "SoftwareExtravaganza.Whizbang.CLI"
+          )
+
+          MISSING=0
+          for pkg in "${EXPECTED_PACKAGES[@]}"; do
+            if [ ! -f ./packages/${pkg}.*.nupkg ]; then
+              echo "ERROR: ${pkg} package not created"
+              MISSING=$((MISSING + 1))
+            else
+              echo "✓ ${pkg}"
+            fi
+          done
+
+          if [ $MISSING -gt 0 ]; then
+            echo ""
+            echo "ERROR: ${MISSING} package(s) missing"
+            exit 1
+          fi
+
+          echo ""
+          echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
+
+      - name: List packages
+        run: ls -la ./packages
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nuget-packages-${{ github.run_id }}
+          path: ./packages/*.nupkg
+          retention-days: 7
 
   publish:
     name: Publish to NuGet
-    needs: [check-release, release]
-    if: needs.check-release.outputs.should_release == 'true'
+    needs: [check-release, build-and-pack]
     permissions:
       contents: read
-      id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
-    uses: ./.github/workflows/nuget-publish.yml
+      id-token: write
+    uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.check-release.outputs.version }}
-      ref: v${{ needs.check-release.outputs.version }}
+      artifact-name: nuget-packages-${{ github.run_id }}
     secrets:
       PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
       PUSHOVER_USER_KEY_1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
@@ -379,11 +542,51 @@ jobs:
       PUSHOVER_USER_KEY_9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
       PUSHOVER_USER_KEY_10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
 
+  upload-release-assets:
+    name: Upload Release Assets
+    needs: [check-release, build-and-pack]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: nuget-packages-${{ github.run_id }}
+          path: ./packages
+
+      - name: Generate SHA256 hashes
+        run: |
+          cd ./packages
+          for file in *.nupkg; do
+            sha256sum "$file" > "$file.sha256"
+          done
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ needs.check-release.outputs.version }}
+          files: |
+            ./packages/*.nupkg
+            ./packages/*.sha256
+          fail_on_unmatched_files: false
+          draft: false
+
+      - name: Summary
+        env:
+          RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "## Release Assets Uploaded" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Release**: [v$RELEASE_VERSION](https://github.com/$REPO/releases/tag/v$RELEASE_VERSION)" >> "$GITHUB_STEP_SUMMARY"
+
   # Sync main back to develop after successful release
   sync-develop:
     name: Sync Main to Develop
     needs: [check-release, publish]
-    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -404,7 +607,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
         run: |
-          echo "Syncing main → develop after v$RELEASE_VERSION release"
+          echo "Syncing main -> develop after v$RELEASE_VERSION release"
 
           # Fetch all branches
           git fetch origin main develop
@@ -414,10 +617,10 @@ jobs:
 
           # Merge main into develop (should be fast-forward or simple merge)
           if git merge origin/main --no-edit -m "chore: sync main into develop after v$RELEASE_VERSION release"; then
-            echo "✅ Successfully merged main into develop"
+            echo "Successfully merged main into develop"
             git push origin develop
           else
-            echo "⚠️ Merge conflict detected"
+            echo "Merge conflict detected"
             echo "This usually means develop has commits not in main."
             echo "Manual intervention may be required."
             git merge --abort
@@ -428,8 +631,65 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.check-release.outputs.version }}
         run: |
-          echo "## Develop Branch Synced" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Main has been merged into develop after v$RELEASE_VERSION release." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This ensures develop has all release commits (version bumps, etc.)." >> $GITHUB_STEP_SUMMARY
+          echo "## Develop Branch Synced" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Main has been merged into develop after v$RELEASE_VERSION release." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This ensures develop has all release commits (version bumps, etc.)." >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # Notifications - comprehensive failure detection
+  # ============================================================================
+
+  notify-release-failed:
+    name: Notify Release Failed
+    needs: [check-release, release, build-and-pack, publish]
+    if: >-
+      always() &&
+      needs.check-release.outputs.should_release == 'true' &&
+      (needs.release.result == 'failure' || needs.build-and-pack.result == 'failure' || needs.publish.result == 'failure') &&
+      vars.PUSHOVER_ENABLED == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions/notify-pushover
+
+      - name: Determine failed job
+        id: failed
+        env:
+          RELEASE_RESULT: ${{ needs.release.result }}
+          BUILD_RESULT: ${{ needs.build-and-pack.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+        run: |
+          if [ "$RELEASE_RESULT" == "failure" ]; then
+            echo "job=tag creation" >> "$GITHUB_OUTPUT"
+          elif [ "$BUILD_RESULT" == "failure" ]; then
+            echo "job=build-and-pack" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISH_RESULT" == "failure" ]; then
+            echo "job=NuGet publish" >> "$GITHUB_OUTPUT"
+          else
+            echo "job=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send Notification
+        uses: ./.github/actions/notify-pushover
+        with:
+          api-token: ${{ secrets.PUSHOVER_API_TOKEN }}
+          user-key-1: ${{ secrets.PUSHOVER_USER_KEY_1 }}
+          user-key-2: ${{ secrets.PUSHOVER_USER_KEY_2 }}
+          user-key-3: ${{ secrets.PUSHOVER_USER_KEY_3 }}
+          user-key-4: ${{ secrets.PUSHOVER_USER_KEY_4 }}
+          user-key-5: ${{ secrets.PUSHOVER_USER_KEY_5 }}
+          user-key-6: ${{ secrets.PUSHOVER_USER_KEY_6 }}
+          user-key-7: ${{ secrets.PUSHOVER_USER_KEY_7 }}
+          user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
+          user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
+          user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
+          title: "❌ Release v${{ needs.check-release.outputs.version }} Failed"
+          message: "Release failed at: ${{ steps.failed.outputs.job }}"
+          status: deploy-failed
+          url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          url-title: "View Workflow"

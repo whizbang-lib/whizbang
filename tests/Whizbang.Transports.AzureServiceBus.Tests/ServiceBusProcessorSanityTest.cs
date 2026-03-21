@@ -29,8 +29,8 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
   /// </summary>
   [Test]
   public async Task ServiceBusProcessor_ReceivesMessages_FromGenericTopicAsync() {
-    var topicName = "topic-00";
-    var subscriptionName = "sub-00-a";
+    const string topicName = "topic-00";
+    const string subscriptionName = "sub-00-a";
     var connectionString = _fixture.ConnectionString;
 
     Console.WriteLine("[PROCESSOR TEST] ==========================================================");
@@ -92,7 +92,7 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
     Console.WriteLine("[PROCESSOR TEST] Sending test message...");
     var sender = client.CreateSender(topicName);
     var testMessageId = Guid.NewGuid().ToString();
-    var message = new ServiceBusMessage($"{{\"test\":true}}") {
+    var message = new ServiceBusMessage("{\"test\":true}") {
       MessageId = testMessageId,
       ContentType = "application/json"
     };

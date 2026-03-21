@@ -18,7 +18,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsValid_ReturnsSchemaAsync() {
     // Arrange
-    var expectedSchema = "my_custom_schema";
+    const string expectedSchema = "my_custom_schema";
     var logger = new CapturingLogger();
 
     // Act
@@ -36,7 +36,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsNull_LogsWarningAndReturnsDefaultAsync() {
     // Arrange
-    string? schema = null;
+    const string? schema = null;
     var logger = new CapturingLogger();
 
     // Act
@@ -74,7 +74,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenSchemaIsWhitespace_LogsWarningAndReturnsDefaultAsync() {
     // Arrange
-    string? schema = "   ";
+    const string? schema = "   ";
     var logger = new CapturingLogger();
 
     // Act
@@ -92,7 +92,7 @@ public class EFCoreWorkCoordinatorSchemaTests {
   [Test]
   public async Task GetSchemaWithFallback_WhenLoggerIsNull_DoesNotThrowAsync() {
     // Arrange - null logger should not cause exceptions
-    string? schema = null;
+    const string? schema = null;
 
     // Act
     var result = EFCoreWorkCoordinator<WorkCoordinationDbContext>.GetSchemaWithFallback(

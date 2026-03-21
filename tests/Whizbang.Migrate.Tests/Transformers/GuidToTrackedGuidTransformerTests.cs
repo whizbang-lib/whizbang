@@ -12,7 +12,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_GuidNewGuid_TransformsToTrackedGuidNewMedoAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -35,7 +35,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_GuidCreateVersion7_TransformsToTrackedGuidNewMedoAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -58,7 +58,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_SystemGuidNewGuid_TransformsToTrackedGuidNewMedoAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public System.Guid CreateOrder() {
           return System.Guid.NewGuid();
@@ -78,7 +78,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_SystemGuidCreateVersion7_TransformsToTrackedGuidNewMedoAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       public class OrderService {
         public System.Guid CreateOrder() {
           return System.Guid.CreateVersion7();
@@ -98,7 +98,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_NoGuidGeneration_ReturnsUnchangedAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -121,7 +121,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_AddsWhizbangCoreValueObjectsUsingAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -143,7 +143,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_PreservesExistingUsingsAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Microsoft.Extensions.Logging;
 
@@ -168,7 +168,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_MultipleGuidCalls_TransformsAllAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -195,7 +195,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_GuidNewGuidInFieldInitializer_TransformsAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class Order {
@@ -215,7 +215,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_GuidNewGuidInConstructor_TransformsAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class Order {
@@ -239,7 +239,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_PreservesNamespaceAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       namespace MyApp.Domain;
@@ -262,7 +262,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_DoesNotDuplicateUsingAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Whizbang.Core.ValueObjects;
 
@@ -286,7 +286,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_TracksAllChangesAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -309,7 +309,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_EmitsWarningAboutTypeChangeAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderService {
@@ -334,7 +334,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_GuidInLambda_TransformsAsync() {
     // Arrange
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using System.Collections.Generic;
       using System.Linq;
@@ -364,7 +364,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G01_GuidNewGuidInHandler_TransformsToTrackedGuidAsync() {
     // Arrange - G01: Guid.NewGuid() in handler to strongly-typed ID pattern
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderHandler {
@@ -393,7 +393,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G02_CombGuidIdGeneration_TransformsToTrackedGuidAsync() {
     // Arrange - G02: CombGuidIdGeneration.NewGuid() from Marten
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Marten.Schema.Identity;
 
@@ -436,7 +436,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G02_CombGuidInEventSourcing_TransformsToTrackedGuidAsync() {
     // Arrange - G02: CombGuid used for stream ID generation in event sourcing
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Marten;
       using Marten.Schema.Identity;
@@ -474,7 +474,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G03_DefaultStreamIdCheck_EmitsWarningAsync() {
     // Arrange - G03: Default StreamId check pattern should emit warning
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderHandler {
@@ -508,7 +508,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G04_CollisionRetryPattern_EmitsWarningAsync() {
     // Arrange - G04: Collision retry pattern should emit warning about being unnecessary
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
 
       public class OrderHandler {
@@ -554,7 +554,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G02_MultipleCombGuidCalls_TransformsAllAsync() {
     // Arrange - G02: Multiple CombGuid calls in same file
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Marten.Schema.Identity;
 
@@ -579,7 +579,7 @@ public class GuidToTrackedGuidTransformerTests {
   public async Task TransformAsync_G02_CombGuidWithMartenUsing_RemovesMartenUsingAsync() {
     // Arrange - G02: Remove Marten.Schema.Identity using when CombGuid is transformed
     var transformer = new GuidToTrackedGuidTransformer();
-    var sourceCode = """
+    const string sourceCode = """
       using System;
       using Marten;
       using Marten.Schema.Identity;

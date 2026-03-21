@@ -76,7 +76,7 @@ public sealed class ImpersonationDispatcherBuilder {
       string? actualPrincipal,
       string? ambientTenantId) {
     _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity, nameof(effectiveIdentity));
+    ArgumentException.ThrowIfNullOrWhiteSpace(effectiveIdentity);
     _effectiveIdentity = effectiveIdentity;
     _actualPrincipal = actualPrincipal;
     _ambientTenantId = ambientTenantId;
@@ -135,8 +135,8 @@ public sealed class ImpersonationDispatcherBuilder {
   /// <docs>fundamentals/security/scope-propagation#tenant-scoped-impersonation</docs>
   /// <tests>Whizbang.Core.Tests/Dispatch/ImpersonationDispatcherBuilderTests.cs:RunAs_ForTenant_SetsExplicitTenantIdAsync</tests>
   public DispatcherSecurityBuilder ForTenant(string tenantId) {
-    ArgumentNullException.ThrowIfNull(tenantId, nameof(tenantId));
-    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId, nameof(tenantId));
+    ArgumentNullException.ThrowIfNull(tenantId);
+    ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
     return new DispatcherSecurityBuilder(
         _dispatcher,

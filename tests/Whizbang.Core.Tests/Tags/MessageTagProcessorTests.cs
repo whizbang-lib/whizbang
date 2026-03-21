@@ -294,14 +294,9 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class OrderTrackingHook : IMessageTagHook<SignalTagAttribute> {
-    private readonly string _name;
-    private readonly List<string> _executionOrder;
-
-    public OrderTrackingHook(string name, List<string> executionOrder) {
-      _name = name;
-      _executionOrder = executionOrder;
-    }
+  private sealed class OrderTrackingHook(string name, List<string> executionOrder) : IMessageTagHook<SignalTagAttribute> {
+    private readonly string _name = name;
+    private readonly List<string> _executionOrder = executionOrder;
 
     public ValueTask<JsonElement?> OnTaggedMessageAsync(
         TagContext<SignalTagAttribute> _,
@@ -844,16 +839,11 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingScope : IServiceScope, IAsyncDisposable {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingScope(Func<Type, object?> resolver) {
-      _resolver = resolver;
-      ServiceProvider = new TrackingServiceProvider(resolver);
-    }
+  private sealed class TrackingScope(Func<Type, object?> resolver) : IServiceScope, IAsyncDisposable {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public bool Disposed { get; private set; }
-    public IServiceProvider ServiceProvider { get; }
+    public IServiceProvider ServiceProvider { get; } = new TrackingServiceProvider(resolver);
 
     public void Dispose() {
       Disposed = true;
@@ -865,12 +855,8 @@ public class MessageTagProcessorTests {
     }
   }
 
-  private sealed class TrackingServiceProvider : IServiceProvider {
-    private readonly Func<Type, object?> _resolver;
-
-    public TrackingServiceProvider(Func<Type, object?> resolver) {
-      _resolver = resolver;
-    }
+  private sealed class TrackingServiceProvider(Func<Type, object?> resolver) : IServiceProvider {
+    private readonly Func<Type, object?> _resolver = resolver;
 
     public object? GetService(Type serviceType) {
       return _resolver(serviceType);

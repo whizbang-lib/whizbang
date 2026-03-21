@@ -55,8 +55,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
       }
 
       // TModel is the first type argument
-      var modelType = iface.TypeArguments[0] as INamedTypeSymbol;
-      if (modelType == null) {
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
         continue;
       }
 
@@ -93,8 +92,7 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
-      var propType = member.Type as INamedTypeSymbol;
-      if (propType == null) {
+      if (member.Type is not INamedTypeSymbol propType) {
         continue;
       }
 

@@ -23,7 +23,7 @@ public class StreamIdGuardTests {
     var messageId = Guid.NewGuid();
 
     // Act & Assert - should not throw
-    var action = () => StreamIdGuard.ThrowIfEmpty(streamId, messageId, "Dispatcher.Outbox");
+    void action() => StreamIdGuard.ThrowIfEmpty(streamId, messageId, "Dispatcher.Outbox");
     await Assert.That(action).ThrowsNothing();
   }
 
@@ -76,7 +76,7 @@ public class StreamIdGuardTests {
     var messageId = Guid.NewGuid();
 
     // Act & Assert - null StreamId is valid (no stream concept)
-    var action = () => StreamIdGuard.ThrowIfNonNullEmpty(null, messageId, "WorkCoordinator.QueueOutbox");
+    void action() => StreamIdGuard.ThrowIfNonNullEmpty(null, messageId, "WorkCoordinator.QueueOutbox");
     await Assert.That(action).ThrowsNothing();
   }
 
@@ -97,7 +97,7 @@ public class StreamIdGuardTests {
     var messageId = Guid.NewGuid();
 
     // Act & Assert - should not throw
-    var action = () => StreamIdGuard.ThrowIfNonNullEmpty(streamId, messageId, "WorkCoordinator.QueueOutbox");
+    void action() => StreamIdGuard.ThrowIfNonNullEmpty(streamId, messageId, "WorkCoordinator.QueueOutbox");
     await Assert.That(action).ThrowsNothing();
   }
 }

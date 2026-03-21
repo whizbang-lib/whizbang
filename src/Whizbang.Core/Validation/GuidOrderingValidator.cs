@@ -8,19 +8,14 @@ namespace Whizbang.Core.Validation;
 /// Validates that TrackedGuid values are appropriate for time-sensitive ordering.
 /// Logs/warns/errors based on configuration when v4 or unknown source is used.
 /// </summary>
-public partial class GuidOrderingValidator {
-  private readonly WhizbangOptions _options;
-  private readonly ILogger _logger;
-
-  /// <summary>
-  /// Creates a new GuidOrderingValidator.
-  /// </summary>
-  /// <param name="options">Whizbang configuration options.</param>
-  /// <param name="logger">Logger for reporting violations.</param>
-  public GuidOrderingValidator(WhizbangOptions options, ILogger logger) {
-    _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+/// <remarks>
+/// Creates a new GuidOrderingValidator.
+/// </remarks>
+/// <param name="options">Whizbang configuration options.</param>
+/// <param name="logger">Logger for reporting violations.</param>
+public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logger) {
+  private readonly WhizbangOptions _options = options ?? throw new ArgumentNullException(nameof(options));
+  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <summary>
   /// Validates that a TrackedGuid is appropriate for time-sensitive ordering.

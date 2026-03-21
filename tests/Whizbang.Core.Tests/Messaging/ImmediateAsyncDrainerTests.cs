@@ -258,7 +258,7 @@ public class ImmediateAsyncDrainerTests {
     // Arrange - Create a chain of depth 5
     var drainer = new ImmediateAsyncDrainer(warningThreshold: 100);
     var chainDepth = 0;
-    var maxDepth = 5;
+    const int maxDepth = 5;
 
     var invoker = new CallbackReceptorInvoker((envelope, stage, context, ct) => {
       if (++chainDepth < maxDepth) {
@@ -509,16 +509,12 @@ public class ImmediateAsyncDrainerTests {
   /// <summary>
   /// IReceptorInvoker that executes a callback on each invocation.
   /// </summary>
-  private sealed class CallbackReceptorInvoker : IReceptorInvoker {
-    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?, CancellationToken> _callback;
+  private sealed class CallbackReceptorInvoker(
+      Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?, CancellationToken> callback) : IReceptorInvoker {
+    private readonly Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?, CancellationToken> _callback = callback;
     private int _invocationCount;
 
     public int InvocationCount => _invocationCount;
-
-    public CallbackReceptorInvoker(
-        Action<IMessageEnvelope, LifecycleStage, ILifecycleContext?, CancellationToken> callback) {
-      _callback = callback;
-    }
 
     public ValueTask InvokeAsync(
         IMessageEnvelope envelope,
@@ -534,12 +530,8 @@ public class ImmediateAsyncDrainerTests {
   /// <summary>
   /// Simple logger that records warning messages for assertion.
   /// </summary>
-  private sealed class TestLogger : ILogger {
-    private readonly ConcurrentBag<string> _messages;
-
-    public TestLogger(ConcurrentBag<string> messages) {
-      _messages = messages;
-    }
+  private sealed class TestLogger(ConcurrentBag<string> messages) : ILogger {
+    private readonly ConcurrentBag<string> _messages = messages;
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

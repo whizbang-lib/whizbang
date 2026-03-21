@@ -123,7 +123,7 @@ public class DefaultValueTests {
   [Test]
   public async Task FunctionDefault_PreservesFunctionValueAsync() {
     // Arrange
-    var function = DefaultValueFunction.UUID__GENERATE;
+    const DefaultValueFunction function = DefaultValueFunction.UUID__GENERATE;
 
     // Act
     var defaultValue = DefaultValue.Function(function);
@@ -137,7 +137,7 @@ public class DefaultValueTests {
   [Test]
   public async Task IntegerDefault_PreservesIntegerValueAsync() {
     // Arrange
-    var value = 123;
+    const int value = 123;
 
     // Act
     var defaultValue = DefaultValue.Integer(value);
@@ -151,7 +151,7 @@ public class DefaultValueTests {
   [Test]
   public async Task StringDefault_PreservesStringValueAsync() {
     // Arrange
-    var value = "Pending";
+    const string value = "Pending";
 
     // Act
     var defaultValue = DefaultValue.String(value);
@@ -165,7 +165,7 @@ public class DefaultValueTests {
   [Test]
   public async Task BooleanDefault_PreservesBooleanValueAsync() {
     // Arrange
-    var value = false;
+    const bool value = false;
 
     // Act
     var defaultValue = DefaultValue.Boolean(value);

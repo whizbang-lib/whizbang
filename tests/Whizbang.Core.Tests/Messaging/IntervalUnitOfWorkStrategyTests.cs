@@ -393,7 +393,7 @@ public class IntervalUnitOfWorkStrategyTests {
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();
-    await Assert.That(lifecycleStagesInCallback!).ContainsKey(message1);
+    await Assert.That(lifecycleStagesInCallback).ContainsKey(message1);
     await Assert.That(lifecycleStagesInCallback).ContainsKey(message2);
   }
 

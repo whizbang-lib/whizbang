@@ -17,19 +17,13 @@ namespace Whizbang.Core.Security;
 /// </remarks>
 /// <docs>fundamentals/security/message-security#immutable-context</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/ImmutableScopeContextTests.cs</tests>
-public sealed class ImmutableScopeContext : IScopeContext {
-  private readonly SecurityExtraction _extraction;
-
-  /// <summary>
-  /// Creates an immutable scope context from an extraction result.
-  /// </summary>
-  /// <param name="extraction">The security extraction to wrap</param>
-  /// <param name="shouldPropagate">Whether to propagate to outgoing messages</param>
-  public ImmutableScopeContext(SecurityExtraction extraction, bool shouldPropagate) {
-    _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
-    ShouldPropagate = shouldPropagate;
-    EstablishedAt = DateTimeOffset.UtcNow;
-  }
+/// <remarks>
+/// Creates an immutable scope context from an extraction result.
+/// </remarks>
+/// <param name="extraction">The security extraction to wrap</param>
+/// <param name="shouldPropagate">Whether to propagate to outgoing messages</param>
+public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool shouldPropagate) : IScopeContext {
+  private readonly SecurityExtraction _extraction = extraction ?? throw new ArgumentNullException(nameof(extraction));
 
   /// <summary>
   /// Identifies the source of this context (which extractor created it).
@@ -39,12 +33,12 @@ public sealed class ImmutableScopeContext : IScopeContext {
   /// <summary>
   /// When this context was established.
   /// </summary>
-  public DateTimeOffset EstablishedAt { get; }
+  public DateTimeOffset EstablishedAt { get; } = DateTimeOffset.UtcNow;
 
   /// <summary>
   /// Whether this context should be propagated to outgoing messages.
   /// </summary>
-  public bool ShouldPropagate { get; }
+  public bool ShouldPropagate { get; } = shouldPropagate;
 
   // === IScopeContext implementation ===
 

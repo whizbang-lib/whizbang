@@ -11,7 +11,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithGenerateStreamIdAttribute_GeneratesGetGenerationPolicyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -29,7 +29,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert - Should generate GetGenerationPolicy method with entry for OrderCreatedEvent
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     await Assert.That(generatedSource).Contains("OrderCreatedEvent");
     await Assert.That(generatedSource).Contains("(true, false)"); // ShouldGenerate=true, OnlyIfEmpty=false (default)
   }
@@ -38,7 +38,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithOnlyIfEmptyTrue_GeneratesCorrectPolicyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -56,7 +56,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert - OnlyIfEmpty should be true
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     await Assert.That(generatedSource).Contains("InventoryReservedEvent");
     await Assert.That(generatedSource).Contains("(true, true)"); // ShouldGenerate=true, OnlyIfEmpty=true
   }
@@ -65,7 +65,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithoutGenerateStreamId_NoGenerationPolicyEntryAsync() {
     // Arrange - Event has [StreamId] but NOT [GenerateStreamId]
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -83,7 +83,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert - GetGenerationPolicy should exist but NOT have an entry for this event
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     // The method exists but there's no dispatch case for OrderItemAddedEvent
     // It falls through to the default return (false, false)
     await Assert.That(generatedSource).DoesNotContain("(true, false)");
@@ -94,7 +94,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithClassLevelGenerateStreamId_GeneratesPolicyAsync() {
     // Arrange - [GenerateStreamId] on class, [StreamId] inherited from base
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -116,7 +116,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert - Should generate GetGenerationPolicy for the derived type with class-level attribute
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     await Assert.That(generatedSource).Contains("OrderCreatedEvent");
     await Assert.That(generatedSource).Contains("(true, false)");
   }
@@ -125,7 +125,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleEvents_GeneratesCorrectPoliciesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -153,7 +153,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert - Only events with [GenerateStreamId] should appear in generation policy
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     await Assert.That(generatedSource).Contains("OrderCreatedEvent");
     await Assert.That(generatedSource).Contains("InventoryReservedEvent");
     // OrderItemAddedEvent should NOT have a generation policy entry
@@ -164,7 +164,7 @@ public class GenerateStreamIdGeneratorTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_WithRecordParameter_GeneratesPolicyAsync() {
     // Arrange - [property: GenerateStreamId] on record parameter
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
 
@@ -179,7 +179,7 @@ public class GenerateStreamIdGeneratorTests {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "StreamIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("GetGenerationPolicy");
+    await Assert.That(generatedSource).Contains("GetGenerationPolicy");
     await Assert.That(generatedSource).Contains("OrderCreatedEvent");
     await Assert.That(generatedSource).Contains("(true, false)");
   }

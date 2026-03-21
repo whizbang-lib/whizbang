@@ -31,10 +31,8 @@ public interface IPermissionExtractor {
 /// <summary>
 /// Extracts permissions from a specific claim type.
 /// </summary>
-internal sealed class ClaimPermissionExtractor : IPermissionExtractor {
-  private readonly string _claimType;
-
-  public ClaimPermissionExtractor(string claimType) => _claimType = claimType;
+internal sealed class ClaimPermissionExtractor(string claimType) : IPermissionExtractor {
+  private readonly string _claimType = claimType;
 
   public IEnumerable<Permission> ExtractPermissions(IReadOnlyDictionary<string, string> claims) {
     if (claims.TryGetValue(_claimType, out var value) && !string.IsNullOrWhiteSpace(value)) {
@@ -45,22 +43,20 @@ internal sealed class ClaimPermissionExtractor : IPermissionExtractor {
   }
 
   public IEnumerable<string> ExtractRoles(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<string>();
+    [];
 
   public IEnumerable<SecurityPrincipalId> ExtractSecurityPrincipals(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<SecurityPrincipalId>();
+    [];
 }
 
 /// <summary>
 /// Extracts roles from a specific claim type.
 /// </summary>
-internal sealed class ClaimRoleExtractor : IPermissionExtractor {
-  private readonly string _claimType;
-
-  public ClaimRoleExtractor(string claimType) => _claimType = claimType;
+internal sealed class ClaimRoleExtractor(string claimType) : IPermissionExtractor {
+  private readonly string _claimType = claimType;
 
   public IEnumerable<Permission> ExtractPermissions(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<Permission>();
+    [];
 
   public IEnumerable<string> ExtractRoles(IReadOnlyDictionary<string, string> claims) {
     if (claims.TryGetValue(_claimType, out var value) && !string.IsNullOrWhiteSpace(value)) {
@@ -71,22 +67,20 @@ internal sealed class ClaimRoleExtractor : IPermissionExtractor {
   }
 
   public IEnumerable<SecurityPrincipalId> ExtractSecurityPrincipals(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<SecurityPrincipalId>();
+    [];
 }
 
 /// <summary>
 /// Extracts security principals from a specific claim type.
 /// </summary>
-internal sealed class ClaimSecurityPrincipalExtractor : IPermissionExtractor {
-  private readonly string _claimType;
-
-  public ClaimSecurityPrincipalExtractor(string claimType) => _claimType = claimType;
+internal sealed class ClaimSecurityPrincipalExtractor(string claimType) : IPermissionExtractor {
+  private readonly string _claimType = claimType;
 
   public IEnumerable<Permission> ExtractPermissions(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<Permission>();
+    [];
 
   public IEnumerable<string> ExtractRoles(IReadOnlyDictionary<string, string> claims) =>
-    Enumerable.Empty<string>();
+    [];
 
   public IEnumerable<SecurityPrincipalId> ExtractSecurityPrincipals(IReadOnlyDictionary<string, string> claims) {
     if (claims.TryGetValue(_claimType, out var value) && !string.IsNullOrWhiteSpace(value)) {

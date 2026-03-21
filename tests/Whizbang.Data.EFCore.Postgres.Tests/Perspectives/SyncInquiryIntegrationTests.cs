@@ -48,7 +48,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -111,7 +111,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -179,7 +179,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var startedEventId = _idProvider.NewGuid();
     var completedEventId = _idProvider.NewGuid();
     var cancelledEventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -242,7 +242,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     // Arrange: No events exist for the stream yet
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
 
     // Create sync inquiry with DiscoverPendingFromOutbox = true
     var inquiryId = _idProvider.NewGuid();
@@ -296,7 +296,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -363,7 +363,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var streamId = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);
@@ -443,7 +443,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     // REAL FORMAT: "Namespace.EventType, AssemblyName"
@@ -518,7 +518,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var instanceId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     // REAL stored format
@@ -586,7 +586,7 @@ public class SyncInquiryIntegrationTests : EFCoreTestBase {
     var streamId = _idProvider.NewGuid();
     var explicitEventId = _idProvider.NewGuid();
     var otherEventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     await using var connection = new NpgsqlConnection(ConnectionString);

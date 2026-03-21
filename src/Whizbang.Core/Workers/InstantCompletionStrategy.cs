@@ -23,19 +23,15 @@ namespace Whizbang.Core.Workers;
 /// <docs>operations/workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async</tests>
-public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
-  private readonly ILogger<InstantCompletionStrategy> _logger;
-
-  /// <summary>
-  /// Creates a new instant completion strategy.
-  /// </summary>
-  /// <param name="logger">Optional logger for diagnostic output.</param>
-  /// <remarks>
-  /// No configuration needed - uses lightweight out-of-band coordinator methods.
-  /// </remarks>
-  public InstantCompletionStrategy(ILogger<InstantCompletionStrategy>? logger = null) {
-    _logger = logger ?? NullLogger<InstantCompletionStrategy>.Instance;
-  }
+/// <remarks>
+/// Creates a new instant completion strategy.
+/// </remarks>
+/// <param name="logger">Optional logger for diagnostic output.</param>
+/// <remarks>
+/// No configuration needed - uses lightweight out-of-band coordinator methods.
+/// </remarks>
+public sealed partial class InstantCompletionStrategy(ILogger<InstantCompletionStrategy>? logger = null) : IPerspectiveCompletionStrategy {
+  private readonly ILogger<InstantCompletionStrategy> _logger = logger ?? NullLogger<InstantCompletionStrategy>.Instance;
 
   /// <inheritdoc />
   /// <remarks>

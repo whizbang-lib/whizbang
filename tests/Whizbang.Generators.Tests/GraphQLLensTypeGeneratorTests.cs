@@ -20,7 +20,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithGraphQLLensAttribute_GeneratesQueryTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -39,7 +39,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GetOrders");
+    await Assert.That(code).Contains("GetOrders");
     await Assert.That(code).Contains("IOrderLens");
   }
 
@@ -50,7 +50,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithMultipleLenses_GeneratesAllQueriesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -77,7 +77,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GetOrders");
+    await Assert.That(code).Contains("GetOrders");
     await Assert.That(code).Contains("GetProducts");
     await Assert.That(code).Contains("GetCustomers");
   }
@@ -89,7 +89,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutGraphQLLensAttribute_DoesNotGenerateAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
 
@@ -115,7 +115,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithPagingEnabled_IncludesUsePagingAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -134,7 +134,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[UsePaging(DefaultPageSize = 20, MaxPageSize = 50)]");
+    await Assert.That(code).Contains("[UsePaging(DefaultPageSize = 20, MaxPageSize = 50)]");
   }
 
   /// <summary>
@@ -144,7 +144,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithPagingDisabled_ExcludesUsePagingAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -163,7 +163,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("[UsePaging");
+    await Assert.That(code).DoesNotContain("[UsePaging");
   }
 
   /// <summary>
@@ -173,7 +173,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithFilteringEnabled_IncludesUseFilteringAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -192,7 +192,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[UseFiltering]");
+    await Assert.That(code).Contains("[UseFiltering]");
   }
 
   /// <summary>
@@ -202,7 +202,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithFilteringDisabled_ExcludesUseFilteringAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -221,7 +221,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).DoesNotContain("[UseFiltering]");
+    await Assert.That(code).DoesNotContain("[UseFiltering]");
   }
 
   /// <summary>
@@ -231,7 +231,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithSortingEnabled_IncludesUseSortingAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -250,7 +250,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[UseSorting]");
+    await Assert.That(code).Contains("[UseSorting]");
   }
 
   /// <summary>
@@ -260,7 +260,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithoutExplicitQueryName_UsesModelNameAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -280,7 +280,7 @@ public class GraphQLLensTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "orders" from "OrderReadModel" (remove ReadModel, pluralize, lowercase)
-    await Assert.That(code!).Contains("GetOrders");
+    await Assert.That(code).Contains("GetOrders");
   }
 
   /// <summary>
@@ -290,7 +290,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_ProducesCompilableCodeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -321,7 +321,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithProjectionEnabled_IncludesUseProjectionAttributeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -340,7 +340,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("[UseProjection]");
+    await Assert.That(code).Contains("[UseProjection]");
   }
 
   /// <summary>
@@ -350,7 +350,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesRegistrationExtensionsAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -369,7 +369,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("AddWhizbangLensQueries");
+    await Assert.That(code).Contains("AddWhizbangLensQueries");
     await Assert.That(code).Contains("IRequestExecutorBuilder");
   }
 
@@ -380,7 +380,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesDiagnosticsClassAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -399,7 +399,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("WhizbangGraphQLDiagnostics");
+    await Assert.That(code).Contains("WhizbangGraphQLDiagnostics");
     await Assert.That(code).Contains("DiscoveredLensCount");
   }
 
@@ -410,7 +410,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithClassHavingGraphQLLens_GeneratesQueryTypeAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -429,7 +429,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GetProducts");
+    await Assert.That(code).Contains("GetProducts");
     await Assert.That(code).Contains("ProductLens");
   }
 
@@ -440,7 +440,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_UsesConsumerNamespaceAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -459,7 +459,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace MyCompany.OrderService.Generated");
+    await Assert.That(code).Contains("namespace MyCompany.OrderService.Generated");
   }
 
   /// <summary>
@@ -469,7 +469,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_GeneratesLensInfoPropertiesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -488,7 +488,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("OrdersInfo");
+    await Assert.That(code).Contains("OrdersInfo");
   }
 
   /// <summary>
@@ -498,7 +498,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DerivesQueryNameFromModelSuffixAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -518,7 +518,7 @@ public class GraphQLLensTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "customers" from "CustomerModel" (remove Model, pluralize, lowercase)
-    await Assert.That(code!).Contains("GetCustomers");
+    await Assert.That(code).Contains("GetCustomers");
   }
 
   /// <summary>
@@ -528,7 +528,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_DerivesQueryNameFromDtoSuffixAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -548,7 +548,7 @@ public class GraphQLLensTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
     // Should derive "invoices" from "InvoiceDto" (remove Dto, pluralize, lowercase)
-    await Assert.That(code!).Contains("GetInvoices");
+    await Assert.That(code).Contains("GetInvoices");
   }
 
   /// <summary>
@@ -558,7 +558,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithAllOptions_GeneratesCorrectlyAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -584,7 +584,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GetAuditLogs");
+    await Assert.That(code).Contains("GetAuditLogs");
     await Assert.That(code).Contains("[UseFiltering]");
     await Assert.That(code).Contains("[UseSorting]");
     await Assert.That(code).Contains("[UseProjection]");
@@ -598,7 +598,7 @@ public class GraphQLLensTypeGeneratorTests {
   [RequiresAssemblyFiles]
   public async Task Generator_WithAllFeaturesDisabled_GeneratesMinimalAttributesAsync() {
     // Arrange
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core.Lenses;
             using Whizbang.Transports.HotChocolate;
@@ -622,7 +622,7 @@ public class GraphQLLensTypeGeneratorTests {
     // Assert
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("GetSimple");
+    await Assert.That(code).Contains("GetSimple");
     await Assert.That(code).DoesNotContain("[UseFiltering]");
     await Assert.That(code).DoesNotContain("[UseSorting]");
     await Assert.That(code).DoesNotContain("[UsePaging");

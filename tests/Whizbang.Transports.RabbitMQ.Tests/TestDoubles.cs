@@ -12,14 +12,9 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// Simple manual mocks since Rocks isn't working yet.
 /// Only implements members actually used by RabbitMQChannelPool tests.
 /// </summary>
-internal class FakeConnection : IConnection {
-  private readonly Func<Task<IChannel>> _channelFactory;
-  private readonly bool _isOpen;
-
-  public FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen = true) {
-    _channelFactory = channelFactory;
-    _isOpen = isOpen;
-  }
+internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen = true) : IConnection {
+  private readonly Func<Task<IChannel>> _channelFactory = channelFactory;
+  private readonly bool _isOpen = isOpen;
 
   public Task<IChannel> CreateChannelAsync(CreateChannelOptions? options = null, CancellationToken cancellationToken = default) {
     return _channelFactory();
@@ -33,10 +28,10 @@ internal class FakeConnection : IConnection {
   public uint FrameMax => 0;
   public TimeSpan Heartbeat => TimeSpan.Zero;
   public bool IsOpen => _isOpen;
-  public AmqpTcpEndpoint[] KnownHosts => Array.Empty<AmqpTcpEndpoint>();
+  public AmqpTcpEndpoint[] KnownHosts => [];
   public IProtocol Protocol => throw new NotImplementedException();
   public IDictionary<string, object?>? ServerProperties => null;
-  public IEnumerable<ShutdownReportEntry> ShutdownReport => Enumerable.Empty<ShutdownReportEntry>();
+  public IEnumerable<ShutdownReportEntry> ShutdownReport => [];
   public string? ClientProvidedName => null;
   public int LocalPort => 0;
   public int RemotePort => 0;

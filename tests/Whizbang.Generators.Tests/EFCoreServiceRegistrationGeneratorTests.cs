@@ -83,7 +83,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithoutWhizbangDbContextAttribute_DoesNotDiscoverDbContextAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
 
       namespace TestApp;
@@ -140,7 +140,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithSingleKey_DiscoversDbContextWithKeyAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -183,7 +183,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -499,7 +499,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync() {
     // Arrange
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -838,7 +838,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   public async Task Generator_SchemaExtensions_IncludesGinIndexesForJsonbColumnsAsync() {
     // Arrange - use explicit perspective that implements IPerspectiveFor<TModel>
     // The PERSPECTIVE_BOILERPLATE doesn't implement the interface, so we need a full definition
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;
@@ -892,7 +892,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesPhysicalFieldsInDDLAsync() {
     // Arrange - Model with [PhysicalField] attributes
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -958,7 +958,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesVectorFieldsInDDLAsync() {
     // Arrange - Model with [VectorField] attribute
-    var source = """
+    const string source = """
       using System;
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Core;
@@ -1023,7 +1023,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesUniqueDbSetNamesAsync() {
     // Arrange - Two perspectives with nested Model classes (the bug scenario)
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1103,7 +1103,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedModelClasses_GeneratesCorrectTableNamesAsync() {
     // Arrange - Same scenario as above
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1169,7 +1169,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_DiscoversPerspectiveAsync() {
     // Arrange - JDNext pattern: static class with nested Model and Projection
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1227,7 +1227,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesLensQueryRegistrationAsync() {
     // Arrange - Same JDNext pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1276,7 +1276,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithNestedPerspectiveClass_GeneratesCorrectRegistrationCodeAsync() {
     // Arrange - JDNext pattern
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1330,7 +1330,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithMultipleNestedPerspectiveClasses_DiscoversAllAsync() {
     // Arrange - Multiple static classes with nested perspectives
-    var source = """
+    const string source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
       using Whizbang.Core;
@@ -1396,7 +1396,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_SchemaExtensions_IncludesStep5_RegisterPerspectiveAssociationsAsync() {
     // Arrange - source with DbContext and a perspective
-    var source = """
+    const string source = """
       using System.Threading;
       using System.Threading.Tasks;
       using Microsoft.EntityFrameworkCore;

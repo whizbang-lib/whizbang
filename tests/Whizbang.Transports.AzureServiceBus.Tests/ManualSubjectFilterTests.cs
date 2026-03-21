@@ -65,7 +65,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is the exact format TransportPublishStrategy would generate for a nested class
-    var subjectWithPlus = "jdx.contracts.chat.chatconversationscontracts+createcommand";
+    const string subjectWithPlus = "jdx.contracts.chat.chatconversationscontracts+createcommand";
 
     var message = new ServiceBusMessage("test payload for + character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -132,7 +132,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This is what the Subject SHOULD look like after normalizing '+' to '.'
-    var subjectWithDots = "jdx.contracts.chat.chatconversationscontracts.createcommand";
+    const string subjectWithDots = "jdx.contracts.chat.chatconversationscontracts.createcommand";
 
     var message = new ServiceBusMessage("test payload for . character") {
       MessageId = Guid.NewGuid().ToString(),
@@ -187,7 +187,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // Simulates a doubly-nested class: OuterClass+InnerClass+DeepestClass
-    var subjectWithMultiplePlus = "jdx.contracts.chat.outer+inner+createcommand";
+    const string subjectWithMultiplePlus = "jdx.contracts.chat.outer+inner+createcommand";
 
     var message = new ServiceBusMessage("test payload for multiple + characters") {
       MessageId = Guid.NewGuid().ToString(),
@@ -239,7 +239,7 @@ public class ManualSubjectFilterTests(ServiceBusEmulatorFixtureSource fixtureSou
     var sender = client.CreateSender(TOPIC_NAME);
 
     // This subject does NOT match 'jdx.contracts.chat.%'
-    var nonMatchingSubject = "other.namespace.somecommand";
+    const string nonMatchingSubject = "other.namespace.somecommand";
 
     var message = new ServiceBusMessage("test payload for non-matching subject") {
       MessageId = Guid.NewGuid().ToString(),

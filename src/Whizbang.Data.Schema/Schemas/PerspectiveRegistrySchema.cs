@@ -33,22 +33,22 @@ public static class PerspectiveRegistrySchema {
       new ColumnDefinition(
         Name: Columns.ID,
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false,
+        PrimaryKey: true,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
         Name: Columns.CLR_TYPE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 500,
         Nullable: false
-      ),
+,
+        MaxLength: 500),
       new ColumnDefinition(
         Name: Columns.TABLE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 255,
         Nullable: false
-      ),
+,
+        MaxLength: 255),
       new ColumnDefinition(
         Name: Columns.SCHEMA_JSON,
         DataType: WhizbangDataType.JSON,
@@ -57,15 +57,15 @@ public static class PerspectiveRegistrySchema {
       new ColumnDefinition(
         Name: Columns.SCHEMA_HASH,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 64,
         Nullable: false
-      ),
+,
+        MaxLength: 64),
       new ColumnDefinition(
         Name: Columns.SERVICE_NAME,
         DataType: WhizbangDataType.STRING,
-        MaxLength: 255,
         Nullable: false
-      ),
+,
+        MaxLength: 255),
       new ColumnDefinition(
         Name: Columns.CREATED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
@@ -79,25 +79,25 @@ public static class PerspectiveRegistrySchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+    [
       new IndexDefinition(
-        Name: "idx_perspective_registry_table_name",
-        Columns: ImmutableArray.Create(Columns.TABLE_NAME)
-      ),
+            Name: "idx_perspective_registry_table_name",
+            Columns: [Columns.TABLE_NAME                                        ]
+          ),
       new IndexDefinition(
         Name: "idx_perspective_registry_schema_hash",
-        Columns: ImmutableArray.Create(Columns.SCHEMA_HASH)
+        Columns: [Columns.SCHEMA_HASH                                     ]
       ),
       new IndexDefinition(
         Name: "idx_perspective_registry_service_name",
-        Columns: ImmutableArray.Create(Columns.SERVICE_NAME)
+        Columns: [Columns.SERVICE_NAME                                      ]
       )
-    ),
-    UniqueConstraints: ImmutableArray.Create(
-      new UniqueConstraintDefinition(
+,
+    ],
+    UniqueConstraints: [new UniqueConstraintDefinition(
         Name: "uq_perspective_registry_type_service",
-        Columns: ImmutableArray.Create(Columns.CLR_TYPE_NAME, Columns.SERVICE_NAME)
-      )
-    )
+        Columns: [Columns.CLR_TYPE_NAME, Columns.SERVICE_NAME]
+      )]
   );
 }

@@ -79,12 +79,8 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Command handler that returns an event to be cascaded.
   /// Captures the scope context during execution.
   /// </summary>
-  public class CascadeTestCommandReceptor : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
-    private readonly IScopeContextAccessor _scopeContextAccessor;
-
-    public CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) {
-      _scopeContextAccessor = scopeContextAccessor;
-    }
+  public class CascadeTestCommandReceptor(IScopeContextAccessor scopeContextAccessor) : IReceptor<CascadeTestCommand, (CascadeTestResult, CascadeTestEvent)> {
+    private readonly IScopeContextAccessor _scopeContextAccessor = scopeContextAccessor;
 
     public ValueTask<(CascadeTestResult, CascadeTestEvent)> HandleAsync(
       CascadeTestCommand message,
@@ -185,8 +181,9 @@ public class DispatcherCascadeSecurityPropagationTests {
   public async Task NoSecurityContext_CascadedEvents_HaveNullScopeAsync() {
     // Arrange
     CascadeSecurityTracker.Reset();
-    var scopeContextAccessor = new ScopeContextAccessor();
-    scopeContextAccessor.Current = null; // No security context
+    var scopeContextAccessor = new ScopeContextAccessor {
+      Current = null // No security context
+    };
     var outboxCapture = new OutboxMessageCapture();
     var (dispatcher, _) = _createDispatcherWithOutboxCapture(scopeContextAccessor, outboxCapture);
 
@@ -255,12 +252,12 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// </summary>
   public class OutboxMessageCapture : IWorkCoordinatorStrategy {
     private readonly List<OutboxMessage> _capturedMessages = [];
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public IReadOnlyList<OutboxMessage> CapturedMessages {
       get {
         lock (_lock) {
-          return _capturedMessages.ToList();
+          return [.. _capturedMessages];
         }
       }
     }

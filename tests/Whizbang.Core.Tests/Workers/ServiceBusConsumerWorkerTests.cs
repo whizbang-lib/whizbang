@@ -134,12 +134,8 @@ internal sealed class TestSubscription : ISubscription {
 /// <summary>
 /// Test double for IWorkCoordinatorStrategy
 /// </summary>
-internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-  private readonly Func<WorkBatch> _flushFunc;
-
-  public TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) {
-    _flushFunc = flushFunc;
-  }
+internal sealed class TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) : IWorkCoordinatorStrategy {
+  private readonly Func<WorkBatch> _flushFunc = flushFunc;
 
   public void QueueOutboxMessage(OutboxMessage message) { }
   public void QueueInboxMessage(InboxMessage message) { }

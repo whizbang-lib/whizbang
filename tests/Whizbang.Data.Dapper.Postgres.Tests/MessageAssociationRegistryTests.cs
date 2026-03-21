@@ -79,7 +79,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task MessageAssociationsTable_Exists_WithCorrectSchemaAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query table schema
@@ -122,7 +122,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task MessageAssociationsTable_HasUniqueConstraint_OnAssociationColumnsAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query constraints
@@ -150,7 +150,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociationsFunction_Exists_WithCorrectSignatureAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
 
     // Act - Query function signature
@@ -175,7 +175,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_InsertsNewAssociations_SuccessfullyAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -210,7 +210,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_UpdatesTimestamp_OnConflictAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -252,7 +252,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_DeletesRemovedAssociations_CorrectlyAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -310,7 +310,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_DuplicateEntriesInJson_ThrowsPostgresExceptionAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 
@@ -349,7 +349,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
   [Test]
   public async Task RegisterMessageAssociations_CalledTwice_IsIdempotentAsync() {
     // Arrange
-    await using var conn = new NpgsqlConnection(_connectionString!);
+    await using var conn = new NpgsqlConnection(_connectionString);
     await conn.OpenAsync();
     await _cleanupAssociationsAsync(conn);
 

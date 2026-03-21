@@ -32,7 +32,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// </summary>
 public static class TemplateUtilities {
   // CA1861: Prefer static readonly over constant array arguments for better performance
-  private static readonly string[] _lineSeparators = { "\r\n", "\r", "\n" };
+  private static readonly string[] _lineSeparators = ["\r\n", "\r", "\n"];
   /// <summary>
   /// Replaces a #region block with generated code, preserving indentation.
   /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.
@@ -53,7 +53,7 @@ public static class TemplateUtilities {
     // Use simple string search instead of regex to avoid catastrophic backtracking
     // This is more efficient for large templates (migration scripts can be 50KB+)
     var regionStart = $"#region {regionName}";
-    var regionEnd = "#endregion";
+    const string regionEnd = "#endregion";
 
     var startIdx = template.IndexOf(regionStart, StringComparison.Ordinal);
     if (startIdx < 0) {
@@ -73,7 +73,7 @@ public static class TemplateUtilities {
     while (indentStart > 0 && template[indentStart - 1] != '\n' && template[indentStart - 1] != '\r') {
       indentStart--;
     }
-    var indentation = template.Substring(indentStart, startIdx - indentStart);
+    var indentation = template[indentStart..startIdx];
 
     // Indent the replacement code to match the region's indentation
     var indentedReplacement = IndentCode(replacement.TrimEnd(), indentation);
@@ -107,7 +107,7 @@ public static class TemplateUtilities {
     }
 
     // Build the result - add trailing content (like semicolon) after replacement
-    var suffix = template.Substring(replaceEnd);
+    var suffix = template[replaceEnd..];
     var trailing = trailingContent.ToString();
 
     // If there's trailing content (like ";"), append it directly to the replacement
@@ -120,7 +120,7 @@ public static class TemplateUtilities {
       indentedReplacement += "\n";
     }
 
-    return template.Substring(0, replaceStart) + indentedReplacement + suffix;
+    return template[..replaceStart] + indentedReplacement + suffix;
   }
 
   /// <summary>
@@ -195,7 +195,7 @@ public static class TemplateUtilities {
       }
 
       if (line.StartsWith(indentationToRemove, StringComparison.Ordinal)) {
-        return line.Substring(indentationToRemove.Length);
+        return line[indentationToRemove.Length..];
       }
       return line;
     });

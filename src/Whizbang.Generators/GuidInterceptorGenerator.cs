@@ -30,12 +30,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private const string SUPPRESS_SHORT_NAME = "SuppressGuidInterception";
 
   // Third-party library patterns
-  private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = {
+  private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = [
     ("Marten.Schema.Identity.CombGuidIdGeneration", "NewGuid", "Version7", "SourceMarten"),
     ("UUIDNext.Uuid", "NewDatabaseFriendly", "Version7", "SourceUuidNext"),
     ("UUIDNext.Uuid", "NewSequential", "Version7", "SourceUuidNext"),
     ("Medo.Uuid7", "NewUuid7", "Version7", "SourceMedo"),
-  };
+  ];
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Check if interception is enabled via MSBuild property
@@ -237,7 +237,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private static string _sanitizeFileName(string filePath) {
     // Extract just the filename without extension and sanitize
     var fileName = System.IO.Path.GetFileNameWithoutExtension(filePath);
-    return new string(fileName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+    return new string([.. fileName.Select(c => char.IsLetterOrDigit(c) ? c : '_')]);
   }
 
   private static INamedTypeSymbol? _getContainingTypeSymbol(
@@ -372,9 +372,9 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     foreach (var info in intercepted) {
       sb.AppendLine();
-      sb.AppendLine($"    /// <summary>");
+      sb.AppendLine("    /// <summary>");
       sb.AppendLine($"    /// Intercepts {info.FullyQualifiedTypeName.Replace("global::", "")}.{info.OriginalMethod}() at {info.FilePath}:{info.LineNumber}");
-      sb.AppendLine($"    /// </summary>");
+      sb.AppendLine("    /// </summary>");
       sb.AppendLine($"    [global::System.Runtime.CompilerServices.InterceptsLocation(\"{_escapeString(info.FilePath)}\", {info.LineNumber}, {info.ColumnNumber})]");
       sb.AppendLine($"    internal static global::Whizbang.Core.ValueObjects.TrackedGuid {info.InterceptorMethodName}() {{");
 
@@ -389,10 +389,10 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         _ => $"{info.FullyQualifiedTypeName}.{info.OriginalMethod}()"
       };
 
-      sb.AppendLine($"      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
+      sb.AppendLine("      return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(");
       sb.AppendLine($"          {originalCall},");
       sb.AppendLine($"          global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidVersion} | global::Whizbang.Core.ValueObjects.GuidMetadata.{info.GuidSource});");
-      sb.AppendLine($"    }}");
+      sb.AppendLine("    }");
     }
 
     sb.AppendLine("  }");

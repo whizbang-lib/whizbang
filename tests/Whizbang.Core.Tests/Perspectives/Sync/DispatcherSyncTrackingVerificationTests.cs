@@ -37,7 +37,7 @@ public class DispatcherSyncTrackingVerificationTests {
     SyncEventTypeRegistrations.Clear();
 
     var eventType = typeof(VerificationTestEventB);
-    var perspectiveName = "MyApp.Perspectives.TestPerspectiveC";
+    const string perspectiveName = "MyApp.Perspectives.TestPerspectiveC";
 
     // Act - simulate module initializer
     SyncEventTypeRegistrations.Register(eventType, perspectiveName);

@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Core;
 using Whizbang.Core.Diagnostics;
@@ -86,7 +87,7 @@ public class SyncAwareLensQueryTests {
     var syncQuery = new SyncAwareLensQuery<TestModel>(mockQuery, awaiter, typeof(TestPerspective), options);
 
     // With no pending events, should return immediately
-    var result = await syncQuery.GetByIdAsync(Guid.NewGuid());
+    _ = await syncQuery.GetByIdAsync(Guid.NewGuid());
 
     await Assert.That(mockQuery.GetByIdAsyncCallCount).IsEqualTo(1);
   }
@@ -196,6 +197,16 @@ public class SyncAwareLensQueryTests {
     public Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
       GetByIdAsyncCallCount++;
       return Task.FromResult(ModelToReturn);
+    }
+
+    public IScopedLensAccess<TModel> Scope(QueryScope scope) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> ScopeOverride(QueryScope scope, ScopeFilterOverride overrideValues) => new MockScopedAccess(this);
+    public IScopedLensAccess<TModel> DefaultScope => new MockScopedAccess(this);
+
+    private sealed class MockScopedAccess(MockLensQuery<TModel> inner) : IScopedLensAccess<TModel> {
+      public IQueryable<PerspectiveRow<TModel>> Query => inner.Query;
+      public Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) =>
+        inner.GetByIdAsync(id, cancellationToken);
     }
   }
 }

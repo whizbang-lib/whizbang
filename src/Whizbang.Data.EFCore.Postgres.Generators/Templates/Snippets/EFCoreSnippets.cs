@@ -80,7 +80,6 @@ __PHYSICAL_FIELD_CONFIGS__
 
 
 
-
   /// <summary>
   /// Configuration for a PerspectiveRow&lt;TModel&gt; entity with polymorphic types.
   /// Uses Property().HasColumnType("jsonb") instead of ComplexProperty().ToJson() to allow
@@ -284,10 +283,12 @@ __PHYSICAL_FIELD_CONFIGS__
     // NOTE: Requires AddPooledDbContextFactory<__DBCONTEXT_FQN__>() instead of AddDbContext<__DBCONTEXT_FQN__>()
     services.AddTransient<global::Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
       var dbContextFactory = sp.GetRequiredService<Microsoft.EntityFrameworkCore.IDbContextFactory<__DBCONTEXT_FQN__>>();
+      var scopeContextAccessor = sp.GetRequiredService<global::Whizbang.Core.Security.IScopeContextAccessor>();
+      var whizbangOptions = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<global::Whizbang.Core.Configuration.WhizbangCoreOptions>>();
       var tableNames = new System.Collections.Generic.Dictionary<System.Type, string> {
         [typeof(__MODEL_TYPE__)] = "__TABLE_NAME__"
       };
-      var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames);
+      var lensFactory = new global::Whizbang.Data.EFCore.Postgres.EFCoreLensQueryFactory<__DBCONTEXT_FQN__>(dbContextFactory, tableNames, scopeContextAccessor, whizbangOptions);
       return new global::Whizbang.Core.Lenses.FactoryOwnedLensQuery<__MODEL_TYPE__>(lensFactory);
     });
 

@@ -16,38 +16,29 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Uses database-specific upsert strategies for optimal single-roundtrip performance.
 /// </summary>
 /// <typeparam name="TModel">The model type stored in the perspective</typeparam>
-public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
+/// <remarks>
+/// Initializes a new instance of <see cref="EFCorePostgresPerspectiveStore{TModel}"/>.
+/// </remarks>
+/// <param name="context">The EF Core DbContext</param>
+/// <param name="tableName">The table name for this perspective (for SQL generation)</param>
+/// <param name="upsertStrategy">The database-specific upsert strategy (optional, defaults to PostgresUpsertStrategy)</param>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync</tests>
+public class EFCorePostgresPerspectiveStore<TModel>(
+    DbContext context,
+    string tableName,
+    IDbUpsertStrategy? upsertStrategy = null) : IPerspectiveStore<TModel>
     where TModel : class {
 
-  private readonly DbContext _context;
-  private readonly string _tableName;
-  private readonly IDbUpsertStrategy _upsertStrategy;
+  private readonly DbContext _context = context ?? throw new ArgumentNullException(nameof(context));
+  private readonly string _tableName = tableName ?? throw new ArgumentNullException(nameof(tableName));
+  private readonly IDbUpsertStrategy _upsertStrategy = upsertStrategy ?? new PostgresUpsertStrategy();
 
   private static PerspectiveMetadata _defaultMetadata => new() {
     EventType = "Unknown",
     EventId = Guid.NewGuid().ToString(),
     Timestamp = DateTime.UtcNow
   };
-
-  /// <summary>
-  /// Initializes a new instance of <see cref="EFCorePostgresPerspectiveStore{TModel}"/>.
-  /// </summary>
-  /// <param name="context">The EF Core DbContext</param>
-  /// <param name="tableName">The table name for this perspective (for SQL generation)</param>
-  /// <param name="upsertStrategy">The database-specific upsert strategy (optional, defaults to PostgresUpsertStrategy)</param>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync</tests>
-  public EFCorePostgresPerspectiveStore(
-      DbContext context,
-      string tableName,
-      IDbUpsertStrategy? upsertStrategy = null) {
-
-    _context = context ?? throw new ArgumentNullException(nameof(context));
-    _tableName = tableName ?? throw new ArgumentNullException(nameof(tableName));
-
-    // Default to PostgresUpsertStrategy for production, allow override for testing
-    _upsertStrategy = upsertStrategy ?? new PostgresUpsertStrategy();
-  }
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WhenRecordExists_ReturnsModelAsync</tests>

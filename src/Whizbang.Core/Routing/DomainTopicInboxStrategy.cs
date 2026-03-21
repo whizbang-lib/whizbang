@@ -5,22 +5,18 @@ namespace Whizbang.Core.Routing;
 /// JDNext-style - explicit inbox per domain.
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
-public sealed class DomainTopicInboxStrategy : IInboxRoutingStrategy {
-  private readonly string _suffix;
+/// <remarks>
+/// Creates a domain topic inbox strategy with custom suffix.
+/// </remarks>
+/// <param name="suffix">The suffix to append to domain names (e.g., ".inbox", ".in").</param>
+public sealed class DomainTopicInboxStrategy(string suffix) : IInboxRoutingStrategy {
+  private readonly string _suffix = suffix ?? throw new ArgumentNullException(nameof(suffix));
 
   /// <summary>
   /// Creates a domain topic inbox strategy with default suffix.
   /// </summary>
   public DomainTopicInboxStrategy()
       : this(".inbox") { }
-
-  /// <summary>
-  /// Creates a domain topic inbox strategy with custom suffix.
-  /// </summary>
-  /// <param name="suffix">The suffix to append to domain names (e.g., ".inbox", ".in").</param>
-  public DomainTopicInboxStrategy(string suffix) {
-    _suffix = suffix ?? throw new ArgumentNullException(nameof(suffix));
-  }
 
   /// <inheritdoc />
   public InboxSubscription GetSubscription(

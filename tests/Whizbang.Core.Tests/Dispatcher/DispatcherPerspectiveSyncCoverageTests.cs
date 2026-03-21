@@ -88,15 +88,11 @@ public class DispatcherPerspectiveSyncCoverageTests {
   // Test Dispatcher
   // ========================================
 
-  private sealed class CoverageTestDispatcher : Core.Dispatcher {
-    private readonly ReceptorInvoker<object>? _invoker;
-
-    public CoverageTestDispatcher(
-      IServiceProvider sp,
-      ReceptorInvoker<object>? invoker = null
-    ) : base(sp, new StubServiceInstanceProvider()) {
-      _invoker = invoker;
-    }
+  private sealed class CoverageTestDispatcher(
+    IServiceProvider sp,
+    ReceptorInvoker<object>? invoker = null
+    ) : Core.Dispatcher(sp, new StubServiceInstanceProvider()) {
+    private readonly ReceptorInvoker<object>? _invoker = invoker;
 
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (_invoker != null && messageType == typeof(TestCmd)) {

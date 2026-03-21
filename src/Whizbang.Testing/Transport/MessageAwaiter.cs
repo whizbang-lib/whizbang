@@ -26,33 +26,28 @@ namespace Whizbang.Testing.Transport;
 /// </para>
 /// </remarks>
 /// <typeparam name="TResult">The type of result to extract from received messages.</typeparam>
-public sealed class MessageAwaiter<TResult> : IAwaiterIdentity where TResult : notnull {
+/// <remarks>
+/// Creates a new message awaiter.
+/// </remarks>
+/// <param name="resultExtractor">
+/// Function to extract the result from a received envelope.
+/// Return null to skip the message (e.g., warmup messages).
+/// </param>
+/// <param name="filter">
+/// Optional predicate to filter which messages to process.
+/// If null, all messages are processed.
+/// </param>
+public sealed class MessageAwaiter<TResult>(
+  Func<IMessageEnvelope, TResult?> resultExtractor,
+  Predicate<IMessageEnvelope>? filter = null
+  ) : IAwaiterIdentity where TResult : notnull {
   private readonly TaskCompletionSource<TResult> _tcs =
     new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly Func<IMessageEnvelope, TResult?> _resultExtractor;
-  private readonly Predicate<IMessageEnvelope>? _filter;
-
-  /// <summary>
-  /// Creates a new message awaiter.
-  /// </summary>
-  /// <param name="resultExtractor">
-  /// Function to extract the result from a received envelope.
-  /// Return null to skip the message (e.g., warmup messages).
-  /// </param>
-  /// <param name="filter">
-  /// Optional predicate to filter which messages to process.
-  /// If null, all messages are processed.
-  /// </param>
-  public MessageAwaiter(
-    Func<IMessageEnvelope, TResult?> resultExtractor,
-    Predicate<IMessageEnvelope>? filter = null
-  ) {
-    _resultExtractor = resultExtractor ?? throw new ArgumentNullException(nameof(resultExtractor));
-    _filter = filter;
-  }
+  private readonly Func<IMessageEnvelope, TResult?> _resultExtractor = resultExtractor ?? throw new ArgumentNullException(nameof(resultExtractor));
+  private readonly Predicate<IMessageEnvelope>? _filter = filter;
 
   /// <summary>
   /// Gets whether a result has been received.

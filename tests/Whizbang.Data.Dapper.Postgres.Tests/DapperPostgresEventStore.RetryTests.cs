@@ -73,7 +73,7 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
   public async Task AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
-    var concurrency = 8; // Moderate concurrency to force retries but succeed
+    const int concurrency = 8; // Moderate concurrency to force retries but succeed
     var envelopes = Enumerable.Range(0, concurrency)
       .Select(_ => _createTestEnvelope(streamId))
       .ToList();
@@ -98,15 +98,13 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
   public async Task AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync() {
     // Arrange - Create a scenario that will force many retries
     var streamId = Guid.NewGuid();
-    var concurrency = 10;
+    const int concurrency = 10;
     var envelopes = Enumerable.Range(0, concurrency)
       .Select(_ => _createTestEnvelope(streamId))
       .ToList();
 
     // Act - Maximum concurrent pressure
-    var tasks = envelopes.Select(env => Task.Run(async () => {
-      await _store.AppendAsync(streamId, env);
-    }));
+    var tasks = envelopes.Select(env => Task.Run(async () => await _store.AppendAsync(streamId, env)));
     await Task.WhenAll(tasks);
 
     // Assert - Despite extreme concurrency, all should eventually succeed
@@ -144,7 +142,7 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
   public async Task AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync() {
     // Arrange - Use moderate concurrency to observe retry behavior
     var streamId = Guid.NewGuid();
-    var count = 8;
+    const int count = 8;
 
     // Act - All appends happen simultaneously to force conflicts
     await Task.WhenAll(
@@ -198,9 +196,7 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
       new { });
 
     // Act & Assert - Should throw exception (not unique violation, so no retry)
-    await Assert.That(async () => {
-      await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
-    }).ThrowsException();
+    await Assert.That(async () => await _store.AppendAsync(streamId, _createTestEnvelope(streamId))).ThrowsException();
 
     // Restore the table for other tests by regenerating schema from C#
     var schemaConfig = new SchemaConfiguration(
@@ -235,5 +231,5 @@ public class DapperPostgresEventStoreRetryTests : IDisposable {
     return envelope;
   }
 
-  private sealed class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase;
 }

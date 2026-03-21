@@ -65,9 +65,7 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
   }
 }
 
-internal sealed class WhizbangOptionsExtensionInfo : DbContextOptionsExtensionInfo {
-  public WhizbangOptionsExtensionInfo(IDbContextOptionsExtension extension) : base(extension) { }
-
+internal sealed class WhizbangOptionsExtensionInfo(IDbContextOptionsExtension extension) : DbContextOptionsExtensionInfo(extension) {
   public override bool IsDatabaseProvider => false;
 
   public override string LogFragment => "WhizbangFunctions ";

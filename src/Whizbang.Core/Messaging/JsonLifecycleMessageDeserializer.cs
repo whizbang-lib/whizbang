@@ -10,16 +10,12 @@ namespace Whizbang.Core.Messaging;
 /// Uses JsonContextRegistry for AOT-safe deserialization with zero reflection.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-stages</docs>
-public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  /// <summary>
-  /// Creates a new JSON lifecycle message deserializer.
-  /// </summary>
-  /// <param name="jsonOptions">JSON serializer options for deserialization. If null, uses default options.</param>
-  public JsonLifecycleMessageDeserializer(JsonSerializerOptions? jsonOptions = null) {
-    _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
-  }
+/// <remarks>
+/// Creates a new JSON lifecycle message deserializer.
+/// </remarks>
+/// <param name="jsonOptions">JSON serializer options for deserialization. If null, uses default options.</param>
+public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? jsonOptions = null) : ILifecycleMessageDeserializer {
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? new JsonSerializerOptions();
 
   /// <summary>
   /// Deserializes a message from an OutboxMessage or InboxMessage envelope.
@@ -66,7 +62,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
       throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
-        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'"
+        "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'"
       );
     }
 
@@ -108,7 +104,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (jsonElement.ValueKind == JsonValueKind.Undefined) {
       throw new InvalidOperationException(
         $"Cannot deserialize message type '{messageTypeName}': JsonElement is Undefined. " +
-        $"This may indicate the payload was never set or was disposed.");
+        "This may indicate the payload was never set or was disposed.");
     }
 
     // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
@@ -117,7 +113,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
     if (jsonTypeInfo is null) {
       throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
-        $"Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
+        "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
       );
     }
 
@@ -128,7 +124,7 @@ public sealed class JsonLifecycleMessageDeserializer : ILifecycleMessageDeserial
       if (message is null) {
         throw new InvalidOperationException(
           $"Deserialization of type '{messageTypeName}' returned null. " +
-          $"This may indicate invalid JSON or a serialization configuration issue."
+          "This may indicate invalid JSON or a serialization configuration issue."
         );
       }
 

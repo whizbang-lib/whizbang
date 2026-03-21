@@ -45,9 +45,9 @@ public class ServiceRegistrationTests {
   [Test]
   public async Task AddWhizbangLenses_WithOptions_ShouldApplyConfigurationAsync() {
     // Arrange
-    var configuredScope = GraphQLLensScope.All;
-    var configuredPageSize = 25;
-    var configuredMaxPageSize = 200;
+    const GraphQLLensScope configuredScope = GraphQLLensScope.All;
+    const int configuredPageSize = 25;
+    const int configuredMaxPageSize = 200;
 
     // Act
     var serviceProvider = new ServiceCollection()
@@ -176,7 +176,7 @@ public class ServiceRegistrationTests {
   [Test]
   public async Task AddWhizbangLenses_WithCustomScope_ShouldPersistAsync() {
     // Arrange
-    var customScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
+    const GraphQLLensScope customScope = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
 
     // Act
     var serviceProvider = new ServiceCollection()

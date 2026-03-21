@@ -25,7 +25,7 @@ public class MigrationProjectManagerTests {
     // Assert
     await Assert.That(project.Name).IsEqualTo("orders-migration");
     await Assert.That(project.RepoPath).IsEqualTo("/path/to/repo");
-    await Assert.That(project.CreatedAt).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(project.CreatedAt).IsNotEqualTo(default);
   }
 
   [Test]
@@ -145,7 +145,7 @@ public class MigrationProjectManagerTests {
   public async Task UpdateProgressAsync_UpdatesProjectProgress_Async() {
     // Arrange
     var manager = new MigrationProjectManager(_tempDir);
-    var project = await manager.CreateProjectAsync("test-project", "/path/to/repo");
+    _ = await manager.CreateProjectAsync("test-project", "/path/to/repo");
 
     // Act
     await manager.UpdateProgressAsync("test-project", 3, 7, "Processing handlers");

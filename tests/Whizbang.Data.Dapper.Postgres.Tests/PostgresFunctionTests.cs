@@ -19,9 +19,9 @@ public class PostgresFunctionTests : PostgresTestBase {
   public async Task RegisterInstanceHeartbeat_NewInstance_InsertsSuccessfullyAsync() {
     // Arrange
     var instanceId = _idProvider.NewGuid();
-    var serviceName = "TestService";
-    var hostName = "test-host";
-    var processId = 12345;
+    const string serviceName = "TestService";
+    const string hostName = "test-host";
+    const int processId = 12345;
     var now = DateTimeOffset.UtcNow;
 
     // Act
@@ -51,9 +51,9 @@ public class PostgresFunctionTests : PostgresTestBase {
   public async Task RegisterInstanceHeartbeat_ExistingInstance_UpdatesHeartbeatAsync() {
     // Arrange
     var instanceId = _idProvider.NewGuid();
-    var serviceName = "TestService";
-    var hostName = "test-host";
-    var processId = 12345;
+    const string serviceName = "TestService";
+    const string hostName = "test-host";
+    const int processId = 12345;
     var originalTime = DateTimeOffset.UtcNow.AddMinutes(-5);
     var updatedTime = DateTimeOffset.UtcNow;
 
@@ -394,7 +394,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var workId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -439,7 +439,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   public async Task UpdatePerspectiveCursors_UpdatesCursorWithHighestSequenceAsync() {
     // Arrange
     var streamId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
@@ -547,7 +547,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var now = DateTimeOffset.UtcNow;
-    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+    const int highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
@@ -586,7 +586,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var now = DateTimeOffset.UtcNow;
-    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+    const int highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
@@ -626,7 +626,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
     var now = DateTimeOffset.UtcNow;
-    var highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+    const int highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
@@ -762,7 +762,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
     var instanceId = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
     var leaseExpiry = now.AddMinutes(5);
 
@@ -871,7 +871,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   public async Task ClaimOrphanedOutbox_ClaimsMessagesForCorrectPartitionAsync() {
     // Arrange
     var instance1 = _idProvider.NewGuid();
-    var instance2 = _idProvider.NewGuid();
+    _ = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var message1Id = _idProvider.NewGuid();
     var message2Id = _idProvider.NewGuid();
@@ -960,7 +960,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
     var event3Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
     var leaseExpiry = now.AddMinutes(5);
 
@@ -1020,7 +1020,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var event1Id = _idProvider.NewGuid();
     var event2Id = _idProvider.NewGuid();
-    var perspectiveName = "TestPerspective";
+    const string perspectiveName = "TestPerspective";
     var now = DateTimeOffset.UtcNow;
     var leaseExpiry = now.AddMinutes(5);
 

@@ -388,7 +388,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
   // ============================================================
 
   private static ServiceInstanceProvider _createTestInstanceProvider() =>
-    new ServiceInstanceProvider(
+    new(
       Guid.NewGuid(),
       "IdleTestService",
       "test-host",
@@ -425,7 +425,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
   }
 
   private static OutboxWork _createOutboxWork(Guid messageId, string destination) =>
-    new OutboxWork {
+    new() {
       MessageId = messageId,
       Destination = destination,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
@@ -443,7 +443,7 @@ public class WorkCoordinatorPublisherWorkerIdleStateTests {
     };
 
   private static InboxWork _createInboxWork(Guid messageId) =>
-    new InboxWork {
+    new() {
       MessageId = messageId,
       Envelope = new MessageEnvelope<JsonElement> {
         MessageId = MessageId.From(messageId),

@@ -32,9 +32,9 @@ public static class ReceptorProcessingSchema {
       new ColumnDefinition(
         Name: "id",
         DataType: WhizbangDataType.UUID,
-        PrimaryKey: true,
         Nullable: false
-      ),
+,
+        PrimaryKey: true),
       new ColumnDefinition(
         Name: "event_id",
         DataType: WhizbangDataType.UUID,
@@ -104,21 +104,23 @@ public static class ReceptorProcessingSchema {
         Nullable: true
       )
     ),
-    Indexes: ImmutableArray.Create(
+    Indexes:
+
+    [
       new IndexDefinition(
-        Name: "idx_receptor_processing_event_id",
-        Columns: ImmutableArray.Create("event_id")
-      ),
+            Name: "idx_receptor_processing_event_id",
+            Columns: ["event_id"                                ]
+          ),
       new IndexDefinition(
         Name: "idx_receptor_processing_receptor_name",
-        Columns: ImmutableArray.Create("receptor_name")
+        Columns: ["receptor_name"                                 ]
       ),
       new IndexDefinition(
         Name: "idx_receptor_processing_status",
-        Columns: ImmutableArray.Create("status")
+        Columns: ["status"                          ]
       )
-    )
-  );
+,
+    ]);
 
   /// <summary>
   /// Column name constants for type-safe access.

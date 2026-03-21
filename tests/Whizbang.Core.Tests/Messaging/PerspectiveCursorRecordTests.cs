@@ -17,7 +17,7 @@ public class PerspectiveCursorRecordTests {
   public async Task PerspectiveCursorRecord_WithAllProperties_CreatesInstanceAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
-    var perspectiveName = "OrderSummaryPerspective";
+    const string perspectiveName = "OrderSummaryPerspective";
     var lastEventId = Guid.NewGuid();
     var status = PerspectiveProcessingStatus.Completed;
     var processedAt = DateTime.UtcNow;
