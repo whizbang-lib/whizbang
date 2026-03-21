@@ -391,14 +391,48 @@ function Invoke-Prepare {
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Format Check... ⏭️ Skipped $(Format-StepTiming 'Format Check')" -ForegroundColor DarkGray
         $script:steps += @{ name = "Format Check"; status = "skipped"; duration_s = 0 }
     } else {
-        $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
-            $exitCode = Invoke-DotnetWithProgress -Arguments "format --verify-no-changes" -WorkingDir $repoRoot
-            if ($exitCode -ne 0 -and $AutoFix) {
-                Write-Host ""
-                Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
-                $exitCode = Invoke-DotnetWithProgress -Arguments "format" -WorkingDir $repoRoot
-                Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
-                $exitCode = Invoke-DotnetWithProgress -Arguments "format --verify-no-changes" -WorkingDir $repoRoot
+        $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -ShowOutput -Action {
+            # Run format check with diagnostic verbosity to get file:line:rule details
+            $formatOutput = & dotnet format --verify-no-changes --verbosity diagnostic $repoRoot 2>&1 | Out-String
+            $exitCode = $LASTEXITCODE
+
+            if ($exitCode -ne 0) {
+                # Extract formatting violations: lines matching "path(line,col): severity ruleId: message"
+                $violations = $formatOutput -split "`n" |
+                    Where-Object { $_ -match ":\s*(warning|error)\s+\w+\s*:" -or $_ -match "Formatted code file" } |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ }
+
+                if ($violations.Count -gt 0) {
+                    Write-AiLine "    Formatting issues:" -ForegroundColor Yellow
+                    foreach ($v in $violations | Select-Object -First 25) {
+                        Write-AiLine "      $v" -ForegroundColor Gray
+                    }
+                    if ($violations.Count -gt 25) {
+                        Write-Host "      ... and $($violations.Count - 25) more" -ForegroundColor DarkGray
+                    }
+                } else {
+                    # Fallback: show which files would be changed
+                    $changedFiles = $formatOutput -split "`n" | Where-Object { $_ -match "\.cs" } | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -First 20
+                    if ($changedFiles.Count -gt 0) {
+                        Write-AiLine "    Files with formatting issues:" -ForegroundColor Yellow
+                        foreach ($f in $changedFiles) {
+                            Write-AiLine "      - $f" -ForegroundColor Gray
+                        }
+                    }
+                }
+
+                if ($AutoFix) {
+                    Write-Host ""
+                    Write-Host "    AutoFix: Running dotnet format..." -ForegroundColor Yellow
+                    $exitCode = Invoke-DotnetWithProgress -Arguments "format" -WorkingDir $repoRoot
+                    Write-Host "    AutoFix: Re-checking..." -ForegroundColor Yellow
+                    $formatOutput2 = & dotnet format --verify-no-changes $repoRoot 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                    if ($exitCode -eq 0) {
+                        Write-AiLine "    AutoFix: ✅ All formatting issues resolved" -ForegroundColor Green
+                    }
+                }
             }
             @{ ExitCode = $exitCode; Details = $null }
         }
