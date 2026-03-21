@@ -13,6 +13,7 @@ using Whizbang.Core.AutoPopulate;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -127,6 +128,8 @@ public abstract partial class Dispatcher(
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
   // Message tag processor - invoked after successful receptor completion
   private readonly IMessageTagProcessor? _messageTagProcessor = serviceProvider.GetService<IMessageTagProcessor>();
+  // Lifecycle coordinator - centralized stage transitions
+  private readonly ILifecycleCoordinator? _lifecycleCoordinator = serviceProvider.GetService<ILifecycleCoordinator>();
   // Auto-populate processor - populates message properties from envelope context
   private readonly IAutoPopulateProcessor _autoPopulateProcessor = serviceProvider.GetService<IAutoPopulateProcessor>() ?? new AutoPopulateProcessor();
   // Tracing options for component-level control (Lifecycle, Handlers, etc.)
@@ -2659,9 +2662,22 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Create a scope to resolve scoped IReceptorInvoker
+    // Create a scope to resolve scoped services
     // Dispatcher is a singleton — cannot inject scoped services directly
     await using var scope = _scopeFactory.CreateAsyncScope();
+
+    // Prefer coordinator path — handles receptors + tags + ImmediateAsync
+    if (_lifecycleCoordinator is not null) {
+      var eventId = envelope.MessageId.Value;
+      var tracking = _lifecycleCoordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, ct).ConfigureAwait(false);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, ct).ConfigureAwait(false);
+      _lifecycleCoordinator.AbandonTracking(eventId);
+      return;
+    }
+
+    // Fallback: direct invocation when coordinator not registered
     var scopedInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     if (scopedInvoker is null) {
       return;
@@ -2672,14 +2688,12 @@ public abstract partial class Dispatcher(
       MessageSource = MessageSource.Local
     };
 
-    // PostLifecycleAsync (non-blocking)
     if (asyncReceptors.Count > 0) {
       await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
       await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
         context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
     }
 
-    // PostLifecycleInline (blocking)
     if (inlineReceptors.Count > 0) {
       await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
         context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
@@ -2687,7 +2701,6 @@ public abstract partial class Dispatcher(
         context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
     }
 
-    // Process message tags at PostLifecycleInline
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;
       await _messageTagProcessor.ProcessTagsAsync(

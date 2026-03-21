@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Coverage settings for dotnet test with Microsoft.Testing.Extensions.CodeCoverage
+  DEPRECATED: This file uses the coverlet/XPlat Code Coverage format.
+  This project uses Microsoft.Testing.Extensions.CodeCoverage instead.
 
-  Key setting: ExcludeAssembliesWithoutSources=None
-  - Default (MissingAll) excludes assemblies if source files are missing from PDB paths
-  - In CI, artifact downloads may have different paths than build, causing empty coverage
-  - Setting to None ensures coverage is collected regardless of source file availability
+  Coverage settings have moved to: codecoverage.config
+  Used via: dotnet run - - --coverage --coverage-settings codecoverage.config
 
-  See: https://github.com/microsoft/codecoverage/blob/main/docs/configuration.md
+  This file is retained for compatibility with tools that expect .runsettings
+  (e.g., dotnet test --settings). For the Run-Tests.ps1 script, the
+  codecoverage.config file is used automatically.
 -->
 <RunSettings>
   <DataCollectionRunSettings>

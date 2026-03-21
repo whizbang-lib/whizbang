@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -216,6 +217,7 @@ public partial class PerspectiveWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
     var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
     // DIAGNOSTIC: Log which service/instance is processing checkpoints
     LogProcessingWorkBatchForService(_logger, _instanceProvider.ServiceName, _instanceProvider.InstanceId);
@@ -816,42 +818,44 @@ public partial class PerspectiveWorker(
     }
 
     // Phase 5: Fire PostLifecycle once per unique event processed in this batch
-    // PostLifecycle fires AFTER all perspectives in the batch have processed, enabling
-    // single-notification patterns (e.g., one SignalR notification per event, not per perspective)
-    if (batchProcessedEvents.Count > 0 && receptorInvoker is not null) {
-      foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
-        var context = new LifecycleExecutionContext {
-          CurrentStage = LifecycleStage.PostLifecycleAsync,
-          StreamId = streamId,
-          PerspectiveType = null, // Not perspective-specific
-          MessageSource = MessageSource.Local,
-          AttemptNumber = 1
-        };
+    // Uses LifecycleCoordinator to guarantee exactly-once PostLifecycle per event.
+    // The coordinator handles receptor invocation, ImmediateAsync chaining, and tag processing.
+    if (batchProcessedEvents.Count > 0) {
+      if (lifecycleCoordinator is not null) {
+        foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
+          // Establish security context from envelope hops
+          await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
 
-        // Establish security context from envelope hops
-        await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+          // Begin tracking at PostLifecycleAsync (entry point for this segment)
+          var tracking = lifecycleCoordinator.BeginTracking(
+            eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local, streamId);
 
-        // PostLifecycleAsync (non-blocking)
-        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, cancellationToken);
-        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-          context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+          // Advance through PostLifecycle stages — coordinator fires receptors + tags + ImmediateAsync
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
+          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
 
-        // PostLifecycleInline (blocking)
-        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
-          context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);
-        await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-          context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+          // EXIT: processing complete
+          lifecycleCoordinator.AbandonTracking(eventId);
+        }
+      } else if (receptorInvoker is not null) {
+        // Fallback: direct invocation when coordinator not registered
+        foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
+          var context = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PostLifecycleAsync,
+            StreamId = streamId,
+            PerspectiveType = null,
+            MessageSource = MessageSource.Local,
+            AttemptNumber = 1
+          };
 
-        // Process message tags at PostLifecycleInline
-        var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
-        if (tagProcessor is not null) {
-          var eventPayload = envelope.Payload;
-          var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
-          await tagProcessor.ProcessTagsAsync(
-            eventPayload, eventPayload.GetType(),
-            LifecycleStage.PostLifecycleInline,
-            extractedScope, cancellationToken
-          ).ConfigureAwait(false);
+          await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+          await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, cancellationToken);
+          await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+            context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+          await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
+            context with { CurrentStage = LifecycleStage.PostLifecycleInline }, cancellationToken);
+          await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+            context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
         }
       }
     }
