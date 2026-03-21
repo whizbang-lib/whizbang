@@ -57,9 +57,15 @@ function Write-WhizbangBanner {
     <#
     .SYNOPSIS
         Prints the Whizbang ASCII art banner with true-color gradient.
+
+    .PARAMETER Animate
+        When true, re-randomizes stars 3 times over 3 seconds for a twinkling effect.
+        Default: true.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        [bool]$Animate = $true
+    )
 
     Write-Host ""
 
@@ -206,6 +212,19 @@ function Write-WhizbangBanner {
     Write-LogoEOL
 
     Write-Host ""
+
+    # Animate: redraw banner with new random stars (twinkling effect)
+    # Banner = 10 rendered lines (bg top + 6 art + bg bottom + tagline + blank)
+    if ($Animate) {
+        $bannerLineCount = 10
+        for ($frame = 0; $frame -lt 3; $frame++) {
+            Start-Sleep -Seconds 1
+            # Move cursor up to overwrite the banner
+            Write-Host "$([char]27)[${bannerLineCount}A" -NoNewline
+            # Re-render (Write-LogoSeg randomizes stars differently each time)
+            Write-WhizbangBanner -Animate $false
+        }
+    }
 }
 
 function Write-WhizbangHeader {
