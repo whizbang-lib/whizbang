@@ -493,6 +493,78 @@ trap {
     exit 130
 }
 
+# Generate coverage report from Cobertura XML files using reportgenerator
+# Returns hashtable with CoveragePct, TotalLines, TotalCovered, HtmlReport
+function Invoke-CoverageReport {
+    param(
+        [string]$RepoRoot,
+        [array]$CoberturaFiles
+    )
+
+    $reportDir = Join-Path $RepoRoot "coverage-report"
+    $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+
+    # Generate HTML, TextSummary, and JsonSummary reports
+    # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
+    reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
+
+    # Read coverage totals from TextSummary (instant — no XML parsing needed)
+    $summaryFile = Join-Path $reportDir "Summary.txt"
+    $totalLines = 0
+    $totalCovered = 0
+    $coveragePct = 0
+    if (Test-Path $summaryFile) {
+        $summaryText = Get-Content $summaryFile -Raw
+        if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
+        if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+        if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
+    }
+
+    Write-Host ""
+    Write-Host "=====================================" -ForegroundColor Cyan
+    Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
+    Write-Host "=====================================" -ForegroundColor Cyan
+
+    # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
+    $jsonSummaryFile = Join-Path $reportDir "Summary.json"
+    if (Test-Path $jsonSummaryFile) {
+        $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
+        $filesBelow100 = @()
+        foreach ($assembly in $jsonSummary.coverage.assemblies) {
+            foreach ($class in $assembly.classes) {
+                if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
+                    $filesBelow100 += @{
+                        Name     = $class.name
+                        Coverage = $class.coverage
+                        Covered  = $class.coveredLines
+                        Total    = $class.coverableLines
+                    }
+                }
+            }
+        }
+
+        if ($filesBelow100.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
+            foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
+                $uncovered = $file.Total - $file.Covered
+                Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    $htmlReport = Join-Path $reportDir "index.html"
+    Write-Host ""
+    Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+
+    return @{
+        CoveragePct  = $coveragePct
+        TotalLines   = $totalLines
+        TotalCovered = $totalCovered
+        HtmlReport   = $htmlReport
+    }
+}
+
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
@@ -830,58 +902,11 @@ try {
             $reportDir = Join-Path $repoRoot "coverage-report"
             $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
-            # Generate HTML, TextSummary, and JsonSummary reports
-            # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
-
-            # Read coverage totals from TextSummary (instant — no XML parsing needed)
-            $summaryFile = Join-Path $reportDir "Summary.txt"
-            $totalLines = 0
-            $totalCovered = 0
-            $coveragePct = 0
-            if (Test-Path $summaryFile) {
-                $summaryText = Get-Content $summaryFile -Raw
-                if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
-                if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
-                if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
-            }
-
-            Write-Host ""
-            Write-Host "=====================================" -ForegroundColor Cyan
-            Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
-            Write-Host "=====================================" -ForegroundColor Cyan
-
-            # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
-            $jsonSummaryFile = Join-Path $reportDir "Summary.json"
-            if (Test-Path $jsonSummaryFile) {
-                $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
-                $filesBelow100 = @()
-                foreach ($assembly in $jsonSummary.coverage.assemblies) {
-                    foreach ($class in $assembly.classes) {
-                        if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
-                            $filesBelow100 += @{
-                                Name     = $class.name
-                                Coverage = $class.coverage
-                                Covered  = $class.coveredLines
-                                Total    = $class.coverableLines
-                            }
-                        }
-                    }
-                }
-
-                if ($filesBelow100.Count -gt 0) {
-                    Write-Host ""
-                    Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
-                    foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
-                        $uncovered = $file.Total - $file.Covered
-                        Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
-                    }
-                }
-            }
-
-            $htmlReport = Join-Path $reportDir "index.html"
-            Write-Host ""
-            Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coveragePct = $coverageResult.CoveragePct
+            $totalLines = $coverageResult.TotalLines
+            $totalCovered = $coverageResult.TotalCovered
+            $htmlReport = $coverageResult.HtmlReport
         } else {
             Write-Host "No cobertura XML files found." -ForegroundColor Yellow
         }
@@ -2014,58 +2039,11 @@ try {
             $reportDir = Join-Path $repoRoot "coverage-report"
             $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
-            # Generate HTML, TextSummary, and JsonSummary reports
-            # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
-
-            # Read coverage totals from TextSummary (instant — no XML parsing needed)
-            $summaryFile = Join-Path $reportDir "Summary.txt"
-            $totalLines = 0
-            $totalCovered = 0
-            $coveragePct = 0
-            if (Test-Path $summaryFile) {
-                $summaryText = Get-Content $summaryFile -Raw
-                if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
-                if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
-                if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
-            }
-
-            Write-Host ""
-            Write-Host "=====================================" -ForegroundColor Cyan
-            Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
-            Write-Host "=====================================" -ForegroundColor Cyan
-
-            # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
-            $jsonSummaryFile = Join-Path $reportDir "Summary.json"
-            if (Test-Path $jsonSummaryFile) {
-                $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
-                $filesBelow100 = @()
-                foreach ($assembly in $jsonSummary.coverage.assemblies) {
-                    foreach ($class in $assembly.classes) {
-                        if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
-                            $filesBelow100 += @{
-                                Name     = $class.name
-                                Coverage = $class.coverage
-                                Covered  = $class.coveredLines
-                                Total    = $class.coverableLines
-                            }
-                        }
-                    }
-                }
-
-                if ($filesBelow100.Count -gt 0) {
-                    Write-Host ""
-                    Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
-                    foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
-                        $uncovered = $file.Total - $file.Covered
-                        Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
-                    }
-                }
-            }
-
-            $htmlReport = Join-Path $reportDir "index.html"
-            Write-Host ""
-            Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coveragePct = $coverageResult.CoveragePct
+            $totalLines = $coverageResult.TotalLines
+            $totalCovered = $coverageResult.TotalCovered
+            $htmlReport = $coverageResult.HtmlReport
         } else {
             Write-Host "No cobertura XML files found. Ensure tests ran with --coverage." -ForegroundColor Yellow
         }
