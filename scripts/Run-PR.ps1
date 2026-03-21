@@ -189,32 +189,40 @@ function Invoke-Prepare {
         param(
             [string]$Name,
             [scriptblock]$Action,
-            [string]$FailureType = "BuildFailure"
+            [string]$FailureType = "BuildFailure",
+            [switch]$ShowOutput  # When set, child output is shown (newline after name, result on separate line)
         )
 
         $stepStart = [DateTime]::UtcNow
-        Write-Host "  ▶ $Name..." -ForegroundColor Cyan -NoNewline
+        if ($ShowOutput) {
+            Write-Host "  ▶ $Name..." -ForegroundColor Cyan
+        } else {
+            Write-Host "  ▶ $Name..." -ForegroundColor Cyan -NoNewline
+        }
 
         try {
             $result = & $Action
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
 
             if ($result.ExitCode -ne 0) {
-                Write-Host " ❌ Failed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
+                $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
+                Write-Host "$prefix ❌ Failed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
                 $script:steps += @{ name = $Name; status = "failed"; duration_s = [math]::Round($stepDuration, 1); details = $result.Details }
                 $script:overallPassed = $false
                 Write-AiInstructions -Type $FailureType
                 return $false
             }
             else {
-                Write-Host " ✅ Passed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Green
+                $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
+                Write-Host "$prefix ✅ Passed ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Green
                 $script:steps += @{ name = $Name; status = "passed"; duration_s = [math]::Round($stepDuration, 1); details = $result.Details }
                 return $true
             }
         }
         catch {
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
-            Write-Host " ❌ Error ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
+            $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
+            Write-Host "$prefix ❌ Error ($(Format-Duration -Seconds $stepDuration))" -ForegroundColor Red
             Write-Host "    $_" -ForegroundColor Red
             $script:steps += @{ name = $Name; status = "error"; duration_s = [math]::Round($stepDuration, 1); details = $_.ToString() }
             $script:overallPassed = $false
@@ -257,7 +265,7 @@ function Invoke-Prepare {
 
     # Step 3: Unit tests + coverage
     $coveragePct = $null
-    $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -Action {
+    $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
         $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
         $testOutput = & $testScript -Mode AiUnit -Coverage -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-String
         $exitCode = $LASTEXITCODE
@@ -282,7 +290,7 @@ function Invoke-Prepare {
 
     # Step 4: Integration tests (unless skipped)
     if (-not $SkipIntegration) {
-        $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -Action {
+        $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
             & $testScript -Mode AiIntegrations -FailFast -OutputFormat Json -NoBuild -NoHeader 2>&1 | Out-Null
             @{ ExitCode = $LASTEXITCODE; Details = $null }
