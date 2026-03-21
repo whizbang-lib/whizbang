@@ -790,11 +790,14 @@ try {
             # Generate HTML and TextSummary reports
             reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
 
-            # Parse cobertura XML for detailed coverage info
+            # Parse cobertura XML for detailed coverage info (single pass for totals + per-file)
             $totalLines = 0
             $totalCovered = 0
             $uncoveredByFile = @{}
+            $fileCoverage = @{}
+            $fileCount = 0
 
+            Write-Host "Parsing coverage data..." -ForegroundColor Gray -NoNewline
             foreach ($cobFile in $coberturaFiles) {
                 [xml]$cobXml = Get-Content $cobFile.FullName
                 foreach ($package in $cobXml.coverage.packages.package) {
@@ -802,10 +805,17 @@ try {
                         $filename = $class.filename
                         # Only include src/ files, exclude test files
                         if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
+                            if (-not $fileCoverage.ContainsKey($filename)) {
+                                $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
+                                $fileCount++
+                                if ($fileCount % 100 -eq 0) { Write-Host "." -NoNewline }
+                            }
                             foreach ($line in $class.lines.line) {
                                 $totalLines++
+                                $fileCoverage[$filename].Total++
                                 if ([int]$line.hits -gt 0) {
                                     $totalCovered++
+                                    $fileCoverage[$filename].Covered++
                                 } else {
                                     if (-not $uncoveredByFile.ContainsKey($filename)) {
                                         $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
@@ -817,6 +827,7 @@ try {
                     }
                 }
             }
+            Write-Host " done ($fileCount files)" -ForegroundColor Gray
 
             # Calculate and display overall coverage
             $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
@@ -825,29 +836,8 @@ try {
             Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
             Write-Host "=====================================" -ForegroundColor Cyan
 
-            # Show files below 100% coverage
+            # Show files below 100% coverage (data already collected in single pass above)
             if ($uncoveredByFile.Count -gt 0) {
-                $fileCoverage = @{}
-                foreach ($cobFile in $coberturaFiles) {
-                    [xml]$cobXml = Get-Content $cobFile.FullName
-                    foreach ($package in $cobXml.coverage.packages.package) {
-                        foreach ($class in $package.classes.class) {
-                            $filename = $class.filename
-                            if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                                if (-not $fileCoverage.ContainsKey($filename)) {
-                                    $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                }
-                                foreach ($line in $class.lines.line) {
-                                    $fileCoverage[$filename].Total++
-                                    if ([int]$line.hits -gt 0) {
-                                        $fileCoverage[$filename].Covered++
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Write-Host ""
                 Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
                 foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
@@ -2001,11 +1991,14 @@ try {
             # Generate HTML and TextSummary reports
             reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
 
-            # Parse cobertura XML for detailed coverage info
+            # Parse cobertura XML for detailed coverage info (single pass for totals + per-file)
             $totalLines = 0
             $totalCovered = 0
             $uncoveredByFile = @{}
+            $fileCoverage = @{}
+            $fileCount = 0
 
+            Write-Host "Parsing coverage data..." -ForegroundColor Gray -NoNewline
             foreach ($cobFile in $coberturaFiles) {
                 [xml]$cobXml = Get-Content $cobFile.FullName
                 foreach ($package in $cobXml.coverage.packages.package) {
@@ -2013,10 +2006,17 @@ try {
                         $filename = $class.filename
                         # Only include src/ files, exclude test files
                         if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
+                            if (-not $fileCoverage.ContainsKey($filename)) {
+                                $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
+                                $fileCount++
+                                if ($fileCount % 100 -eq 0) { Write-Host "." -NoNewline }
+                            }
                             foreach ($line in $class.lines.line) {
                                 $totalLines++
+                                $fileCoverage[$filename].Total++
                                 if ([int]$line.hits -gt 0) {
                                     $totalCovered++
+                                    $fileCoverage[$filename].Covered++
                                 } else {
                                     if (-not $uncoveredByFile.ContainsKey($filename)) {
                                         $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
@@ -2028,6 +2028,7 @@ try {
                     }
                 }
             }
+            Write-Host " done ($fileCount files)" -ForegroundColor Gray
 
             # Calculate and display overall coverage
             $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
@@ -2036,36 +2037,13 @@ try {
             Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
             Write-Host "=====================================" -ForegroundColor Cyan
 
-            # Show files below 100% coverage
+            # Show files below 100% coverage (data already collected in single pass above)
             if ($uncoveredByFile.Count -gt 0) {
-                # Calculate per-file coverage from cobertura data
-                $fileCoverage = @{}
-                foreach ($cobFile in $coberturaFiles) {
-                    [xml]$cobXml = Get-Content $cobFile.FullName
-                    foreach ($package in $cobXml.coverage.packages.package) {
-                        foreach ($class in $package.classes.class) {
-                            $filename = $class.filename
-                            if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                                if (-not $fileCoverage.ContainsKey($filename)) {
-                                    $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                }
-                                foreach ($line in $class.lines.line) {
-                                    $fileCoverage[$filename].Total++
-                                    if ([int]$line.hits -gt 0) {
-                                        $fileCoverage[$filename].Covered++
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Write-Host ""
                 Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
                 foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
                     $fc = $fileCoverage[$file]
                     $filePct = if ($fc.Total -gt 0) { [math]::Round(($fc.Covered / $fc.Total) * 100, 2) } else { 0 }
-                    # Make path relative to repo root for readability
                     $relPath = $file
                     if ($file.StartsWith($repoRoot)) {
                         $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
