@@ -332,7 +332,10 @@ function Invoke-Prepare {
     Write-Host ""
 
     # Step 1: Format check (with AutoFix support)
-    if (-not $SkipFormat) {
+    if ($SkipFormat) {
+        Write-Host "  ▶ Format Check... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Format Check"; status = "skipped"; duration_s = 0 }
+    } else {
         $continue = Run-Step -Name "Format Check" -FailureType "FormatFailure" -Action {
             Push-Location $repoRoot
             try {
@@ -352,7 +355,10 @@ function Invoke-Prepare {
     }
 
     # Step 2: Build
-    if (-not $SkipBuild) {
+    if ($SkipBuild) {
+        Write-Host "  ▶ Build... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Build"; status = "skipped"; duration_s = 0 }
+    } else {
         $continue = Run-Step -Name "Build" -FailureType "BuildFailure" -Action {
             Push-Location $repoRoot
             try {
@@ -366,7 +372,10 @@ function Invoke-Prepare {
 
     # Step 3: Unit tests + coverage
     $coveragePct = $null
-    if (-not $SkipUnitTests) {
+    if ($SkipUnitTests) {
+        Write-Host "  ▶ Unit Tests + Coverage... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Unit Tests + Coverage"; status = "skipped"; duration_s = 0 }
+    } else {
         $unitTestLogFile = Join-Path $repoRoot "logs" "pr-unit-tests.log"
         $continue = Run-Step -Name "Unit Tests + Coverage" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
@@ -397,7 +406,10 @@ function Invoke-Prepare {
     }
 
     # Step 4: Integration tests (unless skipped)
-    if (-not $SkipIntegration) {
+    if ($SkipIntegration) {
+        Write-Host "  ▶ Integration Tests... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Integration Tests"; status = "skipped"; duration_s = 0 }
+    } else {
         $integrationTestLogFile = Join-Path $repoRoot "logs" "pr-integration-tests.log"
         $continue = Run-Step -Name "Integration Tests" -FailureType "TestFailure" -ShowOutput -Action {
             $testScript = Join-Path $PSScriptRoot "Run-Tests.ps1"
@@ -412,7 +424,10 @@ function Invoke-Prepare {
     }
 
     # Step 5: Sonar (unless skipped)
-    if (-not $SkipSonar) {
+    if ($SkipSonar) {
+        Write-Host "  ▶ SonarQube Analysis... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
+    } else {
         $continue = Run-Step -Name "SonarCloud Analysis" -FailureType "SonarFailure" -Action {
             $sonarScript = Join-Path $PSScriptRoot "Run-Sonar.ps1"
             & $sonarScript -Mode Ai -OutputFormat Json -SkipBuild -NoHeader 2>&1 | Out-Null
@@ -422,7 +437,10 @@ function Invoke-Prepare {
     }
 
     # Step 6: Coverage threshold
-    if (-not $SkipCoverage) {
+    if ($SkipCoverage) {
+        Write-Host "  ▶ Coverage Threshold... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Coverage Threshold"; status = "skipped"; duration_s = 0 }
+    } else {
         $script:stepNumber++
         Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step $($script:stepNumber)/$($script:totalSteps): Coverage Threshold" -PercentComplete 100
         if ($null -ne $coveragePct) {
