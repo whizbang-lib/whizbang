@@ -63,6 +63,14 @@ dotnet format
 
 # Full cycle
 dotnet clean && dotnet build && dotnet test --max-parallel-test-modules 8 && dotnet format
+
+# PR readiness scripts (consistent -Mode, -OutputFormat, -LogFile params)
+pwsh scripts/Run-PR.ps1                          # Full send: prepare + create PR + monitor CI
+pwsh scripts/Run-PR.ps1 -Action Prepare -Mode Ai # Local checks only (sparse output)
+pwsh scripts/Run-PR.ps1 -Action Monitor           # Monitor existing PR CI checks
+pwsh scripts/Run-PR.ps1 -Action Create -Draft      # Create draft PR (gitflow-aware)
+pwsh scripts/Run-Sonar.ps1 -Mode Ai               # SonarCloud analysis with AI output
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit -Coverage -OutputFormat Json  # JSON result + coverage
 ```
 
 📖 **Read**: `docs/TEST-FILTERING.md` for test filtering examples and syntax
