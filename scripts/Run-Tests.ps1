@@ -2020,10 +2020,9 @@ try {
             $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
         }
 
-        # Emit AI instructions if there are failures
-        if ($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) {
-            $aiIndent = if ($NoHeader) { "    " } else { "" }
-            Write-AiInstructions -Type TestFailure -Indent $aiIndent
+        # Emit AI instructions if there are failures (only when running standalone, not from Run-PR)
+        if (($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) -and -not $NoHeader) {
+            Write-AiInstructions -Type TestFailure
         }
 
         Write-Host ""
