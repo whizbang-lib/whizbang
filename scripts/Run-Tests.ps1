@@ -518,9 +518,8 @@ try {
 
     # Indentation: when called as child from Run-PR.ps1, indent all output to align
     # under the "▶" step indicators. Override Write-Host with an indented wrapper.
-    $ind = if ($NoHeader) { "    " } else { "" }
     if ($NoHeader) {
-        function Write-IndentedHost {
+        function script:Write-IndentedHost {
             param(
                 [Parameter(Position = 0)] [string]$Object = "",
                 [string]$ForegroundColor = "",
@@ -529,9 +528,9 @@ try {
             $params = @{}
             if ($ForegroundColor) { $params["ForegroundColor"] = $ForegroundColor }
             if ($NoNewline) { $params["NoNewline"] = $true }
-            Microsoft.PowerShell.Utility\Write-Host "${Object}" @params
+            Microsoft.PowerShell.Utility\Write-Host "    ${Object}" @params
         }
-        Set-Alias -Name Write-Host -Value Write-IndentedHost -Scope Local
+        Set-Alias -Name Write-Host -Value Write-IndentedHost -Scope Script
     }
 
     # Build the dotnet test command
