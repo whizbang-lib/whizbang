@@ -9,14 +9,12 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// Handles AdjustInventoryCommand and publishes InventoryAdjustedEvent
 /// </summary>
 public class AdjustInventoryReceptor(IDispatcher dispatcher, ILogger<AdjustInventoryReceptor> logger) : IReceptor<AdjustInventoryCommand, InventoryAdjustedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<AdjustInventoryReceptor> _logger = logger;
 
   public async ValueTask<InventoryAdjustedEvent> HandleAsync(
     AdjustInventoryCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Adjusting inventory for product {ProductId} by {QuantityChange} (Reason: {Reason})",
       message.ProductId,
       message.QuantityChange,
@@ -33,9 +31,9 @@ public class AdjustInventoryReceptor(IDispatcher dispatcher, ILogger<AdjustInven
     };
 
     // Publish the event
-    await _dispatcher.PublishAsync(inventoryAdjusted);
+    await dispatcher.PublishAsync(inventoryAdjusted);
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Inventory adjusted for product {ProductId}",
       message.ProductId);
 
