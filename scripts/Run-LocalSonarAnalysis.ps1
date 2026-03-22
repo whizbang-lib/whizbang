@@ -207,7 +207,7 @@ Write-Info "Starting SonarQube analysis..."
 Push-Location $RepoRoot
 try {
     # Load shared exclusion config (single source of truth with CI)
-    $exclusionConfigPath = Join-Path $RepoRoot "sonar-exclusions.config"
+    $exclusionConfigPath = Join-Path $RepoRoot "sonar.config"
     $sonarExclusions = "**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**"
     $sonarCoverageExclusions = "**/samples/**,**/benchmarks/**,**/tests/**"
     $sonarCpdExclusions = ""
@@ -229,7 +229,7 @@ try {
                 }
             }
         }
-        Write-Info "Loaded exclusions from sonar-exclusions.config"
+        Write-Info "Loaded exclusions from sonar.config"
     }
 
     $beginArgs = @(
