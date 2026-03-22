@@ -162,33 +162,23 @@ jobs:
             PR_PARAMS="/d:sonar.pullrequest.key=$PR_NUMBER /d:sonar.pullrequest.branch=$HEAD_REF /d:sonar.pullrequest.base=$BASE_REF"
           fi
 
-          # Load shared exclusion config (single source of truth with local scripts)
-          SONAR_EXCLUSIONS=$(grep '^sonar\.exclusions=' sonar-exclusions.config | cut -d= -f2-)
-          SONAR_CPD_EXCLUSIONS=$(grep '^sonar\.cpd\.exclusions=' sonar-exclusions.config | cut -d= -f2-)
-          SONAR_COVERAGE_EXCLUSIONS=$(grep '^sonar\.coverage\.exclusions=' sonar-exclusions.config | cut -d= -f2-)
+          # Load ALL sonar.* properties from shared config (single source of truth with local scripts)
+          SONAR_EXTRA_ARGS=""
+          while IFS='=' read -r key value; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+            key=$(echo "$key" | xargs)  # trim
+            value=$(echo "$value" | xargs)  # trim
+            SONAR_EXTRA_ARGS="$SONAR_EXTRA_ARGS /d:$key=\"$value\""
+          done < sonar-exclusions.config
 
-          dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
+          eval dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
             /d:sonar.token="${SONAR_TOKEN}" \
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.qualitygate.wait=true \
             ${PR_PARAMS} \
-            /d:sonar.exclusions="${SONAR_EXCLUSIONS}" \
-            /d:sonar.cpd.exclusions="${SONAR_CPD_EXCLUSIONS}" \
-            /d:sonar.coverage.exclusions="${SONAR_COVERAGE_EXCLUSIONS}" \
             /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
-            /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
-            /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
-            /d:sonar.issue.ignore.multicriteria.e1.resourceKey="src/Whizbang.Generators/**" \
-            /d:sonar.issue.ignore.multicriteria.e2.ruleKey="csharpsquid:S1192" \
-            /d:sonar.issue.ignore.multicriteria.e2.resourceKey="src/Whizbang.Generators.Shared/**" \
-            /d:sonar.issue.ignore.multicriteria.e3.ruleKey="csharpsquid:S1192" \
-            /d:sonar.issue.ignore.multicriteria.e3.resourceKey="src/Whizbang.Data.EFCore.Postgres.Generators/**" \
-            /d:sonar.issue.ignore.multicriteria.e4.ruleKey="csharpsquid:S1192" \
-            /d:sonar.issue.ignore.multicriteria.e4.resourceKey="src/Whizbang.Data.Schema/Schemas/**" \
-            /d:sonar.issue.ignore.multicriteria.e5.ruleKey="csharpsquid:S6444" \
-            /d:sonar.issue.ignore.multicriteria.e5.resourceKey="src/Whizbang.Generators.Shared/**" \
-            /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
-            /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
+            $SONAR_EXTRA_ARGS
 
           # Build for SonarScanner to analyze code
           dotnet clean --configuration Release

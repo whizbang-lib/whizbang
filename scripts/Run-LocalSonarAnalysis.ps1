@@ -210,12 +210,23 @@ try {
     $exclusionConfigPath = Join-Path $RepoRoot "sonar-exclusions.config"
     $sonarExclusions = "**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**"
     $sonarCoverageExclusions = "**/samples/**,**/benchmarks/**,**/tests/**"
+    $sonarCpdExclusions = ""
+    $sonarExtraArgs = @()
     if (Test-Path $exclusionConfigPath) {
         Get-Content $exclusionConfigPath | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
             $parts = $_ -split "=", 2
-            switch ($parts[0].Trim()) {
-                "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
-                "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
+            $key = $parts[0].Trim()
+            $value = $parts[1].Trim()
+            switch ($key) {
+                "sonar.exclusions" { $sonarExclusions = $value }
+                "sonar.coverage.exclusions" { $sonarCoverageExclusions = $value }
+                "sonar.cpd.exclusions" { $sonarCpdExclusions = $value }
+                default {
+                    # Pass through all other sonar.* properties (e.g., issue ignore rules)
+                    if ($key.StartsWith("sonar.")) {
+                        $sonarExtraArgs += "/d:${key}=${value}"
+                    }
+                }
             }
         }
         Write-Info "Loaded exclusions from sonar-exclusions.config"
@@ -230,6 +241,8 @@ try {
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
     )
+    if ($sonarCpdExclusions) { $beginArgs += "/d:sonar.cpd.exclusions=$sonarCpdExclusions" }
+    $beginArgs += $sonarExtraArgs
     # Use the correct coverage property based on report format
     if ($useSonarQubeFormat) {
         $beginArgs += "/d:sonar.coverageReportPaths=$coveragePaths"
