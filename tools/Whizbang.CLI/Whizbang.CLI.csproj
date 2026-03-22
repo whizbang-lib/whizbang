@@ -13,6 +13,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <SonarQubeExclude>true</SonarQubeExclude>
 
     <!-- Package as global .NET tool -->
     <PackAsTool>true</PackAsTool>
