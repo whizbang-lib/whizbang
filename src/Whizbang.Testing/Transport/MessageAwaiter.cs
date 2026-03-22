@@ -58,7 +58,7 @@ public sealed class MessageAwaiter<TResult>(
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
+    async (envelope, _, _) => {
       // Apply filter if specified
       if (_filter != null && !_filter(envelope)) {
         return;
@@ -115,7 +115,7 @@ public sealed class MessageIdAwaiter : IAwaiterIdentity {
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
+    async (envelope, _, _) => {
       _tcs.TrySetResult(envelope.MessageId.ToString());
       await Task.CompletedTask;
     };
@@ -174,7 +174,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
-    async (envelope, envelopeType, ct) => {
+    async (_, _, _) => {
       if (Interlocked.Increment(ref _receivedCount) >= _expectedCount) {
         _tcs.TrySetResult(true);
       }

@@ -240,7 +240,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<ITracer, Tracer>();
     services.TryAddSingleton<IPerspectiveSyncSignaler, LocalSyncSignaler>();
 
-    services.TryAddScoped<IScopedEventTracker>(sp => {
+    services.TryAddScoped<IScopedEventTracker>(_ => {
       var tracker = new ScopedEventTracker();
       ScopedEventTrackerAccessor.CurrentTracker = tracker;
       return tracker;
