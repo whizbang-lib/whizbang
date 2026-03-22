@@ -7,6 +7,8 @@ namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
 /// Tests for PerspectiveMigrationWorker — verifies background rebuild processing.
+/// Uses TaskCompletionSource-based signaling for deterministic synchronization
+/// instead of Task.Delay, following the same pattern as PerspectiveWorkerCoverageTests.
 /// </summary>
 public class PerspectiveMigrationWorkerTests {
   [Test]
@@ -31,6 +33,7 @@ public class PerspectiveMigrationWorkerTests {
     // Arrange
     var rebuilder = new FakeRebuilder();
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
+    var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
@@ -38,14 +41,14 @@ public class PerspectiveMigrationWorkerTests {
       ]),
       UpdateMigrationStatus = (key, status, desc, _) => {
         statusUpdates.Add((key, status, desc));
+        workDone.TrySetResult();
         return Task.CompletedTask;
       }
     };
 
-    // Act
+    // Act — wait for status update signal instead of Task.Delay
     await worker.StartAsync(CancellationToken.None);
-    // Give background task time to complete
-    await Task.Delay(200);
+    await workDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
 
     // Assert
@@ -60,6 +63,7 @@ public class PerspectiveMigrationWorkerTests {
     // Arrange
     var rebuilder = new FakeRebuilder { ShouldFail = true };
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
+    var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
@@ -67,13 +71,14 @@ public class PerspectiveMigrationWorkerTests {
       ]),
       UpdateMigrationStatus = (key, status, desc, _) => {
         statusUpdates.Add((key, status, desc));
+        workDone.TrySetResult();
         return Task.CompletedTask;
       }
     };
 
-    // Act
+    // Act — wait for status update signal
     await worker.StartAsync(CancellationToken.None);
-    await Task.Delay(200);
+    await workDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
 
     // Assert
@@ -83,7 +88,7 @@ public class PerspectiveMigrationWorkerTests {
 
   [Test]
   public async Task ExecuteAsync_WithNoCallbacks_CompletesGracefullyAsync() {
-    // Arrange — callbacks not set
+    // Arrange — callbacks not set, ExecuteAsync returns early
     var rebuilder = new FakeRebuilder();
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance);
 
@@ -101,6 +106,7 @@ public class PerspectiveMigrationWorkerTests {
     var rebuilder = new FakeRebuilder();
     var cts = new CancellationTokenSource();
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
+    var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
@@ -112,13 +118,14 @@ public class PerspectiveMigrationWorkerTests {
         statusUpdates.Add((key, status, desc));
         // Cancel after first rebuild completes so the foreach break triggers
         cts.Cancel();
+        workDone.TrySetResult();
         return Task.CompletedTask;
       }
     };
 
-    // Act
+    // Act — wait for the first status update (which also cancels)
     await worker.StartAsync(cts.Token);
-    await Task.Delay(500);
+    await workDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — only the first rebuild should have been processed before cancellation kicked in
@@ -131,6 +138,7 @@ public class PerspectiveMigrationWorkerTests {
     // Arrange — covers lines 63-67 (inner catch block with status update)
     var rebuilder = new ThrowingRebuilder();
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
+    var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
@@ -138,13 +146,14 @@ public class PerspectiveMigrationWorkerTests {
       ]),
       UpdateMigrationStatus = (key, status, desc, _) => {
         statusUpdates.Add((key, status, desc));
+        workDone.TrySetResult();
         return Task.CompletedTask;
       }
     };
 
-    // Act — should not throw
+    // Act — wait for status update signal
     await worker.StartAsync(CancellationToken.None);
-    await Task.Delay(300);
+    await workDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — exception caught, status updated to Failed
@@ -156,6 +165,7 @@ public class PerspectiveMigrationWorkerTests {
   [Test]
   public async Task ExecuteAsync_WhenRebuilderThrowsAndStatusUpdateFails_SwallowsBothExceptionsAsync() {
     // Arrange — covers lines 66-70 (best effort status update failure)
+    // No callback signal available (UpdateMigrationStatus throws), so use StopAsync to await completion
     var rebuilder = new ThrowingRebuilder();
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
@@ -165,9 +175,8 @@ public class PerspectiveMigrationWorkerTests {
       UpdateMigrationStatus = (_, _, _, _) => throw new InvalidOperationException("Status update also failed")
     };
 
-    // Act — should not throw despite both failures
+    // Act — StopAsync awaits ExecuteAsync completion (which catches both exceptions internally)
     await worker.StartAsync(CancellationToken.None);
-    await Task.Delay(300);
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — just verifying it completes without exception (reaching here = success)
@@ -178,6 +187,7 @@ public class PerspectiveMigrationWorkerTests {
   [Test]
   public async Task ExecuteAsync_WhenGetPendingRebuildsThrows_CatchesOuterExceptionAsync() {
     // Arrange — covers lines 73-75 (outer catch block)
+    // GetPendingRebuilds throws immediately, so ExecuteAsync completes quickly
     var rebuilder = new FakeRebuilder();
 
     var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
@@ -185,9 +195,8 @@ public class PerspectiveMigrationWorkerTests {
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
 
-    // Act — should not throw
+    // Act — StopAsync awaits ExecuteAsync completion
     await worker.StartAsync(CancellationToken.None);
-    await Task.Delay(300);
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — worker swallowed the exception

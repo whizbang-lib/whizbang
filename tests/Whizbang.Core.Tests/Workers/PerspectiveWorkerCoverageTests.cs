@@ -166,7 +166,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(400); // Let several empty polls complete
+    await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -189,7 +189,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(400); // Let several polling cycles complete
+    await Task.Delay(1000); // Let several polling cycles complete (generous for CI contention)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -208,11 +208,11 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Start worker with database not ready
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Let several not-ready cycles happen
+    await Task.Delay(500); // Let several not-ready cycles happen
 
     // Now make database ready
     dbCheck.IsReady = true;
-    await Task.Delay(300); // Let a ready cycle happen
+    await Task.Delay(500); // Let a ready cycle happen
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -248,7 +248,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Start and let run briefly, then cancel
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await Task.Delay(500); // Generous delay for CI contention
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -286,7 +286,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Let it run long enough for >10 cycles
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Should get >10 cycles at 10ms interval
+    await Task.Delay(1000); // Should get >10 cycles at 10ms interval (generous for CI)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }

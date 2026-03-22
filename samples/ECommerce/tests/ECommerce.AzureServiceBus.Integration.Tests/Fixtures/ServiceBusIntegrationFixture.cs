@@ -535,6 +535,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       )
     );
 
+    // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
+    builder.Services.AddSingleton(new TaskCompletionSource<ECommerce.Contracts.Events.ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously));
+
     // Logging
     var debugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     builder.Services.AddLogging(logging => {
@@ -724,6 +727,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
+
+    // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
+    builder.Services.AddSingleton(new TaskCompletionSource<ECommerce.Contracts.Events.ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously));
 
     // Logging
     var bffDebugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";

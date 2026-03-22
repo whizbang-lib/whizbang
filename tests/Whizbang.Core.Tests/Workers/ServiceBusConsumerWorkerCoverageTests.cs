@@ -84,13 +84,10 @@ public class ServiceBusConsumerWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // Cancel to stop ExecuteAsync
+    // Cancel to stop ExecuteAsync — StopAsync will also cancel and await the task
     await cts.CancelAsync();
 
-    // Wait a moment for background task to process cancellation
-    await Task.Delay(100);
-
-    // Stop gracefully
+    // Stop gracefully — StopAsync awaits ExecuteAsync completion, no delay needed
     await worker.StopAsync(CancellationToken.None);
 
     // Assert - Worker stopped without throwing (OperationCanceledException was caught)
