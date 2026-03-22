@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -275,6 +276,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
@@ -287,6 +297,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
     var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
     Console.WriteLine($"[InMemoryFixture] InventoryWorker IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
@@ -419,10 +434,24 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddWhizbangDispatcher() and related registrations below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Configure security to allow anonymous messages for testing
     builder.Services.Replace(ServiceDescriptor.Singleton(new MessageSecurityOptions { AllowAnonymous = true }));
@@ -442,6 +471,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
+
+    // Register dispatcher infrastructure (includes IReceptorRegistry needed for PostPerspectiveInline lifecycle callbacks)
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register perspective invoker for scoped event processing (use BFF's generated invoker)
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
