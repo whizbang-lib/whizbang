@@ -78,9 +78,12 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
-  public async Task<long> GetNextAsync(string streamKey, CancellationToken ct = default) {
+  public Task<long> GetNextAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
+    return _getNextCoreAsync(streamKey, ct);
+  }
 
+  private async Task<long> _getNextCoreAsync(string streamKey, CancellationToken ct) {
     try {
       using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);
@@ -138,9 +141,12 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
-  public async Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default) {
+  public Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
+    return _getCurrentCoreAsync(streamKey, ct);
+  }
 
+  private async Task<long> _getCurrentCoreAsync(string streamKey, CancellationToken ct) {
     try {
       using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);
@@ -167,9 +173,12 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
-  public async Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default) {
+  public Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
+    return _resetCoreAsync(streamKey, newValue, ct);
+  }
 
+  private async Task _resetCoreAsync(string streamKey, long newValue, CancellationToken ct) {
     try {
       using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);

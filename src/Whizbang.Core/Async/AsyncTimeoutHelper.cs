@@ -20,13 +20,20 @@ public static class AsyncTimeoutHelper {
   /// <param name="cancellationToken">External cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
   /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
-  public static async Task WaitWithTimeoutAsync(
+  public static Task WaitWithTimeoutAsync(
       Task task,
       TimeSpan timeout,
       string timeoutMessage,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(task);
+    return _waitWithTimeoutCoreAsync(task, timeout, timeoutMessage, cancellationToken);
+  }
 
+  private static async Task _waitWithTimeoutCoreAsync(
+      Task task,
+      TimeSpan timeout,
+      string timeoutMessage,
+      CancellationToken cancellationToken) {
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     cts.CancelAfter(timeout);
 
@@ -48,13 +55,20 @@ public static class AsyncTimeoutHelper {
   /// <returns>The result of the completed task.</returns>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
   /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
-  public static async Task<T> WaitWithTimeoutAsync<T>(
+  public static Task<T> WaitWithTimeoutAsync<T>(
       Task<T> task,
       TimeSpan timeout,
       string timeoutMessage,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(task);
+    return _waitWithTimeoutCoreAsync(task, timeout, timeoutMessage, cancellationToken);
+  }
 
+  private static async Task<T> _waitWithTimeoutCoreAsync<T>(
+      Task<T> task,
+      TimeSpan timeout,
+      string timeoutMessage,
+      CancellationToken cancellationToken) {
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     cts.CancelAfter(timeout);
 

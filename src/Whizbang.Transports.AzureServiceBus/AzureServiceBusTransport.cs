@@ -173,7 +173,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
-  public async Task PublishAsync(
+  public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
@@ -182,7 +182,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
+    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+  }
 
+  private async Task _publishCoreAsync(
+    IMessageEnvelope envelope,
+    TransportDestination destination,
+    string? envelopeType,
+    CancellationToken cancellationToken
+  ) {
     try {
       _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to get sender for {Destination}", destination.Address);
       var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
@@ -304,7 +312,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
-  public async Task<ISubscription> SubscribeAsync(
+  public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
@@ -312,7 +320,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ObjectDisposedException.ThrowIf(_disposed, this);
     ArgumentNullException.ThrowIfNull(handler);
     ArgumentNullException.ThrowIfNull(destination);
+    return _subscribeCoreAsync(handler, destination, cancellationToken);
+  }
 
+  private async Task<ISubscription> _subscribeCoreAsync(
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
     try {
       var topicName = destination.Address;
 

@@ -47,9 +47,12 @@ public sealed partial class DispatcherEventCascader : IEventCascader {
   }
 
   /// <inheritdoc/>
-  public async Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+  public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(result);
+    return _cascadeFromResultCoreAsync(result, sourceEnvelope, receptorDefault, cancellationToken);
+  }
 
+  private async Task _cascadeFromResultCoreAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault, CancellationToken cancellationToken) {
     // Lazily resolve dispatcher on first use (avoids circular dependency)
     _dispatcher ??= _serviceProvider.GetRequiredService<IDispatcher>();
 
