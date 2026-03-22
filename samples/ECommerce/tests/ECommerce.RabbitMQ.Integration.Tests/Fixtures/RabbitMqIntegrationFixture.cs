@@ -256,6 +256,15 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
@@ -411,6 +420,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
+
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // See comment in _createInventoryHost() for full explanation.
+    ServiceRegistrationCallbacks.Dispatcher = null;
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
