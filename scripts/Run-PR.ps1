@@ -506,7 +506,7 @@ function Invoke-Prepare {
 
                 # Load exclusions
                 $sonarExclusions = ""; $sonarCoverageExclusions = ""
-                $exclusionConfig = Join-Path $repoRoot "sonar-exclusions.config"
+                $exclusionConfig = Join-Path $repoRoot "sonar.config"
                 if (Test-Path $exclusionConfig) {
                     Get-Content $exclusionConfig | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
                         $parts = $_ -split "=", 2

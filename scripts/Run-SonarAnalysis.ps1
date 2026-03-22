@@ -177,7 +177,7 @@ try {
     # Begin analysis
     Write-Info "Step 1/3: Begin analysis configuration..."
     # Load shared exclusion config (single source of truth with CI)
-    $exclusionConfigPath = Join-Path $PSScriptRoot ".." "sonar-exclusions.config"
+    $exclusionConfigPath = Join-Path $PSScriptRoot ".." "sonar.config"
     $sonarExclusions = ""
     $sonarCpdExclusions = ""
     $sonarCoverageExclusions = ""
@@ -190,9 +190,9 @@ try {
                 "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
             }
         }
-        Write-Info "Loaded exclusions from sonar-exclusions.config"
+        Write-Info "Loaded exclusions from sonar.config"
     } else {
-        Write-Warning2 "sonar-exclusions.config not found, using defaults"
+        Write-Warning2 "sonar.config not found, using defaults"
         $sonarExclusions = "**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**"
         $sonarCoverageExclusions = "**/samples/**,**/benchmarks/**,**/tests/**"
     }

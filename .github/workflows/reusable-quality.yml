@@ -170,7 +170,7 @@ jobs:
             key=$(echo "$key" | xargs)  # trim
             value=$(echo "$value" | xargs)  # trim
             SONAR_EXTRA_ARGS="$SONAR_EXTRA_ARGS /d:$key=\"$value\""
-          done < sonar-exclusions.config
+          done < sonar.config
 
           eval dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
             /d:sonar.token="${SONAR_TOKEN}" \
