@@ -1,9 +1,9 @@
-name: whiz-sonar
+name: whizbang-sonar
 
 services:
   sonarqube:
     image: sonarqube:lts-community
-    container_name: whizbang-sonarqube
+    container_name: whizbang-sonar
     depends_on:
       sonarqube-db:
         condition: service_healthy
@@ -26,7 +26,7 @@ services:
 
   sonarqube-db:
     image: postgres:16-alpine
-    container_name: whizbang-sonarqube-db
+    container_name: whizbang-sonar-db
     environment:
       POSTGRES_USER: sonar
       POSTGRES_PASSWORD: sonar

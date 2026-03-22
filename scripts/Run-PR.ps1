@@ -439,90 +439,101 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Start SonarScanner before build (so it captures the build output)
-    # The begin/end wrapper avoids a second build — sonar observes the Step 2 build
+    # ── Sonar Phase A: Start Docker container early (runs in parallel with Format) ──
     $script:sonarStarted = $false
     ${script:sonarToken} = $null
     $sonarUrl = "http://localhost:9000"
     $sonarProjectKey = "whizbang-local"
+    $script:sonarStartTime = [DateTime]::UtcNow
+
     if (-not $SkipSonar) {
-        # Ensure Docker + SonarQube container are running (reuse preflight from Run-Sonar.ps1)
-        $sonarScript = Join-Path $PSScriptRoot "Run-Sonar.ps1"
-        # Just run preflight checks — the actual analysis is handled inline
         $dockerAvailable = $null -ne (Get-Command docker -ErrorAction SilentlyContinue)
         if ($dockerAvailable) {
             $dockerRunning = docker info 2>&1; $dockerOk = $LASTEXITCODE -eq 0
             if ($dockerOk) {
                 $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
-                $sonarContainer = docker ps --filter "name=whizbang-sonarqube" --format "{{.Status}}" 2>$null
+                $sonarContainer = docker ps --filter "name=whizbang-sonar" --format "{{.Status}}" 2>$null
                 if (-not $sonarContainer -and (Test-Path $composeFile)) {
-                    Write-Host "    Starting SonarQube container..." -ForegroundColor Yellow
+                    Write-Host "    Starting SonarQube container (warming up in background)..." -ForegroundColor Yellow
                     docker compose -f $composeFile up -d 2>&1 | Out-Null
-                    $maxWait = 180; $waited = 0
-                    while ($waited -lt $maxWait) {
-                        try {
-                            $resp = Invoke-RestMethod -Uri "$sonarUrl/api/system/status" -TimeoutSec 3 -ErrorAction SilentlyContinue
-                            if ($resp.status -eq "UP") { break }
-                        } catch { }
-                        Start-Sleep -Seconds 5; $waited += 5
-                    }
-                }
-                # Ensure token exists
-                $tokenFile = Join-Path $repoRoot ".sonarqube-local.token"
-                if (-not (Test-Path $tokenFile)) {
-                    try {
-                        $authHeader = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin"))
-                        $tokenResponse = Invoke-RestMethod -Uri "$sonarUrl/api/user_tokens/generate" -Method Post -Headers @{ Authorization = "Basic $authHeader" } -Body @{ name = "whizbang-local-$(Get-Date -Format 'yyyyMMdd-HHmmss')" } -ErrorAction Stop
-                        $tokenResponse.token | Out-File -FilePath $tokenFile -NoNewline -Encoding utf8
-                    } catch { }
+                } else {
+                    Write-Host "    SonarQube container already running" -ForegroundColor DarkGray
                 }
             }
-        }
-
-        $tokenFile = Join-Path $repoRoot ".sonarqube-local.token"
-        if (Test-Path $tokenFile) {
-            ${script:sonarToken} = (Get-Content $tokenFile -Raw).Trim()
-            $sonarUrl = "http://localhost:9000"
-            $sonarProjectKey = "whizbang-local"
-
-            # Load exclusions
-            $sonarExclusions = ""; $sonarCoverageExclusions = ""
-            $exclusionConfig = Join-Path $repoRoot "sonar-exclusions.config"
-            if (Test-Path $exclusionConfig) {
-                Get-Content $exclusionConfig | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
-                    $parts = $_ -split "=", 2
-                    switch ($parts[0].Trim()) {
-                        "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
-                        "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
-                    }
-                }
-            }
-
-            # Check for pre-generated SonarQube coverage report
-            $sonarCoverageReport = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
-            $coverageArg = if (Test-Path $sonarCoverageReport) {
-                "/d:sonar.coverageReportPaths=$sonarCoverageReport"
-            } else { "" }
-
-            Push-Location $repoRoot
-            $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl")
-            if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
-            if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
-            $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
-            if ($LASTEXITCODE -eq 0) {
-                $script:sonarStarted = $true
-                Write-Host "    SonarScanner begin: ✅" -ForegroundColor DarkGray
-            } else {
-                Write-AiLine "    SonarScanner begin failed:" -ForegroundColor Red
-                $beginOutput -split "`n" | Select-Object -Last 5 | ForEach-Object {
-                    Write-Host "      $_" -ForegroundColor DarkGray
-                }
-            }
-            Pop-Location
         }
     }
 
     # Step 2: Build (captured by SonarScanner if started)
+    # ── Sonar Phase B: Wait for Sonar UP + get token + run begin (before Build) ──
+    if (-not $SkipSonar -and $dockerAvailable -and $dockerOk) {
+        $sonarTimeout = 300  # 5 minutes from script start
+        $elapsed = ([DateTime]::UtcNow - $script:sonarStartTime).TotalSeconds
+        $remaining = [math]::Max(0, $sonarTimeout - $elapsed)
+
+        Write-Host "    Waiting for SonarQube to be ready (${remaining}s timeout)..." -ForegroundColor Gray -NoNewline
+        $sonarReady = $false
+        while (([DateTime]::UtcNow - $script:sonarStartTime).TotalSeconds -lt $sonarTimeout) {
+            try {
+                $resp = Invoke-RestMethod -Uri "$sonarUrl/api/system/status" -TimeoutSec 3 -ErrorAction SilentlyContinue
+                if ($resp.status -eq "UP") { $sonarReady = $true; break }
+            } catch { }
+            Write-Host "." -NoNewline
+            Start-Sleep -Seconds 5
+        }
+
+        if ($sonarReady) {
+            Write-Host " ✅" -ForegroundColor Green
+
+            # Ensure token exists
+            $tokenFile = Join-Path $repoRoot ".sonarqube-local.token"
+            if (-not (Test-Path $tokenFile)) {
+                try {
+                    $authHeader = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin"))
+                    $tokenResponse = Invoke-RestMethod -Uri "$sonarUrl/api/user_tokens/generate" -Method Post -Headers @{ Authorization = "Basic $authHeader" } -Body @{ name = "whizbang-local-$(Get-Date -Format 'yyyyMMdd-HHmmss')" } -ErrorAction Stop
+                    $tokenResponse.token | Out-File -FilePath $tokenFile -NoNewline -Encoding utf8
+                    Write-Host "    Token generated ✅" -ForegroundColor DarkGray
+                } catch {
+                    Write-Host "    ⚠️ Could not generate token: $_" -ForegroundColor Yellow
+                }
+            }
+
+            if (Test-Path $tokenFile) {
+                ${script:sonarToken} = (Get-Content $tokenFile -Raw).Trim()
+
+                # Load exclusions
+                $sonarExclusions = ""; $sonarCoverageExclusions = ""
+                $exclusionConfig = Join-Path $repoRoot "sonar-exclusions.config"
+                if (Test-Path $exclusionConfig) {
+                    Get-Content $exclusionConfig | Where-Object { $_ -match "^[^#].*=" } | ForEach-Object {
+                        $parts = $_ -split "=", 2
+                        switch ($parts[0].Trim()) {
+                            "sonar.exclusions" { $sonarExclusions = $parts[1].Trim() }
+                            "sonar.coverage.exclusions" { $sonarCoverageExclusions = $parts[1].Trim() }
+                        }
+                    }
+                }
+
+                # Run sonarscanner begin
+                Push-Location $repoRoot
+                $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl")
+                if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
+                if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
+                $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
+                if ($LASTEXITCODE -eq 0) {
+                    $script:sonarStarted = $true
+                    Write-Host "    SonarScanner begin: ✅" -ForegroundColor DarkGray
+                } else {
+                    Write-AiLine "    SonarScanner begin failed:" -ForegroundColor Red
+                    $beginOutput -split "`n" | Select-Object -Last 5 | ForEach-Object {
+                        Write-Host "      $_" -ForegroundColor DarkGray
+                    }
+                }
+                Pop-Location
+            }
+        } else {
+            Write-Host " ⏰ Timed out — skipping Sonar analysis" -ForegroundColor Yellow
+        }
+    }
     if ($SkipBuild) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped $(Format-StepTiming 'Build')" -ForegroundColor DarkGray

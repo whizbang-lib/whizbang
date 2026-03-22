@@ -194,7 +194,7 @@ if (-not $scannerInstalled -and -not $scannerGlobal) {
 }
 
 # 5. Check if SonarQube container is running, start if not
-$sonarContainer = docker ps --filter "name=whizbang-sonarqube" --format "{{.Status}}" 2>$null
+$sonarContainer = docker ps --filter "name=whizbang-sonar" --format "{{.Status}}" 2>$null
 if (-not $sonarContainer) {
     Write-Host "Starting SonarQube container (first run may take 1-2 minutes)..." -ForegroundColor Yellow
     docker compose -f $composeFile up -d 2>&1 | Out-Null
