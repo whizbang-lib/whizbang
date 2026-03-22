@@ -58,11 +58,9 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     IServiceProvider scopedProvider,
     CancellationToken ct) {
     if (_whenAllStates.TryGetValue(eventId, out var whenAll)) {
-      // WhenAll active — record this completion
-      whenAll.SignalComplete(source);
-
-      if (!whenAll.AllComplete) {
-        return; // Not all paths complete yet
+      // Atomically signal and check completion — returns true exactly once
+      if (!whenAll.TrySignalAndComplete(source)) {
+        return; // Not all paths complete yet, or already fired
       }
 
       // All paths complete — remove WhenAll state and fire PostLifecycle
@@ -90,25 +88,32 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     private readonly HashSet<PostLifecycleCompletionSource> _expected;
     private readonly ConcurrentDictionary<PostLifecycleCompletionSource, bool> _completed = new();
     private readonly Lock _lock = new();
+    private bool _fired;
 
     public WhenAllState(PostLifecycleCompletionSource[] sources) {
       _expected = [.. sources];
     }
 
-    public void SignalComplete(PostLifecycleCompletionSource source) {
+    /// <summary>
+    /// Atomically signals a source as complete and returns <c>true</c> exactly once —
+    /// when all expected sources are complete. Subsequent calls always return <c>false</c>.
+    /// </summary>
+    public bool TrySignalAndComplete(PostLifecycleCompletionSource source) {
       _completed.TryAdd(source, true);
-    }
 
-    public bool AllComplete {
-      get {
-        lock (_lock) {
-          foreach (var expected in _expected) {
-            if (!_completed.ContainsKey(expected)) {
-              return false;
-            }
-          }
-          return true;
+      lock (_lock) {
+        if (_fired) {
+          return false;
         }
+
+        foreach (var expected in _expected) {
+          if (!_completed.ContainsKey(expected)) {
+            return false;
+          }
+        }
+
+        _fired = true;
+        return true;
       }
     }
   }

@@ -658,9 +658,9 @@ public class LifecycleCoordinatorTests {
       eventId, PostLifecycleCompletionSource.Distributed, scope2.ServiceProvider, CancellationToken.None).AsTask();
     await Task.WhenAll(task1, task2);
 
-    // Assert — PostLifecycle fires (at least once, concurrency may cause race but should not crash)
+    // Assert — PostLifecycle fires exactly once (TrySignalAndComplete guarantees atomicity)
     var firings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync);
-    await Assert.That(firings).IsGreaterThanOrEqualTo(1);
+    await Assert.That(firings).IsEqualTo(1);
   }
 
   #endregion
