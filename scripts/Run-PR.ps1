@@ -514,7 +514,8 @@ function Invoke-Prepare {
 
                 # Run sonarscanner begin
                 Push-Location $repoRoot
-                $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl")
+                $sonarCoverageReportPath = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
+                $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl", "/d:sonar.coverageReportPaths=$sonarCoverageReportPath")
                 if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
                 if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
                 $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
@@ -586,15 +587,52 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 5: Sonar end (finish analysis started before build)
+    # Step 5: Coverage report (combined from unit + integration test coverage)
+    # Matches CI pipeline: merge all cobertura XMLs, generate HTML + TextSummary + SonarQube format
+    # MUST run before SonarQube Analysis so sonarscanner end can pick up the coverage data
+    if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
+        $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
+            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+
+            if ($coberturaFiles.Count -gt 0) {
+                $reportDir = Join-Path $repoRoot "coverage-report"
+                $sonarDir = Join-Path $repoRoot "coverage" "sonarqube"
+                $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+                $fileFilters = "-*.g.cs;-**/.whizbang-generated/*"
+
+                # Generate HTML + TextSummary + JsonSummary for human consumption
+                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" "-filefilters:$fileFilters" 2>&1 | Out-Null
+
+                # Generate SonarQube format for local SonarQube ingestion (matches CI pipeline)
+                reportgenerator "-reports:$reports" "-targetdir:$sonarDir" "-reporttypes:SonarQube" "-filefilters:$fileFilters" 2>&1 | Out-Null
+
+                $summaryFile = Join-Path $reportDir "Summary.txt"
+                if (Test-Path $summaryFile) {
+                    $summaryText = Get-Content $summaryFile -Raw
+                    if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $script:coveragePct = [double]$Matches[1] }
+                    $totalCovered = 0; $totalLines = 0
+                    if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+                    if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
+                    Write-AiLine "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
+                    Write-Host "    HTML report: $(Join-Path $reportDir 'index.html')" -ForegroundColor DarkCyan
+                    Write-Host "    SonarQube report: $(Join-Path $sonarDir 'SonarQube.xml')" -ForegroundColor DarkGray
+                }
+                @{ ExitCode = 0; Details = $null }
+            } else {
+                Write-Host "    No coverage data collected" -ForegroundColor Yellow
+                @{ ExitCode = 0; Details = $null }
+            }
+        }
+    }
+
+    # Step 6: Sonar end (finish analysis started before build)
+    # Runs AFTER Coverage Report so sonarscanner end picks up coverage/sonarqube/SonarQube.xml
     if ($SkipSonar) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Analysis... ⏭️ Skipped $(Format-StepTiming 'SonarQube Analysis')" -ForegroundColor DarkGray
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     } elseif ($script:sonarStarted) {
-        # Feed coverage report to sonar before ending (generated in Coverage Report step)
-        $sonarCoverageReport = Join-Path $repoRoot "coverage" "sonarqube" "SonarQube.xml"
-
         $continue = Run-Step -Name "SonarQube Analysis" -FailureType "SonarFailure" -Action {
             Push-Location $repoRoot
             try {
@@ -684,45 +722,7 @@ function Invoke-Prepare {
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     }
 
-    # Step 5b: Coverage report (combined from unit + integration test coverage)
-    # Matches CI pipeline: merge all cobertura XMLs, generate HTML + TextSummary + SonarQube format
-    if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
-        $continue = Run-Step -Name "Coverage Report" -FailureType "BuildFailure" -Action {
-            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
-
-            if ($coberturaFiles.Count -gt 0) {
-                $reportDir = Join-Path $repoRoot "coverage-report"
-                $sonarDir = Join-Path $repoRoot "coverage" "sonarqube"
-                $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-                $fileFilters = "-*.g.cs;-**/.whizbang-generated/*"
-
-                # Generate HTML + TextSummary + JsonSummary for human consumption
-                reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" "-filefilters:$fileFilters" 2>&1 | Out-Null
-
-                # Generate SonarQube format for local SonarQube ingestion (matches CI pipeline)
-                reportgenerator "-reports:$reports" "-targetdir:$sonarDir" "-reporttypes:SonarQube" "-filefilters:$fileFilters" 2>&1 | Out-Null
-
-                $summaryFile = Join-Path $reportDir "Summary.txt"
-                if (Test-Path $summaryFile) {
-                    $summaryText = Get-Content $summaryFile -Raw
-                    if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $script:coveragePct = [double]$Matches[1] }
-                    $totalCovered = 0; $totalLines = 0
-                    if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
-                    if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
-                    Write-AiLine "    Coverage: $($script:coveragePct)% ($totalCovered / $totalLines lines)" -ForegroundColor Cyan
-                    Write-Host "    HTML report: $(Join-Path $reportDir 'index.html')" -ForegroundColor DarkCyan
-                    Write-Host "    SonarQube report: $(Join-Path $sonarDir 'SonarQube.xml')" -ForegroundColor DarkGray
-                }
-                @{ ExitCode = 0; Details = $null }
-            } else {
-                Write-Host "    No coverage data collected" -ForegroundColor Yellow
-                @{ ExitCode = 0; Details = $null }
-            }
-        }
-    }
-
-    # Step 6: Coverage threshold
+    # Step 7: Coverage threshold
     if ($SkipCoverage) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped $(Format-StepTiming 'Coverage Threshold')" -ForegroundColor DarkGray
