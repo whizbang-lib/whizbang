@@ -232,7 +232,7 @@ function Invoke-Prepare {
     $script:failureTypes = @()
 
     # Total steps always includes all 7 steps (skipped ones still show in output)
-    $script:totalSteps = 7  # Format, Build, Unit Tests, Integration, Coverage Report, Sonar, Coverage Threshold
+    $script:totalSteps = 9  # Sonar Container, Format, Sonar Ready, Build, Unit Tests, Integration, Coverage Report, Sonar Analysis, Coverage Threshold
 
     # Load per-step estimates from history (full stats: avg, stddev, p85)
     $stepHistoryFile = Join-Path $repoRoot "logs" "pr-steps.jsonl"
@@ -395,7 +395,39 @@ function Invoke-Prepare {
     Write-Host "  Preparing PR..." -ForegroundColor Cyan
     Write-Host ""
 
-    # Step 1: Format check (with AutoFix support)
+    # ── Sonar variables (shared across steps) ──
+    $script:sonarStarted = $false
+    ${script:sonarToken} = $null
+    $sonarUrl = "http://localhost:9000"
+    $sonarProjectKey = "whizbang-local"
+    $script:sonarStartTime = [DateTime]::UtcNow
+    $script:dockerAvailable = $null -ne (Get-Command docker -ErrorAction SilentlyContinue)
+    $script:dockerOk = $false
+    $script:sonarContainerStarted = $false
+
+    # Step 1: Start SonarQube container (non-blocking — boots while format runs)
+    if ($SkipSonar) {
+        $script:stepNumber++
+        Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Start SonarQube Container... ⏭️ Skipped" -ForegroundColor DarkGray
+        $script:steps += @{ name = "Start SonarQube Container"; status = "skipped"; duration_s = 0 }
+    } else {
+        Run-Step -Name "Start SonarQube Container" -Action {
+            if ($script:dockerAvailable) {
+                $dockerRunning = docker info 2>&1; $script:dockerOk = $LASTEXITCODE -eq 0
+                if ($script:dockerOk) {
+                    $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
+                    if (Test-Path $composeFile) {
+                        docker compose -f $composeFile up -d 2>&1 | Out-Null
+                        $script:sonarContainerStarted = $true
+                        $script:sonarStartTime = [DateTime]::UtcNow
+                    }
+                }
+            }
+            @{ ExitCode = 0; Details = $null }
+        } | Out-Null
+    }
+
+    # Step 2: Format check (with AutoFix support) — runs while SonarQube boots
     if ($SkipFormat) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Format Check... ⏭️ Skipped $(Format-StepTiming 'Format Check')" -ForegroundColor DarkGray
@@ -449,47 +481,35 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # ── Sonar Phase A: Start Docker container early (runs in parallel with Format) ──
-    $script:sonarStarted = $false
-    ${script:sonarToken} = $null
-    $sonarUrl = "http://localhost:9000"
-    $sonarProjectKey = "whizbang-local"
-    $script:sonarStartTime = [DateTime]::UtcNow
-
-    if (-not $SkipSonar) {
-        $dockerAvailable = $null -ne (Get-Command docker -ErrorAction SilentlyContinue)
-        if ($dockerAvailable) {
-            $dockerRunning = docker info 2>&1; $dockerOk = $LASTEXITCODE -eq 0
-            if ($dockerOk) {
-                $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
-                if (Test-Path $composeFile) {
-                    Write-Host "    Starting SonarQube container..." -ForegroundColor Yellow
-                    docker compose -f $composeFile up -d 2>&1 | Out-Null
-                }
+    # Step 3: Wait for SonarQube ready + sonarscanner begin (before Build so scanner captures it)
+    if ($SkipSonar -or -not $script:sonarContainerStarted) {
+        if (-not $SkipSonar) {
+            $script:stepNumber++
+            Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Ready... ⏭️ Skipped (container not started)" -ForegroundColor DarkGray
+            $script:steps += @{ name = "SonarQube Ready"; status = "skipped"; duration_s = 0 }
+        } else {
+            $script:stepNumber++
+            Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] SonarQube Ready... ⏭️ Skipped" -ForegroundColor DarkGray
+            $script:steps += @{ name = "SonarQube Ready"; status = "skipped"; duration_s = 0 }
+        }
+    } else {
+        $continue = Run-Step -Name "SonarQube Ready" -Action {
+            $sonarTimeout = 300  # 5 minutes from container start
+            $sonarReady = $false
+            while (([DateTime]::UtcNow - $script:sonarStartTime).TotalSeconds -lt $sonarTimeout) {
+                try {
+                    $resp = Invoke-RestMethod -Uri "$sonarUrl/api/system/status" -TimeoutSec 3 -ErrorAction SilentlyContinue
+                    if ($resp.status -eq "UP") { $sonarReady = $true; break }
+                } catch { }
+                Update-StepProgress
+                Start-Sleep -Seconds 5
             }
-        }
-    }
 
-    # Step 2: Build (captured by SonarScanner if started)
-    # ── Sonar Phase B: Wait for Sonar UP + get token + run begin (before Build) ──
-    if (-not $SkipSonar -and $dockerAvailable -and $dockerOk) {
-        $sonarTimeout = 300  # 5 minutes from script start
-        $elapsed = ([DateTime]::UtcNow - $script:sonarStartTime).TotalSeconds
-        $remaining = [math]::Max(0, $sonarTimeout - $elapsed)
-
-        Write-Host "    Waiting for SonarQube to be ready (${remaining}s timeout)..." -ForegroundColor Gray -NoNewline
-        $sonarReady = $false
-        while (([DateTime]::UtcNow - $script:sonarStartTime).TotalSeconds -lt $sonarTimeout) {
-            try {
-                $resp = Invoke-RestMethod -Uri "$sonarUrl/api/system/status" -TimeoutSec 3 -ErrorAction SilentlyContinue
-                if ($resp.status -eq "UP") { $sonarReady = $true; break }
-            } catch { }
-            Write-Host "." -NoNewline
-            Start-Sleep -Seconds 5
-        }
-
-        if ($sonarReady) {
-            Write-Host " ✅" -ForegroundColor Green
+            if (-not $sonarReady) {
+                Write-AiLine "    SonarQube did not become ready within timeout" -ForegroundColor Red
+                @{ ExitCode = 1; Details = "SonarQube timeout" }
+                return
+            }
 
             # Ensure token exists
             $tokenFile = Join-Path $repoRoot ".sonarqube-local.token"
@@ -498,9 +518,8 @@ function Invoke-Prepare {
                     $authHeader = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin"))
                     $tokenResponse = Invoke-RestMethod -Uri "$sonarUrl/api/user_tokens/generate" -Method Post -Headers @{ Authorization = "Basic $authHeader" } -Body @{ name = "whizbang-local-$(Get-Date -Format 'yyyyMMdd-HHmmss')" } -ErrorAction Stop
                     $tokenResponse.token | Out-File -FilePath $tokenFile -NoNewline -Encoding utf8
-                    Write-Host "    Token generated ✅" -ForegroundColor DarkGray
                 } catch {
-                    Write-Host "    ⚠️ Could not generate token: $_" -ForegroundColor Yellow
+                    Write-AiLine "    ⚠️ Could not generate token: $_" -ForegroundColor Yellow
                 }
             }
 
@@ -529,7 +548,6 @@ function Invoke-Prepare {
                 $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
                 if ($LASTEXITCODE -eq 0) {
                     $script:sonarStarted = $true
-                    Write-Host "    SonarScanner begin: ✅" -ForegroundColor DarkGray
                 } else {
                     Write-AiLine "    SonarScanner begin failed:" -ForegroundColor Red
                     $beginOutput -split "`n" | Select-Object -Last 5 | ForEach-Object {
@@ -538,10 +556,13 @@ function Invoke-Prepare {
                 }
                 Pop-Location
             }
-        } else {
-            Write-Host " ⏰ Timed out — skipping Sonar analysis" -ForegroundColor Yellow
+
+            @{ ExitCode = $(if ($script:sonarStarted) { 0 } else { 0 }); Details = $null }
         }
+        if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
+
+    # Step 4: Build (captured by SonarScanner if started)
     if ($SkipBuild) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Build... ⏭️ Skipped $(Format-StepTiming 'Build')" -ForegroundColor DarkGray
@@ -554,7 +575,7 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 3: Unit tests (with coverage collection)
+    # Step 5: Unit tests (with coverage collection)
     $coveragePct = $null
     if ($SkipUnitTests) {
         $script:stepNumber++
@@ -575,7 +596,7 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 4: Integration tests (with coverage collection)
+    # Step 6: Integration tests (with coverage collection)
     if ($SkipIntegration) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Integration Tests... ⏭️ Skipped $(Format-StepTiming 'Integration Tests')" -ForegroundColor DarkGray
@@ -595,7 +616,7 @@ function Invoke-Prepare {
         if (-not $continue -and $FailFast) { return @{ Passed = $false; Steps = $script:steps } }
     }
 
-    # Step 5: Coverage report (combined from unit + integration test coverage)
+    # Step 7: Coverage report (combined from unit + integration test coverage)
     # Matches CI pipeline: merge all cobertura XMLs, generate HTML + TextSummary + SonarQube format
     # MUST run before SonarQube Analysis so sonarscanner end can pick up the coverage data
     if (-not $SkipCoverage -and (-not $SkipUnitTests -or -not $SkipIntegration)) {
@@ -634,7 +655,7 @@ function Invoke-Prepare {
         }
     }
 
-    # Step 6: Sonar end (finish analysis started before build)
+    # Step 8: Sonar end (finish analysis started before build)
     # Runs AFTER Coverage Report so sonarscanner end picks up coverage/sonarqube/SonarQube.xml
     if ($SkipSonar) {
         $script:stepNumber++
@@ -730,7 +751,7 @@ function Invoke-Prepare {
         $script:steps += @{ name = "SonarQube Analysis"; status = "skipped"; duration_s = 0 }
     }
 
-    # Step 7: Coverage threshold
+    # Step 9: Coverage threshold
     if ($SkipCoverage) {
         $script:stepNumber++
         Write-Host "  ▶ [$($script:stepNumber)/$($script:totalSteps)] Coverage Threshold... ⏭️ Skipped $(Format-StepTiming 'Coverage Threshold')" -ForegroundColor DarkGray
