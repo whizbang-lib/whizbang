@@ -47,12 +47,13 @@ public static class SharedRabbitMqFixtureSource {
     }
 
     // Initialize both shared containers (they handle their own singleton pattern and health checks)
-    await SharedPostgresContainer.InitializeAsync(cancellationToken);
+    // Use InitializeOrSkipAsync to gracefully skip tests when Docker/infrastructure is unavailable
+    await SharedPostgresContainer.InitializeOrSkipAsync(cancellationToken);
     if (!wasInitialized) {
       Console.WriteLine("[SharedRabbitMqFixture] SharedPostgresContainer ready");
     }
 
-    await SharedRabbitMqContainer.InitializeAsync(cancellationToken);
+    await SharedRabbitMqContainer.InitializeOrSkipAsync(cancellationToken);
     if (!wasInitialized) {
       Console.WriteLine("[SharedRabbitMqFixture] SharedRabbitMqContainer ready");
     }

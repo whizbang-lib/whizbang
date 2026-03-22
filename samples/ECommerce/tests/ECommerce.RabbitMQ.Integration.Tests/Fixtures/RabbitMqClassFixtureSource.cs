@@ -1,6 +1,7 @@
 using Dapper;
 using Npgsql;
 using Testcontainers.RabbitMq;
+using TUnit.Core.Exceptions;
 using Whizbang.Testing.Containers;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
@@ -54,8 +55,14 @@ public sealed class RabbitMqClassFixtureSource : IDisposable {
     }
 
     // Initialize SharedPostgresContainer and start RabbitMQ container
-    await SharedPostgresContainer.InitializeAsync();
-    await _rabbitMqContainer.StartAsync();
+    // Use InitializeOrSkipAsync to gracefully skip tests when Docker is unavailable
+    await SharedPostgresContainer.InitializeOrSkipAsync();
+
+    try {
+      await _rabbitMqContainer.StartAsync();
+    } catch (Exception ex) when (ex is not OperationCanceledException and not SkipTestException) {
+      throw new SkipTestException($"RabbitMQ container failed to start (Docker may not be running): {ex.Message}");
+    }
 
     // Create a unique database for this fixture instance
     _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
