@@ -505,7 +505,7 @@ function Invoke-Prepare {
             } else { "" }
 
             Push-Location $repoRoot
-            $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.token=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl")
+            $beginArgs = @("begin", "/k:$sonarProjectKey", "/d:sonar.login=${script:sonarToken}", "/d:sonar.host.url=$sonarUrl")
             if ($sonarExclusions) { $beginArgs += "/d:sonar.exclusions=$sonarExclusions" }
             if ($sonarCoverageExclusions) { $beginArgs += "/d:sonar.coverage.exclusions=$sonarCoverageExclusions" }
             $beginOutput = & dotnet-sonarscanner @beginArgs 2>&1 | Out-String
@@ -588,7 +588,7 @@ function Invoke-Prepare {
         $continue = Run-Step -Name "SonarQube Analysis" -FailureType "SonarFailure" -Action {
             Push-Location $repoRoot
             try {
-                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.token="${script:sonarToken}" 2>&1 | Out-String
+                $sonarEndOutput = & dotnet-sonarscanner end /d:sonar.login="${script:sonarToken}" 2>&1 | Out-String
                 $exitCode = $LASTEXITCODE
                 if ($exitCode -ne 0) {
                     Write-AiLine "    sonarscanner end failed:" -ForegroundColor Red

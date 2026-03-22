@@ -1,3 +1,5 @@
+name: whiz-sonar
+
 services:
   sonarqube:
     image: sonarqube:lts-community
