@@ -320,7 +320,7 @@ function Invoke-Prepare {
             $stepDuration = ([DateTime]::UtcNow - $stepStart).TotalSeconds
 
             Update-StepProgress
-            Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
+            Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
 
             if ($result.ExitCode -ne 0) {
                 $prefix = if ($ShowOutput) { "  ▶ $Name..." } else { "" }
@@ -347,7 +347,7 @@ function Invoke-Prepare {
             return $false
         }
         finally {
-            Write-Progress -Id 3 -Activity "x" -Completed -ErrorAction SilentlyContinue
+            Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
             Update-StepProgress
         }
     }
@@ -358,16 +358,21 @@ function Invoke-Prepare {
         $elapsed = ([DateTime]::UtcNow - $startTime).TotalSeconds
         $stepElapsed = ([DateTime]::UtcNow - $script:stepStart).TotalSeconds
 
+        # Bar 1: Total estimated time (only when we have estimates)
         if ($script:totalEstSec -gt 0) {
             $timePct = [math]::Min(100, [math]::Round(($elapsed / $script:totalEstSec) * 100))
             $remaining = [math]::Max(0, $script:totalEstSec - $elapsed)
             Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
         }
 
+        # Bar 2: Per-step progress (always shown; estimate only when history exists)
         if ($script:stepEstSec -gt 0) {
             $stepPct = [math]::Min(100, [math]::Round(($stepElapsed / $script:stepEstSec) * 100))
             $stepRemain = [math]::Max(0, $script:stepEstSec - $stepElapsed)
-            Write-Progress -Id 3 -ParentId 0 -Activity "$($script:currentStepName): $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepPct
+            Write-Progress -Id 2 -ParentId 0 -Activity "$($script:currentStepName): $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepPct
+        } else {
+            # No estimate data — still show elapsed time with indeterminate progress
+            Write-Progress -Id 2 -ParentId 0 -Activity "$($script:currentStepName): $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "(no estimate — first run)" -PercentComplete -1
         }
     }
 
