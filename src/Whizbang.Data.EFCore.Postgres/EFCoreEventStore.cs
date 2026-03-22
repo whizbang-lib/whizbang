@@ -140,10 +140,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
@@ -201,10 +199,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
@@ -296,10 +292,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload to the concrete type
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;

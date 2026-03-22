@@ -143,7 +143,6 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
 
   public Guid AwaiterId { get; } = TrackedGuid.NewMedo();
 
-  private readonly int _expectedCount;
   private int _receivedCount;
 
   /// <summary>
@@ -152,7 +151,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   /// <param name="expectedCount">Number of messages to wait for.</param>
   public CountingMessageAwaiter(int expectedCount) {
     ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedCount);
-    _expectedCount = expectedCount;
+    ExpectedCount = expectedCount;
   }
 
   /// <summary>
@@ -163,7 +162,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   /// <summary>
   /// Gets the expected message count.
   /// </summary>
-  public int ExpectedCount => _expectedCount;
+  public int ExpectedCount { get; }
 
   /// <summary>
   /// Gets whether all expected messages have been received.
@@ -175,7 +174,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   /// </summary>
   public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
     async (_, _, _) => {
-      if (Interlocked.Increment(ref _receivedCount) >= _expectedCount) {
+      if (Interlocked.Increment(ref _receivedCount) >= ExpectedCount) {
         _tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
@@ -190,7 +189,7 @@ public sealed class CountingMessageAwaiter : IAwaiterIdentity {
   public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
     await AsyncTimeoutHelper.WaitWithTimeoutAsync(
         _tcs.Task, timeout,
-        $"Expected {_expectedCount} messages but only received {_receivedCount} within {timeout}",
+        $"Expected {ExpectedCount} messages but only received {_receivedCount} within {timeout}",
         cancellationToken);
   }
 }

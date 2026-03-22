@@ -68,35 +68,17 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
 
   /// <inheritdoc />
   public bool HasPermission(Permission permission) {
-    foreach (var p in Permissions) {
-      if (p.Matches(permission)) {
-        return true;
-      }
-    }
-
-    return false;
+    return Permissions.Any(p => p.Matches(permission));
   }
 
   /// <inheritdoc />
   public bool HasAnyPermission(params Permission[] permissions) {
-    foreach (var required in permissions) {
-      if (HasPermission(required)) {
-        return true;
-      }
-    }
-
-    return false;
+    return permissions.Any(HasPermission);
   }
 
   /// <inheritdoc />
   public bool HasAllPermissions(params Permission[] permissions) {
-    foreach (var required in permissions) {
-      if (!HasPermission(required)) {
-        return false;
-      }
-    }
-
-    return true;
+    return permissions.All(HasPermission);
   }
 
   /// <inheritdoc />
@@ -106,34 +88,16 @@ public sealed class ImmutableScopeContext(SecurityExtraction extraction, bool sh
 
   /// <inheritdoc />
   public bool HasAnyRole(params string[] roleNames) {
-    foreach (var role in roleNames) {
-      if (Roles.Contains(role)) {
-        return true;
-      }
-    }
-
-    return false;
+    return roleNames.Any(Roles.Contains);
   }
 
   /// <inheritdoc />
   public bool IsMemberOfAny(params SecurityPrincipalId[] principals) {
-    foreach (var principal in principals) {
-      if (SecurityPrincipals.Contains(principal)) {
-        return true;
-      }
-    }
-
-    return false;
+    return principals.Any(SecurityPrincipals.Contains);
   }
 
   /// <inheritdoc />
   public bool IsMemberOfAll(params SecurityPrincipalId[] principals) {
-    foreach (var principal in principals) {
-      if (!SecurityPrincipals.Contains(principal)) {
-        return false;
-      }
-    }
-
-    return true;
+    return principals.All(SecurityPrincipals.Contains);
   }
 }

@@ -93,11 +93,10 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
   /// </summary>
   private sealed class CountingReceptor(TaskCompletionSource<bool> tcs, int expected) : IReceptor<TEvent>, IAcceptsLifecycleContext {
     private readonly TaskCompletionSource<bool> _tcs = tcs;
-    private readonly int _expected = expected;
     private readonly ConcurrentDictionary<string, byte> _completedPerspectives = new();
     private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
-    public int Expected => _expected;
+    public int Expected { get; } = expected;
     public int Count => _completedPerspectives.Count;
 
     public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
@@ -106,7 +105,7 @@ public sealed class MultiHostPerspectiveAwaiter<TEvent> : IAwaiterIdentity, IDis
 
       // Track unique perspectives (deduplicate by perspective type)
       if (_completedPerspectives.TryAdd(perspectiveKey, 0)) {
-        if (_completedPerspectives.Count >= _expected) {
+        if (_completedPerspectives.Count >= Expected) {
           _tcs.TrySetResult(true);
         }
       }

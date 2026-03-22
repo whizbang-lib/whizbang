@@ -10,19 +10,16 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 public abstract class DapperSequenceProviderBase : ISequenceProvider {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly IDbExecutor _executor;
-
   protected DapperSequenceProviderBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
 
-    _connectionFactory = connectionFactory;
-    _executor = executor;
+    ConnectionFactory = connectionFactory;
+    Executor = executor;
   }
 
-  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
-  protected IDbExecutor Executor => _executor;
+  protected IDbConnectionFactory ConnectionFactory { get; }
+  protected IDbExecutor Executor { get; }
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.

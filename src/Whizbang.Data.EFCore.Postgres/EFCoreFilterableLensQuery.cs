@@ -94,12 +94,10 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       return new UnfilteredScopedAccess(_context);
     }
 
-    var context = _scopeContextAccessor.Current;
-    if (context == null) {
-      throw new InvalidOperationException(
+    var context = _scopeContextAccessor.Current
+      ?? throw new InvalidOperationException(
           $"Scope '{scope}' requires ambient scope context but IScopeContextAccessor.Current is null. " +
           "Ensure scope context middleware is configured.");
-    }
 
     // Apply overrides if provided
     IScopeContext effectiveContext = context;

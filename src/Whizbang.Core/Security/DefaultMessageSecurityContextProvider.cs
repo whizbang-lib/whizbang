@@ -114,10 +114,8 @@ public sealed class DefaultMessageSecurityContextProvider(
         // but the envelope's hops contain the ScopeDelta from the original authentication.
         // If scope data exists on the envelope, the message was already authenticated —
         // return null so callers can use envelope.GetCurrentScope() as fallback.
-        var envelopeScope = envelope.GetCurrentScope();
-        if (envelopeScope is null) {
-          throw new SecurityContextRequiredException(payloadType);
-        }
+        _ = envelope.GetCurrentScope()
+          ?? throw new SecurityContextRequiredException(payloadType);
       }
 
       return null;

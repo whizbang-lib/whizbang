@@ -352,12 +352,10 @@ public partial class ServiceBusConsumerWorker(
         "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
-      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
-      if (serializer == null) {
-        throw new InvalidOperationException(
+      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>()
+        ?? throw new InvalidOperationException(
           "IEnvelopeSerializer is required but not registered. " +
           "Ensure you call services.AddWhizbang() to register core services.");
-      }
 
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));

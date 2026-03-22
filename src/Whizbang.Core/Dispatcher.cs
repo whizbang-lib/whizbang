@@ -3147,7 +3147,7 @@ public abstract partial class Dispatcher(
         // No strategy AND no deferred channel - log warning for backward compatibility
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
         var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
-        if (logger != null && logger.IsEnabled(LogLevel.Warning)) {
+        if (logger?.IsEnabled(LogLevel.Warning) == true) {
           var eventTypeName = eventType.Name;
           logger.LogWarning(
             "IWorkCoordinatorStrategy not registered and IDeferredOutboxChannel not available - " +
@@ -3318,11 +3318,9 @@ public abstract partial class Dispatcher(
       // This avoids creating MessageEnvelope<IEvent> which can't be serialized
       var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
       var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
-      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions);
-      if (jsonTypeInfo == null) {
-        throw new InvalidOperationException(
+      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
+        ?? throw new InvalidOperationException(
           $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
-      }
 
       var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
 
@@ -3684,12 +3682,8 @@ public abstract partial class Dispatcher(
     // Create ONE scope for all messages
     var scope = _scopeFactory.CreateScope();
     try {
-      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
-
-      // If no strategy is registered, throw
-      if (strategy == null) {
-        throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
-      }
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>()
+        ?? throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
 
       // Queue ALL messages to the strategy
       foreach (var (message, messageType, context) in messages) {
@@ -4319,10 +4313,8 @@ public abstract partial class Dispatcher(
   }
 
   private void _ensureReceptorExists(object message, Type messageType) {
-    var invoker = GetReceptorInvoker<object>(message, messageType);
-    if (invoker == null) {
-      throw new ReceptorNotFoundException(messageType);
-    }
+    var invoker = GetReceptorInvoker<object>(message, messageType)
+      ?? throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>

@@ -151,7 +151,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Rotate: capture current unit and create new one for next batch
     await _unitLock.WaitAsync(ct);
     try {
-      if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+      if (_currentUnit?.Messages.Count > 0) {
         unitToFlush = _currentUnit;
         _currentUnit = null;  // New unit created on next QueueMessageAsync
       }
@@ -191,7 +191,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Flush remaining unit (if any)
     await _unitLock.WaitAsync();
     try {
-      if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+      if (_currentUnit?.Messages.Count > 0) {
         if (OnFlushRequested != null) {
           await OnFlushRequested.Invoke(_currentUnit.UnitId, CancellationToken.None);
         }
