@@ -82,7 +82,7 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy {
     }
 
     // Flush current unit if it has messages
-    if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+    if (_currentUnit?.Messages.Count > 0) {
       if (OnFlushRequested != null) {
         try {
           await OnFlushRequested.Invoke(_currentUnit.UnitId, CancellationToken.None);

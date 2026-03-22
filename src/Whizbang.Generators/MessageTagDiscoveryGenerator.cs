@@ -352,7 +352,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"      AttributeType = typeof({tag.AttributeFullName}),");
     sb.AppendLine($"      Tag = \"{_escapeString(tag.Tag)}\",");
 
-    if (tag.Properties is not null && tag.Properties.Length > 0) {
+    if (tag.Properties?.Length > 0) {
       sb.AppendLine($"      Properties = new[] {{ {string.Join(", ", tag.Properties.Select(p => $"\"{p}\""))} }},");
     }
 
@@ -368,7 +368,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("        var dict = new Dictionary<string, object?>();");
 
     // Extract specified properties, or all properties if none specified
-    var propsToExtract = tag.Properties is not null && tag.Properties.Length > 0
+    var propsToExtract = tag.Properties?.Length > 0
         ? tag.Properties
         : tag.TypeProperties;
 

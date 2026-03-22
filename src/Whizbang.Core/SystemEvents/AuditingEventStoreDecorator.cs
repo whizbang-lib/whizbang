@@ -161,8 +161,8 @@ public sealed class AuditingEventStoreDecorator(
         .FirstOrDefault() as AuditEventAttribute;
 
     return _options.AuditMode == AuditMode.OptOut
-      ? attr?.Exclude != true         // audit unless excluded
-      : attr != null && !attr.Exclude; // audit only if marked
+      ? attr?.Exclude != true           // audit unless excluded
+      : attr?.Exclude == false;         // audit only if marked
   }
 
   private EventAudited _buildEventAudited<TMessage>(

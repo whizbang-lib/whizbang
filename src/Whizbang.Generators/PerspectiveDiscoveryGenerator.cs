@@ -39,7 +39,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => _extractPerspectiveInfos(ctx, ct)
-    ).Where(static infos => infos is not null && infos.Length > 0)
+    ).Where(static infos => infos?.Length > 0)
      .SelectMany(static (infos, _) => infos!.ToImmutableArray());
 
     // Collect all perspectives and generate registration code

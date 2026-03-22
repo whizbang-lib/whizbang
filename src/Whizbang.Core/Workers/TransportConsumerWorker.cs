@@ -630,10 +630,8 @@ public partial class TransportConsumerWorker : BackgroundService {
         $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. MessageId: {envelope.MessageId}");
     } else {
       // Strongly-typed envelope - serialize it
-      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>();
-      if (serializer == null) {
-        throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
-      }
+      var serializer = scopeServiceProvider.GetService<IEnvelopeSerializer>()
+        ?? throw new InvalidOperationException("IEnvelopeSerializer is required but not registered");
 
       // Call generic SerializeEnvelope method via reflection
       var genericMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));

@@ -153,7 +153,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
     // Get the namespace
     var containingNamespace = messageType.ContainingNamespace;
-    if (containingNamespace is null || containingNamespace.IsGlobalNamespace) {
+    if (containingNamespace?.IsGlobalNamespace != false) {
       return null;
     }
 

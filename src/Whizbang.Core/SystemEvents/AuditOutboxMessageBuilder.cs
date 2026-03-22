@@ -121,8 +121,8 @@ public static class AuditOutboxMessageBuilder {
         .FirstOrDefault() as AuditEventAttribute;
 
     return options.AuditMode == AuditMode.OptOut
-      ? attr?.Exclude != true         // audit unless excluded
-      : attr != null && !attr.Exclude; // audit only if marked
+      ? attr?.Exclude != true           // audit unless excluded
+      : attr?.Exclude == false;         // audit only if marked
   }
 
   private static Type? _resolveEventType(string assemblyQualifiedName) {

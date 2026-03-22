@@ -322,7 +322,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       string assemblyName) {
 
     // Only generate populator for record types
-    var recordInfos = infos.Where(i => i is not null && i.IsRecord).Select(i => i!).ToList();
+    var recordInfos = infos.Where(i => i?.IsRecord == true).Select(i => i!).ToList();
     if (recordInfos.Count == 0) {
       return;
     }
