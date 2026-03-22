@@ -34,7 +34,7 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    await SharedRabbitMqContainer.InitializeAsync();
+    await SharedRabbitMqContainer.InitializeOrSkipAsync();
 
     var factory = new ConnectionFactory {
       Uri = new Uri(SharedRabbitMqContainer.ConnectionString)

@@ -33,7 +33,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   [Before(Test)]
   public async Task SetupAsync() {
     // Initialize shared container once for all tests
-    await SharedRabbitMqContainer.InitializeAsync();
+    await SharedRabbitMqContainer.InitializeOrSkipAsync();
 
     // Create connection for this test
     var factory = new ConnectionFactory {
