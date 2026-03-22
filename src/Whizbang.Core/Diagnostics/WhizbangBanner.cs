@@ -370,7 +370,7 @@ public static partial class WhizbangBanner {
 
     // Fixed width matching the logo banner
     const int BANNER_WIDTH = 84;
-    var innerWidth = BANNER_WIDTH - 4;
+    const int innerWidth = BANNER_WIDTH - 4;
 
     var titleLine = whizbangVersion != null
         ? $"  {name} v{version} (Whizbang v{whizbangVersion})"
