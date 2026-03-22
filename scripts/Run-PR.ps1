@@ -647,16 +647,19 @@ function Invoke-Prepare {
                             Write-Host ""
                             Write-AiLine "    Top Issues:" -ForegroundColor Yellow
                             foreach ($issue in $issues.issues | Select-Object -First 15) {
-                                $severity = switch ($issue.severity) {
+                                $severityValue = if ($issue.PSObject.Properties['severity']) { $issue.severity } else { $null }
+                                $severity = switch ($severityValue) {
                                     "BLOCKER" { "🔴" }
                                     "CRITICAL" { "🟠" }
                                     "MAJOR" { "🟡" }
                                     "MINOR" { "🔵" }
                                     default { "⚪" }
                                 }
-                                $component = $issue.component -replace "^${sonarProjectKey}:", ""
-                                $line = if ($issue.line) { ":$($issue.line)" } else { "" }
-                                Write-AiLine "      $severity [$($issue.rule)] $($issue.message)" -ForegroundColor Gray
+                                $component = if ($issue.PSObject.Properties['component']) { $issue.component -replace "^${sonarProjectKey}:", "" } else { "(unknown)" }
+                                $line = if ($issue.PSObject.Properties['line']) { ":$($issue.line)" } else { "" }
+                                $rule = if ($issue.PSObject.Properties['rule']) { $issue.rule } else { "unknown" }
+                                $message = if ($issue.PSObject.Properties['message']) { $issue.message } else { "(no message)" }
+                                Write-AiLine "      $severity [$rule] $message" -ForegroundColor Gray
                                 Write-AiLine "         $component$line" -ForegroundColor DarkGray
                             }
                             if ($issues.total -gt 15) {
