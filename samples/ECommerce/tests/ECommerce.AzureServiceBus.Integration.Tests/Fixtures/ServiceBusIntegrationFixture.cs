@@ -942,30 +942,37 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         using (var scope = _inventoryHost!.Services.CreateScope()) {
           var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
+          // Each schema group gets its own DO block so that a missing table in one group
+          // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
+          // entire BEGIN...END block's savepoint).
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
           await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$
-            BEGIN
-              -- Truncate core infrastructure tables (INVENTORY schema)
+            DO $$ BEGIN
               TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
-
-              -- Truncate all perspective tables (INVENTORY schema)
-              TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
-              TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
-              TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
-
-              -- Truncate core infrastructure tables (BFF schema)
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
-
-              -- Truncate all perspective tables (BFF schema)
-              TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
-              TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
-              TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
-            EXCEPTION
-              WHEN undefined_table THEN
-                -- Tables don't exist, nothing to clean up
-                NULL;
-            END $$;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] All tables truncated.");
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {

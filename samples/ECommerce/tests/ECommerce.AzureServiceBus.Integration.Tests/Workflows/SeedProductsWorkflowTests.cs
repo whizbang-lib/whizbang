@@ -48,6 +48,7 @@ public class SeedProductsWorkflowTests {
       fixture.BffProductLens,
       fixture.GetLogger<SeedMutations>());
 
+
     using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 24,  // 12 products × 2 perspectives
       bffPerspectives: 24);
@@ -56,6 +57,7 @@ public class SeedProductsWorkflowTests {
       bffPerspectives: 12);
 
     var seededCount = await seedMutations.SeedProductsAsync();
+    Console.WriteLine($"[SeedProducts] SeedProductsAsync returned: {seededCount}");
     if (seededCount == 0) {
       return; // Already seeded
     }
