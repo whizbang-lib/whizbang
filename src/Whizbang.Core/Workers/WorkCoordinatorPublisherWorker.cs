@@ -817,7 +817,7 @@ public partial class WorkCoordinatorPublisherWorker(
     var orderedProcessor = new OrderedStreamProcessor();
     await orderedProcessor.ProcessInboxWorkAsync(
       workToProcess,
-      processor: (work) => {
+      processor: (_) => {
         // For orphaned recovery, mark as EventStored (same as TransportConsumerWorker)
         return Task.FromResult(MessageProcessingStatus.EventStored);
       },
