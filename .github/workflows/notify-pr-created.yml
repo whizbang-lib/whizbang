@@ -25,7 +25,7 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           # Build title and message
-          TITLE="PR #${PR_NUMBER} Created"
+          TITLE="[LIB] PR #${PR_NUMBER} Created"
           MESSAGE="${PR_TITLE}\n\nBy: ${PR_AUTHOR}\n${HEAD_BRANCH} → ${BASE_BRANCH}"
 
           # Output for next step
