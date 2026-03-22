@@ -18,7 +18,7 @@ public class DapperDbExecutor : IDbExecutor {
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
-  public async Task<IReadOnlyList<T>> QueryAsync<T>(
+  public Task<IReadOnlyList<T>> QueryAsync<T>(
     IDbConnection connection,
     string sql,
     object? param = null,
@@ -26,7 +26,15 @@ public class DapperDbExecutor : IDbExecutor {
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(sql);
+    return _queryAsyncCoreAsync<T>(connection, sql, param, transaction, cancellationToken);
+  }
 
+  private static async Task<IReadOnlyList<T>> _queryAsyncCoreAsync<T>(
+    IDbConnection connection,
+    string sql,
+    object? param,
+    IDbTransaction? transaction,
+    CancellationToken cancellationToken) {
     var commandDefinition = new DapperExtensions.CommandDefinition(
       sql,
       param,
@@ -44,7 +52,7 @@ public class DapperDbExecutor : IDbExecutor {
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
-  public async Task<T?> QuerySingleOrDefaultAsync<T>(
+  public Task<T?> QuerySingleOrDefaultAsync<T>(
     IDbConnection connection,
     string sql,
     object? param = null,
@@ -52,7 +60,15 @@ public class DapperDbExecutor : IDbExecutor {
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(sql);
+    return _querySingleOrDefaultAsyncCoreAsync<T>(connection, sql, param, transaction, cancellationToken);
+  }
 
+  private static async Task<T?> _querySingleOrDefaultAsyncCoreAsync<T>(
+    IDbConnection connection,
+    string sql,
+    object? param,
+    IDbTransaction? transaction,
+    CancellationToken cancellationToken) {
     var commandDefinition = new DapperExtensions.CommandDefinition(
       sql,
       param,
@@ -74,7 +90,7 @@ public class DapperDbExecutor : IDbExecutor {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
-  public async Task<int> ExecuteAsync(
+  public Task<int> ExecuteAsync(
     IDbConnection connection,
     string sql,
     object? param = null,
@@ -82,7 +98,15 @@ public class DapperDbExecutor : IDbExecutor {
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(sql);
+    return _executeAsyncCoreAsync(connection, sql, param, transaction, cancellationToken);
+  }
 
+  private static async Task<int> _executeAsyncCoreAsync(
+    IDbConnection connection,
+    string sql,
+    object? param,
+    IDbTransaction? transaction,
+    CancellationToken cancellationToken) {
     var commandDefinition = new DapperExtensions.CommandDefinition(
       sql,
       param,
@@ -104,7 +128,7 @@ public class DapperDbExecutor : IDbExecutor {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-  public async Task<T?> ExecuteScalarAsync<T>(
+  public Task<T?> ExecuteScalarAsync<T>(
     IDbConnection connection,
     string sql,
     object? param = null,
@@ -112,7 +136,15 @@ public class DapperDbExecutor : IDbExecutor {
     CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(sql);
+    return _executeScalarAsyncCoreAsync<T>(connection, sql, param, transaction, cancellationToken);
+  }
 
+  private static async Task<T?> _executeScalarAsyncCoreAsync<T>(
+    IDbConnection connection,
+    string sql,
+    object? param,
+    IDbTransaction? transaction,
+    CancellationToken cancellationToken) {
     var commandDefinition = new DapperExtensions.CommandDefinition(
       sql,
       param,

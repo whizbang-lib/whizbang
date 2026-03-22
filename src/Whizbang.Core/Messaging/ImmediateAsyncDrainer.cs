@@ -57,11 +57,16 @@ public sealed partial class ImmediateAsyncDrainer(int warningThreshold = 10, ILo
   /// <param name="receptorInvoker">The receptor invoker to use for invocation.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The total number of items drained.</returns>
-  public async ValueTask<int> DrainAsync(
+  public ValueTask<int> DrainAsync(
       IReceptorInvoker receptorInvoker,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(receptorInvoker);
+    return _drainCoreAsync(receptorInvoker, cancellationToken);
+  }
 
+  private async ValueTask<int> _drainCoreAsync(
+      IReceptorInvoker receptorInvoker,
+      CancellationToken cancellationToken) {
     var depth = 0;
     while (_queue.TryDequeue(out var pending)) {
       cancellationToken.ThrowIfCancellationRequested();

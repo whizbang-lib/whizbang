@@ -39,7 +39,7 @@ public sealed class DefaultMessageSecurityContextProvider(
   private readonly Action<ScopeContextEstablished>? _onAuditEvent = onAuditEvent;
 
   /// <inheritdoc />
-  public async ValueTask<IScopeContext?> EstablishContextAsync(
+  public ValueTask<IScopeContext?> EstablishContextAsync(
     IMessageEnvelope envelope,
     IServiceProvider scopedProvider,
     CancellationToken cancellationToken = default) {
@@ -62,7 +62,7 @@ public sealed class DefaultMessageSecurityContextProvider(
     if (envelope.Payload is null) {
       // No payload means no type to check - return null for anonymous processing
       if (_options.AllowAnonymous) {
-        return null;
+        return default;
       }
       throw new ArgumentNullException(nameof(envelope), "Message envelope has null Payload");
     }
@@ -70,9 +70,17 @@ public sealed class DefaultMessageSecurityContextProvider(
     // Check if message type is exempt
     var payloadType = envelope.Payload.GetType();
     if (_options.ExemptMessageTypes?.Contains(payloadType) == true) {
-      return null;
+      return default;
     }
 
+    return _establishContextCoreAsync(envelope, scopedProvider, payloadType, cancellationToken);
+  }
+
+  private async ValueTask<IScopeContext?> _establishContextCoreAsync(
+    IMessageEnvelope envelope,
+    IServiceProvider scopedProvider,
+    Type payloadType,
+    CancellationToken cancellationToken) {
     // Track if payload is JsonElement - an intermediate representation from outbox
     // before deserialization. For JsonElement, we try extractors but don't REQUIRE
     // security (it will be checked again after deserialization with the real type).

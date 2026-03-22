@@ -57,14 +57,21 @@ public class DispatcherTransportBridge(
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_AutomaticallySerializesMessageAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_PreservesCorrelationIdAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_CreatesEnvelopeWithHopAsync</tests>
-  public async Task PublishToTransportAsync<TMessage>(
+  public Task PublishToTransportAsync<TMessage>(
     TMessage message,
     TransportDestination destination,
     IMessageContext? context = null
   ) {
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(destination);
+    return _publishToTransportCoreAsync(message, destination, context);
+  }
 
+  private async Task _publishToTransportCoreAsync<TMessage>(
+    TMessage message,
+    TransportDestination destination,
+    IMessageContext? context
+  ) {
     // Create or use provided context - use CascadeContextFactory for proper security propagation
     if (context == null) {
       var cascade = _cascadeContextFactory.NewRoot();
@@ -90,14 +97,21 @@ public class DispatcherTransportBridge(
   /// <returns>The typed response from the remote service</returns>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync</tests>
-  public async Task<TResponse> SendToTransportAsync<TRequest, TResponse>(
+  public Task<TResponse> SendToTransportAsync<TRequest, TResponse>(
     TRequest request,
     TransportDestination destination,
     IMessageContext? context = null
   ) where TRequest : notnull where TResponse : notnull {
     ArgumentNullException.ThrowIfNull(request);
     ArgumentNullException.ThrowIfNull(destination);
+    return _sendToTransportCoreAsync<TRequest, TResponse>(request, destination, context);
+  }
 
+  private async Task<TResponse> _sendToTransportCoreAsync<TRequest, TResponse>(
+    TRequest request,
+    TransportDestination destination,
+    IMessageContext? context
+  ) where TRequest : notnull where TResponse : notnull {
     // Create or use provided context - use CascadeContextFactory for proper security propagation
     if (context == null) {
       var cascade = _cascadeContextFactory.NewRoot();
@@ -128,11 +142,16 @@ public class DispatcherTransportBridge(
   /// <returns>Subscription that can be disposed to stop routing</returns>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_DeserializesAndInvokesLocalReceptorAsync</tests>
-  public async Task<ISubscription> SubscribeFromTransportAsync<TMessage>(
+  public Task<ISubscription> SubscribeFromTransportAsync<TMessage>(
     TransportDestination destination
   ) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(destination);
+    return _subscribeFromTransportCoreAsync<TMessage>(destination);
+  }
 
+  private async Task<ISubscription> _subscribeFromTransportCoreAsync<TMessage>(
+    TransportDestination destination
+  ) where TMessage : notnull {
     // Subscribe to transport and route to dispatcher
     return await _transport.SubscribeAsync(
       handler: async (envelope, envelopeType, ct) => {
