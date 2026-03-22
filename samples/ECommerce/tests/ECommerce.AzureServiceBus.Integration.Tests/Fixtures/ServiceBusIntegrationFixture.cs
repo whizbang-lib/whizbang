@@ -880,8 +880,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
     var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
-    var loggerFactory = _bffHost!.Services.GetRequiredService<ILoggerFactory>();
-    var logger = loggerFactory.CreateLogger<PerspectiveCompletionWaiter<TEvent>>();
 
     // DIAGNOSTIC: Log registry instances used by test waiter
     Console.WriteLine($"[Fixture DIAGNOSTIC] Creating waiter for {typeof(TEvent).Name}: InventoryRegistry={inventoryRegistry.GetHashCode()}, BffRegistry={bffRegistry.GetHashCode()}");
@@ -890,8 +888,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       inventoryRegistry,
       bffRegistry,
       inventoryPerspectives,
-      bffPerspectives,
-      logger
+      bffPerspectives
     );
   }
 

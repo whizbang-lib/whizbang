@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -47,13 +46,11 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <param name="bffRegistry">Lifecycle registry for the BFF/frontend host.</param>
   /// <param name="inventoryPerspectives">Number of perspectives expected on inventory host.</param>
   /// <param name="bffPerspectives">Number of perspectives expected on BFF host.</param>
-  /// <param name="logger">Optional logger.</param>
   public PerspectiveCompletionWaiter(
     IReceptorRegistry inventoryRegistry,
     IReceptorRegistry bffRegistry,
     int inventoryPerspectives,
-    int bffPerspectives,
-    ILogger<PerspectiveCompletionWaiter<TEvent>>? logger = null) {
+    int bffPerspectives) {
 
     _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
