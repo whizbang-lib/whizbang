@@ -346,10 +346,10 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   private sealed class TestLogger<T> : ILogger<T> {
-    private readonly List<LogEntry> _logs = [];
+    private readonly System.Collections.Concurrent.ConcurrentQueue<LogEntry> _logs = new();
 
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      _logs.Add(new LogEntry {
+      _logs.Enqueue(new LogEntry {
         LogLevel = logLevel,
         Message = formatter(state, exception),
         Exception = exception
@@ -361,10 +361,10 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
     public List<LogEntry> GetLogsContaining(string text) =>
-      _logs.FindAll(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase));
+      _logs.Where(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase)).ToList();
 
     public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
-      _logs.FindAll(l => l.LogLevel == level);
+      _logs.Where(l => l.LogLevel == level).ToList();
 
     public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }
