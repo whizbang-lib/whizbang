@@ -71,7 +71,7 @@ BEGIN
       pr.table_name,
       pr.schema_hash
     INTO v_existing
-    FROM wh_perspective_registry pr
+    FROM __SCHEMA__.wh_perspective_registry pr
     WHERE pr.clr_type_name = v_perspective.clr_type_name
       AND pr.service_name = v_perspective.service_name;
 
@@ -103,14 +103,14 @@ BEGIN
       END IF;
 
       -- Update the registry entry
-      UPDATE wh_perspective_registry
+      UPDATE __SCHEMA__.wh_perspective_registry
       SET
         table_name = v_perspective.table_name,
         schema_json = v_perspective.schema_json,
         schema_hash = v_perspective.schema_hash,
         updated_at = NOW()
-      WHERE wh_perspective_registry.clr_type_name = v_perspective.clr_type_name
-        AND wh_perspective_registry.service_name = v_perspective.service_name;
+      WHERE __SCHEMA__.wh_perspective_registry.clr_type_name = v_perspective.clr_type_name
+        AND __SCHEMA__.wh_perspective_registry.service_name = v_perspective.service_name;
 
     ELSE
       -- New CLR type - insert into registry
@@ -118,7 +118,7 @@ BEGIN
       v_old_table_name := NULL;
       v_old_schema_hash := NULL;
 
-      INSERT INTO wh_perspective_registry (
+      INSERT INTO __SCHEMA__.wh_perspective_registry (
         clr_type_name,
         table_name,
         schema_json,
@@ -154,4 +154,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Grant execute permission on function
-GRANT EXECUTE ON FUNCTION reconcile_perspective_registry(JSONB, VARCHAR) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION __SCHEMA__.reconcile_perspective_registry(JSONB, VARCHAR) TO PUBLIC;
