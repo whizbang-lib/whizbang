@@ -611,7 +611,9 @@ function Invoke-Prepare {
                 if ($exitCode -eq 0) {
                     Start-Sleep -Seconds 5  # Wait for SonarQube to process
                     try {
-                        $authHeader = @{ Authorization = "Bearer ${script:sonarToken}" }
+                        # SonarQube 9.9 LTS uses token as username with empty password for Basic auth
+                        $authBytes = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${script:sonarToken}:"))
+                        $authHeader = @{ Authorization = "Basic $authBytes" }
 
                         # Quality gate
                         $qg = Invoke-RestMethod -Uri "$sonarUrl/api/qualitygates/project_status?projectKey=$sonarProjectKey" -Headers $authHeader -ErrorAction Stop
