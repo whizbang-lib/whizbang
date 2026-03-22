@@ -297,7 +297,7 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "🔑 Release v${{ needs.check-release.outputs.version }} needs approval"
+          title: "[LIB] 🔑 Release v${{ needs.check-release.outputs.version }} needs approval"
           message: "Release v${{ needs.check-release.outputs.version }} is ready for approval"
           status: approval-needed
           url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -688,7 +688,7 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "❌ Release v${{ needs.check-release.outputs.version }} Failed"
+          title: "[LIB] ❌ Release v${{ needs.check-release.outputs.version }} Failed"
           message: "Release failed at: ${{ steps.failed.outputs.job }}"
           status: deploy-failed
           url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
