@@ -426,7 +426,6 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"  public object? {methodName}(object message, DateTimeOffset timestamp) {{");
     sb.AppendLine("    return message switch {");
 
-    var hasAnyMatch = false;
     foreach (var group in typeGroups) {
       var timestampProperties = group.Where(i =>
           i.PopulateKind == "Timestamp" && i.SpecificKind == $"TimestampKind.{timestampKindName}"
@@ -435,8 +434,6 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       if (timestampProperties.Count == 0) {
         continue;
       }
-
-      hasAnyMatch = true;
       sb.AppendLine($"      {group.Key} m => m with {{");
       foreach (var prop in timestampProperties) {
         sb.AppendLine($"        {prop.PropertyName} = timestamp,");
@@ -444,11 +441,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       sb.AppendLine("      },");
     }
 
-    if (!hasAnyMatch) {
-      sb.AppendLine("      _ => null");
-    } else {
-      sb.AppendLine("      _ => null");
-    }
+    sb.AppendLine("      _ => null");
 
     sb.AppendLine("    };");
     sb.AppendLine("  }");
