@@ -116,7 +116,9 @@ param(
 
     [switch]$CleanLogs,     # Remove log files and coverage reports before running
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
-    [switch]$CleanAll       # Remove all logs, metrics, and reports before running
+    [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
+
+    [switch]$PersistContainer  # Keep SonarQube Docker container running after script ends
 )
 
 $ErrorActionPreference = "Stop"
@@ -452,12 +454,9 @@ function Invoke-Prepare {
             $dockerRunning = docker info 2>&1; $dockerOk = $LASTEXITCODE -eq 0
             if ($dockerOk) {
                 $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
-                $sonarContainer = docker ps --filter "name=whizbang-sonar" --format "{{.Status}}" 2>$null
-                if (-not $sonarContainer -and (Test-Path $composeFile)) {
-                    Write-Host "    Starting SonarQube container (warming up in background)..." -ForegroundColor Yellow
+                if (Test-Path $composeFile) {
+                    Write-Host "    Starting SonarQube container..." -ForegroundColor Yellow
                     docker compose -f $composeFile up -d 2>&1 | Out-Null
-                } else {
-                    Write-Host "    SonarQube container already running" -ForegroundColor DarkGray
                 }
             }
         }
@@ -1137,6 +1136,15 @@ finally {
 
     # Stop tee logging
     if ($LogFile) { Stop-TeeLogging }
+
+    # Stop SonarQube container (unless -PersistContainer)
+    if (-not $SkipSonar -and -not $PersistContainer) {
+        $composeFile = Join-Path $repoRoot "docker-compose.sonarqube.yml"
+        if (Test-Path $composeFile) {
+            Write-Host "  Stopping SonarQube container..." -ForegroundColor DarkGray
+            docker compose -f $composeFile down 2>&1 | Out-Null
+        }
+    }
 
     # Stop transcript
     Stop-Transcript | Out-Null
