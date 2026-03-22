@@ -81,7 +81,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       // Stop any existing containers on this port (via docker-compose with full cleanup)
       // Using -v to remove volumes and --remove-orphans to clean orphaned containers
       // Use explicit project name to ensure consistent network naming
-      var projectName = $"sbtest{_port}";
+      var projectName = $"whizbang-azure-servicebus-{_port}";
       await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile, cancellationToken);
 
       // Also remove the network explicitly in case docker-compose didn't
@@ -168,7 +168,7 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     }
 
     if (File.Exists(_dockerComposeFile)) {
-      var projectName = $"sbtest{_port}";
+      var projectName = $"whizbang-azure-servicebus-{_port}";
       await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile);
       await _removeNetworkAsync($"{projectName}_default");
       File.Delete(_dockerComposeFile);
