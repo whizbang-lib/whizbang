@@ -368,4 +368,42 @@ namespace TestNamespace {
     await Assert.That(generatedSource).Contains("TestNamespace.Sessions+Active+Projection")
       .Because("deeply nested perspective should use CLR format with '+' for each nesting level");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_IncludesAssociationAsync() {
+    // Arrange — Perspective using IPerspectiveWithActionsFor for Purge
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record DeletedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event)
+        => ApplyResult<OrderModel>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert — DeletedEvent must be in generated JSON associations
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("DeletedEvent")
+      .Because("IPerspectiveWithActionsFor events must be in DB associations for process_work_batch to create perspective events");
+    await Assert.That(generatedSource).Contains("OrderPurgePerspective")
+      .Because("The perspective class must be the target in the association");
+  }
 }

@@ -394,7 +394,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Check if class implements IPerspectiveFor<TModel> base interface
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
-      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>";
+      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
     });
 
     if (perspectiveForInterface is null) {
