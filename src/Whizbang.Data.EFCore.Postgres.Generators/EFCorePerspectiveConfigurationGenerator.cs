@@ -338,7 +338,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal);
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
+             originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal) ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel,", StringComparison.Ordinal) ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel,", StringComparison.Ordinal);
     });
 
     if (perspectiveForInterface is null) {
