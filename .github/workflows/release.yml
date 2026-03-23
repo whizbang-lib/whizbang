@@ -113,13 +113,13 @@ jobs:
           fetch-depth: 0
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@5e921e851881443c3f3ae9108d9fb33f528f13d5 # v4.3.0
+        uses: gittools/actions/gitversion/setup@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
         with:
           versionSpec: '6.1.x'
 
       - name: Determine Base Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@5e921e851881443c3f3ae9108d9fb33f528f13d5 # v4.3.0
+        uses: gittools/actions/gitversion/execute@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
