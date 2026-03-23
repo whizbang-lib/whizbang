@@ -46,7 +46,9 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     // Find IPerspectiveFor<TModel, ...> interfaces
     foreach (var iface in typeSymbol.AllInterfaces) {
       // Must be IPerspectiveFor with at least 2 type arguments (TModel + at least one TEvent)
-      if (!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) || iface.TypeArguments.Length < 2) {
+      if ((!iface.Name.StartsWith("IPerspectiveFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveWithActionsFor", StringComparison.Ordinal) &&
+           !iface.Name.StartsWith("IPerspectiveBase", StringComparison.Ordinal)) || iface.TypeArguments.Length < 2) {
         continue;
       }
 
