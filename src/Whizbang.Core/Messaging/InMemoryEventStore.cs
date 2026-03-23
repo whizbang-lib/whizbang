@@ -71,20 +71,18 @@ public class InMemoryEventStore : IEventStore {
     // Try to get the envelope from the registry (preserves tracing context)
     var envelope = _envelopeRegistry?.TryGetEnvelope(message);
 
-    if (envelope is null) {
-      // No envelope registered - create a minimal envelope for backwards compatibility
-      envelope = new MessageEnvelope<TMessage> {
-        MessageId = MessageId.New(),
-        Payload = message,
-        Hops = [
-          new MessageHop {
-            ServiceInstance = ServiceInstanceInfo.Unknown,
-            Timestamp = DateTimeOffset.UtcNow,
-            TraceParent = System.Diagnostics.Activity.Current?.Id
-          }
-        ]
-      };
-    }
+    // No envelope registered - create a minimal envelope for backwards compatibility
+    envelope ??= new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow,
+          TraceParent = System.Diagnostics.Activity.Current?.Id
+        }
+      ]
+    };
 
     return AppendAsync(streamId, envelope, cancellationToken);
   }

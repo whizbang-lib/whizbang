@@ -15,7 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
-public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
+public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy {
   private readonly TimeSpan _interval;
   private readonly Task _flushTask;
   private readonly CancellationTokenSource _disposeCts = new();
@@ -151,7 +151,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
     // Rotate: capture current unit and create new one for next batch
     await _unitLock.WaitAsync(ct);
     try {
-      if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+      if (_currentUnit?.Messages.Count > 0) {
         unitToFlush = _currentUnit;
         _currentUnit = null;  // New unit created on next QueueMessageAsync
       }
@@ -191,7 +191,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
     // Flush remaining unit (if any)
     await _unitLock.WaitAsync();
     try {
-      if (_currentUnit != null && _currentUnit.Messages.Count > 0) {
+      if (_currentUnit?.Messages.Count > 0) {
         if (OnFlushRequested != null) {
           await OnFlushRequested.Invoke(_currentUnit.UnitId, CancellationToken.None);
         }

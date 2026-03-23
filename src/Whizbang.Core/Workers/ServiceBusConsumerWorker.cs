@@ -5,8 +5,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
@@ -280,6 +282,30 @@ public partial class ServiceBusConsumerWorker(
           await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, ct);
 
           await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
+          // PostLifecycle stages for events WITHOUT perspectives
+          // Events with perspectives get PostLifecycle from PerspectiveWorker at batch end
+          if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+            var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
+            if (coordinator is not null) {
+              // Use coordinator for PostLifecycle — guarantees once-per-event firing
+              var eventId = work.Envelope.MessageId.Value;
+              var tracking = coordinator.BeginTracking(
+                eventId, typedEnvelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+              await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, ct);
+              await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct);
+              coordinator.AbandonTracking(eventId);
+            } else {
+              // Fallback: direct invocation when coordinator not registered
+              lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, ct);
+              await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+
+              lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
+              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, ct);
+              await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, ct);
+            }
+          }
         }
       }
 
@@ -304,6 +330,33 @@ public partial class ServiceBusConsumerWorker(
   private static async Task _invokeImmediateAsyncAsync(IReceptorInvoker receptorInvoker, IMessageEnvelope typedEnvelope, LifecycleExecutionContext lifecycleContext, CancellationToken ct) {
     await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
       lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, ct);
+  }
+
+  /// <summary>
+  /// Checks if the given message type is an event type that has NO associated perspectives.
+  /// Events with perspectives get PostLifecycle from PerspectiveWorker at batch end.
+  /// Events without perspectives need PostLifecycle fired here immediately.
+  /// </summary>
+  private static bool _isEventWithoutPerspectives(string messageType, IServiceProvider serviceProvider) {
+    var registry = serviceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry is null) {
+      // No perspectives registered at all - all events are "without perspectives"
+      return true;
+    }
+
+    var normalizedMessageType = EventTypeMatchingHelper.NormalizeTypeName(messageType);
+
+    var perspectives = registry.GetRegisteredPerspectives();
+    foreach (var perspective in perspectives) {
+      foreach (var eventType in perspective.EventTypes) {
+        var normalizedEventType = EventTypeMatchingHelper.NormalizeTypeName(eventType);
+        if (string.Equals(normalizedMessageType, normalizedEventType, StringComparison.Ordinal)) {
+          return false; // This event type has at least one perspective
+        }
+      }
+    }
+
+    return true; // No perspectives handle this event type
   }
 
   /// <summary>
@@ -352,12 +405,10 @@ public partial class ServiceBusConsumerWorker(
         "not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
       // Strongly-typed envelope - need to serialize it to JsonElement form for storage
-      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
-      if (serializer == null) {
-        throw new InvalidOperationException(
+      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>()
+        ?? throw new InvalidOperationException(
           "IEnvelopeSerializer is required but not registered. " +
           "Ensure you call services.AddWhizbang() to register core services.");
-      }
 
       // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
       var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));

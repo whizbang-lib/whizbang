@@ -43,13 +43,19 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
-  public async Task AppendAsync<TMessage>(
+  public Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(envelope);
+    return _appendCoreAsync(streamId, envelope, cancellationToken);
+  }
 
+  private async Task _appendCoreAsync<TMessage>(
+      Guid streamId,
+      MessageEnvelope<TMessage> envelope,
+      CancellationToken cancellationToken) {
     // Get the next sequence number for this stream
     var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
     var nextSequence = lastSequence + 1;
@@ -140,10 +146,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
@@ -201,10 +205,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
@@ -296,10 +298,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Deserialize the event payload to the concrete type
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
       var metadata = record.Metadata;
@@ -408,7 +408,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_SkipsUnknownEventsAsync</tests>
-  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
       Guid streamId,
       Guid? afterEventId,
       Guid upToEventId,
@@ -416,7 +416,15 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       CancellationToken cancellationToken = default) {
 
     ArgumentNullException.ThrowIfNull(eventTypes);
+    return _getEventsBetweenPolymorphicCoreAsync(streamId, afterEventId, upToEventId, eventTypes, cancellationToken);
+  }
 
+  private async Task<List<MessageEnvelope<IEvent>>> _getEventsBetweenPolymorphicCoreAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken) {
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     // Guid.Empty means "no upper bound" - read all events for the stream
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()

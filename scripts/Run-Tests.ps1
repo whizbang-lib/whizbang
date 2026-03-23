@@ -275,6 +275,29 @@ param(
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
 
+    [string]$LogFile = "",  # Tee output to file (verbose to file, sparse to console)
+
+    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$LogMode = "",  # Log file verbosity (defaults to -Mode if not specified)
+
+    [ValidateSet("Text", "Json")]
+    [string]$OutputFormat = "Text",  # Output format: Text (human-readable) or Json (machine-readable)
+
+    [switch]$NoHeader,  # Suppress the branded header (used when called from Run-PR.ps1)
+
+    [switch]$NoReport,  # Skip coverage report generation (used when Run-PR handles it)
+
+    # Parent progress context (passed by Run-PR.ps1 for progress bar updates)
+    [double]$ParentStartTime = 0,    # Parent start time as Unix epoch seconds
+    [double]$ParentTotalEstSec = 0,  # Total estimated seconds for all parent steps
+    [double]$StepEstSec = 0,         # Estimated seconds for this step
+    [int]$ParentStepNumber = 0,      # Current step number in parent
+    [int]$ParentTotalSteps = 0,      # Total steps in parent
+
+    [switch]$CleanLogs,     # Remove log files and coverage reports before running
+    [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
+    [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -282,6 +305,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Import shared PR readiness module
+Import-Module (Join-Path $PSScriptRoot "lib" "PR-Readiness-Common.psm1") -Force
+
+# Handle cleanup flags
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if ($CleanAll) {
+    Write-Host "Cleaning all logs, metrics, and reports..." -ForegroundColor Yellow
+    Invoke-CleanAll -RepoRoot $repoRoot
+} elseif ($CleanLogs -or $CleanMetrics) {
+    if ($CleanLogs) { Invoke-CleanLogs -RepoRoot $repoRoot }
+    if ($CleanMetrics) { Invoke-CleanMetrics -RepoRoot $repoRoot }
+}
 
 # Handle legacy parameters (for backward compatibility)
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
@@ -303,10 +339,29 @@ $useVerboseLogging = $Mode -in @("Unit", "Integration")  # Verbose log-format ou
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
+# Suppress progress bars in AI mode
+if ($useAiOutput) {
+    $ProgressPreference = 'SilentlyContinue'
+}
+
 # FailFast defaults to true in AI modes (stop on first failure to save time)
 if ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
     $FailFast = $true
 }
+
+# Initialize tee logging if -LogFile is specified
+if ($LogFile) {
+    $effectiveLogMode = if ($LogMode) { $LogMode } else { $Mode }
+    Initialize-TeeLogging -LogFile $LogFile -ConsoleMode $Mode -LogMode $effectiveLogMode
+}
+
+# Track start time for history logging
+$script:runStartTime = [DateTime]::UtcNow
+
+# Show run estimation from history
+$historyFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+$estimate = Get-RunEstimate -FilePath $historyFile -FilterKey "mode" -FilterValue $Mode
+$estimateStr = if ($estimate) { $estimate.Formatted } else { "" }
 
 # Handle -CleanupOnly: just clean up containers and exit
 if ($CleanupOnly) {
@@ -435,79 +490,161 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
     }
 }
 
+# Ctrl+C handler — kill dotnet child processes cleanly
+trap {
+    Write-Host ""
+    Write-Host "  ⚠️  Interrupted — stopping test processes..." -ForegroundColor Yellow
+    # Kill any dotnet test processes spawned by this script
+    Get-Process -Name "dotnet" -ErrorAction SilentlyContinue |
+        Where-Object { $_.StartTime -gt $script:runStartTime } |
+        ForEach-Object { try { $_.Kill($true) } catch { } }
+    Write-Progress -Id 2 -Activity "x" -Completed -ErrorAction SilentlyContinue
+    exit 130
+}
+
+# Generate coverage report from Cobertura XML files using reportgenerator
+# Returns hashtable with CoveragePct, TotalLines, TotalCovered, HtmlReport
+function Invoke-CoverageReport {
+    param(
+        [string]$RepoRoot,
+        [array]$CoberturaFiles
+    )
+
+    $reportDir = Join-Path $RepoRoot "coverage-report"
+    $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+
+    # Generate HTML, TextSummary, and JsonSummary reports
+    # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell)
+    reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary;JsonSummary" 2>&1 | Out-Null
+
+    # Read coverage totals from TextSummary (instant — no XML parsing needed)
+    $summaryFile = Join-Path $reportDir "Summary.txt"
+    $totalLines = 0
+    $totalCovered = 0
+    $coveragePct = 0
+    if (Test-Path $summaryFile) {
+        $summaryText = Get-Content $summaryFile -Raw
+        if ($summaryText -match "Line coverage:\s+([\d.]+)%") { $coveragePct = [double]$Matches[1] }
+        if ($summaryText -match "Covered lines:\s+(\d+)") { $totalCovered = [int]$Matches[1] }
+        if ($summaryText -match "Coverable lines:\s+(\d+)") { $totalLines = [int]$Matches[1] }
+    }
+
+    Write-Host ""
+    Write-Host "=====================================" -ForegroundColor Cyan
+    Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
+    Write-Host "=====================================" -ForegroundColor Cyan
+
+    # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
+    $jsonSummaryFile = Join-Path $reportDir "Summary.json"
+    if (Test-Path $jsonSummaryFile) {
+        $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
+        $filesBelow100 = @()
+        foreach ($assembly in $jsonSummary.coverage.assemblies) {
+            foreach ($class in $assembly.classes) {
+                if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
+                    $filesBelow100 += @{
+                        Name     = $class.name
+                        Coverage = $class.coverage
+                        Covered  = $class.coveredLines
+                        Total    = $class.coverableLines
+                    }
+                }
+            }
+        }
+
+        if ($filesBelow100.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
+            foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
+                $uncovered = $file.Total - $file.Covered
+                Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    $htmlReport = Join-Path $reportDir "index.html"
+    Write-Host ""
+    Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+
+    return @{
+        CoveragePct  = $coveragePct
+        TotalLines   = $totalLines
+        TotalCovered = $totalCovered
+        HtmlReport   = $htmlReport
+    }
+}
+
 try {
     # Determine parallel level
     if ($MaxParallel -eq 0) {
         $MaxParallel = [Environment]::ProcessorCount
     }
 
-    if (-not $useAiOutput) {
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host "  Whizbang Test Suite Runner" -ForegroundColor Cyan
-        Write-Host "  (Parallel Execution via dotnet test)" -ForegroundColor Cyan
-        Write-Host "=====================================" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
-        Write-Host "Mode: $Mode" -ForegroundColor Yellow
+    # Branded header (suppressed when called from Run-PR.ps1)
+    if (-not $NoHeader) {
+        $headerParams = @{ Mode = $Mode; Parallel = "$MaxParallel" }
+        if ($Coverage) { $headerParams["Coverage"] = "On" }
+        if ($FailFast) { $headerParams["FailFast"] = "On" }
+        if ($ProjectFilter) { $headerParams["ProjectFilter"] = $ProjectFilter }
+        if ($Tag) { $headerParams["Tag"] = $Tag }
+
+        # Build detail lines for the config box
+        $details = @()
         if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
+            $details += "Integration Tests: Only"
         } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded (use -Mode Ai or -Mode Full to include)" -ForegroundColor Yellow
+            $details += "Integration Tests: Excluded"
         }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Yellow
-        }
-        Write-Host ""
-    } else {
-        Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
+        if ($TestFilter) { $details += "Test Filter: $TestFilter" }
+        if ($NoBuild) { $details += "Skipping build (using pre-built artifacts)" }
 
-        # Display actual command line that was used
-        $cmdLine = $MyInvocation.Line
-        if ([string]::IsNullOrWhiteSpace($cmdLine)) {
-            $cmdLine = "$($MyInvocation.MyCommand.Path) -Mode $Mode"
-            if ($FailFast) { $cmdLine += " -FailFast" }
-            if ($ProjectFilter) { $cmdLine += " -ProjectFilter '$ProjectFilter'" }
-            if ($TestFilter) { $cmdLine += " -TestFilter '$TestFilter'" }
-        }
-        Write-Host "Command: $cmdLine" -ForegroundColor DarkGray
-
-        Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
-        Write-Host "Mode: $Mode" -ForegroundColor Gray
-        if ($onlyIntegrationTests) {
-            Write-Host "Integration Tests: Only" -ForegroundColor Gray
-        } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded" -ForegroundColor Gray
-        }
-        if ($ProjectFilter) {
-            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Gray
-        }
-        if ($TestFilter) {
-            Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
-        }
-        if ($FailFast) {
-            Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
-        }
-        if ($Coverage) {
-            Write-Host "Coverage: Enabled" -ForegroundColor Gray
-        }
-        if ($Tag) {
-            Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
-        }
-
-        # Flush output immediately so background processes show header right away
+        Write-WhizbangHeader -ScriptName "Test Runner" -Params $headerParams -Estimate $estimateStr -Details $details
         [Console]::Out.Flush()
+    }
+
+    # Progress bar updater — called from periodic progress checkpoints
+    # Updates parent progress bars (timing overall + timing step) when running under Run-PR
+    $script:parentEpochStart = if ($ParentStartTime -gt 0) { [DateTimeOffset]::FromUnixTimeSeconds([long]$ParentStartTime).UtcDateTime } else { $null }
+    function Update-ParentProgress {
+        if (-not $script:parentEpochStart -or $ParentTotalEstSec -le 0) { return }
+
+        $elapsed = ([DateTime]::UtcNow - $script:parentEpochStart).TotalSeconds
+
+        # Id 0: Overall step progress
+        if ($ParentTotalSteps -gt 0) {
+            $stepPct = [math]::Round(($ParentStepNumber / $ParentTotalSteps) * 100)
+            Write-Progress -Id 0 -Activity "Preparing PR" -Status "Step ${ParentStepNumber}/${ParentTotalSteps}: $Mode Tests" -PercentComplete $stepPct
+        }
+
+        # Id 1: Total elapsed vs remaining
+        $timePct = [math]::Min(100, [math]::Round(($elapsed / $ParentTotalEstSec) * 100))
+        $remaining = [math]::Max(0, $ParentTotalEstSec - $elapsed)
+        Write-Progress -Id 1 -ParentId 0 -Activity "Total: $(Format-Duration -Seconds $elapsed) elapsed" -Status "~$(Format-Duration -Seconds $remaining) remaining" -PercentComplete $timePct
+
+        # Id 3: Step elapsed vs remaining
+        if ($StepEstSec -gt 0) {
+            $stepElapsed = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+            $stepTimePct = [math]::Min(100, [math]::Round(($stepElapsed / $StepEstSec) * 100))
+            $stepRemain = [math]::Max(0, $StepEstSec - $stepElapsed)
+            Write-Progress -Id 3 -ParentId 0 -Activity "$Mode Tests: $(Format-Duration -Seconds $stepElapsed) elapsed" -Status "~$(Format-Duration -Seconds $stepRemain) remaining" -PercentComplete $stepTimePct
+        }
+    }
+
+    # Indentation: when called as child from Run-PR.ps1, indent all output to align
+    # under the "▶" step indicators. Override Write-Host with an indented wrapper.
+    if ($NoHeader) {
+        function script:Write-IndentedHost {
+            param(
+                [Parameter(Position = 0)] [string]$Object = "",
+                [string]$ForegroundColor = "",
+                [switch]$NoNewline
+            )
+            $params = @{}
+            if ($ForegroundColor) { $params["ForegroundColor"] = $ForegroundColor }
+            if ($NoNewline) { $params["NoNewline"] = $true }
+            Microsoft.PowerShell.Utility\Write-Host "    ${Object}" @params
+        }
+        Set-Alias -Name Write-Host -Value Write-IndentedHost -Scope Script
     }
 
     # Build the dotnet test command
@@ -713,12 +850,25 @@ try {
             }
         }
 
+        # Complete sub-progress bar
+        $totalTestProjects = $unitTestProjects.Count + $integrationTestProjects.Count
+        if ($NoHeader) {
+            Write-Progress -Id 2 -ParentId 0 -Activity "Running Tests" -Completed
+        }
+
         # Aggregate results
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
         $failedProjects = @()
 
+        $resultIndex = 0
         foreach ($result in $results) {
+            $resultIndex++
+            if ($NoHeader) {
+                $pct = [math]::Round(($resultIndex / $totalTestProjects) * 100)
+                Write-Progress -Id 2 -ParentId 0 -Activity "Test Results" -Status "${resultIndex}/${totalTestProjects}: $($result.ProjectName)" -PercentComplete $pct
+            }
+
             if ($result.ExitCode -eq 0) {
                 $totalProjectsPassed++
                 if ($useAiOutput) {
@@ -765,106 +915,36 @@ try {
         }
         Write-Host ""
 
-        # Generate coverage report
-        Write-Host ""
-        Write-Host "Generating coverage report..." -ForegroundColor Cyan
+        # Generate coverage report (skipped when Run-PR handles it separately)
+        if (-not $NoReport) {
+            Write-Host ""
+            Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
-        # Auto-install reportgenerator if not present
-        $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        if (-not $rgInstalled) {
-            Write-Host "Installing reportgenerator global tool..." -ForegroundColor Yellow
-            dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
-        }
-
-        # Find all cobertura XML files from test output
-        $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
-
-        if ($coberturaFiles.Count -gt 0) {
-            $reportDir = Join-Path $repoRoot "coverage-report"
-            $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-
-            # Generate HTML and TextSummary reports
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
-
-            # Parse cobertura XML for detailed coverage info
-            $totalLines = 0
-            $totalCovered = 0
-            $uncoveredByFile = @{}
-
-            foreach ($cobFile in $coberturaFiles) {
-                [xml]$cobXml = Get-Content $cobFile.FullName
-                foreach ($package in $cobXml.coverage.packages.package) {
-                    foreach ($class in $package.classes.class) {
-                        $filename = $class.filename
-                        # Only include src/ files, exclude test files
-                        if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                            foreach ($line in $class.lines.line) {
-                                $totalLines++
-                                if ([int]$line.hits -gt 0) {
-                                    $totalCovered++
-                                } else {
-                                    if (-not $uncoveredByFile.ContainsKey($filename)) {
-                                        $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
-                                    }
-                                    $uncoveredByFile[$filename].Add([int]$line.number)
-                                }
-                            }
-                        }
-                    }
+            # Auto-install reportgenerator: try local manifest first, fall back to global
+            $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgInstalled -and -not $rgLocal) {
+                Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+                dotnet tool restore 2>&1 | Out-Null
+                $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+                if (-not $rgLocal) {
+                    dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
                 }
             }
 
-            # Calculate and display overall coverage
-            $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
-            Write-Host ""
-            Write-Host "=====================================" -ForegroundColor Cyan
-            Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
-            Write-Host "=====================================" -ForegroundColor Cyan
+            # Find all cobertura XML files from test output
+            $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
 
-            # Show files below 100% coverage
-            if ($uncoveredByFile.Count -gt 0) {
-                $fileCoverage = @{}
-                foreach ($cobFile in $coberturaFiles) {
-                    [xml]$cobXml = Get-Content $cobFile.FullName
-                    foreach ($package in $cobXml.coverage.packages.package) {
-                        foreach ($class in $package.classes.class) {
-                            $filename = $class.filename
-                            if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                                if (-not $fileCoverage.ContainsKey($filename)) {
-                                    $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                }
-                                foreach ($line in $class.lines.line) {
-                                    $fileCoverage[$filename].Total++
-                                    if ([int]$line.hits -gt 0) {
-                                        $fileCoverage[$filename].Covered++
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Write-Host ""
-                Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
-                foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
-                    $fc = $fileCoverage[$file]
-                    $filePct = if ($fc.Total -gt 0) { [math]::Round(($fc.Covered / $fc.Total) * 100, 2) } else { 0 }
-                    $relPath = $file
-                    if ($file.StartsWith($repoRoot)) {
-                        $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
-                    }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object) -join ", "
-                    Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
-                    Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
-                }
+            if ($coberturaFiles.Count -gt 0) {
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+                $coveragePct = $coverageResult.CoveragePct
+                $totalLines = $coverageResult.TotalLines
+                $totalCovered = $coverageResult.TotalCovered
+                $htmlReport = $coverageResult.HtmlReport
+            } else {
+                Write-Host "No cobertura XML files found." -ForegroundColor Yellow
             }
-
-            $htmlReport = Join-Path $reportDir "index.html"
-            Write-Host ""
-            Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
-        } else {
-            Write-Host "No cobertura XML files found." -ForegroundColor Yellow
         }
 
         Write-Host ""
@@ -1270,6 +1350,12 @@ try {
                 $silentSeconds = ($now - $lastOutputTime).TotalSeconds
                 $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
 
+                # Update parent progress bars every 2 seconds (realtime ticking)
+                if (-not $script:lastParentProgressUpdate -or ($now - $script:lastParentProgressUpdate).TotalSeconds -ge 2) {
+                    Update-ParentProgress
+                    $script:lastParentProgressUpdate = $now
+                }
+
                 # Time-based progress update (even when no output)
                 if ($elapsedSinceLastProgress -ge $ProgressInterval) {
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
@@ -1284,6 +1370,7 @@ try {
                     } else {
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
+                    Update-ParentProgress
                     $lastProgressTime = $now
                 }
 
@@ -1398,6 +1485,7 @@ try {
                     # Show heartbeat (building/not yet testing)
                     Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                 }
+                Update-ParentProgress
 
                 $lastProgressTime = $now
                 $lastTotalTests = $totalTests
@@ -1932,6 +2020,11 @@ try {
             $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
         }
 
+        # Emit AI instructions if there are failures (only when running standalone, not from Run-PR)
+        if (($failedTests.Count -gt 0 -or $buildErrors.Count -gt 0) -and -not $NoHeader) {
+            Write-AiInstructions -Type TestFailure
+        }
+
         Write-Host ""
     } else {
         # Normal mode: Pass through to native MTP output with built-in progress
@@ -1965,16 +2058,21 @@ try {
         $hasErrors = $LASTEXITCODE -ne 0
     }
 
-    # --- Coverage Report Generation ---
-    if ($Coverage) {
+    # --- Coverage Report Generation (skipped when Run-PR handles it separately) ---
+    if ($Coverage -and -not $NoReport) {
         Write-Host ""
         Write-Host "Generating coverage report..." -ForegroundColor Cyan
 
-        # Auto-install reportgenerator if not present
+        # Auto-install reportgenerator: try local manifest first, fall back to global
         $rgInstalled = dotnet tool list -g 2>$null | Select-String "dotnet-reportgenerator-globaltool"
-        if (-not $rgInstalled) {
-            Write-Host "Installing reportgenerator global tool..." -ForegroundColor Yellow
-            dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+        $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+        if (-not $rgInstalled -and -not $rgLocal) {
+            Write-Host "Installing reportgenerator..." -ForegroundColor Yellow
+            dotnet tool restore 2>&1 | Out-Null
+            $rgLocal = dotnet tool list 2>$null | Select-String "dotnet-reportgenerator-globaltool"
+            if (-not $rgLocal) {
+                dotnet tool install -g dotnet-reportgenerator-globaltool 2>&1 | Out-Null
+            }
         }
 
         # Find all cobertura XML files from test output
@@ -1982,93 +2080,61 @@ try {
             Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
 
         if ($coberturaFiles.Count -gt 0) {
-            $reportDir = Join-Path $repoRoot "coverage-report"
-            $reports = ($coberturaFiles | ForEach-Object { $_.FullName }) -join ";"
-
-            # Generate HTML and TextSummary reports
-            reportgenerator "-reports:$reports" "-targetdir:$reportDir" "-reporttypes:Html;TextSummary" 2>&1 | Out-Null
-
-            # Parse cobertura XML for detailed coverage info
-            $totalLines = 0
-            $totalCovered = 0
-            $uncoveredByFile = @{}
-
-            foreach ($cobFile in $coberturaFiles) {
-                [xml]$cobXml = Get-Content $cobFile.FullName
-                foreach ($package in $cobXml.coverage.packages.package) {
-                    foreach ($class in $package.classes.class) {
-                        $filename = $class.filename
-                        # Only include src/ files, exclude test files
-                        if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                            foreach ($line in $class.lines.line) {
-                                $totalLines++
-                                if ([int]$line.hits -gt 0) {
-                                    $totalCovered++
-                                } else {
-                                    if (-not $uncoveredByFile.ContainsKey($filename)) {
-                                        $uncoveredByFile[$filename] = [System.Collections.Generic.List[int]]::new()
-                                    }
-                                    $uncoveredByFile[$filename].Add([int]$line.number)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            # Calculate and display overall coverage
-            $coveragePct = if ($totalLines -gt 0) { [math]::Round(($totalCovered / $totalLines) * 100, 2) } else { 0 }
-            Write-Host ""
-            Write-Host "=====================================" -ForegroundColor Cyan
-            Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
-            Write-Host "=====================================" -ForegroundColor Cyan
-
-            # Show files below 100% coverage
-            if ($uncoveredByFile.Count -gt 0) {
-                # Calculate per-file coverage from cobertura data
-                $fileCoverage = @{}
-                foreach ($cobFile in $coberturaFiles) {
-                    [xml]$cobXml = Get-Content $cobFile.FullName
-                    foreach ($package in $cobXml.coverage.packages.package) {
-                        foreach ($class in $package.classes.class) {
-                            $filename = $class.filename
-                            if ($filename -and $filename -match "[/\\]src[/\\]" -and $filename -notmatch "[/\\]tests?[/\\]") {
-                                if (-not $fileCoverage.ContainsKey($filename)) {
-                                    $fileCoverage[$filename] = @{ Total = 0; Covered = 0 }
-                                }
-                                foreach ($line in $class.lines.line) {
-                                    $fileCoverage[$filename].Total++
-                                    if ([int]$line.hits -gt 0) {
-                                        $fileCoverage[$filename].Covered++
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Write-Host ""
-                Write-Host "Files below 100% coverage:" -ForegroundColor Yellow
-                foreach ($file in ($uncoveredByFile.Keys | Sort-Object)) {
-                    $fc = $fileCoverage[$file]
-                    $filePct = if ($fc.Total -gt 0) { [math]::Round(($fc.Covered / $fc.Total) * 100, 2) } else { 0 }
-                    # Make path relative to repo root for readability
-                    $relPath = $file
-                    if ($file.StartsWith($repoRoot)) {
-                        $relPath = $file.Substring($repoRoot.Length).TrimStart("/", "\")
-                    }
-                    $lineNums = ($uncoveredByFile[$file] | Sort-Object) -join ", "
-                    Write-Host "  $relPath - ${filePct}% coverage" -ForegroundColor Yellow
-                    Write-Host "    Uncovered lines: $lineNums" -ForegroundColor DarkYellow
-                }
-            }
-
-            $htmlReport = Join-Path $reportDir "index.html"
-            Write-Host ""
-            Write-Host "HTML report: $htmlReport" -ForegroundColor Cyan
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coveragePct = $coverageResult.CoveragePct
+            $totalLines = $coverageResult.TotalLines
+            $totalCovered = $coverageResult.TotalCovered
+            $htmlReport = $coverageResult.HtmlReport
         } else {
             Write-Host "No cobertura XML files found. Ensure tests ran with --coverage." -ForegroundColor Yellow
         }
+    }
+
+    # Calculate run duration
+    $runDuration = ([DateTime]::UtcNow - $script:runStartTime).TotalSeconds
+
+    # Calculate coverage percentage if available
+    $coveragePct = $null
+    if ($Coverage -and $totalLines -gt 0) {
+        $coveragePct = [math]::Round(($totalCovered / $totalLines) * 100, 2)
+    }
+
+    # Write history entry
+    $historyEntry = @{
+        mode        = $Mode
+        duration_s  = [math]::Round($runDuration, 1)
+        total       = $totalPassed + $totalFailed + $totalSkipped
+        passed      = $totalPassed
+        failed      = $totalFailed
+        skipped     = $totalSkipped
+    }
+    if ($null -ne $coveragePct) { $historyEntry["coverage_pct"] = $coveragePct }
+    if ($failedTests.Count -gt 0) { $historyEntry["failed_tests"] = @($failedTests) }
+    $histFile = Join-Path $PSScriptRoot ".." "logs" "test-runs.jsonl"
+    Write-HistoryEntry -FilePath $histFile -Entry $historyEntry
+
+    # Stop tee logging
+    if ($LogFile) { Stop-TeeLogging }
+
+    # JSON output mode
+    if ($OutputFormat -eq "Json") {
+        $jsonResult = @{
+            status       = if (-not $hasErrors) { "passed" } else { "failed" }
+            mode         = $Mode
+            duration_s   = [math]::Round($runDuration, 1)
+            total        = $totalPassed + $totalFailed + $totalSkipped
+            passed       = $totalPassed
+            failed       = $totalFailed
+            skipped      = $totalSkipped
+            failed_tests = @($failedTests)
+        }
+        if ($null -ne $coveragePct) { $jsonResult["coverage_pct"] = $coveragePct }
+        if ($Coverage) {
+            $htmlReport = Join-Path (Join-Path $repoRoot "coverage-report") "index.html"
+            if (Test-Path $htmlReport) { $jsonResult["coverage_report"] = $htmlReport }
+        }
+        ConvertTo-JsonResult -Result $jsonResult
+        exit $(if (-not $hasErrors) { 0 } else { 1 })
     }
 
     if (-not $hasErrors) {

@@ -59,7 +59,7 @@ public static class PrincipalFilterExtensions {
 
     if (callerPrincipals == null || callerPrincipals.Count == 0) {
       // No principals = no access (return empty result)
-      return query.Where(r => false);
+      return query.Where(_ => false);
     }
 
     // Convert principals to string list for LINQ Contains
@@ -106,7 +106,7 @@ public static class PrincipalFilterExtensions {
 
     if (!hasUserId && !hasPrincipals) {
       // No filter criteria = no access (return empty result)
-      return query.Where(r => false);
+      return query.Where(_ => false);
     }
 
     // Build OR predicate: (UserId = currentUser) OR (AllowedPrincipals contains any caller principal)

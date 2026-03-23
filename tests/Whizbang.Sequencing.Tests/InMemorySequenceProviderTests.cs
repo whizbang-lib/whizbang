@@ -258,34 +258,29 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   }
 
   [Test]
-  [Arguments(10, 100, 5.0)]
-  [Arguments(50, 500, 8.0)]
-  [Arguments(100, 1000, 10.0)]
-  public async Task ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync(int streamCount, int callsPerStream, double maxSeconds) {
+  [Arguments(10, 100)]
+  [Arguments(50, 500)]
+  [Arguments(100, 1000)]
+  public async Task ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync(int streamCount, int callsPerStream) {
     // Arrange
     var provider = new InMemorySequenceProvider();
-    var allTasks = new List<Task<long>>();
+    var streamKeys = Enumerable.Range(0, streamCount).Select(i => $"concurrent-stream-{i}").ToArray();
 
-    // Act - Concurrent calls across many streams
-    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    // Act - Bounded parallelism instead of 100K fire-and-forget Task.Run calls
+    // which saturate the ThreadPool and cause OperationCanceledException under load
+    var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount * 2 };
+
+    // Each work item is one (stream, call) pair
+    var workItems = streamKeys.SelectMany(key =>
+      Enumerable.Range(0, callsPerStream).Select(_ => key)).ToArray();
+
+    await Parallel.ForEachAsync(workItems, parallelOptions, async (streamKey, ct) => {
+      await provider.GetNextAsync(streamKey, ct);
+    });
+
+    // Assert - Verify each stream reached expected count (correctness, not timing)
     for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
-      var streamKey = $"concurrent-stream-{streamIdx}";
-      for (int call = 0; call < callsPerStream; call++) {
-        var capturedStreamId = streamKey;
-        allTasks.Add(Task.Run(async () => await provider.GetNextAsync(capturedStreamId)));
-      }
-    }
-
-    await Task.WhenAll(allTasks);
-    stopwatch.Stop();
-
-    // Assert - Should complete in reasonable time
-    await Assert.That(stopwatch.Elapsed.TotalSeconds).IsLessThan(maxSeconds);
-
-    // Verify each stream reached expected count
-    for (int streamIdx = 0; streamIdx < streamCount; streamIdx++) {
-      var streamKey = $"concurrent-stream-{streamIdx}";
-      var current = await provider.GetCurrentAsync(streamKey);
+      var current = await provider.GetCurrentAsync(streamKeys[streamIdx]);
       await Assert.That(current).IsEqualTo(callsPerStream - 1);
     }
   }

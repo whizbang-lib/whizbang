@@ -81,7 +81,7 @@ public static class LensQueryExtensions {
   /// <param name="options">The synchronization options.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The read model, or null if not found.</returns>
-  public static async Task<TModel?> GetByIdAsync<TModel, TPerspective>(
+  public static Task<TModel?> GetByIdAsync<TModel, TPerspective>(
       this ILensQuery<TModel> query,
       Guid id,
       IPerspectiveSyncAwaiter awaiter,
@@ -92,7 +92,7 @@ public static class LensQueryExtensions {
     ArgumentNullException.ThrowIfNull(options);
 
     var syncQuery = new SyncAwareLensQuery<TModel>(query, awaiter, typeof(TPerspective), options);
-    return await syncQuery.GetByIdAsync(id, cancellationToken);
+    return syncQuery.GetByIdAsync(id, cancellationToken);
   }
 
   /// <summary>
@@ -106,7 +106,7 @@ public static class LensQueryExtensions {
   /// <param name="options">The synchronization options.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The read model, or null if not found.</returns>
-  public static async Task<TModel?> GetByIdAsync<TModel>(
+  public static Task<TModel?> GetByIdAsync<TModel>(
       this ILensQuery<TModel> query,
       Guid id,
       IPerspectiveSyncAwaiter awaiter,
@@ -119,6 +119,6 @@ public static class LensQueryExtensions {
     ArgumentNullException.ThrowIfNull(options);
 
     var syncQuery = new SyncAwareLensQuery<TModel>(query, awaiter, perspectiveType, options);
-    return await syncQuery.GetByIdAsync(id, cancellationToken);
+    return syncQuery.GetByIdAsync(id, cancellationToken);
   }
 }

@@ -247,7 +247,12 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     if (receptors.Count == 0) {
       // No receptors registered for this message type and stage - this is normal
-      // Context is already established above, so just return
+      // Context is already established above, but tags must still fire as lifecycle observers
+      var tagProcessorNoReceptors = _scopedProvider.GetService<IMessageTagProcessor>();
+      if (tagProcessorNoReceptors is not null) {
+        var scopeForTags = messageContextAccessor?.Current?.ScopeContext;
+        await tagProcessorNoReceptors.ProcessTagsAsync(message, messageType, stage, scopeForTags, cancellationToken).ConfigureAwait(false);
+      }
       return;
     }
 

@@ -177,16 +177,12 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
       return null;
     }
 
-    ScopeContext? result = null;
-
     // Walk forwards through current hops, applying each delta
-    foreach (var hop in Hops.Where(h => h.Type == HopType.Current)) {
-      if (hop.Scope != null) {
-        result = hop.Scope.ApplyTo(result);
-      }
-    }
-
-    return result;
+    return Hops
+      .Where(h => h.Type == HopType.Current)
+      .Select(hop => hop.Scope)
+      .Where(scope => scope != null)
+      .Aggregate((ScopeContext?)null, (current, scope) => scope!.ApplyTo(current));
   }
 
   /// <summary>
@@ -227,7 +223,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <returns>The timestamp of the first hop</returns>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMessageTimestamp_ReturnsFirstHopTimestampAsync</tests>
   public DateTimeOffset GetMessageTimestamp() {
-    return Hops != null && Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
+    return Hops?.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
   }
 
   /// <summary>
@@ -237,7 +233,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <returns>The correlation ID from the first hop, or null if not set</returns>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public CorrelationId? GetCorrelationId() {
-    return Hops != null && Hops.Count > 0 ? Hops[0].CorrelationId : null;
+    return Hops?.Count > 0 ? Hops[0].CorrelationId : null;
   }
 
   /// <summary>
@@ -247,7 +243,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <returns>The causation ID from the first hop, or null if not set</returns>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public MessageId? GetCausationId() {
-    return Hops != null && Hops.Count > 0 ? Hops[0].CausationId : null;
+    return Hops?.Count > 0 ? Hops[0].CausationId : null;
   }
 
   /// <summary>
@@ -316,21 +312,16 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_SkipsHopsWithoutTrailsAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_IgnoresCausationHopsAsync</tests>
   public IReadOnlyList<PolicyDecision> GetAllPolicyDecisions() {
-    var result = new List<PolicyDecision>();
-
     // Defensive: Handle null or empty Hops gracefully
     if (Hops == null || Hops.Count == 0) {
-      return result;
+      return [];
     }
 
     // Walk forwards through current hops only to maintain chronological order
-    foreach (var hop in Hops.Where(h => h.Type == HopType.Current)) {
-      if (hop.Trail != null) {
-        result.AddRange(hop.Trail.Decisions);
-      }
-    }
-
-    return result;
+    return Hops
+      .Where(h => h.Type == HopType.Current && h.Trail != null)
+      .SelectMany(hop => hop.Trail!.Decisions)
+      .ToList();
   }
 
   /// <summary>

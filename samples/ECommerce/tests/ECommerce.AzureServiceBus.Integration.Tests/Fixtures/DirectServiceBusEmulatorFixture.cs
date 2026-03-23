@@ -27,7 +27,7 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   /// <param name="configFileName">Optional config file name (e.g., "Config-Default.json"). If null, uses built-in config.</param>
   public DirectServiceBusEmulatorFixture(int port, string? configFileName) {
     _port = port;
-    _projectName = $"sbecommerce{_port}";  // Explicit project name to avoid conflicts
+    _projectName = $"whizbang-ecommerce-servicebus-{_port}";  // Explicit project name to avoid conflicts
     // Store paths for Config.json
     var testDirectory = AppContext.BaseDirectory;
     _configFile = Path.Combine(testDirectory, "Config.json");

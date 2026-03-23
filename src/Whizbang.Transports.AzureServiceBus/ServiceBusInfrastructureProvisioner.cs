@@ -37,18 +37,23 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsTopicAlreadyExistsHandlesRaceAsync</tests>
-  public async Task ProvisionOwnedDomainsAsync(
+  public Task ProvisionOwnedDomainsAsync(
       IReadOnlySet<string> ownedDomains,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
     if (ownedDomains.Count == 0) {
       _logger.LogDebug("No owned domains to provision");
-      return;
+      return Task.CompletedTask;
     }
 
     cancellationToken.ThrowIfCancellationRequested();
+    return _provisionOwnedDomainsCoreAsync(ownedDomains, cancellationToken);
+  }
 
+  private async Task _provisionOwnedDomainsCoreAsync(
+      IReadOnlySet<string> ownedDomains,
+      CancellationToken cancellationToken) {
     if (_logger.IsEnabled(LogLevel.Information)) {
       var count = ownedDomains.Count;
       _logger.LogInformation(
@@ -68,11 +73,11 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync</tests>
   /// <tests>Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerTests.cs:EnsureTopicExistsAsync_LowercasesTopicNameAsync</tests>
-  public async Task EnsureTopicExistsAsync(
+  public Task EnsureTopicExistsAsync(
       string topicName,
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(topicName);
-    await _ensureTopicAsync(topicName.ToLowerInvariant(), cancellationToken);
+    return _ensureTopicAsync(topicName.ToLowerInvariant(), cancellationToken);
   }
 
   /// <summary>

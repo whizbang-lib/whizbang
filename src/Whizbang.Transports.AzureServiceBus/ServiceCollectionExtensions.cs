@@ -67,7 +67,7 @@ public static class ServiceCollectionExtensions {
     if (options.AutoProvisionInfrastructure) {
       var hasAdminClient = services.Any(sd => sd.ServiceType == typeof(IServiceBusAdminClient));
       if (!hasAdminClient) {
-        services.AddSingleton<IServiceBusAdminClient>(sp => {
+        services.AddSingleton<IServiceBusAdminClient>(_ => {
           var adminClient = new ServiceBusAdministrationClient(connectionString);
           return new ServiceBusAdminClientWrapper(adminClient);
         });
@@ -151,7 +151,7 @@ public static class ServiceCollectionExtensions {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
     // Register admin client wrapper
-    services.AddSingleton<IServiceBusAdminClient>(sp => {
+    services.AddSingleton<IServiceBusAdminClient>(_ => {
       var adminClient = new ServiceBusAdministrationClient(connectionString);
       return new ServiceBusAdminClientWrapper(adminClient);
     });

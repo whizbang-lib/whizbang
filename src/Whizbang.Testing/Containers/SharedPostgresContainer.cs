@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Npgsql;
+using TUnit.Core.Exceptions;
 
 namespace Whizbang.Testing.Containers;
 
@@ -56,6 +57,46 @@ public static class SharedPostgresContainer {
   /// Gets whether the container has been successfully initialized.
   /// </summary>
   public static bool IsInitialized => _initialized;
+
+  /// <summary>
+  /// Attempts to initialize the shared PostgreSQL container.
+  /// Returns true if initialization succeeds, false if Docker or PostgreSQL is not available.
+  /// Unlike <see cref="InitializeAsync"/>, this method does not throw on infrastructure unavailability.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>True if the container is ready; false if Docker/PostgreSQL is unavailable.</returns>
+  public static async Task<bool> TryInitializeAsync(CancellationToken cancellationToken = default) {
+    if (_initialized) {
+      return true;
+    }
+
+    if (!await SharedRabbitMqContainer.IsDockerAvailableAsync(cancellationToken)) {
+      Console.WriteLine("[SharedPostgresContainer] Docker is not available - skipping container initialization");
+      return false;
+    }
+
+    try {
+      await InitializeAsync(cancellationToken);
+      return true;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      Console.WriteLine($"[SharedPostgresContainer] Container initialization failed: {ex.Message}");
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Initializes the shared PostgreSQL container, or skips the test if Docker/PostgreSQL is not available.
+  /// Use this in <c>[Before(Test)]</c> methods for integration tests that require PostgreSQL.
+  /// Throws <see cref="SkipTestException"/> when infrastructure is unavailable, causing TUnit to
+  /// report the test as skipped rather than failed.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="SkipTestException">Thrown when Docker or PostgreSQL is not available.</exception>
+  public static async Task InitializeOrSkipAsync(CancellationToken cancellationToken = default) {
+    if (!await TryInitializeAsync(cancellationToken)) {
+      throw new SkipTestException("PostgreSQL container is not available (Docker may not be running)");
+    }
+  }
 
   /// <summary>
   /// Initializes the shared PostgreSQL container.

@@ -74,7 +74,7 @@ public class TransportManager(
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
-  public async Task PublishToTargetsAsync<TMessage>(
+  public Task PublishToTargetsAsync<TMessage>(
     TMessage message,
     IReadOnlyList<PublishTarget> targets,
     IMessageContext? context = null
@@ -84,9 +84,17 @@ public class TransportManager(
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return;
+      return Task.CompletedTask;
     }
 
+    return _publishToTargetsCoreAsync(message, targets, context);
+  }
+
+  private async Task _publishToTargetsCoreAsync<TMessage>(
+    TMessage message,
+    IReadOnlyList<PublishTarget> targets,
+    IMessageContext? context
+  ) {
     // Create context if not provided - use CascadeContextFactory for proper security propagation
     if (context == null) {
       var cascade = _cascadeContextFactory.NewRoot();
@@ -105,7 +113,7 @@ public class TransportManager(
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
-  public async Task<List<ISubscription>> SubscribeFromTargetsAsync(
+  public Task<List<ISubscription>> SubscribeFromTargetsAsync(
     IReadOnlyList<SubscriptionTarget> targets,
     Func<IMessageEnvelope, Task> handler
   ) {
@@ -114,9 +122,16 @@ public class TransportManager(
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return [];
+      return Task.FromResult<List<ISubscription>>([]);
     }
 
+    return _subscribeFromTargetsCoreAsync(targets, handler);
+  }
+
+  private async Task<List<ISubscription>> _subscribeFromTargetsCoreAsync(
+    IReadOnlyList<SubscriptionTarget> targets,
+    Func<IMessageEnvelope, Task> handler
+  ) {
     // Subscribe to all targets in parallel
     var tasks = targets.Select(target => _subscribeFromTargetAsync(target, handler));
     var subscriptions = await Task.WhenAll(tasks);

@@ -156,24 +156,14 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
   /// Checks if a handler name matches any pattern in TracedHandlers configuration.
   /// </summary>
   private static bool _matchesTracedHandler(string handlerName, TracingOptions options) {
-    foreach (var pattern in options.TracedHandlers.Keys) {
-      if (_matchesPattern(handlerName, pattern)) {
-        return true;
-      }
-    }
-    return false;
+    return options.TracedHandlers.Keys.Any(pattern => _matchesPattern(handlerName, pattern));
   }
 
   /// <summary>
   /// Checks if a message type name matches any pattern in TracedMessages configuration.
   /// </summary>
   private static bool _matchesTracedMessage(string messageTypeName, TracingOptions options) {
-    foreach (var pattern in options.TracedMessages.Keys) {
-      if (_matchesPattern(messageTypeName, pattern)) {
-        return true;
-      }
-    }
-    return false;
+    return options.TracedMessages.Keys.Any(pattern => _matchesPattern(messageTypeName, pattern));
   }
 
   /// <summary>

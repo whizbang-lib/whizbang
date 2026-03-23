@@ -122,34 +122,20 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
   }
 
   private HashSet<string> _extractRoles(HttpContext context) {
-    var roles = new HashSet<string>();
-
     var rolesClaim = context.User?.FindAll(_options.RolesClaimType);
-    if (rolesClaim != null) {
-      foreach (var claim in rolesClaim) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          roles.Add(claim.Value);
-        }
-      }
-    }
-
-    return roles;
+    return rolesClaim?
+      .Select(claim => claim.Value)
+      .Where(value => !string.IsNullOrEmpty(value))
+      .ToHashSet() ?? [];
   }
 
   private HashSet<Permission> _extractPermissions(HttpContext context) {
-    var permissions = new HashSet<Permission>();
-
     var permClaims = context.User?.FindAll(_options.PermissionsClaimType);
-    if (permClaims != null) {
-      foreach (var claim in permClaims) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          // Permission has an implicit conversion from string
-          permissions.Add(new Permission(claim.Value));
-        }
-      }
-    }
-
-    return permissions;
+    return permClaims?
+      .Select(claim => claim.Value)
+      .Where(value => !string.IsNullOrEmpty(value))
+      .Select(value => new Permission(value))
+      .ToHashSet() ?? [];
   }
 
   private HashSet<SecurityPrincipalId> _extractPrincipals(HttpContext context) {
@@ -171,10 +157,8 @@ public class WhizbangScopeMiddleware(RequestDelegate next, WhizbangScopeOptions?
     // Add group principals
     var groupClaims = context.User?.FindAll(_options.GroupsClaimType);
     if (groupClaims != null) {
-      foreach (var claim in groupClaims) {
-        if (!string.IsNullOrEmpty(claim.Value)) {
-          principals.Add(SecurityPrincipalId.Group(claim.Value));
-        }
+      foreach (var value in groupClaims.Select(claim => claim.Value).Where(v => !string.IsNullOrEmpty(v))) {
+        principals.Add(SecurityPrincipalId.Group(value));
       }
     }
 

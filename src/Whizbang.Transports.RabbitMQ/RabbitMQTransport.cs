@@ -107,7 +107,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   }
 
   /// <inheritdoc />
-  public async Task PublishAsync(
+  public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
@@ -121,6 +121,15 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
     }
 
+    return _publishCoreAsync(envelope, destination, envelopeType, cancellationToken);
+  }
+
+  private async Task _publishCoreAsync(
+    IMessageEnvelope envelope,
+    TransportDestination destination,
+    string? envelopeType,
+    CancellationToken cancellationToken
+  ) {
     var exchangeName = destination.Address;
     var routingKey = destination.RoutingKey ?? "#";
 
@@ -241,7 +250,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   }
 
   /// <inheritdoc />
-  public async Task<ISubscription> SubscribeAsync(
+  public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
@@ -254,6 +263,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
     }
 
+    return _subscribeCoreAsync(handler, destination, cancellationToken);
+  }
+
+  private async Task<ISubscription> _subscribeCoreAsync(
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
     var exchangeName = destination.Address;
 
     // Queue name priority:

@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints;
 /// Get a specific product by ID
 /// </summary>
 public class GetProductByIdEndpoint(IProductCatalogLens lens) : EndpointWithoutRequest<ProductDto> {
-  private readonly IProductCatalogLens _lens = lens;
 
   public override void Configure() {
     Get("/products/{productId}");
@@ -22,7 +21,7 @@ public class GetProductByIdEndpoint(IProductCatalogLens lens) : EndpointWithoutR
       return;
     }
 
-    var product = await _lens.GetByIdAsync(productId, ct);
+    var product = await lens.GetByIdAsync(productId, ct);
 
     if (product == null) {
       HttpContext.Response.StatusCode = 404;

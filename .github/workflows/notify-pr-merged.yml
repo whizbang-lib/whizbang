@@ -24,7 +24,7 @@ jobs:
           BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
           MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
         run: |
-          TITLE="PR #${PR_NUMBER} Merged"
+          TITLE="[LIB] PR #${PR_NUMBER} Merged"
           MESSAGE="${PR_TITLE}\n\nMerged to ${BASE_BRANCH} by ${MERGED_BY}"
 
           echo "title=${TITLE}" >> "$GITHUB_OUTPUT"

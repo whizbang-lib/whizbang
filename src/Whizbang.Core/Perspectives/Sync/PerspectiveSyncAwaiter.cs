@@ -57,7 +57,7 @@ public sealed partial class PerspectiveSyncAwaiter(
 
 
   /// <inheritdoc />
-  public async Task<bool> IsCaughtUpAsync(
+  public Task<bool> IsCaughtUpAsync(
       Type perspectiveType,
       PerspectiveSyncOptions options,
       CancellationToken ct = default) {
@@ -69,7 +69,14 @@ public sealed partial class PerspectiveSyncAwaiter(
           "IsCaughtUpAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
 
-    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
+    return _isCaughtUpCoreAsync(perspectiveType, options, ct);
+  }
+
+  private async Task<bool> _isCaughtUpCoreAsync(
+      Type perspectiveType,
+      PerspectiveSyncOptions options,
+      CancellationToken ct) {
+    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
 
     // If no events match the filter, we're caught up
     if (pendingEvents.Count == 0) {
@@ -103,7 +110,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   }
 
   /// <inheritdoc />
-  public async Task<SyncResult> WaitAsync(
+  public Task<SyncResult> WaitAsync(
       Type perspectiveType,
       PerspectiveSyncOptions options,
       CancellationToken ct = default) {
@@ -115,6 +122,13 @@ public sealed partial class PerspectiveSyncAwaiter(
           "WaitAsync requires IScopedEventTracker. Use WaitForStreamAsync for stream-based sync.");
     }
 
+    return _waitCoreAsync(perspectiveType, options, ct);
+  }
+
+  private async Task<SyncResult> _waitCoreAsync(
+      Type perspectiveType,
+      PerspectiveSyncOptions options,
+      CancellationToken ct) {
     // Create span for perspective sync wait - shows blocking time in traces
     using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"PerspectiveSync {perspectiveType.Name}",
@@ -123,7 +137,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
 
     var stopwatch = _clock.StartNew();
-    var pendingEvents = _tracker.GetEmittedEvents(options.Filter);
+    var pendingEvents = _tracker!.GetEmittedEvents(options.Filter);
 
     // If no events match the filter, return immediately
     if (pendingEvents.Count == 0) {
@@ -177,7 +191,7 @@ public sealed partial class PerspectiveSyncAwaiter(
   }
 
   /// <inheritdoc />
-  public async Task<SyncResult> WaitForStreamAsync(
+  public Task<SyncResult> WaitForStreamAsync(
       Type perspectiveType,
       Guid streamId,
       Type[]? eventTypes,
@@ -185,7 +199,16 @@ public sealed partial class PerspectiveSyncAwaiter(
       Guid? eventIdToAwait = null,
       CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(perspectiveType);
+    return _waitForStreamCoreAsync(perspectiveType, streamId, eventTypes, timeout, eventIdToAwait, ct);
+  }
 
+  private async Task<SyncResult> _waitForStreamCoreAsync(
+      Type perspectiveType,
+      Guid streamId,
+      Type[]? eventTypes,
+      TimeSpan timeout,
+      Guid? eventIdToAwait,
+      CancellationToken ct) {
     // Create span for stream-based perspective sync wait - shows blocking time in traces
     using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"PerspectiveSync {perspectiveType.Name} Stream",

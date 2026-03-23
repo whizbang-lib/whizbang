@@ -178,7 +178,7 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "🚀 Deployed v${{ needs.publish.outputs.version }}"
+          title: "[LIB] 🚀 Deployed v${{ needs.publish.outputs.version }}"
           message: "Whizbang v${{ needs.publish.outputs.version }} published to NuGet"
           status: deployed
           url: "https://www.nuget.org/packages/Whizbang.Core/${{ needs.publish.outputs.version }}"
@@ -210,7 +210,7 @@ jobs:
           user-key-8: ${{ secrets.PUSHOVER_USER_KEY_8 }}
           user-key-9: ${{ secrets.PUSHOVER_USER_KEY_9 }}
           user-key-10: ${{ secrets.PUSHOVER_USER_KEY_10 }}
-          title: "❌ Deploy Failed"
+          title: "[LIB] ❌ Deploy Failed"
           message: "Failed to publish Whizbang to NuGet"
           status: deploy-failed
           url: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

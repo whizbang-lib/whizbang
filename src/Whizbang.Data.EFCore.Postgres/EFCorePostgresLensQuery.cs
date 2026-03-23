@@ -96,12 +96,10 @@ internal static class ScopedAccessHelper {
       return new UnfilteredScopedAccess<TModel>(context);
     }
 
-    var scopeContext = scopeContextAccessor.Current;
-    if (scopeContext == null) {
-      throw new InvalidOperationException(
+    var scopeContext = scopeContextAccessor.Current
+      ?? throw new InvalidOperationException(
           $"Scope '{scope}' requires ambient scope context but IScopeContextAccessor.Current is null. " +
           "Ensure scope context middleware is configured.");
-    }
 
     IScopeContext effectiveContext = scopeContext;
     if (overrideValues.HasValue) {

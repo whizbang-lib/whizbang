@@ -16,6 +16,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -413,6 +414,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
@@ -529,6 +535,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       )
     );
 
+    // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
+    builder.Services.AddSingleton(new TaskCompletionSource<ECommerce.Contracts.Events.ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously));
+
     // Logging
     var debugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     builder.Services.AddLogging(logging => {
@@ -605,6 +614,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register dispatcher infrastructure (includes IReceptorInvoker needed for PostPerspectiveInline lifecycle callbacks)
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
@@ -713,6 +727,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
       )
     );
+
+    // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
+    builder.Services.AddSingleton(new TaskCompletionSource<ECommerce.Contracts.Events.ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously));
 
     // Logging
     var bffDebugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
@@ -863,8 +880,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<IReceptorRegistry>();
     var bffRegistry = _bffHost!.Services.GetRequiredService<IReceptorRegistry>();
-    var loggerFactory = _bffHost!.Services.GetRequiredService<ILoggerFactory>();
-    var logger = loggerFactory.CreateLogger<PerspectiveCompletionWaiter<TEvent>>();
 
     // DIAGNOSTIC: Log registry instances used by test waiter
     Console.WriteLine($"[Fixture DIAGNOSTIC] Creating waiter for {typeof(TEvent).Name}: InventoryRegistry={inventoryRegistry.GetHashCode()}, BffRegistry={bffRegistry.GetHashCode()}");
@@ -873,8 +888,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       inventoryRegistry,
       bffRegistry,
       inventoryPerspectives,
-      bffPerspectives,
-      logger
+      bffPerspectives
     );
   }
 
@@ -925,30 +939,37 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         using (var scope = _inventoryHost!.Services.CreateScope()) {
           var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
+          // Each schema group gets its own DO block so that a missing table in one group
+          // doesn't roll back truncations in other groups (PL/pgSQL EXCEPTION rolls back the
+          // entire BEGIN...END block's savepoint).
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory infrastructure tables...");
           await dbContext.Database.ExecuteSqlRawAsync(@"
-            DO $$
-            BEGIN
-              -- Truncate core infrastructure tables (INVENTORY schema)
+            DO $$ BEGIN
               TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_cursors, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
-
-              -- Truncate all perspective tables (INVENTORY schema)
-              TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
-              TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
-              TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
-
-              -- Truncate core infrastructure tables (BFF schema)
-              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
-
-              -- Truncate all perspective tables (BFF schema)
-              TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
-              TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
-              TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
-            EXCEPTION
-              WHEN undefined_table THEN
-                -- Tables don't exist, nothing to clean up
-                NULL;
-            END $$;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
           ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating inventory perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE inventory.wh_per_inventory_level, inventory.wh_per_product CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF infrastructure tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_cursors, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+
+          Console.WriteLine("[ServiceBusFixture] Truncating BFF perspective tables...");
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$ BEGIN
+              TRUNCATE TABLE bff.wh_per_inventory_level, bff.wh_per_product CASCADE;
+            EXCEPTION WHEN undefined_table THEN NULL; END $$;
+          ", cancellationToken);
+          Console.WriteLine("[ServiceBusFixture] All tables truncated.");
         }
         break; // Success
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {

@@ -114,13 +114,7 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check all interfaces the type implements
-    foreach (var iface in type.AllInterfaces) {
-      if (_isMultiGenericLensQuery(iface)) {
-        return iface;
-      }
-    }
-
-    return null;
+    return type.AllInterfaces.FirstOrDefault(_isMultiGenericLensQuery);
   }
 
   private static bool _isMultiGenericLensQuery(INamedTypeSymbol type) {
@@ -147,12 +141,6 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
       ITypeSymbol typeArg,
       ImmutableArray<ITypeSymbol> validTypes) {
     // Check if typeArg matches any of the valid types
-    foreach (var validType in validTypes) {
-      if (SymbolEqualityComparer.Default.Equals(typeArg, validType)) {
-        return true;
-      }
-    }
-
-    return false;
+    return validTypes.Any(validType => SymbolEqualityComparer.Default.Equals(typeArg, validType));
   }
 }

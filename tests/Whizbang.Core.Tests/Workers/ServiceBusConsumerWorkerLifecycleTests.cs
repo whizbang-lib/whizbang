@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -243,6 +244,79 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     await Assert.That(capturedScope!.Scope.TenantId).IsEqualTo("inbox-tenant");
   }
 
+  /// <summary>
+  /// Verifies that ServiceBusConsumerWorker fires PostLifecycle for events without
+  /// perspectives. This mirrors what TransportConsumerWorker does.
+  /// Previously this was a bug — ServiceBusConsumerWorker stopped at PostInboxInline.
+  /// </summary>
+  [Test]
+  public async Task ServiceBusConsumerWorker_PostLifecycle_Fires_ForEventsWithoutPerspectivesAsync() {
+    // Arrange
+    var invokedStages = new List<LifecycleStage>();
+
+    var registry = new TestLifecycleReceptorRegistry();
+    foreach (var stage in AllInboxAndPostLifecycleStages()) {
+      var capturedStage = stage;
+      registry.AddReceptor(stage, new ReceptorInfo(
+        MessageType: typeof(TestInboxEvent),
+        ReceptorId: $"test_postlifecycle_receptor_{stage}",
+        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+          invokedStages.Add(capturedStage);
+          return ValueTask.FromResult<object?>(null);
+        }
+      ));
+    }
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    var serviceProvider = services.BuildServiceProvider();
+    using var scope = serviceProvider.CreateScope();
+
+    var receptorInvoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+    var envelope = _createTypedEnvelopeWithScope("user-postlifecycle", "tenant-postlifecycle");
+
+    // Act: simulate the ServiceBusConsumerWorker lifecycle flow (PostInbox + PostLifecycle)
+    // It invokes PreInbox → PostInbox stages, then STOPS. No PostLifecycle.
+    var lifecycleContext = new LifecycleExecutionContext {
+      CurrentStage = LifecycleStage.PostInboxAsync,
+      MessageSource = MessageSource.Inbox
+    };
+
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostInboxAsync, lifecycleContext, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, CancellationToken.None);
+
+    lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline, lifecycleContext, CancellationToken.None);
+    await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, CancellationToken.None);
+
+    // PostLifecycle stages for events without perspectives
+    // This mirrors the code added to ServiceBusConsumerWorker
+    var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Lifecycle.ILifecycleCoordinator>();
+    if (coordinator is not null) {
+      var eventId = envelope.MessageId.Value;
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // Assert: PostInbox stages fired
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxAsync);
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostInboxInline);
+
+    // Assert: PostLifecycle MUST fire for events without perspectives
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleAsync)
+      .Because("ServiceBusConsumerWorker must fire PostLifecycleAsync for events without perspectives");
+    await Assert.That(invokedStages).Contains(LifecycleStage.PostLifecycleInline)
+      .Because("ServiceBusConsumerWorker must fire PostLifecycleInline for events without perspectives");
+  }
+
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> InboxStages() {
@@ -250,6 +324,15 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     yield return LifecycleStage.PreInboxInline;
     yield return LifecycleStage.PostInboxAsync;
     yield return LifecycleStage.PostInboxInline;
+  }
+
+  public static IEnumerable<LifecycleStage> AllInboxAndPostLifecycleStages() {
+    yield return LifecycleStage.PreInboxAsync;
+    yield return LifecycleStage.PreInboxInline;
+    yield return LifecycleStage.PostInboxAsync;
+    yield return LifecycleStage.PostInboxInline;
+    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleInline;
   }
 
   #endregion

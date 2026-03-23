@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -246,11 +247,8 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
     // For class types, also check implemented interfaces
     if (typeSymbol is INamedTypeSymbol namedType) {
-      foreach (var iface in namedType.AllInterfaces) {
-        if (_hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute")) {
-          return true;
-        }
-      }
+      return namedType.AllInterfaces.Any(iface =>
+        _hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute"));
     }
 
     return false;

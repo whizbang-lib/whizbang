@@ -15,6 +15,13 @@
         "roslynator"
       ],
       "rollForward": false
+    },
+    "dotnet-reportgenerator-globaltool": {
+      "version": "5.4.5",
+      "commands": [
+        "reportgenerator"
+      ],
+      "rollForward": false
     }
   }
 }

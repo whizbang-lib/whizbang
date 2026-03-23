@@ -51,6 +51,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   public async Task IsReadyAsync_WithMissingTables_ReturnsFalseAsync() {
     // Arrange - Create a fresh database without Whizbang schema
     await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
+      .WithName($"whizbang-test-dapper-empty-{Environment.ProcessId}")
       .WithDatabase("empty_test")
       .WithUsername("postgres")
       .WithPassword("postgres")
@@ -147,6 +148,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   public async Task IsReadyAsync_WithMissingFunctions_ReturnsFalseAsync() {
     // Arrange - Create a fresh database with tables but WITHOUT the process_work_batch function
     await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
+      .WithName($"whizbang-test-dapper-tables-only-{Environment.ProcessId}")
       .WithDatabase("tables_only_test")
       .WithUsername("postgres")
       .WithPassword("postgres")

@@ -35,12 +35,10 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
   /// </summary>
   public static string DefaultInboxTopic => DEFAULT_INBOX_TOPIC;
 
-  private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-
   /// <summary>
   /// Gets the configured inbox topic name for this strategy instance.
   /// </summary>
-  public string InboxTopic => _inboxTopic;
+  public string InboxTopic { get; } = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
   private readonly ITopicRoutingStrategy _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
 
   /// <summary>
@@ -75,7 +73,7 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
       var routingKey = $"{ns}.{typeName}";  // "myapp.users.commands.createtenantcommand"
 
       return new TransportDestination(
-        Address: _inboxTopic,
+        Address: InboxTopic,
         RoutingKey: routingKey,
         Metadata: _createMetadata(ns, kind)
       );

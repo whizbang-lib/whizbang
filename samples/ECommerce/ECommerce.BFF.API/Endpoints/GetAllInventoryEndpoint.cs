@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints;
 /// Get all inventory levels
 /// </summary>
 public class GetAllInventoryEndpoint(IInventoryLevelsLens lens) : EndpointWithoutRequest<List<InventoryLevelDto>> {
-  private readonly IInventoryLevelsLens _lens = lens;
 
   public override void Configure() {
     Get("/inventory");
@@ -16,7 +15,7 @@ public class GetAllInventoryEndpoint(IInventoryLevelsLens lens) : EndpointWithou
   }
 
   public override async Task HandleAsync(CancellationToken ct) {
-    var inventory = await _lens.GetAllAsync(ct);
+    var inventory = await lens.GetAllAsync(ct);
     Response = [.. inventory];
   }
 }

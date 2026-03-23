@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -256,11 +257,25 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // The ECommerce.Integration.TestUtilities assembly has a module initializer that overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with its own callback (which registers
+    // DistributeStageTestReceptor). That receptor requires TaskCompletionSource<ProductCreatedEvent>
+    // in its constructor, which is not registered in DI, causing a build failure.
+    // Since we explicitly call AddReceptors() and AddWhizbangDispatcher() below,
+    // the auto-registration callback is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
@@ -412,11 +427,20 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
     ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang().
+    // See comment in _createInventoryHost() for full explanation.
+    ServiceRegistrationCallbacks.Dispatcher = null;
+
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Use Global scope for integration tests (no tenant filtering needed)
+    // Without this, lens queries default to Tenant scope which requires IScopeContextAccessor.Current
+    // to be set by middleware — but test scopes don't go through middleware.
+    builder.Services.Configure<WhizbangCoreOptions>(o => o.DefaultQueryScope = QueryScope.Global);
 
     // Register lifecycle services for Distribute stage support
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
