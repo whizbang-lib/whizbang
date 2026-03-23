@@ -50,7 +50,6 @@ public static partial class SubscriptionRetryHelper {
     var attempt = 0;
 
     while (true) {
-      // Check if we've exhausted initial attempts and not retrying indefinitely
       if (attempt >= options.InitialRetryAttempts && !options.RetryIndefinitely) {
         LogSubscriptionGivingUp(logger, destination.Address, options.InitialRetryAttempts, state.LastError);
         state.Status = SubscriptionStatus.Failed;
@@ -65,63 +64,93 @@ public static partial class SubscriptionRetryHelper {
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
-        // Hook into disconnection event for immediate reconnection
-        subscription.OnDisconnected += (sender, args) => {
-          if (args.IsApplicationInitiated) {
-            return; // Don't reconnect if application is shutting down
-          }
-
-          LogSubscriptionDisconnected(logger, destination.Address, args.Reason);
-
-          // Mark as recovering and trigger immediate reconnection
-          state.Status = SubscriptionStatus.Recovering;
-          state.LastError = args.Exception;
-          state.LastErrorTime = DateTimeOffset.UtcNow;
-
-          // Fire-and-forget reconnection attempt
-          // Use Task.Run to avoid blocking the event handler
-          _ = Task.Run(async () => {
-            try {
-              // Small delay to allow transport to fully disconnect
-              await Task.Delay(options.InitialRetryDelay, cancellationToken);
-
-              // Attempt reconnection with retry logic
-              await SubscribeWithRetryAsync(transport, destination, handler, state, options, logger, cancellationToken);
-            } catch (OperationCanceledException) {
-              // Shutdown - ignore
-            } catch (Exception ex) {
-              LogReconnectionFailed(logger, destination.Address, ex);
-            }
-          }, cancellationToken);
-        };
-
-        if (attempt == 1) {
-          LogSubscriptionSuccess(logger, destination.Address, destination.RoutingKey ?? "#");
-        } else {
-          LogSubscriptionEstablished(logger, destination.Address, destination.RoutingKey ?? "#", attempt);
-        }
+        _hookDisconnectionReconnect(subscription, transport, destination, handler, state, options, logger, cancellationToken);
+        _logSubscriptionSuccess(logger, destination, attempt);
 
         return; // Success!
       } catch (OperationCanceledException) {
         throw; // Don't retry on cancellation
       } catch (Exception ex) {
-        state.LastError = ex;
-        state.LastErrorTime = DateTimeOffset.UtcNow;
-        state.Status = SubscriptionStatus.Recovering;
-        state.IncrementAttempt();
-
-        // Log based on attempt phase
-        if (attempt <= options.InitialRetryAttempts) {
-          // Initial retry phase - log each failure as warning
-          LogSubscriptionFailed(logger, destination.Address, attempt, currentDelay.TotalMilliseconds, ex);
-        } else if (attempt % 10 == 0) {
-          // Indefinite retry phase - log less frequently
-          LogSubscriptionStillFailing(logger, destination.Address, attempt, currentDelay.TotalMilliseconds);
-        }
+        _handleSubscriptionFailure(state, ex);
+        _logRetryAttempt(logger, destination, attempt, currentDelay, options, ex);
 
         await Task.Delay(currentDelay, cancellationToken);
         currentDelay = CalculateNextDelay(currentDelay, options);
       }
+    }
+  }
+
+  /// <summary>
+  /// Hooks into subscription disconnection event for immediate reconnection.
+  /// </summary>
+  private static void _hookDisconnectionReconnect(
+      ISubscription subscription,
+      ITransport transport,
+      TransportDestination destination,
+      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+      SubscriptionState state,
+      SubscriptionResilienceOptions options,
+      ILogger logger,
+      CancellationToken cancellationToken) {
+    subscription.OnDisconnected += (sender, args) => {
+      if (args.IsApplicationInitiated) {
+        return;
+      }
+
+      LogSubscriptionDisconnected(logger, destination.Address, args.Reason);
+
+      state.Status = SubscriptionStatus.Recovering;
+      state.LastError = args.Exception;
+      state.LastErrorTime = DateTimeOffset.UtcNow;
+
+      _ = Task.Run(async () => {
+        try {
+          await Task.Delay(options.InitialRetryDelay, cancellationToken);
+          await SubscribeWithRetryAsync(transport, destination, handler, state, options, logger, cancellationToken);
+        } catch (OperationCanceledException) {
+          // Shutdown - ignore
+        } catch (Exception ex) {
+          LogReconnectionFailed(logger, destination.Address, ex);
+        }
+      }, cancellationToken);
+    };
+  }
+
+  /// <summary>
+  /// Logs subscription success, differentiating first attempt from retries.
+  /// </summary>
+  private static void _logSubscriptionSuccess(ILogger logger, TransportDestination destination, int attempt) {
+    if (attempt == 1) {
+      LogSubscriptionSuccess(logger, destination.Address, destination.RoutingKey ?? "#");
+    } else {
+      LogSubscriptionEstablished(logger, destination.Address, destination.RoutingKey ?? "#", attempt);
+    }
+  }
+
+  /// <summary>
+  /// Updates subscription state on failure.
+  /// </summary>
+  private static void _handleSubscriptionFailure(SubscriptionState state, Exception ex) {
+    state.LastError = ex;
+    state.LastErrorTime = DateTimeOffset.UtcNow;
+    state.Status = SubscriptionStatus.Recovering;
+    state.IncrementAttempt();
+  }
+
+  /// <summary>
+  /// Logs retry attempt based on phase (initial vs indefinite).
+  /// </summary>
+  private static void _logRetryAttempt(
+      ILogger logger,
+      TransportDestination destination,
+      int attempt,
+      TimeSpan currentDelay,
+      SubscriptionResilienceOptions options,
+      Exception ex) {
+    if (attempt <= options.InitialRetryAttempts) {
+      LogSubscriptionFailed(logger, destination.Address, attempt, currentDelay.TotalMilliseconds, ex);
+    } else if (attempt % 10 == 0) {
+      LogSubscriptionStillFailing(logger, destination.Address, attempt, currentDelay.TotalMilliseconds);
     }
   }
 

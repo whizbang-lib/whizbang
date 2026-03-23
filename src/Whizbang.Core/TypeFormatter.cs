@@ -42,14 +42,7 @@ public static class TypeFormatter {
     }
 
     // Step 2: Add namespace if requested
-    if (qualification.HasFlag(TypeQualification.Namespace) && !string.IsNullOrEmpty(type.Namespace)) {
-      result.Append(type.Namespace);
-
-      // Add separator before type name if type name will be included
-      if (qualification.HasFlag(TypeQualification.TypeName)) {
-        result.Append('.');
-      }
-    }
+    _appendNamespace(result, type, qualification);
 
     // Step 3: Add type name if requested
     if (qualification.HasFlag(TypeQualification.TypeName)) {
@@ -58,38 +51,61 @@ public static class TypeFormatter {
 
     // Step 4: Add assembly information if requested
     if (qualification.HasFlag(TypeQualification.Assembly)) {
-      var assemblyName = type.Assembly.GetName();
-
-      // Add comma separator before assembly if we have content
-      if (result.Length > 0) {
-        result.Append(", ");
-      }
-
-      result.Append(assemblyName.Name);
-
-      // Step 5: Add version, culture, and public key token if requested
-      if (qualification.HasFlag(TypeQualification.Version)) {
-        result.Append(CultureInfo.InvariantCulture, $", Version={assemblyName.Version}");
-      }
-
-      if (qualification.HasFlag(TypeQualification.Culture)) {
-        var culture = assemblyName.CultureName;
-        if (string.IsNullOrEmpty(culture)) {
-          culture = "neutral";
-        }
-        result.Append(CultureInfo.InvariantCulture, $", Culture={culture}");
-      }
-
-      if (qualification.HasFlag(TypeQualification.PublicKeyToken)) {
-        var token = assemblyName.GetPublicKeyToken();
-        var tokenString = token == null || token.Length == 0
-            ? "null"
-            : Convert.ToHexStringLower(token);
-        result.Append(CultureInfo.InvariantCulture, $", PublicKeyToken={tokenString}");
-      }
+      _appendAssemblyInfo(result, type, qualification);
     }
 
     return result.ToString();
+  }
+
+  /// <summary>
+  /// Appends namespace to result if the Namespace flag is set and the type has a namespace.
+  /// </summary>
+  private static void _appendNamespace(StringBuilder result, Type type, TypeQualification qualification) {
+    if (!qualification.HasFlag(TypeQualification.Namespace) || string.IsNullOrEmpty(type.Namespace)) {
+      return;
+    }
+
+    result.Append(type.Namespace);
+
+    // Add separator before type name if type name will be included
+    if (qualification.HasFlag(TypeQualification.TypeName)) {
+      result.Append('.');
+    }
+  }
+
+  /// <summary>
+  /// Appends assembly name and optional version, culture, and public key token.
+  /// </summary>
+  private static void _appendAssemblyInfo(StringBuilder result, Type type, TypeQualification qualification) {
+    var assemblyName = type.Assembly.GetName();
+
+    // Add comma separator before assembly if we have content
+    if (result.Length > 0) {
+      result.Append(", ");
+    }
+
+    result.Append(assemblyName.Name);
+
+    // Add version, culture, and public key token if requested
+    if (qualification.HasFlag(TypeQualification.Version)) {
+      result.Append(CultureInfo.InvariantCulture, $", Version={assemblyName.Version}");
+    }
+
+    if (qualification.HasFlag(TypeQualification.Culture)) {
+      var culture = assemblyName.CultureName;
+      if (string.IsNullOrEmpty(culture)) {
+        culture = "neutral";
+      }
+      result.Append(CultureInfo.InvariantCulture, $", Culture={culture}");
+    }
+
+    if (qualification.HasFlag(TypeQualification.PublicKeyToken)) {
+      var token = assemblyName.GetPublicKeyToken();
+      var tokenString = token == null || token.Length == 0
+          ? "null"
+          : Convert.ToHexStringLower(token);
+      result.Append(CultureInfo.InvariantCulture, $", PublicKeyToken={tokenString}");
+    }
   }
 
   /// <summary>
