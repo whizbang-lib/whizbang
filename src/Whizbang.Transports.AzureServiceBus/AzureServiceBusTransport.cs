@@ -338,74 +338,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Ensure infrastructure exists when auto-provisioning is enabled
       await _ensureInfrastructureExistsAsync(topicName, subscriptionName, cancellationToken);
 
-      // DIAGNOSTIC: Log metadata to trace RoutingPatterns flow
-      _logger.LogWarning(
-        "DIAGNOSTIC [SubscribeAsync]: Topic={TopicName}, Subscription={SubscriptionName}, MetadataNull={MetadataNull}, MetadataKeys=[{MetadataKeys}]",
-        topicName,
-        subscriptionName,
-        destination.Metadata == null,
-        destination.Metadata != null ? string.Join(", ", destination.Metadata.Keys) : "N/A");
-
-      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) == true) {
-        _logger.LogWarning(
-          "DIAGNOSTIC [SubscribeAsync]: Found RoutingPatterns! ValueKind={ValueKind}, RawText={RawText}",
-          routingPatternsElement.ValueKind,
-          routingPatternsElement.GetRawText());
-      } else {
-        _logger.LogWarning(
-          "DIAGNOSTIC [SubscribeAsync]: RoutingPatterns NOT FOUND in metadata for {TopicName}/{SubscriptionName}",
-          topicName,
-          subscriptionName);
-      }
-
-      // Apply routing pattern filter if RoutingPatterns metadata exists (inbox pattern)
-      if (destination.Metadata?.TryGetValue("RoutingPatterns", out var patternsElem) == true &&
-          patternsElem.ValueKind == JsonValueKind.Array) {
-        var patterns = new List<string>();
-        foreach (var pattern in patternsElem.EnumerateArray()) {
-          if (pattern.ValueKind == JsonValueKind.String) {
-            var patternStr = pattern.GetString();
-            if (!string.IsNullOrWhiteSpace(patternStr)) {
-              patterns.Add(patternStr);
-            }
-          }
-        }
-        if (patterns.Count > 0) {
-          await _applyRoutingPatternFilterAsync(topicName, subscriptionName, patterns, cancellationToken);
-        }
-      }
-
-      // Apply CorrelationFilter if specified in metadata (production without Aspire)
-      // Skip if emulator (filters provisioned by Aspire AppHost)
-      if (!_isEmulator &&
-          destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterElem) == true &&
-          destinationFilterElem.ValueKind == JsonValueKind.String) {
-
-        var destinationFilter = destinationFilterElem.GetString();
-        if (!string.IsNullOrWhiteSpace(destinationFilter)) {
-
-          if (_adminClient != null) {
-            try {
-              await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
-            } catch (Exception ex) {
-              _logger.LogWarning(
-                ex,
-                "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
-                destinationFilter,
-                topicName,
-                subscriptionName
-              );
-            }
-          } else {
-            _logger.LogWarning(
-              "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
-              destinationFilter,
-              topicName,
-              subscriptionName
-            );
-          }
-        }
-      }
+      // Apply routing and correlation filters from metadata
+      await _applySubscriptionFiltersAsync(destination, topicName, subscriptionName, cancellationToken);
 
       // Create processor for the topic/subscription
       var processorOptions = new ServiceBusProcessorOptions {
@@ -431,171 +365,16 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
             destination.Address,
             destination.RoutingKey ?? _options.DefaultSubscriptionName
           );
-          // If paused, abandon the message so it can be reprocessed
           await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
           return;
         }
 
-        try {
-          // Get envelope type from message metadata
-          if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
-              envelopeTypeObj is not string envelopeTypeName) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MissingEnvelopeType",
-              "Message does not contain EnvelopeType metadata",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-          // Deserialize envelope using AOT-compatible JsonContextRegistry
-          // Use JsonContextRegistry.GetTypeInfoByName() instead of Type.GetType() to support
-          // cross-assembly generic types like MessageEnvelope<TEvent> where TEvent is from a different assembly
-          var json = args.Message.Body.ToString();
-
-          // DIAGNOSTIC: Log the JSON and Service Bus MessageId before deserializing
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var serviceBusMessageId = args.Message.MessageId;
-            var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
-            _logger.LogDebug(
-              "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
-              serviceBusMessageId,
-              jsonPreview
-            );
-          }
-
-          // Resolve JsonTypeInfo for the envelope type using JsonContextRegistry
-          // This supports fuzzy matching and cross-assembly type resolution
-          var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
-          if (typeInfo == null) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
-              envelopeTypeName,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MissingJsonTypeInfo",
-              $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-
-          if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
-              args.Message.MessageId,
-              envelopeTypeName,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "DeserializationFailed",
-              "Could not deserialize message envelope",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-
-          // DIAGNOSTIC: Log the deserialized MessageId to see if it survived
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var messageId = envelope.MessageId.Value;
-            _logger.LogDebug(
-              "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
-              messageId
-            );
-          }
-
-          // Invoke handler with envelope type metadata
-          await handler(envelope, envelopeTypeName, args.CancellationToken);
-
-          // Complete the message
-          await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            var messageId = args.Message.MessageId;
-            var topicName = destination.Address;
-            var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
-            _logger.LogDebug(
-              "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
-              messageId,
-              topicName,
-              subscriptionName
-            );
-          }
-        } catch (Exception ex) {
-          _logger.LogError(
-            ex,
-            "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
-            args.Message.MessageId,
-            destination.Address,
-            destination.RoutingKey ?? _options.DefaultSubscriptionName
-          );
-
-          // Check retry count
-          var deliveryCount = args.Message.DeliveryCount;
-          if (deliveryCount >= _options.MaxDeliveryAttempts) {
-            _logger.LogWarning(
-              "DEAD-LETTER reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName}. Exception: {ExceptionType}: {ExceptionMessage}",
-              deliveryCount,
-              _options.MaxDeliveryAttempts,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName,
-              ex.GetType().Name,
-              ex.Message
-            );
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "MaxDeliveryAttemptsExceeded",
-              ex.Message,
-              cancellationToken: args.CancellationToken
-            );
-          } else {
-            _logger.LogWarning(
-              "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
-              deliveryCount,
-              _options.MaxDeliveryAttempts,
-              args.Message.MessageId,
-              destination.Address,
-              destination.RoutingKey ?? _options.DefaultSubscriptionName,
-              ex.GetType().Name,
-              ex.Message
-            );
-            // Abandon to retry
-            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
-          }
-        }
+        await _processReceivedMessageAsync(args, handler, destination, cancellationToken);
       };
 
       // Configure error handler
       processor.ProcessErrorAsync += async args => {
-        _logger.LogError(
-          args.Exception,
-          "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
-          destination.Address,
-          destination.RoutingKey ?? _options.DefaultSubscriptionName,
-          args.ErrorSource
-        );
-
-        // If this is a connection-level error, trigger recovery handler
-        if (_isConnectionError(args.Exception)) {
-          _logger.LogWarning(
-            "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
-            (args.Exception as ServiceBusException)?.Reason
-          );
-          await _invokeRecoveryHandlerAsync();
-        }
+        await _handleProcessorErrorAsync(args, destination);
       };
 
       // Start processing
@@ -627,6 +406,179 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  private async Task _processReceivedMessageAsync(
+    ProcessMessageEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken
+  ) {
+    try {
+      var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(args, destination);
+      if (envelope is null) {
+        return; // Message was dead-lettered by _deserializeReceivedMessageAsync
+      }
+
+      await handler(envelope, envelopeTypeName, args.CancellationToken);
+      await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
+          args.Message.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName
+        );
+      }
+    } catch (Exception ex) {
+      await _handleMessageProcessingErrorAsync(args, ex, destination);
+    }
+  }
+
+  private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
+    ProcessMessageEventArgs args,
+    TransportDestination destination
+  ) {
+    // Get envelope type from message metadata
+    if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+        envelopeTypeObj is not string envelopeTypeName) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Missing EnvelopeType metadata for message {MessageId} from {TopicName}/{SubscriptionName}",
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingEnvelopeType",
+        "Message does not contain EnvelopeType metadata",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, null);
+    }
+
+    var json = args.Message.Body.ToString();
+
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var jsonPreview = json.Length > 500 ? json[..500] + "..." : json;
+      _logger.LogDebug(
+        "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
+        args.Message.MessageId,
+        jsonPreview
+      );
+    }
+
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    if (typeInfo == null) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: No JsonTypeInfo found for envelope type {EnvelopeType} - message {MessageId} from {TopicName}/{SubscriptionName}",
+        envelopeTypeName,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MissingJsonTypeInfo",
+        $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, envelopeTypeName);
+    }
+
+    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Deserialization failed for message {MessageId} as {EnvelopeType} from {TopicName}/{SubscriptionName}",
+        args.Message.MessageId,
+        envelopeTypeName,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "DeserializationFailed",
+        "Could not deserialize message envelope",
+        cancellationToken: args.CancellationToken
+      );
+      return (null, envelopeTypeName);
+    }
+
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
+        "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+        envelope.MessageId.Value
+      );
+    }
+
+    return (envelope, envelopeTypeName);
+  }
+
+  private async Task _handleMessageProcessingErrorAsync(
+    ProcessMessageEventArgs args,
+    Exception ex,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      ex,
+      "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
+      args.Message.MessageId,
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName
+    );
+
+    var deliveryCount = args.Message.DeliveryCount;
+    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+      _logger.LogWarning(
+        "DEAD-LETTER reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName}. Exception: {ExceptionType}: {ExceptionMessage}",
+        deliveryCount,
+        _options.MaxDeliveryAttempts,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        ex.GetType().Name,
+        ex.Message
+      );
+      await args.DeadLetterMessageAsync(
+        args.Message,
+        "MaxDeliveryAttemptsExceeded",
+        ex.Message,
+        cancellationToken: args.CancellationToken
+      );
+    } else {
+      _logger.LogWarning(
+        "ABANDON reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from {TopicName}/{SubscriptionName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+        deliveryCount,
+        _options.MaxDeliveryAttempts,
+        args.Message.MessageId,
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        ex.GetType().Name,
+        ex.Message
+      );
+      await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+    }
+  }
+
+  private async Task _handleProcessorErrorAsync(
+    ProcessErrorEventArgs args,
+    TransportDestination destination
+  ) {
+    _logger.LogError(
+      args.Exception,
+      "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
+      destination.Address,
+      destination.RoutingKey ?? _options.DefaultSubscriptionName,
+      args.ErrorSource
+    );
+
+    if (_isConnectionError(args.Exception)) {
+      _logger.LogWarning(
+        "Detected connection-level error in Service Bus processor, triggering recovery: {ErrorReason}",
+        (args.Exception as ServiceBusException)?.Reason
+      );
+      await _invokeRecoveryHandlerAsync();
+    }
+  }
+
   /// <inheritdoc />
   /// <tests>No tests found</tests>
   public async Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
@@ -643,6 +595,107 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       "Request/response pattern is not supported by Azure Service Bus transport. " +
       "Use IRequestResponseStore with publish/subscribe instead."
     );
+  }
+
+  private async Task _applySubscriptionFiltersAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    // DIAGNOSTIC: Log metadata to trace RoutingPatterns flow
+    _logger.LogWarning(
+      "DIAGNOSTIC [SubscribeAsync]: Topic={TopicName}, Subscription={SubscriptionName}, MetadataNull={MetadataNull}, MetadataKeys=[{MetadataKeys}]",
+      topicName,
+      subscriptionName,
+      destination.Metadata == null,
+      destination.Metadata != null ? string.Join(", ", destination.Metadata.Keys) : "N/A");
+
+    // Apply routing pattern filter if RoutingPatterns metadata exists
+    await _applyRoutingPatternsFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+
+    // Apply CorrelationFilter if specified in metadata (production without Aspire)
+    await _applyCorrelationFilterFromMetadataAsync(destination, topicName, subscriptionName, cancellationToken);
+  }
+
+  private async Task _applyRoutingPatternsFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) == true) {
+      _logger.LogWarning(
+        "DIAGNOSTIC [SubscribeAsync]: Found RoutingPatterns! ValueKind={ValueKind}, RawText={RawText}",
+        routingPatternsElement.ValueKind,
+        routingPatternsElement.GetRawText());
+    } else {
+      _logger.LogWarning(
+        "DIAGNOSTIC [SubscribeAsync]: RoutingPatterns NOT FOUND in metadata for {TopicName}/{SubscriptionName}",
+        topicName,
+        subscriptionName);
+      return;
+    }
+
+    if (routingPatternsElement.ValueKind != JsonValueKind.Array) {
+      return;
+    }
+
+    var patterns = new List<string>();
+    foreach (var pattern in routingPatternsElement.EnumerateArray()) {
+      if (pattern.ValueKind == JsonValueKind.String) {
+        var patternStr = pattern.GetString();
+        if (!string.IsNullOrWhiteSpace(patternStr)) {
+          patterns.Add(patternStr);
+        }
+      }
+    }
+    if (patterns.Count > 0) {
+      await _applyRoutingPatternFilterAsync(topicName, subscriptionName, patterns, cancellationToken);
+    }
+  }
+
+  private async Task _applyCorrelationFilterFromMetadataAsync(
+    TransportDestination destination,
+    string topicName,
+    string subscriptionName,
+    CancellationToken cancellationToken
+  ) {
+    // Skip if emulator (filters provisioned by Aspire AppHost)
+    if (_isEmulator) {
+      return;
+    }
+
+    if (destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterElem) != true ||
+        destinationFilterElem.ValueKind != JsonValueKind.String) {
+      return;
+    }
+
+    var destinationFilter = destinationFilterElem.GetString();
+    if (string.IsNullOrWhiteSpace(destinationFilter)) {
+      return;
+    }
+
+    if (_adminClient != null) {
+      try {
+        await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
+      } catch (Exception ex) {
+        _logger.LogWarning(
+          ex,
+          "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+          destinationFilter,
+          topicName,
+          subscriptionName
+        );
+      }
+    } else {
+      _logger.LogWarning(
+        "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
+        destinationFilter,
+        topicName,
+        subscriptionName
+      );
+    }
   }
 
   /// <summary>

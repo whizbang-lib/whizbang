@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 
 namespace Whizbang.Observability.Hooks;
@@ -49,47 +50,21 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
       CancellationToken ct) {
     var attribute = context.Attribute;
 
-    // Determine span name (use SpanName if specified, else Tag)
     var spanName = !string.IsNullOrEmpty(attribute.SpanName)
       ? attribute.SpanName
       : attribute.Tag;
 
-    // Map SpanKind to ActivityKind
     var activityKind = _mapSpanKind(attribute.Kind);
-
-    // Start a new activity (span)
     using var activity = ActivitySource.StartActivity(spanName, activityKind);
 
     if (activity is not null) {
-      // Add standard attributes
-      activity.SetTag("messaging.system", "whizbang");
-      activity.SetTag("messaging.operation", "process");
-      activity.SetTag("whizbang.tag", attribute.Tag);
-      activity.SetTag("whizbang.message_type", context.MessageType.FullName);
+      _setStandardTags(activity, attribute, context.MessageType);
+      _setScopeAttributes(activity, context.Scope);
 
-      // Add scope attributes
-      if (context.Scope?.Scope is not null) {
-        var scope = context.Scope.Scope;
-        if (!string.IsNullOrEmpty(scope.TenantId)) {
-          activity.SetTag("whizbang.scope.tenantid", scope.TenantId);
-        }
-        if (!string.IsNullOrEmpty(scope.UserId)) {
-          activity.SetTag("whizbang.scope.userid", scope.UserId);
-        }
-        if (!string.IsNullOrEmpty(scope.CustomerId)) {
-          activity.SetTag("whizbang.scope.customerid", scope.CustomerId);
-        }
-        if (!string.IsNullOrEmpty(scope.OrganizationId)) {
-          activity.SetTag("whizbang.scope.organizationid", scope.OrganizationId);
-        }
-      }
-
-      // Add payload properties as attributes (from Properties array)
       if (attribute.Properties is { Length: > 0 }) {
         _addPayloadAttributes(activity, context.Payload, attribute.Properties);
       }
 
-      // Record as event if configured
       if (attribute.RecordAsEvent) {
         var eventTags = new ActivityTagsCollection {
           { "event.name", context.MessageType.Name }
@@ -98,8 +73,32 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
       }
     }
 
-    // Return null to pass original payload to next hook
     return ValueTask.FromResult<JsonElement?>(null);
+  }
+
+  private static void _setStandardTags(Activity activity, TelemetryTagAttribute attribute, Type messageType) {
+    activity.SetTag("messaging.system", "whizbang");
+    activity.SetTag("messaging.operation", "process");
+    activity.SetTag("whizbang.tag", attribute.Tag);
+    activity.SetTag("whizbang.message_type", messageType.FullName);
+  }
+
+  private static void _setScopeAttributes(Activity activity, IScopeContext? scopeContext) {
+    if (scopeContext?.Scope is null) {
+      return;
+    }
+
+    var scope = scopeContext.Scope;
+    _setTagIfPresent(activity, "whizbang.scope.tenantid", scope.TenantId);
+    _setTagIfPresent(activity, "whizbang.scope.userid", scope.UserId);
+    _setTagIfPresent(activity, "whizbang.scope.customerid", scope.CustomerId);
+    _setTagIfPresent(activity, "whizbang.scope.organizationid", scope.OrganizationId);
+  }
+
+  private static void _setTagIfPresent(Activity activity, string key, string? value) {
+    if (!string.IsNullOrEmpty(value)) {
+      activity.SetTag(key, value);
+    }
   }
 
   private static ActivityKind _mapSpanKind(SpanKind kind) {

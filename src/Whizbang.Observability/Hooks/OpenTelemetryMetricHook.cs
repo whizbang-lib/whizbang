@@ -104,40 +104,47 @@ public sealed class OpenTelemetryMetricHook : IMessageTagHook<MetricTagAttribute
       IScopeContext? scope) {
     var tags = new TagList();
 
-    // Add properties from payload as dimensions
-    if (properties is { Length: > 0 } && payload.ValueKind == JsonValueKind.Object) {
-      foreach (var propName in properties) {
-        if (payload.TryGetProperty(propName, out var propValue)) {
-          var tagValue = propValue.ValueKind switch {
-            JsonValueKind.String => propValue.GetString(),
-            JsonValueKind.Number => propValue.GetRawText(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            _ => propValue.GetRawText()
-          };
-          tags.Add(propName.ToLowerInvariant(), tagValue);
-        }
-      }
-    }
-
-    // Add scope values as dimensions
-    if (scope?.Scope is not null) {
-      var perspectiveScope = scope.Scope;
-      if (!string.IsNullOrEmpty(perspectiveScope.TenantId) && !tags.Any(t => string.Equals(t.Key, "tenantid", StringComparison.Ordinal))) {
-        tags.Add("tenantid", perspectiveScope.TenantId);
-      }
-      if (!string.IsNullOrEmpty(perspectiveScope.UserId) && !tags.Any(t => string.Equals(t.Key, "userid", StringComparison.Ordinal))) {
-        tags.Add("userid", perspectiveScope.UserId);
-      }
-      if (!string.IsNullOrEmpty(perspectiveScope.CustomerId) && !tags.Any(t => string.Equals(t.Key, "customerid", StringComparison.Ordinal))) {
-        tags.Add("customerid", perspectiveScope.CustomerId);
-      }
-      if (!string.IsNullOrEmpty(perspectiveScope.OrganizationId) && !tags.Any(t => string.Equals(t.Key, "organizationid", StringComparison.Ordinal))) {
-        tags.Add("organizationid", perspectiveScope.OrganizationId);
-      }
-    }
+    _addPayloadPropertyTags(ref tags, payload, properties);
+    _addScopeTags(ref tags, scope);
 
     return tags;
+  }
+
+  private static void _addPayloadPropertyTags(ref TagList tags, JsonElement payload, string[]? properties) {
+    if (properties is not { Length: > 0 } || payload.ValueKind != JsonValueKind.Object) {
+      return;
+    }
+
+    foreach (var propName in properties) {
+      if (payload.TryGetProperty(propName, out var propValue)) {
+        var tagValue = propValue.ValueKind switch {
+          JsonValueKind.String => propValue.GetString(),
+          JsonValueKind.Number => propValue.GetRawText(),
+          JsonValueKind.True => "true",
+          JsonValueKind.False => "false",
+          _ => propValue.GetRawText()
+        };
+        tags.Add(propName.ToLowerInvariant(), tagValue);
+      }
+    }
+  }
+
+  private static void _addScopeTags(ref TagList tags, IScopeContext? scope) {
+    if (scope?.Scope is null) {
+      return;
+    }
+
+    var perspectiveScope = scope.Scope;
+    _addScopeTagIfPresent(ref tags, "tenantid", perspectiveScope.TenantId);
+    _addScopeTagIfPresent(ref tags, "userid", perspectiveScope.UserId);
+    _addScopeTagIfPresent(ref tags, "customerid", perspectiveScope.CustomerId);
+    _addScopeTagIfPresent(ref tags, "organizationid", perspectiveScope.OrganizationId);
+  }
+
+  private static void _addScopeTagIfPresent(ref TagList tags, string key, string? value) {
+    if (!string.IsNullOrEmpty(value) && !tags.Any(t => string.Equals(t.Key, key, StringComparison.Ordinal))) {
+      tags.Add(key, value);
+    }
   }
 
   private static double? _extractValue(JsonElement payload, string? valueProperty) {

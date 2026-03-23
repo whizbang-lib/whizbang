@@ -120,49 +120,58 @@ public static class MessageExtractor {
 
     // Handle Routed<T> wrapper
     if (result is IRouted routed) {
-      // Skip RoutedNone values (discriminated union "no value" marker)
-      if (routed.Mode == DispatchMode.None) {
-        yield break;
-      }
-
-      var wrapperMode = routed.Mode;
-      var innerValue = routed.Value;
-
-      // Determine if this wraps an individual message or a collection
-      if (innerValue is IMessage) {
-        // Individual wrapper: Routed<SomeEvent>
-        foreach (var item in _extractMessagesWithRoutingInternal(
-          innerValue, receptorDefault,
-          individualWrapperMode: wrapperMode,  // Pass as individual
-          collectionWrapperMode,               // Preserve outer collection mode
-          onNonMessageValue)) {
-          yield return item;
-        }
-      } else {
-        // Collection wrapper: Routed<IEvent[]> or Routed<(E1, E2)>
-        foreach (var item in _extractMessagesWithRoutingInternal(
-          innerValue, receptorDefault,
-          individualWrapperMode,               // Preserve inner individual mode
-          collectionWrapperMode: wrapperMode,  // Pass as collection
-          onNonMessageValue)) {
-          yield return item;
-        }
+      foreach (var item in _extractFromRouted(routed, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
+        yield return item;
       }
       yield break;
     }
 
     // Handle single IMessage
     if (result is IMessage message) {
-      var mode = _resolveMode(message, receptorDefault, individualWrapperMode, collectionWrapperMode);
-      yield return (message, mode);
+      yield return (message, _resolveMode(message, receptorDefault, individualWrapperMode, collectionWrapperMode));
       yield break;
     }
 
+    // Handle typed enumerables
+    foreach (var item in _extractFromEnumerable(result, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
+      yield return item;
+    }
+  }
+
+  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromRouted(
+    IRouted routed,
+    DispatchMode? receptorDefault,
+    DispatchMode? individualWrapperMode,
+    DispatchMode? collectionWrapperMode,
+    Action<Type>? onNonMessageValue) {
+    // Skip RoutedNone values (discriminated union "no value" marker)
+    if (routed.Mode == DispatchMode.None) {
+      yield break;
+    }
+
+    var wrapperMode = routed.Mode;
+    var innerValue = routed.Value;
+
+    // Determine if this wraps an individual message or a collection
+    var nextIndividual = innerValue is IMessage ? wrapperMode : individualWrapperMode;
+    var nextCollection = innerValue is IMessage ? collectionWrapperMode : wrapperMode;
+
+    foreach (var item in _extractMessagesWithRoutingInternal(
+      innerValue, receptorDefault, nextIndividual, nextCollection, onNonMessageValue)) {
+      yield return item;
+    }
+  }
+
+  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromEnumerable(
+    object result,
+    DispatchMode? receptorDefault,
+    DispatchMode? individualWrapperMode,
+    DispatchMode? collectionWrapperMode,
+    Action<Type>? onNonMessageValue) {
     // Handle IEnumerable<IMessage> (includes arrays of events/commands)
     if (result is IEnumerable<IMessage> messageEnumerable) {
       foreach (var msg in messageEnumerable) {
-        var mode = _resolveMode(msg, receptorDefault, individualWrapperMode, collectionWrapperMode);
-        yield return (msg, mode);
+        yield return (msg, _resolveMode(msg, receptorDefault, individualWrapperMode, collectionWrapperMode));
       }
       yield break;
     }
@@ -170,8 +179,7 @@ public static class MessageExtractor {
     // Handle IEnumerable<IEvent> (includes arrays)
     if (result is IEnumerable<IEvent> eventEnumerable) {
       foreach (var evt in eventEnumerable) {
-        var mode = _resolveMode(evt, receptorDefault, individualWrapperMode, collectionWrapperMode);
-        yield return (evt, mode);
+        yield return (evt, _resolveMode(evt, receptorDefault, individualWrapperMode, collectionWrapperMode));
       }
       yield break;
     }
@@ -179,8 +187,7 @@ public static class MessageExtractor {
     // Handle IEnumerable<ICommand> (includes arrays)
     if (result is IEnumerable<ICommand> commandEnumerable) {
       foreach (var cmd in commandEnumerable) {
-        var mode = _resolveMode(cmd, receptorDefault, individualWrapperMode, collectionWrapperMode);
-        yield return (cmd, mode);
+        yield return (cmd, _resolveMode(cmd, receptorDefault, individualWrapperMode, collectionWrapperMode));
       }
       yield break;
     }
@@ -190,7 +197,6 @@ public static class MessageExtractor {
       for (int i = 0; i < tuple.Length; i++) {
         var item = tuple[i];
         if (item != null) {
-          // Recursively extract messages from tuple items
           foreach (var extracted in _extractMessagesWithRoutingInternal(
             item, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
             yield return extracted;
@@ -204,7 +210,6 @@ public static class MessageExtractor {
     if (result is IEnumerable enumerable and not string) {
       foreach (var item in enumerable) {
         if (item != null) {
-          // Recursively extract messages from enumerable items
           foreach (var extracted in _extractMessagesWithRoutingInternal(
             item, receptorDefault, individualWrapperMode, collectionWrapperMode, onNonMessageValue)) {
             yield return extracted;
