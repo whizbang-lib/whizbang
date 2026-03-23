@@ -75,12 +75,13 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Look for all perspective interfaces (IPerspectiveFor, IPerspectiveWithActionsFor, etc.)
-    // Check if interface name contains "IPerspectiveFor" (matches both IPerspectiveFor and IPerspectiveWithActionsFor)
-    // Skip the marker base interface (has only 1 type argument)
+    // Match both IPerspectiveFor<TModel, TEvent...> and IPerspectiveWithActionsFor<TModel, TEvent...>
+    // Skip marker base interfaces (have only 1 type argument)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return originalDef.Contains("IPerspectiveFor") && i.TypeArguments.Length > 1;
+          return (originalDef.Contains("IPerspectiveFor<") || originalDef.Contains("IPerspectiveWithActionsFor<"))
+                 && i.TypeArguments.Length > 1;
         })
         .ToList();
 
@@ -123,6 +124,10 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       // Validate event types and extract StreamId information
       var (validationErrors, eventStreamIds) = _validateAndExtractEventInfo(eventTypeSymbols);
 
+      // Detect if this interface is IPerspectiveWithActionsFor (returns ApplyResult<TModel>)
+      var isWithActions = perspectiveInterface.OriginalDefinition.ToDisplayString()
+          .Contains("IPerspectiveWithActionsFor");
+
       return new PerspectiveInfo(
           ClassName: className,
           SimpleName: simpleName,
@@ -132,7 +137,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           MessageTypeNames: messageTypeNames,
           StreamIdPropertyName: streamKeyPropertyName,
           EventStreamIds: eventStreamIds.Count > 0 ? [.. eventStreamIds] : null,
-          EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null
+          EventValidationErrors: validationErrors.Count > 0 ? [.. validationErrors] : null,
+          IsWithActionsInterface: isWithActions
       );
     }).ToArray();
 
@@ -325,7 +331,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var typeArgs = string.Join(", ", perspective.InterfaceTypeArguments);
 
       var generatedCode = registrationSnippet
-          .Replace("__PERSPECTIVE_INTERFACE__", PERSPECTIVE_INTERFACE_NAME)
+          .Replace("__PERSPECTIVE_INTERFACE__", perspective.IsWithActionsInterface
+              ? "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor"
+              : PERSPECTIVE_INTERFACE_NAME)
           .Replace("__TYPE_ARGUMENTS__", typeArgs)
           .Replace("__PERSPECTIVE_CLASS__", perspective.ClassName);
 
@@ -414,8 +422,14 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
         sb.AppendLine($"            var typedModel = ({modelType})((object)model!);");
         sb.AppendLine($"            var typedEvent = ({eventType})((object)evt!);");
-        sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
-        sb.AppendLine("            return (TModel)((object)result!);");
+        if (perspective.IsWithActionsInterface) {
+          // IPerspectiveWithActionsFor returns ApplyResult<TModel> — extract .Model
+          sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
+          sb.AppendLine("            return (TModel)((object)result.Model!);");
+        } else {
+          sb.AppendLine("            var result = perspective.Apply(typedModel, typedEvent);");
+          sb.AppendLine("            return (TModel)((object)result!);");
+        }
         sb.AppendLine("          }");
         sb.AppendLine("        )");
         sb.AppendLine("      };");
