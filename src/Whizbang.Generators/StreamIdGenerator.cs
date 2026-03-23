@@ -290,7 +290,46 @@ public class StreamIdGenerator : IIncrementalGenerator {
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
-    // Report diagnostics for events with stream keys
+    _reportStreamIdDiagnostics(context, eventsWithStreamId, eventsWithoutStreamId);
+
+    // Load and prepare template
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+        typeof(StreamIdGenerator).Assembly,
+        "StreamIdExtractorsTemplate.cs"
+    );
+    template = TemplateUtilities.ReplaceHeaderRegion(typeof(StreamIdGenerator).Assembly, template);
+    template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
+
+    // Generate GetGenerationPolicy dispatch cases (events AND commands)
+    template = _generateGenerationPolicyRegion(template, eventsWithStreamId, commandsWithStreamId);
+
+    // Generate event dispatch and extractors
+    template = _generateEventRegions(template, eventsWithStreamId);
+
+    // Generate command dispatch and extractors
+    template = _generateCommandRegions(template, context, commandsWithStreamId);
+
+    // Replace other regions with empty (perspective DTOs - not yet implemented)
+    template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
+    template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
+
+    // Generate SetStreamId dispatch cases
+    template = _generateSetStreamIdRegion(template, eventsWithStreamId, commandsWithStreamId);
+
+    // Generate [ModuleInitializer] registration code
+    template = _generateModuleInitializerRegion(template, eventsWithStreamId, commandsWithStreamId);
+
+    context.AddSource("StreamIdExtractors.g.cs", template);
+  }
+
+  /// <summary>
+  /// Reports diagnostics for events with and without stream keys.
+  /// </summary>
+  private static void _reportStreamIdDiagnostics(
+      SourceProductionContext context,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<EventWithoutStreamIdInfo> eventsWithoutStreamId) {
+
     foreach (var info in eventsWithStreamId) {
       var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
@@ -301,312 +340,308 @@ public class StreamIdGenerator : IIncrementalGenerator {
       ));
     }
 
-    // Report diagnostics for events without stream keys
     foreach (var info in eventsWithoutStreamId) {
       var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.MissingStreamIdAttribute,
-          info.Location,  // Use actual location for proper suppression support
+          info.Location,
           simpleName
       ));
     }
+  }
 
-    // Load template
-    var template = TemplateUtilities.GetEmbeddedTemplate(
-        typeof(StreamIdGenerator).Assembly,
-        "StreamIdExtractorsTemplate.cs"
-    );
+  /// <summary>
+  /// Generates the GENERATION_POLICY_DISPATCH region for events and commands with [GenerateStreamId].
+  /// </summary>
+  private static string _generateGenerationPolicyRegion(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
 
-    // Replace header with timestamp
-    template = TemplateUtilities.ReplaceHeaderRegion(typeof(StreamIdGenerator).Assembly, template);
-
-    // Replace namespace region with assembly-specific namespace
-    template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
-
-    // Generate GetGenerationPolicy dispatch cases (events AND commands)
     var eventsWithGenerate = eventsWithStreamId.Where(e => e.HasGenerate).ToImmutableArray();
     var commandsWithGenerate = commandsWithStreamId.Where(c => c.HasGenerate).ToImmutableArray();
-    if (!eventsWithGenerate.IsEmpty || !commandsWithGenerate.IsEmpty) {
-      var generationPolicySnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamIdGenerator).Assembly,
-          "StreamIdSnippets.cs",
-          "GENERATION_POLICY_CASE"
-      );
 
-      var generationPolicyCode = new StringBuilder();
-      generationPolicyCode.AppendLine("// Type-based dispatch for generation policy");
-      foreach (var info in eventsWithGenerate) {
-        var caseCode = generationPolicySnippet
-            .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__SHOULD_GENERATE__", "true")
-            .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
-
-        generationPolicyCode.AppendLine(caseCode);
-      }
-
-      foreach (var info in commandsWithGenerate) {
-        var caseCode = generationPolicySnippet
-            .Replace("__EVENT_TYPE__", info.CommandType)
-            .Replace("__SHOULD_GENERATE__", "true")
-            .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
-
-        generationPolicyCode.AppendLine(caseCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", generationPolicyCode.ToString().TrimEnd());
-    } else {
-      template = TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", "");
+    if (eventsWithGenerate.IsEmpty && commandsWithGenerate.IsEmpty) {
+      return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", "");
     }
 
-    // Generate dispatch cases
-    if (!eventsWithStreamId.IsEmpty) {
-      var dispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamIdGenerator).Assembly,
-          "StreamIdSnippets.cs",
-          "DISPATCH_CASE"
-      );
+    var generationPolicySnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly,
+        "StreamIdSnippets.cs",
+        "GENERATION_POLICY_CASE"
+    );
 
-      var dispatchCode = new StringBuilder();
-      dispatchCode.AppendLine("// Type-based dispatch to correct extractor");
-      for (int i = 0; i < eventsWithStreamId.Length; i++) {
-        var info = eventsWithStreamId[i];
-        var caseCode = dispatchSnippet
-            .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+    var generationPolicyCode = new StringBuilder();
+    generationPolicyCode.AppendLine("// Type-based dispatch for generation policy");
 
-        dispatchCode.AppendLine(caseCode);
-      }
+    foreach (var info in eventsWithGenerate) {
+      var caseCode = generationPolicySnippet
+          .Replace("__EVENT_TYPE__", info.EventType)
+          .Replace("__SHOULD_GENERATE__", "true")
+          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+      generationPolicyCode.AppendLine(caseCode);
+    }
 
-      template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_EVENT_DISPATCH", dispatchCode.ToString().TrimEnd());
+    foreach (var info in commandsWithGenerate) {
+      var caseCode = generationPolicySnippet
+          .Replace("__EVENT_TYPE__", info.CommandType)
+          .Replace("__SHOULD_GENERATE__", "true")
+          .Replace("__ONLY_IF_EMPTY__", info.OnlyIfEmpty ? "true" : "false");
+      generationPolicyCode.AppendLine(caseCode);
+    }
 
-      // Generate TryResolveAsGuid dispatch cases
-      var tryDispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamIdGenerator).Assembly,
-          "StreamIdSnippets.cs",
-          "TRY_DISPATCH_CASE"
-      );
+    return TemplateUtilities.ReplaceRegion(template, "GENERATION_POLICY_DISPATCH", generationPolicyCode.ToString().TrimEnd());
+  }
 
-      var tryDispatchCode = new StringBuilder();
-      tryDispatchCode.AppendLine("// Type-based dispatch returning Guid?");
-      for (int i = 0; i < eventsWithStreamId.Length; i++) {
-        var info = eventsWithStreamId[i];
-        var caseCode = tryDispatchSnippet
-            .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+  /// <summary>
+  /// Generates event dispatch, extractor, and try-extract regions.
+  /// </summary>
+  private static string _generateEventRegions(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId) {
 
-        tryDispatchCode.AppendLine(caseCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_EVENT_DISPATCH", tryDispatchCode.ToString().TrimEnd());
-
-      // Generate extractor methods
-      var extractorsCode = new StringBuilder();
-      for (int i = 0; i < eventsWithStreamId.Length; i++) {
-        var info = eventsWithStreamId[i];
-        var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
-        var propertyTypeName = info.PropertyType;
-
-        // Check if property type is nullable (ends with ? or is a reference type)
-        var isNullable = propertyTypeName.EndsWith("?", StringComparison.Ordinal) ||
-                        propertyTypeName.Contains("string") ||
-                        propertyTypeName.Contains("String");
-
-        var extractorSnippet = isNullable
-            ? TemplateUtilities.ExtractSnippet(
-                typeof(StreamIdGenerator).Assembly,
-                "StreamIdSnippets.cs",
-                "EXTRACTOR_NULLABLE"
-              )
-            : TemplateUtilities.ExtractSnippet(
-                typeof(StreamIdGenerator).Assembly,
-                "StreamIdSnippets.cs",
-                "EXTRACTOR_NON_NULLABLE"
-              );
-
-        var extractorCode = extractorSnippet
-            .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__EVENT_NAME__", simpleName)
-            .Replace("__PROPERTY_NAME__", info.PropertyName);
-
-        if (i > 0) {
-          extractorsCode.AppendLine();
-        }
-        extractorsCode.Append(extractorCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "EVENT_EXTRACTORS", extractorsCode.ToString().TrimEnd());
-
-      // Generate TryExtractAsGuid methods
-      var tryExtractorsCode = new StringBuilder();
-      for (int i = 0; i < eventsWithStreamId.Length; i++) {
-        var info = eventsWithStreamId[i];
-        var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
-        var propertyTypeName = info.PropertyType;
-
-        // Determine which TRY_EXTRACTOR snippet to use based on property type
-        var tryExtractorSnippetName = _getTryExtractorSnippetName(propertyTypeName, info.IsPropertyValueType);
-        var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
-            typeof(StreamIdGenerator).Assembly,
-            "StreamIdSnippets.cs",
-            tryExtractorSnippetName
-        );
-
-        var tryExtractorCode = tryExtractorSnippet
-            .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__EVENT_NAME__", simpleName)
-            .Replace("__PROPERTY_NAME__", info.PropertyName);
-
-        if (i > 0) {
-          tryExtractorsCode.AppendLine();
-        }
-        tryExtractorsCode.Append(tryExtractorCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", tryExtractorsCode.ToString().TrimEnd());
-    } else {
-      // No events - leave default throw behavior in Resolve method
+    if (eventsWithStreamId.IsEmpty) {
       template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_EVENT_DISPATCH", "");
       template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_EVENT_DISPATCH", "");
       template = TemplateUtilities.ReplaceRegion(template, "EVENT_EXTRACTORS", "");
       template = TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", "");
+      return template;
     }
 
-    // Generate command dispatch and extractors
-    if (!commandsWithStreamId.IsEmpty) {
-      // Report diagnostics for commands with stream IDs
-      foreach (var info in commandsWithStreamId) {
-        var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
-        context.ReportDiagnostic(Diagnostic.Create(
-            DiagnosticDescriptors.CommandStreamIdDiscovered,
-            Location.None,
-            simpleName,
-            info.PropertyName
-        ));
+    template = _generateEventDispatchCases(template, eventsWithStreamId);
+    template = _generateEventTryDispatchCases(template, eventsWithStreamId);
+    template = _generateEventExtractors(template, eventsWithStreamId);
+    template = _generateEventTryExtractors(template, eventsWithStreamId);
+    return template;
+  }
+
+  /// <summary>
+  /// Generates RESOLVE_EVENT_DISPATCH region with type-based dispatch cases.
+  /// </summary>
+  private static string _generateEventDispatchCases(string template, ImmutableArray<StreamIdInfo> eventsWithStreamId) {
+    var dispatchSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "DISPATCH_CASE");
+
+    var dispatchCode = new StringBuilder();
+    dispatchCode.AppendLine("// Type-based dispatch to correct extractor");
+    for (int i = 0; i < eventsWithStreamId.Length; i++) {
+      var caseCode = dispatchSnippet
+          .Replace("__EVENT_TYPE__", eventsWithStreamId[i].EventType)
+          .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+      dispatchCode.AppendLine(caseCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "RESOLVE_EVENT_DISPATCH", dispatchCode.ToString().TrimEnd());
+  }
+
+  /// <summary>
+  /// Generates TRY_RESOLVE_EVENT_DISPATCH region with Guid? dispatch cases.
+  /// </summary>
+  private static string _generateEventTryDispatchCases(string template, ImmutableArray<StreamIdInfo> eventsWithStreamId) {
+    var tryDispatchSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "TRY_DISPATCH_CASE");
+
+    var tryDispatchCode = new StringBuilder();
+    tryDispatchCode.AppendLine("// Type-based dispatch returning Guid?");
+    for (int i = 0; i < eventsWithStreamId.Length; i++) {
+      var caseCode = tryDispatchSnippet
+          .Replace("__EVENT_TYPE__", eventsWithStreamId[i].EventType)
+          .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+      tryDispatchCode.AppendLine(caseCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_EVENT_DISPATCH", tryDispatchCode.ToString().TrimEnd());
+  }
+
+  /// <summary>
+  /// Generates EVENT_EXTRACTORS region with per-event extractor methods.
+  /// </summary>
+  private static string _generateEventExtractors(string template, ImmutableArray<StreamIdInfo> eventsWithStreamId) {
+    var extractorsCode = new StringBuilder();
+    for (int i = 0; i < eventsWithStreamId.Length; i++) {
+      var info = eventsWithStreamId[i];
+      var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
+
+      var isNullable = info.PropertyType.EndsWith("?", StringComparison.Ordinal) ||
+                      info.PropertyType.Contains("string") ||
+                      info.PropertyType.Contains("String");
+
+      var extractorSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs",
+          isNullable ? "EXTRACTOR_NULLABLE" : "EXTRACTOR_NON_NULLABLE");
+
+      var extractorCode = extractorSnippet
+          .Replace("__EVENT_TYPE__", info.EventType)
+          .Replace("__EVENT_NAME__", simpleName)
+          .Replace("__PROPERTY_NAME__", info.PropertyName);
+
+      if (i > 0) {
+        extractorsCode.AppendLine();
       }
+      extractorsCode.Append(extractorCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "EVENT_EXTRACTORS", extractorsCode.ToString().TrimEnd());
+  }
 
-      // Generate command dispatch cases
-      var commandDispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamIdGenerator).Assembly,
-          "StreamIdSnippets.cs",
-          "COMMAND_DISPATCH_CASE"
-      );
+  /// <summary>
+  /// Generates TRY_EXTRACT_METHODS region with per-event TryExtractAsGuid methods.
+  /// </summary>
+  private static string _generateEventTryExtractors(string template, ImmutableArray<StreamIdInfo> eventsWithStreamId) {
+    var tryExtractorsCode = new StringBuilder();
+    for (int i = 0; i < eventsWithStreamId.Length; i++) {
+      var info = eventsWithStreamId[i];
+      var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
 
-      var commandDispatchCode = new StringBuilder();
-      commandDispatchCode.AppendLine("// Type-based dispatch to correct command extractor");
-      for (int i = 0; i < commandsWithStreamId.Length; i++) {
-        var info = commandsWithStreamId[i];
-        var caseCode = commandDispatchSnippet
-            .Replace("__COMMAND_TYPE__", info.CommandType)
-            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+      var tryExtractorSnippetName = _getTryExtractorSnippetName(info.PropertyType, info.IsPropertyValueType);
+      var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", tryExtractorSnippetName);
 
-        commandDispatchCode.AppendLine(caseCode);
+      var tryExtractorCode = tryExtractorSnippet
+          .Replace("__EVENT_TYPE__", info.EventType)
+          .Replace("__EVENT_NAME__", simpleName)
+          .Replace("__PROPERTY_NAME__", info.PropertyName);
+
+      if (i > 0) {
+        tryExtractorsCode.AppendLine();
       }
+      tryExtractorsCode.Append(tryExtractorCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "TRY_EXTRACT_METHODS", tryExtractorsCode.ToString().TrimEnd());
+  }
 
-      template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_COMMAND_DISPATCH", commandDispatchCode.ToString().TrimEnd());
+  /// <summary>
+  /// Generates command dispatch, extractor, and try-extract regions.
+  /// </summary>
+  private static string _generateCommandRegions(
+      string template,
+      SourceProductionContext context,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
 
-      // Generate TryResolveAsGuid command dispatch cases
-      var commandTryDispatchSnippet = TemplateUtilities.ExtractSnippet(
-          typeof(StreamIdGenerator).Assembly,
-          "StreamIdSnippets.cs",
-          "COMMAND_TRY_DISPATCH_CASE"
-      );
-
-      var commandTryDispatchCode = new StringBuilder();
-      commandTryDispatchCode.AppendLine("// Type-based dispatch returning Guid? for commands");
-      for (int i = 0; i < commandsWithStreamId.Length; i++) {
-        var info = commandsWithStreamId[i];
-        var caseCode = commandTryDispatchSnippet
-            .Replace("__COMMAND_TYPE__", info.CommandType)
-            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
-
-        commandTryDispatchCode.AppendLine(caseCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_COMMAND_DISPATCH", commandTryDispatchCode.ToString().TrimEnd());
-
-      // Generate command extractor methods
-      var commandExtractorsCode = new StringBuilder();
-      for (int i = 0; i < commandsWithStreamId.Length; i++) {
-        var info = commandsWithStreamId[i];
-        var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
-        var propertyTypeName = info.PropertyType;
-
-        // Check if property type is nullable
-        var isNullable = propertyTypeName.EndsWith("?", StringComparison.Ordinal) ||
-                        propertyTypeName.Contains("string") ||
-                        propertyTypeName.Contains("String");
-
-        var extractorSnippet = isNullable
-            ? TemplateUtilities.ExtractSnippet(
-                typeof(StreamIdGenerator).Assembly,
-                "StreamIdSnippets.cs",
-                "COMMAND_EXTRACTOR_NULLABLE"
-              )
-            : TemplateUtilities.ExtractSnippet(
-                typeof(StreamIdGenerator).Assembly,
-                "StreamIdSnippets.cs",
-                "COMMAND_EXTRACTOR_NON_NULLABLE"
-              );
-
-        var extractorCode = extractorSnippet
-            .Replace("__COMMAND_TYPE__", info.CommandType)
-            .Replace("__COMMAND_NAME__", simpleName)
-            .Replace("__PROPERTY_NAME__", info.PropertyName);
-
-        if (i > 0) {
-          commandExtractorsCode.AppendLine();
-        }
-        commandExtractorsCode.Append(extractorCode);
-      }
-
-      // Generate TryExtractAsGuid methods for commands
-      for (int i = 0; i < commandsWithStreamId.Length; i++) {
-        var info = commandsWithStreamId[i];
-        var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
-        var propertyTypeName = info.PropertyType;
-
-        // Determine which COMMAND_TRY_EXTRACTOR snippet to use based on property type
-        var tryExtractorSnippetName = _getCommandTryExtractorSnippetName(propertyTypeName, info.IsPropertyValueType);
-        var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
-            typeof(StreamIdGenerator).Assembly,
-            "StreamIdSnippets.cs",
-            tryExtractorSnippetName
-        );
-
-        var tryExtractorCode = tryExtractorSnippet
-            .Replace("__COMMAND_TYPE__", info.CommandType)
-            .Replace("__COMMAND_NAME__", simpleName)
-            .Replace("__PROPERTY_NAME__", info.PropertyName);
-
-        commandExtractorsCode.AppendLine();
-        commandExtractorsCode.Append(tryExtractorCode);
-      }
-
-      template = TemplateUtilities.ReplaceRegion(template, "COMMAND_EXTRACTORS", commandExtractorsCode.ToString().TrimEnd());
-    } else {
+    if (commandsWithStreamId.IsEmpty) {
       template = TemplateUtilities.ReplaceRegion(template, "RESOLVE_COMMAND_DISPATCH", "");
       template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_COMMAND_DISPATCH", "");
       template = TemplateUtilities.ReplaceRegion(template, "COMMAND_EXTRACTORS", "");
+      return template;
     }
 
-    // Replace other regions with empty (perspective DTOs - not yet implemented)
-    template = TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_OTHER_DISPATCH", "");
-    template = TemplateUtilities.ReplaceRegion(template, "OTHER_EXTRACTORS", "");
+    // Report diagnostics for commands with stream IDs
+    foreach (var info in commandsWithStreamId) {
+      var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.CommandStreamIdDiscovered,
+          Location.None,
+          simpleName,
+          info.PropertyName
+      ));
+    }
 
-    // Generate SetStreamId dispatch cases (events AND commands with Guid [StreamId] properties)
+    template = _generateCommandDispatchCases(template, commandsWithStreamId);
+    template = _generateCommandTryDispatchCases(template, commandsWithStreamId);
+    template = _generateCommandExtractorsAndTryExtractors(template, commandsWithStreamId);
+    return template;
+  }
+
+  /// <summary>
+  /// Generates RESOLVE_COMMAND_DISPATCH region.
+  /// </summary>
+  private static string _generateCommandDispatchCases(string template, ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+    var commandDispatchSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "COMMAND_DISPATCH_CASE");
+
+    var commandDispatchCode = new StringBuilder();
+    commandDispatchCode.AppendLine("// Type-based dispatch to correct command extractor");
+    for (int i = 0; i < commandsWithStreamId.Length; i++) {
+      var caseCode = commandDispatchSnippet
+          .Replace("__COMMAND_TYPE__", commandsWithStreamId[i].CommandType)
+          .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+      commandDispatchCode.AppendLine(caseCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "RESOLVE_COMMAND_DISPATCH", commandDispatchCode.ToString().TrimEnd());
+  }
+
+  /// <summary>
+  /// Generates TRY_RESOLVE_COMMAND_DISPATCH region.
+  /// </summary>
+  private static string _generateCommandTryDispatchCases(string template, ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+    var commandTryDispatchSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "COMMAND_TRY_DISPATCH_CASE");
+
+    var commandTryDispatchCode = new StringBuilder();
+    commandTryDispatchCode.AppendLine("// Type-based dispatch returning Guid? for commands");
+    for (int i = 0; i < commandsWithStreamId.Length; i++) {
+      var caseCode = commandTryDispatchSnippet
+          .Replace("__COMMAND_TYPE__", commandsWithStreamId[i].CommandType)
+          .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
+      commandTryDispatchCode.AppendLine(caseCode);
+    }
+    return TemplateUtilities.ReplaceRegion(template, "TRY_RESOLVE_COMMAND_DISPATCH", commandTryDispatchCode.ToString().TrimEnd());
+  }
+
+  /// <summary>
+  /// Generates COMMAND_EXTRACTORS region (both extract and try-extract methods).
+  /// </summary>
+  private static string _generateCommandExtractorsAndTryExtractors(string template, ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+    var commandExtractorsCode = new StringBuilder();
+
+    // Generate command extractor methods
+    for (int i = 0; i < commandsWithStreamId.Length; i++) {
+      var info = commandsWithStreamId[i];
+      var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
+
+      var isNullable = info.PropertyType.EndsWith("?", StringComparison.Ordinal) ||
+                      info.PropertyType.Contains("string") ||
+                      info.PropertyType.Contains("String");
+
+      var extractorSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs",
+          isNullable ? "COMMAND_EXTRACTOR_NULLABLE" : "COMMAND_EXTRACTOR_NON_NULLABLE");
+
+      var extractorCode = extractorSnippet
+          .Replace("__COMMAND_TYPE__", info.CommandType)
+          .Replace("__COMMAND_NAME__", simpleName)
+          .Replace("__PROPERTY_NAME__", info.PropertyName);
+
+      if (i > 0) {
+        commandExtractorsCode.AppendLine();
+      }
+      commandExtractorsCode.Append(extractorCode);
+    }
+
+    // Generate TryExtractAsGuid methods for commands
+    for (int i = 0; i < commandsWithStreamId.Length; i++) {
+      var info = commandsWithStreamId[i];
+      var simpleName = info.CommandType.Split('.')[^1].Replace("global::", "");
+
+      var tryExtractorSnippetName = _getCommandTryExtractorSnippetName(info.PropertyType, info.IsPropertyValueType);
+      var tryExtractorSnippet = TemplateUtilities.ExtractSnippet(
+          typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", tryExtractorSnippetName);
+
+      var tryExtractorCode = tryExtractorSnippet
+          .Replace("__COMMAND_TYPE__", info.CommandType)
+          .Replace("__COMMAND_NAME__", simpleName)
+          .Replace("__PROPERTY_NAME__", info.PropertyName);
+
+      commandExtractorsCode.AppendLine();
+      commandExtractorsCode.Append(tryExtractorCode);
+    }
+
+    return TemplateUtilities.ReplaceRegion(template, "COMMAND_EXTRACTORS", commandExtractorsCode.ToString().TrimEnd());
+  }
+
+  /// <summary>
+  /// Generates SET_STREAM_ID_DISPATCH region for events and commands with mutable Guid [StreamId] properties.
+  /// </summary>
+  private static string _generateSetStreamIdRegion(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+
     var setStreamIdCode = new StringBuilder();
     var hasSetterCases = false;
 
-    // Only generate setter for types with Guid [StreamId] properties that have a regular set accessor
-    // (skip init-only and read-only properties)
     var eventIndex = 0;
     foreach (var info in eventsWithStreamId) {
       if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
         var setEventSnippet = TemplateUtilities.ExtractSnippet(
-            typeof(StreamIdGenerator).Assembly,
-            "StreamIdSnippets.cs",
-            "SET_STREAM_ID_EVENT_CASE"
-        );
+            typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "SET_STREAM_ID_EVENT_CASE");
         var caseCode = setEventSnippet
             .Replace("__EVENT_TYPE__", info.EventType)
             .Replace("__PROPERTY_NAME__", info.PropertyName)
@@ -621,10 +656,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
     foreach (var info in commandsWithStreamId) {
       if (_isGuidProperty(info.PropertyType) && !info.IsPropertyInitOnly) {
         var setCommandSnippet = TemplateUtilities.ExtractSnippet(
-            typeof(StreamIdGenerator).Assembly,
-            "StreamIdSnippets.cs",
-            "SET_STREAM_ID_COMMAND_CASE"
-        );
+            typeof(StreamIdGenerator).Assembly, "StreamIdSnippets.cs", "SET_STREAM_ID_COMMAND_CASE");
         var caseCode = setCommandSnippet
             .Replace("__COMMAND_TYPE__", info.CommandType)
             .Replace("__PROPERTY_NAME__", info.PropertyName)
@@ -635,22 +667,25 @@ public class StreamIdGenerator : IIncrementalGenerator {
       commandIndex++;
     }
 
-    template = TemplateUtilities.ReplaceRegion(template, "SET_STREAM_ID_DISPATCH",
+    return TemplateUtilities.ReplaceRegion(template, "SET_STREAM_ID_DISPATCH",
         hasSetterCases ? setStreamIdCode.ToString().TrimEnd() : "");
+  }
 
-    // Generate [ModuleInitializer] registration code
-    // Only register if this assembly has extractors (events or commands with [StreamId])
+  /// <summary>
+  /// Generates MODULE_INITIALIZER_REGISTRATION region.
+  /// </summary>
+  private static string _generateModuleInitializerRegion(
+      string template,
+      ImmutableArray<StreamIdInfo> eventsWithStreamId,
+      ImmutableArray<CommandStreamIdInfo> commandsWithStreamId) {
+
     var hasExtractors = !eventsWithStreamId.IsEmpty || !commandsWithStreamId.IsEmpty;
     if (hasExtractors) {
-      // Register with priority 100 (contracts/types that define messages are tried first)
       const string registrationCode = "global::Whizbang.Core.Registry.StreamIdExtractorRegistry.Register(new GeneratedStreamIdExtractor(), priority: 100);";
-      template = TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", registrationCode);
-    } else {
-      // No extractors - don't register anything (leave the region empty)
-      template = TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", "// No extractors in this assembly - skipping registration");
+      return TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", registrationCode);
     }
 
-    context.AddSource("StreamIdExtractors.g.cs", template);
+    return TemplateUtilities.ReplaceRegion(template, "MODULE_INITIALIZER_REGISTRATION", "// No extractors in this assembly - skipping registration");
   }
 
   /// <summary>

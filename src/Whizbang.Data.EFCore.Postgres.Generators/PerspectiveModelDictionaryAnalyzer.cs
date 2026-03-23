@@ -72,19 +72,12 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     }
 
     // Skip system types and types without source
-    if (type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
-        !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal)) {
+    if (_isNonCollectionSystemType(type)) {
       return;
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
-      // Skip static, indexers, and write-only properties
-      if (member.IsStatic || member.IsIndexer || member.IsWriteOnly) {
-        continue;
-      }
-
-      // Skip properties marked as not mapped/ignored by EF Core or JSON serialization
-      if (_isPropertyIgnored(member)) {
+      if (_shouldSkipProperty(member)) {
         continue;
       }
 
@@ -93,50 +86,92 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
       }
 
       // Check if this property is a Dictionary<,> or IDictionary<,>
-      if (_isDictionaryType(propType)) {
-        var keyType = propType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-        var valueType = propType.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-        var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
-
-        var diagnostic = Diagnostic.Create(
-            DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
-            member.Locations.FirstOrDefault() ?? Location.None,
-            member.Name,
-            type.Name,
-            keyType,
-            valueType,
-            suggestedType);
-        context.ReportDiagnostic(diagnostic);
+      if (_reportDictionaryIfFound(context, member, type, propType)) {
         continue;
       }
 
       // Recursively check nested class/struct types
-      // Skip common system types that won't contain Dictionary
       if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
           !_isSystemPrimitiveType(propType)) {
         _checkForDictionary(context, propType, visited);
       }
 
       // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)
-      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-        if (_isDictionaryType(typeArg)) {
-          // Dictionary is inside a collection (e.g., List<Dictionary<string, string>>)
-          var keyType = typeArg.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-          var valueType = typeArg.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
-          var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
+      _checkTypeArgumentsForDictionary(context, member, type, propType, visited);
+    }
+  }
 
-          var diagnostic = Diagnostic.Create(
-              DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
-              member.Locations.FirstOrDefault() ?? Location.None,
-              member.Name,
-              type.Name,
-              keyType,
-              valueType,
-              suggestedType);
-          context.ReportDiagnostic(diagnostic);
-        } else if (!_isSystemPrimitiveType(typeArg)) {
-          _checkForDictionary(context, typeArg, visited);
-        }
+  /// <summary>
+  /// Checks if a type is a System namespace type that is NOT a collections type.
+  /// </summary>
+  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
+    return type.ContainingNamespace?.ToDisplayString().StartsWith("System", StringComparison.Ordinal) == true &&
+           !type.ContainingNamespace.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Checks if a property should be skipped during analysis (static, indexer, write-only, or ignored).
+  /// </summary>
+  private static bool _shouldSkipProperty(IPropertySymbol member) {
+    return member.IsStatic || member.IsIndexer || member.IsWriteOnly || _isPropertyIgnored(member);
+  }
+
+  /// <summary>
+  /// Reports a diagnostic if the property type is a Dictionary type. Returns true if it was a dictionary.
+  /// </summary>
+  private static bool _reportDictionaryIfFound(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol propType) {
+
+    if (!_isDictionaryType(propType)) {
+      return false;
+    }
+
+    _reportDictionaryDiagnostic(context, member, containingType, propType);
+    return true;
+  }
+
+  /// <summary>
+  /// Reports a WHIZ810 diagnostic for a Dictionary property.
+  /// </summary>
+  private static void _reportDictionaryDiagnostic(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol dictionaryType) {
+
+    var keyType = dictionaryType.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var valueType = dictionaryType.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var suggestedType = $"KeyValuePair<{keyType}, {valueType}>";
+
+    var diagnostic = Diagnostic.Create(
+        DiagnosticDescriptors.PerspectiveModelDictionaryProperty,
+        member.Locations.FirstOrDefault() ?? Location.None,
+        member.Name,
+        containingType.Name,
+        keyType,
+        valueType,
+        suggestedType);
+    context.ReportDiagnostic(diagnostic);
+  }
+
+  /// <summary>
+  /// Checks generic type arguments for Dictionary types or nested types containing dictionaries.
+  /// </summary>
+  private static void _checkTypeArgumentsForDictionary(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      INamedTypeSymbol propType,
+      HashSet<INamedTypeSymbol> visited) {
+
+    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+      if (_isDictionaryType(typeArg)) {
+        _reportDictionaryDiagnostic(context, member, containingType, typeArg);
+      } else if (!_isSystemPrimitiveType(typeArg)) {
+        _checkForDictionary(context, typeArg, visited);
       }
     }
   }

@@ -271,6 +271,96 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Reports diagnostics for each discovered message type.
+  /// </summary>
+  private static void _reportMessageTypeDiagnostics(SourceProductionContext context, ImmutableArray<JsonMessageTypeInfo> messages) {
+    foreach (var message in messages) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          message.SimpleName,
+          _getMessageKind(message)
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Reports diagnostics for discovered nested types.
+  /// </summary>
+  private static void _reportTypeDiscoveryDiagnostics(SourceProductionContext context, ImmutableArray<JsonMessageTypeInfo> types, string kind) {
+    foreach (var type in types) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          type.SimpleName,
+          kind
+      ));
+    }
+  }
+
+  /// <summary>
+  /// Reports diagnostics for discovered collection and special types.
+  /// </summary>
+  private static void _reportCollectionTypeDiagnostics(
+      SourceProductionContext context,
+      ImmutableArray<ListTypeInfo> listTypes,
+      ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ArrayTypeInfo> arrayTypes,
+      ImmutableArray<DictionaryTypeInfo> dictionaryTypes,
+      ImmutableArray<JsonEnumInfo> enumTypes) {
+
+    foreach (var t in listTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"List<{t.ElementSimpleName}>", "collection type"));
+    }
+    foreach (var t in iReadOnlyListTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"IReadOnlyList<{t.ElementSimpleName}>", "collection interface type"));
+    }
+    foreach (var t in arrayTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"{t.ElementSimpleName}[]", "array type"));
+    }
+    foreach (var t in dictionaryTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, $"Dictionary<{t.KeyTypeName}, {t.ValueSimpleName}>", "dictionary type"));
+    }
+    foreach (var t in enumTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(DiagnosticDescriptors.JsonSerializableTypeDiscovered, Location.None, t.SimpleName, "enum type"));
+    }
+  }
+
+  /// <summary>
+  /// Discovers and merges polymorphic types from both message inheritance and property analysis.
+  /// </summary>
+  private static ImmutableArray<PolymorphicTypeInfo> _discoverAndMergePolymorphicTypes(
+      SourceProductionContext context,
+      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<PolymorphicTypeInfo> propertyPolymorphicTypes,
+      Compilation compilation) {
+
+    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
+    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
+
+    // Merge: property-derived types take precedence (they have [JsonDerivedType] attributes)
+    var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
+    foreach (var polyType in messagePolymorphicTypes) {
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    foreach (var polyType in propertyPolymorphicTypes) {
+      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
+    }
+    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
+
+    foreach (var polyType in polymorphicTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
+          Location.None,
+          polyType.BaseSimpleName,
+          polyType.DerivedTypes.Length
+      ));
+    }
+
+    return polymorphicTypes;
+  }
+
+  /// <summary>
   /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
   /// and Whizbang core types (MessageId, CorrelationId, etc.).
   /// </summary>
@@ -293,125 +383,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         messages.Length
     ));
 
-    // Report diagnostics for discovered message types
-    foreach (var message in messages) {
-      var messageKind = _getMessageKind(message);
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          message.SimpleName,
-          messageKind
-      ));
-    }
+    _reportMessageTypeDiagnostics(context, messages);
 
-    // Discover nested custom types used in message properties (e.g., OrderLineItem in List<OrderLineItem>)
-    // Also discovers polymorphic base types with [JsonPolymorphic] attribute from property types
+    // Discover nested custom types used in message properties
     var (nestedTypes, propertyPolymorphicTypes) = _discoverNestedTypes(messages, compilation);
-
-    // Report diagnostics for discovered nested types
-    foreach (var nestedType in nestedTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          nestedType.SimpleName,
-          "nested type"
-      ));
-    }
+    _reportTypeDiscoveryDiagnostics(context, nestedTypes, "nested type");
 
     // Combine messages and nested types for code generation
     var allTypes = messages.Concat(nestedTypes).ToImmutableArray();
 
-    // Discover List<T> types used in all messages and nested types
+    // Discover collection and special types
     var listTypes = _discoverListTypes(allTypes);
-
-    // Report diagnostics for discovered list types
-    foreach (var listType in listTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"List<{listType.ElementSimpleName}>",
-          "collection type"
-      ));
-    }
-
-    // Discover IReadOnlyList<T> types used in all messages and nested types
     var iReadOnlyListTypes = _discoverIReadOnlyListTypes(allTypes);
-
-    // Report diagnostics for discovered IReadOnlyList types
-    foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"IReadOnlyList<{iReadOnlyListType.ElementSimpleName}>",
-          "collection interface type"
-      ));
-    }
-
-    // Discover array types (T[]) used in all messages and nested types
     var arrayTypes = _discoverArrayTypes(allTypes);
-
-    // Report diagnostics for discovered array types
-    foreach (var arrayType in arrayTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"{arrayType.ElementSimpleName}[]",
-          "array type"
-      ));
-    }
-
-    // Discover Dictionary<TKey, TValue> types used in all messages and nested types
     var dictionaryTypes = _discoverDictionaryTypes(allTypes);
-
-    // Report diagnostics for discovered dictionary types
-    foreach (var dictType in dictionaryTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          $"Dictionary<{dictType.KeyTypeName}, {dictType.ValueSimpleName}>",
-          "dictionary type"
-      ));
-    }
-
-    // Discover enum types used in message and nested type properties
     var enumTypes = _discoverEnumTypes(allTypes, compilation);
 
-    // Report diagnostics for discovered enum types
-    foreach (var enumType in enumTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
-          Location.None,
-          enumType.SimpleName,
-          "enum type"
-      ));
-    }
+    // Report collection/special type diagnostics
+    _reportCollectionTypeDiagnostics(context, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes, enumTypes);
 
-    // Discover polymorphic base types from inheritance relationships (message types)
-    var allInheritanceInfo = _collectAllInheritanceInfo(messages, compilation);
-    var messagePolymorphicTypes = _buildPolymorphicRegistry(allInheritanceInfo, compilation);
-
-    // Merge message-derived and property-derived polymorphic types
-    // Property-derived types come from nested type discovery (e.g., AbstractFieldSettings with [JsonPolymorphic])
-    // Use dictionary to deduplicate by BaseTypeName (netstandard2.0 doesn't have DistinctBy)
-    var polymorphicTypeDict = new Dictionary<string, PolymorphicTypeInfo>();
-    foreach (var polyType in messagePolymorphicTypes) {
-      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
-    }
-    foreach (var polyType in propertyPolymorphicTypes) {
-      // Property-derived types take precedence (they have [JsonDerivedType] attributes)
-      polymorphicTypeDict[polyType.BaseTypeName] = polyType;
-    }
-    var polymorphicTypes = polymorphicTypeDict.Values.ToImmutableArray();
-
-    // Report diagnostics for discovered polymorphic types
-    foreach (var polyType in polymorphicTypes) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.PolymorphicBaseTypeDiscovered,
-          Location.None,
-          polyType.BaseSimpleName,
-          polyType.DerivedTypes.Length
-      ));
-    }
+    // Discover and merge polymorphic types
+    var polymorphicTypes = _discoverAndMergePolymorphicTypes(context, messages, propertyPolymorphicTypes, compilation);
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -713,54 +705,43 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+  /// <summary>
+  /// Holds pre-loaded snippet templates for GetTypeInfo generation.
+  /// </summary>
+  private sealed record GetTypeInfoSnippets(
+      string ValueObject,
+      string Message,
+      string Envelope,
+      string List,
+      string IReadOnlyList,
+      string Array,
+      string Dictionary,
+      string Enum,
+      string NullableEnum
+  );
+
+  /// <summary>
+  /// Loads all snippet templates needed for GetTypeInfo generation.
+  /// </summary>
+  private static GetTypeInfoSnippets _loadGetTypeInfoSnippets(Assembly assembly) {
+    return new GetTypeInfoSnippets(
+        ValueObject: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_VALUE_OBJECT"),
+        Message: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_MESSAGE"),
+        Envelope: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_MESSAGE_ENVELOPE"),
+        List: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_LIST"),
+        IReadOnlyList: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_IREADONLYLIST"),
+        Array: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_ARRAY"),
+        Dictionary: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_DICTIONARY"),
+        Enum: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_ENUM"),
+        NullableEnum: TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "GET_TYPE_INFO_NULLABLE_ENUM")
+    );
+  }
+
   private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
 
-    // Load snippets
-    var valueObjectCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_VALUE_OBJECT");
-
-    var messageCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_MESSAGE");
-
-    var envelopeCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_MESSAGE_ENVELOPE");
-
-    var listCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_LIST");
-
-    var iReadOnlyListCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_IREADONLYLIST");
-
-    var arrayCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_ARRAY");
-
-    var dictionaryCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_DICTIONARY");
-
-    var enumCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_ENUM");
-
-    var nullableEnumCheckSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "GET_TYPE_INFO_NULLABLE_ENUM");
+    // Load all snippets up front
+    var snippets = _loadGetTypeInfoSnippets(assembly);
 
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
     // Must track types being created to detect circular references
@@ -802,8 +783,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
-    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
-    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
+    sb.AppendLine(snippets.ValueObject.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
+    sb.AppendLine(snippets.ValueObject.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
     // Primitive types - create directly using JsonMetadataServices (AOT-compatible)
@@ -940,7 +921,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // All discovered types (messages + nested types)
     sb.AppendLine("  // Discovered types (messages + nested types)");
     foreach (var type in allTypes) {
-      var check = messageCheckSnippet
+      var check = snippets.Message
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(check);
@@ -950,7 +931,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
-      var check = envelopeCheckSnippet
+      var check = snippets.Envelope
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(check);
@@ -961,7 +942,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!listTypes.IsEmpty) {
       sb.AppendLine("  // List<T> types discovered in messages");
       foreach (var listType in listTypes) {
-        var check = listCheckSnippet
+        var check = snippets.List
             .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
         sb.AppendLine(check);
@@ -973,7 +954,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!iReadOnlyListTypes.IsEmpty) {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
-        var check = iReadOnlyListCheckSnippet
+        var check = snippets.IReadOnlyList
             .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
         sb.AppendLine(check);
@@ -985,7 +966,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!arrayTypes.IsEmpty) {
       sb.AppendLine("  // Array types (T[]) discovered in messages");
       foreach (var arrayType in arrayTypes) {
-        var check = arrayCheckSnippet
+        var check = snippets.Array
             .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
             .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
         sb.AppendLine(check);
@@ -997,7 +978,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     if (!dictionaryTypes.IsEmpty) {
       sb.AppendLine("  // Dictionary<TKey, TValue> types discovered in messages");
       foreach (var dictType in dictionaryTypes) {
-        var check = dictionaryCheckSnippet
+        var check = snippets.Dictionary
             .Replace("__KEY_TYPE__", dictType.KeyTypeName)
             .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
             .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
@@ -1011,14 +992,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  // Enum types discovered in messages and nested types");
       foreach (var enumType in enumTypes) {
         // Non-nullable enum
-        var check = enumCheckSnippet
+        var check = snippets.Enum
             .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
 
         // Nullable enum (always generate both - no need to discover which are used as nullable)
-        var nullableCheck = nullableEnumCheckSnippet
+        var nullableCheck = snippets.NullableEnum
             .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
             .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
         sb.AppendLine(nullableCheck);
@@ -1525,60 +1506,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
 
         // Handle abstract types with [JsonPolymorphic] - discover their derived types
-        // For polymorphic types, we generate JsonTypeInfo for both:
-        // 1. The abstract base type (with polymorphic options for derived type dispatch)
-        // 2. All concrete derived types (for actual serialization)
         if (typeSymbol.IsAbstract) {
-          // Check if this abstract type has [JsonPolymorphic] attribute
-          if (_hasJsonPolymorphicAttribute(typeSymbol)) {
-            // Discover derived types from [JsonDerivedType] attributes
-            var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol);
-            var derivedTypeNames = new List<string>();
-
-            foreach (var derivedType in derivedTypes) {
-              var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-              derivedTypeNames.Add(derivedTypeName);
-
-              // Skip if already processed
-              if (processedTypes.Contains(derivedTypeName)) {
-                continue;
-              }
-
-              // Extract properties and create type info for derived type
-              var derivedProperties = _extractPropertiesFromType(derivedType);
-              var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
-              var derivedClrTypeName = _getClrTypeName(derivedType);
-
-              var derivedTypeInfo = new JsonMessageTypeInfo(
-                  FullyQualifiedName: derivedTypeName,
-                  ClrTypeName: derivedClrTypeName,
-                  SimpleName: derivedType.Name,
-                  IsCommand: false,
-                  IsEvent: false,
-                  IsSerializable: false,
-                  Properties: derivedProperties,
-                  HasParameterizedConstructor: hasDerivedCtor
-              );
-
-              nestedTypes[derivedTypeName] = derivedTypeInfo;
-              processedTypes.Add(derivedTypeName);
-              typesToProcess.Enqueue(derivedTypeInfo);
-            }
-
-            // Create polymorphic type info for the abstract base type
-            // This allows STJ to dispatch to the correct derived type during deserialization
-            if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
-              var simpleName = typeSymbol.Name;
-              var isInterface = typeSymbol.TypeKind == TypeKind.Interface;
-              discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
-                  BaseTypeName: typeNameToProcess,
-                  BaseSimpleName: simpleName,
-                  DerivedTypes: [.. derivedTypeNames],
-                  IsInterface: isInterface
-              );
-            }
-          }
-          // Mark abstract type as processed to avoid re-checking
+          _processAbstractPolymorphicType(typeSymbol, typeNameToProcess, nestedTypes, discoveredPolymorphicTypes, processedTypes, typesToProcess);
           processedTypes.Add(typeNameToProcess);
           continue;
         }
@@ -1624,6 +1553,62 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return (nestedTypes.Values.ToImmutableArray(), discoveredPolymorphicTypes.Values.ToImmutableArray());
+  }
+
+  /// <summary>
+  /// Processes an abstract type with [JsonPolymorphic] attribute, discovering its derived types.
+  /// </summary>
+  private static void _processAbstractPolymorphicType(
+      INamedTypeSymbol typeSymbol,
+      string typeNameToProcess,
+      Dictionary<string, JsonMessageTypeInfo> nestedTypes,
+      Dictionary<string, PolymorphicTypeInfo> discoveredPolymorphicTypes,
+      HashSet<string> processedTypes,
+      Queue<JsonMessageTypeInfo> typesToProcess) {
+
+    if (!_hasJsonPolymorphicAttribute(typeSymbol)) {
+      return;
+    }
+
+    var derivedTypes = _discoverDerivedTypesFromAttributes(typeSymbol);
+    var derivedTypeNames = new List<string>();
+
+    foreach (var derivedType in derivedTypes) {
+      var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      derivedTypeNames.Add(derivedTypeName);
+
+      if (processedTypes.Contains(derivedTypeName)) {
+        continue;
+      }
+
+      var derivedProperties = _extractPropertiesFromType(derivedType);
+      var hasDerivedCtor = _hasMatchingParameterizedConstructor(derivedType, derivedProperties);
+      var derivedClrTypeName = _getClrTypeName(derivedType);
+
+      var derivedTypeInfo = new JsonMessageTypeInfo(
+          FullyQualifiedName: derivedTypeName,
+          ClrTypeName: derivedClrTypeName,
+          SimpleName: derivedType.Name,
+          IsCommand: false,
+          IsEvent: false,
+          IsSerializable: false,
+          Properties: derivedProperties,
+          HasParameterizedConstructor: hasDerivedCtor
+      );
+
+      nestedTypes[derivedTypeName] = derivedTypeInfo;
+      processedTypes.Add(derivedTypeName);
+      typesToProcess.Enqueue(derivedTypeInfo);
+    }
+
+    if (derivedTypeNames.Count > 0 && !discoveredPolymorphicTypes.ContainsKey(typeNameToProcess)) {
+      discoveredPolymorphicTypes[typeNameToProcess] = new PolymorphicTypeInfo(
+          BaseTypeName: typeNameToProcess,
+          BaseSimpleName: typeSymbol.Name,
+          DerivedTypes: [.. derivedTypeNames],
+          IsInterface: typeSymbol.TypeKind == TypeKind.Interface
+      );
+    }
   }
 
   /// <summary>
