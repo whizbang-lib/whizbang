@@ -293,75 +293,8 @@ public class DapperPostgresEventStore(
       var eventData = JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
 
-      // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
-      // Stored metadata uses PascalCase keys: MessageId, Hops
-      var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
-        ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
-
-      var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
-                         ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
-
-      // Extract MessageId from metadata (snake_case key to match ToJsonb)
-      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
-        ? Guid.Parse(msgIdElem.GetString()!)
-        : throw new InvalidOperationException("message_id not found in metadata");
-
-      // Deserialize Hops from metadata (snake_case key)
-      List<MessageHop> hops;
-      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
-        var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
-                           ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
-        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
-      } else {
-        hops = [];
-      }
-
-      // Restore scope from Scope column if present and first hop has no ScopeDelta
-      // Supports both new PerspectiveScope short keys ("t","u","c","o") and legacy snake_case ("tenant_id","user_id")
-      if (!string.IsNullOrEmpty(jsonb.ScopeJson) && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                                ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
-        if (JsonSerializer.Deserialize(jsonb.ScopeJson, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
-          string? tenantId = null;
-          string? userId = null;
-          string? customerId = null;
-          string? organizationId = null;
-
-          // Try PerspectiveScope short keys first (new format)
-          if (scopeDict.TryGetValue("t", out var tElem) && tElem.HasValue && tElem.Value.ValueKind != JsonValueKind.Null) {
-            tenantId = tElem.Value.GetString();
-          }
-          if (scopeDict.TryGetValue("u", out var uElem) && uElem.HasValue && uElem.Value.ValueKind != JsonValueKind.Null) {
-            userId = uElem.Value.GetString();
-          }
-          if (scopeDict.TryGetValue("c", out var cElem) && cElem.HasValue && cElem.Value.ValueKind != JsonValueKind.Null) {
-            customerId = cElem.Value.GetString();
-          }
-          if (scopeDict.TryGetValue("o", out var oElem) && oElem.HasValue && oElem.Value.ValueKind != JsonValueKind.Null) {
-            organizationId = oElem.Value.GetString();
-          }
-
-          // Fall back to legacy snake_case keys
-          if (tenantId == null && scopeDict.TryGetValue("tenant_id", out var tenantElem) && tenantElem.HasValue && tenantElem.Value.ValueKind != JsonValueKind.Null) {
-            tenantId = tenantElem.Value.GetString();
-          }
-          if (userId == null && scopeDict.TryGetValue("user_id", out var userElem) && userElem.HasValue && userElem.Value.ValueKind != JsonValueKind.Null) {
-            userId = userElem.Value.GetString();
-          }
-
-          if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
-            var scope = new PerspectiveScope {
-              TenantId = tenantId,
-              UserId = userId,
-              CustomerId = customerId,
-              OrganizationId = organizationId
-            };
-            // Update first hop with ScopeDelta from the scope column
-            var firstHop = hops[0];
-            hops[0] = firstHop with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-          }
-        }
-      }
+      var (messageId, hops) = _deserializeMetadataAndHops(jsonb);
+      _restoreScopeFromJson(jsonb.ScopeJson, hops);
 
       // Cast to IEvent and construct envelope
       if (eventData is IEvent eventPayload) {
@@ -373,6 +306,61 @@ public class DapperPostgresEventStore(
         yield return typedEnvelope;
       }
     }
+  }
+
+  private (Guid messageId, List<MessageHop> hops) _deserializeMetadataAndHops(JsonbPersistenceModel jsonb) {
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
+    var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                       ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
+
+    var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+      ? Guid.Parse(msgIdElem.GetString()!)
+      : throw new InvalidOperationException("message_id not found in metadata");
+
+    List<MessageHop> hops;
+    if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+      var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
+                         ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+      hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+    } else {
+      hops = [];
+    }
+
+    return (messageId, hops);
+  }
+
+  private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
+    if (string.IsNullOrEmpty(scopeJson) || hops.Count == 0 || hops[0].Scope != null) {
+      return;
+    }
+
+    var scopeDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                            ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>");
+    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
+      return;
+    }
+
+    var tenantId = _extractScopeValue(scopeDict, "t") ?? _extractScopeValue(scopeDict, "tenant_id");
+    var userId = _extractScopeValue(scopeDict, "u") ?? _extractScopeValue(scopeDict, "user_id");
+    var customerId = _extractScopeValue(scopeDict, "c");
+    var organizationId = _extractScopeValue(scopeDict, "o");
+
+    if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(customerId) || !string.IsNullOrEmpty(organizationId)) {
+      var scope = new PerspectiveScope {
+        TenantId = tenantId,
+        UserId = userId,
+        CustomerId = customerId,
+        OrganizationId = organizationId
+      };
+      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    }
+  }
+
+  private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {
+    return scopeDict.TryGetValue(key, out var elem) && elem.HasValue && elem.Value.ValueKind != JsonValueKind.Null
+      ? elem.Value.GetString()
+      : null;
   }
 
   /// <summary>

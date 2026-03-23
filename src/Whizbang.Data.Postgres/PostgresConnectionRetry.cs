@@ -68,9 +68,7 @@ public sealed partial class PostgresConnectionRetry {
       cancellationToken.ThrowIfCancellationRequested();
 
       try {
-        if (_logger is not null) {
-          LogConnectionAttempt(_logger, attempt);
-        }
+        _logRetryAttempt(attempt, isSchema: false);
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -81,27 +79,10 @@ public sealed partial class PostgresConnectionRetry {
 
         return;
       } catch (Exception ex) when (_isTransientException(ex)) {
-        // During initial retry phase, log each failure as warning
-        if (attempt <= _options.InitialRetryAttempts) {
-          if (_logger is not null) {
-            LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
-          }
-        } else if (!_options.RetryIndefinitely) {
-          // Not retrying indefinitely - throw after initial attempts
-          if (_logger is not null) {
-            LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
-          }
+        if (_shouldRethrowAfterRetry(ex, attempt, currentDelay)) {
           throw;
-        } else {
-          // Retrying indefinitely - log less frequently (every 10 attempts)
-          if (_logger is not null && attempt % 10 == 0) {
-            LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
-          }
         }
-
         await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
-
-        // Calculate next delay with exponential backoff (capped at MaxRetryDelay)
         currentDelay = CalculateNextDelay(currentDelay);
       }
     }
@@ -126,9 +107,7 @@ public sealed partial class PostgresConnectionRetry {
       cancellationToken.ThrowIfCancellationRequested();
 
       try {
-        if (_logger is not null) {
-          LogSchemaWaitAttempt(_logger, attempt);
-        }
+        _logRetryAttempt(attempt, isSchema: true);
 
         if (await _isSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false)) {
           if (attempt > 1 && _logger is not null) {
@@ -145,7 +124,6 @@ public sealed partial class PostgresConnectionRetry {
         await Task.Delay(currentDelay, cancellationToken).ConfigureAwait(false);
         currentDelay = CalculateNextDelay(currentDelay);
       } catch (Exception ex) when (_isTransientException(ex)) {
-        // Connection error during schema check - retry
         if (_logger is not null) {
           LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
         }
@@ -170,6 +148,46 @@ public sealed partial class PostgresConnectionRetry {
 
     // Then wait for schema
     await WaitForSchemaReadyAsync(connectionString, cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Handles retry logic for connection attempts: logs appropriately and returns true if the caller should rethrow.
+  /// </summary>
+  private bool _shouldRethrowAfterRetry(Exception ex, int attempt, TimeSpan currentDelay) {
+    if (attempt <= _options.InitialRetryAttempts) {
+      // During initial retry phase, log each failure as warning
+      if (_logger is not null) {
+        LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
+      }
+      return false;
+    }
+
+    if (!_options.RetryIndefinitely) {
+      // Not retrying indefinitely - throw after initial attempts
+      if (_logger is not null) {
+        LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
+      }
+      return true;
+    }
+
+    // Retrying indefinitely - log less frequently (every 10 attempts)
+    if (_logger is not null && attempt % 10 == 0) {
+      LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Logs the current retry attempt for connection or schema checks.
+  /// </summary>
+  private void _logRetryAttempt(int attempt, bool isSchema) {
+    if (_logger is not null) {
+      if (isSchema) {
+        LogSchemaWaitAttempt(_logger, attempt);
+      } else {
+        LogConnectionAttempt(_logger, attempt);
+      }
+    }
   }
 
   /// <summary>

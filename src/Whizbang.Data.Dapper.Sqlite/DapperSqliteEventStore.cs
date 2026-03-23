@@ -205,62 +205,82 @@ public class DapperSqliteEventStore(
 
     // Deserialize all rows first to avoid yield in try-catch
     var results = new List<MessageEnvelope<IEvent>>();
-    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
 
     foreach (var row in rows) {
-      // Parse JSON once to extract MessageId and compare
-      using var doc = JsonDocument.Parse(row.Envelope);
-      var root = doc.RootElement;
-
-      // Try to deserialize the payload with each event type
-      foreach (var eventType in eventTypes) {
-        // Try to deserialize using the type's JsonTypeInfo
-        var typeInfo = JsonOptions.GetTypeInfo(eventType);
-        // Get the MessageId first to filter
-        if (typeInfo != null && root.TryGetProperty("MessageId", out var messageIdProp)) {
-          var messageIdGuid = messageIdProp.GetProperty("Value").GetGuid();
-
-          // Filter by fromEventId
-          if (fromEventId != null && messageIdGuid.CompareTo(fromEventId.Value) <= 0) {
-            break; // Skip this row
-          }
-
-          // Try to deserialize the whole envelope
-          // For SQLite, we need to check if Payload can deserialize as this event type
-          if (root.TryGetProperty("Payload", out var payloadProp)) {
-            var payloadJson = payloadProp.GetRawText();
-            var payload = JsonSerializer.Deserialize(payloadJson, typeInfo);
-            if (payload is IEvent eventPayload) {
-              // Successfully deserialized, extract full envelope
-              var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
-              var messageIdJson = messageIdProp.GetRawText();
-              var messageIdValue = messageIdTypeInfo != null
-                ? (MessageId?)JsonSerializer.Deserialize(messageIdJson, messageIdTypeInfo)
-                : null;
-
-              if (messageIdValue == null) {
-                continue; // Skip if MessageId deserialization failed
-              }
-
-              var hops = root.TryGetProperty("Hops", out var hopsProp) && hopsTypeInfo != null
-                ? (List<MessageHop>?)JsonSerializer.Deserialize(hopsProp.GetRawText(), hopsTypeInfo)
-                : null;
-
-              results.Add(new MessageEnvelope<IEvent> {
-                MessageId = messageIdValue.Value,
-                Payload = eventPayload,
-                Hops = hops ?? []
-              });
-              break; // Found correct type, move to next row
-            }
-          }
-        }
+      var envelope = _tryDeserializeRow(row.Envelope, fromEventId, eventTypes);
+      if (envelope != null) {
+        results.Add(envelope);
       }
     }
 
     foreach (var result in results) {
       yield return result;
     }
+  }
+
+  /// <summary>
+  /// Attempts to deserialize a row's envelope JSON into a polymorphic MessageEnvelope&lt;IEvent&gt;.
+  /// Returns null if the row should be skipped (filtered by fromEventId or no matching type).
+  /// </summary>
+  private MessageEnvelope<IEvent>? _tryDeserializeRow(string envelopeJson, Guid? fromEventId, IReadOnlyList<Type> eventTypes) {
+    using var doc = JsonDocument.Parse(envelopeJson);
+    var root = doc.RootElement;
+
+    foreach (var eventType in eventTypes) {
+      var typeInfo = JsonOptions.GetTypeInfo(eventType);
+      if (typeInfo == null || !root.TryGetProperty("MessageId", out var messageIdProp)) {
+        continue;
+      }
+
+      var messageIdGuid = messageIdProp.GetProperty("Value").GetGuid();
+
+      // Filter by fromEventId
+      if (fromEventId != null && messageIdGuid.CompareTo(fromEventId.Value) <= 0) {
+        break; // Skip this row
+      }
+
+      var envelope = _resolveEventType(root, eventType, typeInfo, messageIdProp);
+      if (envelope != null) {
+        return envelope;
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Tries to deserialize the payload as the given event type and reconstruct the envelope.
+  /// Returns null if the payload doesn't match the event type.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _resolveEventType(JsonElement root, Type eventType, System.Text.Json.Serialization.Metadata.JsonTypeInfo typeInfo, JsonElement messageIdProp) {
+    if (!root.TryGetProperty("Payload", out var payloadProp)) {
+      return null;
+    }
+
+    var payload = JsonSerializer.Deserialize(payloadProp.GetRawText(), typeInfo);
+    if (payload is not IEvent eventPayload) {
+      return null;
+    }
+
+    var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
+    var messageIdValue = messageIdTypeInfo != null
+      ? (MessageId?)JsonSerializer.Deserialize(messageIdProp.GetRawText(), messageIdTypeInfo)
+      : null;
+
+    if (messageIdValue == null) {
+      return null;
+    }
+
+    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+    var hops = root.TryGetProperty("Hops", out var hopsProp) && hopsTypeInfo != null
+      ? (List<MessageHop>?)JsonSerializer.Deserialize(hopsProp.GetRawText(), hopsTypeInfo)
+      : null;
+
+    return new MessageEnvelope<IEvent> {
+      MessageId = messageIdValue.Value,
+      Payload = eventPayload,
+      Hops = hops ?? []
+    };
   }
 
   private static bool _isUniqueConstraintViolation(Exception ex) {

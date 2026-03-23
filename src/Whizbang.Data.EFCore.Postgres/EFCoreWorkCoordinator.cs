@@ -88,7 +88,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return $"\"{schema}\".{identifier}";
   }
 
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method orchestrates complex work batch processing with multiple parameter preparations and SQL execution. Splitting would reduce clarity of the atomic database operation flow.")]
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
@@ -302,7 +301,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <summary>
   /// Processes the query results and maps them to a WorkBatch
   /// </summary>
-  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method deserializes and categorizes work batch results across three work types (outbox, inbox, perspective). The branching logic is inherent to the data mapping process.")]
   private WorkBatch _processResults(List<WorkBatchRow> results) {
 
     // Check for storage failure rows (error tracking from Phase 4.5)
@@ -333,146 +331,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Map results to WorkBatch - deserialize envelopes from database
     var outboxWork = validResults
       .Where(r => r.Source == "outbox")
-      .Select(r => {
-        var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
-
-        var flags = WorkBatchFlags.None;
-        if (r.IsNewlyStored == true) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.IsOrphaned == true) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        // Deserialize metadata if present
-        Dictionary<string, JsonElement>? metadata = null;
-        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
-          try {
-            var metadataDoc = JsonDocument.Parse(r.Metadata);
-            metadata = metadataDoc.RootElement.EnumerateObject()
-              .ToDictionary(p => p.Name, p => p.Value.Clone());
-          } catch (JsonException ex) {
-            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
-          }
-        }
-
-        // Extract message type - prefer direct column, fall back to parsing EnvelopeType if null (backward compat)
-        var messageType = !string.IsNullOrWhiteSpace(r.MessageType)
-          ? r.MessageType
-          : _extractMessageTypeFromEnvelopeType(r.EnvelopeType!);
-
-        return new OutboxWork {
-          MessageId = r.WorkId,
-          Destination = r.Destination!,
-          Envelope = jsonEnvelope,
-          EnvelopeType = r.EnvelopeType!,
-          MessageType = messageType,
-          StreamId = r.StreamId,
-          PartitionNumber = r.PartitionNumber,
-          Attempts = r.Attempts ?? 0,
-          Status = (MessageProcessingStatus)r.Status,
-          Flags = flags,
-          Metadata = metadata
-        };
-      })
+      .Select(_mapOutboxWork)
       .ToList();
 
     var inboxWork = validResults
       .Where(r => r.Source == "inbox")
-      .Select(r => {
-        // Inbox messages MUST have message_type populated (envelope_type not stored for inbox)
-        if (string.IsNullOrWhiteSpace(r.MessageType)) {
-          throw new InvalidOperationException(
-            $"Inbox message {r.WorkId} has null/empty message_type. " +
-            "This indicates the message was not properly serialized by the transport consumer. " +
-            "Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
-        }
-
-        var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
-        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
-        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
-
-        var flags = WorkBatchFlags.None;
-        if (r.IsNewlyStored == true) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.IsOrphaned == true) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        // Deserialize metadata if present
-        Dictionary<string, JsonElement>? metadata = null;
-        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
-          try {
-            var metadataDoc = JsonDocument.Parse(r.Metadata);
-            metadata = metadataDoc.RootElement.EnumerateObject()
-              .ToDictionary(p => p.Name, p => p.Value.Clone());
-          } catch (JsonException ex) {
-            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
-          }
-        }
-
-        return new InboxWork {
-          MessageId = r.WorkId,
-          Envelope = jsonEnvelope,
-          MessageType = r.MessageType,
-          StreamId = r.StreamId,
-          PartitionNumber = r.PartitionNumber,
-          Attempts = r.Attempts ?? 0,
-          Status = (MessageProcessingStatus)r.Status,
-          Flags = flags,
-          Metadata = metadata
-        };
-      })
+      .Select(_mapInboxWork)
       .ToList();
 
     var perspectiveWork = validResults
       .Where(r => r.Source == "perspective")
-      .Select(r => {
-        var flags = WorkBatchFlags.None;
-        if (r.IsNewlyStored == true) {
-          flags |= WorkBatchFlags.NewlyStored;
-        }
-
-        if (r.IsOrphaned == true) {
-          flags |= WorkBatchFlags.Orphaned;
-        }
-
-        // Deserialize metadata if present
-        Dictionary<string, JsonElement>? metadata = null;
-        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
-          try {
-            var metadataDoc = JsonDocument.Parse(r.Metadata);
-            metadata = metadataDoc.RootElement.EnumerateObject()
-              .ToDictionary(p => p.Name, p => p.Value.Clone());
-          } catch (JsonException ex) {
-            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
-          }
-        }
-
-        return new PerspectiveWork {
-          WorkId = r.WorkId,
-          StreamId = r.StreamId ?? throw new InvalidOperationException("Perspective work must have StreamId"),
-          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
-          LastProcessedEventId = null,  // No longer returned by process_work_batch
-          Status = (PerspectiveProcessingStatus)r.Status,
-          PartitionNumber = r.PartitionNumber,
-          Flags = flags,
-          Metadata = metadata
-        };
-      })
+      .Select(_mapPerspectiveWork)
       .ToList();
 
-    // Parse sync inquiry results
-    // SQL returns: source='sync_result', work_id=inquiry_id, work_stream_id=stream_id,
-    //              partition_number=pending_count, status=processed_count,
-    //              message_data=pending_event_ids JSON, metadata={"processed_event_ids":[...]}
     var syncInquiryResults = validResults
       .Where(r => r.Source == "sync_result")
       .Select(r => new SyncInquiryResult {
@@ -507,6 +378,94 @@ public class EFCoreWorkCoordinator<TDbContext>(
       PerspectiveWork = perspectiveWork,
       SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
     };
+  }
+
+  private OutboxWork _mapOutboxWork(WorkBatchRow r) {
+    var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
+    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
+
+    var messageType = !string.IsNullOrWhiteSpace(r.MessageType)
+      ? r.MessageType
+      : _extractMessageTypeFromEnvelopeType(r.EnvelopeType!);
+
+    return new OutboxWork {
+      MessageId = r.WorkId,
+      Destination = r.Destination!,
+      Envelope = jsonEnvelope,
+      EnvelopeType = r.EnvelopeType!,
+      MessageType = messageType,
+      StreamId = r.StreamId,
+      PartitionNumber = r.PartitionNumber,
+      Attempts = r.Attempts ?? 0,
+      Status = (MessageProcessingStatus)r.Status,
+      Flags = _buildFlags(r),
+      Metadata = _parseMetadataJson(r)
+    };
+  }
+
+  private InboxWork _mapInboxWork(WorkBatchRow r) {
+    if (string.IsNullOrWhiteSpace(r.MessageType)) {
+      throw new InvalidOperationException(
+        $"Inbox message {r.WorkId} has null/empty message_type. " +
+        "This indicates the message was not properly serialized by the transport consumer. " +
+        "Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
+    }
+
+    var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
+    var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+      ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
+
+    return new InboxWork {
+      MessageId = r.WorkId,
+      Envelope = jsonEnvelope,
+      MessageType = r.MessageType,
+      StreamId = r.StreamId,
+      PartitionNumber = r.PartitionNumber,
+      Attempts = r.Attempts ?? 0,
+      Status = (MessageProcessingStatus)r.Status,
+      Flags = _buildFlags(r),
+      Metadata = _parseMetadataJson(r)
+    };
+  }
+
+  private PerspectiveWork _mapPerspectiveWork(WorkBatchRow r) {
+    return new PerspectiveWork {
+      WorkId = r.WorkId,
+      StreamId = r.StreamId ?? throw new InvalidOperationException("Perspective work must have StreamId"),
+      PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException("Perspective work must have PerspectiveName"),
+      LastProcessedEventId = null,
+      Status = (PerspectiveProcessingStatus)r.Status,
+      PartitionNumber = r.PartitionNumber,
+      Flags = _buildFlags(r),
+      Metadata = _parseMetadataJson(r)
+    };
+  }
+
+  private static WorkBatchFlags _buildFlags(WorkBatchRow r) {
+    var flags = WorkBatchFlags.None;
+    if (r.IsNewlyStored == true) {
+      flags |= WorkBatchFlags.NewlyStored;
+    }
+    if (r.IsOrphaned == true) {
+      flags |= WorkBatchFlags.Orphaned;
+    }
+    return flags;
+  }
+
+  private Dictionary<string, JsonElement>? _parseMetadataJson(WorkBatchRow r) {
+    if (string.IsNullOrWhiteSpace(r.Metadata)) {
+      return null;
+    }
+
+    try {
+      var metadataDoc = JsonDocument.Parse(r.Metadata);
+      return metadataDoc.RootElement.EnumerateObject()
+        .ToDictionary(p => p.Name, p => p.Value.Clone());
+    } catch (JsonException ex) {
+      _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
+      return null;
+    }
   }
 
   /// <summary>

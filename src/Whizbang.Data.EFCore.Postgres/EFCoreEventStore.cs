@@ -149,19 +149,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
-      var hops = metadata.Hops;
-
-      // Restore scope from dedicated scope column if hops don't already have scope data
-      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
-        if (scopeDelta != null) {
-          var mutableHops = hops.ToList();
-          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
-          hops = mutableHops;
-        }
-      }
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -208,19 +196,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
-      var hops = metadata.Hops;
-
-      // Restore scope from dedicated scope column if hops don't already have scope data
-      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
-        if (scopeDelta != null) {
-          var mutableHops = hops.ToList();
-          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
-          hops = mutableHops;
-        }
-      }
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
@@ -281,18 +257,9 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
       // Look up the concrete type from the EventType column
-      // Try exact match first, then fall back to comparing just the type+assembly part
-      if (!typeMap.TryGetValue(record.EventType, out var concreteType)) {
-        // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
-        var typeAndAssembly = string.Join(", ", record.EventType.Split(',').Take(2).Select(s => s.Trim()));
-        if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
-          // Found via simplified name
-        } else {
-          // Event type not in the requested list - skip it
-          // This allows perspectives to materialize subsets of events from shared streams
-          // (e.g., ProductCatalogPerspective skips InventoryRestockedEvent in product streams)
-          continue;
-        }
+      var concreteType = _resolveConcreteType(record.EventType, typeMap);
+      if (concreteType == null) {
+        continue;
       }
 
       // Deserialize the event payload to the concrete type
@@ -301,25 +268,11 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
         ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      // Metadata is already strongly-typed EnvelopeMetadata - use directly
-      var metadata = record.Metadata;
-      var hops = metadata.Hops;
-
-      // Restore scope from the dedicated scope column if hops don't already have scope data.
-      // This enables perspectives and receptors to get scope without re-parsing metadata hops.
-      // Falls back gracefully: if scope column is null or hops already have scope, no-op.
-      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
-        if (scopeDelta != null) {
-          var mutableHops = hops.ToList();
-          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
-          hops = mutableHops;
-        }
-      }
+      var hops = _restoreScopeInHops(record);
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent
       var envelope = new MessageEnvelope<IEvent> {
-        MessageId = metadata.MessageId,
+        MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops
       };
@@ -368,31 +321,16 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     foreach (var record in records) {
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var hops = _restoreScopeInHops(record);
 
-      var hops = record.Metadata.Hops;
-
-      // Restore scope from dedicated scope column if hops don't already have scope data
-      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
-        if (scopeDelta != null) {
-          var mutableHops = hops.ToList();
-          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
-          hops = mutableHops;
-        }
-      }
-
-      var envelope = new MessageEnvelope<TMessage> {
+      envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = record.Metadata.MessageId,
         Payload = (TMessage)eventData,
         Hops = hops
-      };
-
-      envelopes.Add(envelope);
+      });
     }
 
     return envelopes;
@@ -456,47 +394,27 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     foreach (var record in records) {
       // Normalize event type name (remove assembly version/culture/publickey if present)
-      // EventType column stores "TypeName, AssemblyName" or full assembly-qualified name
-      // We need to match against FullName (TypeName only) in our dictionary
       var storedTypeName = record.EventType;
       var commaIndex = storedTypeName.IndexOf(',');
       var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
 
-      // Look up the concrete type based on normalized EventType
-      // Skip events that aren't in the perspective's list - a perspective doesn't need all events from a stream
+      // Skip events that aren't in the perspective's list
       if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
         continue;
       }
 
-      // Deserialize to concrete type using JSON source generation
       var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
-      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
 
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
-      }
+      var hops = _restoreScopeInHops(record);
 
-      // Cast to IEvent (safe because all event types implement IEvent)
-      var hops = record.Metadata.Hops;
-
-      // Restore scope from dedicated scope column if hops don't already have scope data
-      if (record.Scope != null && hops.Count > 0 && hops[0].Scope == null) {
-        var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
-        if (scopeDelta != null) {
-          var mutableHops = hops.ToList();
-          mutableHops[0] = mutableHops[0] with { Scope = scopeDelta };
-          hops = mutableHops;
-        }
-      }
-
-      var envelope = new MessageEnvelope<IEvent> {
+      envelopes.Add(new MessageEnvelope<IEvent> {
         MessageId = record.Metadata.MessageId,
         Payload = (IEvent)eventData,
         Hops = hops
-      };
-
-      envelopes.Add(envelope);
+      });
     }
 
     return envelopes;
@@ -518,6 +436,43 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       .MaxAsync(e => (long?)e.Version, cancellationToken);
 
     return lastSequence ?? -1;
+  }
+
+  /// <summary>
+  /// Resolves a concrete type from the stored EventType string using the type map.
+  /// Returns null if the type is not in the requested list (allows perspectives to skip irrelevant events).
+  /// </summary>
+  private static Type? _resolveConcreteType(string eventType, Dictionary<string, Type> typeMap) {
+    if (typeMap.TryGetValue(eventType, out var concreteType)) {
+      return concreteType;
+    }
+
+    // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
+    var typeAndAssembly = string.Join(", ", eventType.Split(',').Take(2).Select(s => s.Trim()));
+    if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
+      return concreteType;
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
+  /// Returns the (possibly modified) hops list.
+  /// </summary>
+  private static List<MessageHop> _restoreScopeInHops(EventStoreRecord record) {
+    var hops = record.Metadata.Hops.ToList();
+    if (record.Scope == null || hops.Count == 0 || hops[0].Scope != null) {
+      return hops;
+    }
+
+    var scopeDelta = ScopeDelta.FromPerspectiveScope(record.Scope);
+    if (scopeDelta == null) {
+      return hops;
+    }
+
+    hops[0] = hops[0] with { Scope = scopeDelta };
+    return hops;
   }
 
   /// <summary>
