@@ -272,6 +272,116 @@ public class OutboxPublishPipelineIntegrationTests {
   }
 
   // ========================================
+  // PostLifecycle Integration Tests
+  // ========================================
+
+  [Test]
+  public async Task OutboxWorker_FiresPostLifecycle_WhenEventLeavesServiceAsync() {
+    // Arrange — real WorkCoordinatorPublisherWorker with lifecycle tracking.
+    // The coordinator loop processes WorkToReturn on startup, writing outbox work
+    // to the channel. The publisher loop reads from the channel and publishes.
+    // PostLifecycle stages fire after publishing.
+    var postLifecycleFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var publishedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var coordinator = new TestWorkCoordinator();
+    var publishStrategy = new TestPublishStrategy(publishedTcs);
+    var channelWriter = new TestWorkChannelWriter();
+    var instanceProvider = new TestServiceInstanceProvider();
+
+    var messageId = Guid.CreateVersion7();
+    coordinator.WorkToReturn = [
+      new OutboxWork {
+        MessageId = messageId,
+        Destination = "test-topic",
+        Envelope = _createTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+        MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+        StreamId = Guid.CreateVersion7(),
+        PartitionNumber = 1,
+        Attempts = 0,
+        Status = MessageProcessingStatus.Stored,
+        Flags = WorkBatchFlags.None,
+      }
+    ];
+
+    var strategy = new ImmediateWorkCoordinatorStrategy(
+      coordinator, instanceProvider, new WorkCoordinatorOptions(), workChannelWriter: channelWriter);
+
+    var stagesFired = new ConcurrentBag<LifecycleStage>();
+    var sp = _buildServiceProviderWithLifecycle(
+      coordinator, publishStrategy, instanceProvider, channelWriter,
+      stagesFired, postLifecycleFired);
+    var worker = sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await worker.StartAsync(cts.Token);
+
+    try {
+      // Act — same pattern as working tests
+      strategy.QueueOutboxMessage(_createOutboxMessage());
+      await strategy.FlushAsync(WorkBatchFlags.None);
+
+      // publishedTcs set deterministically by TestPublishStrategy.PublishAsync
+      await publishedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+      // postLifecycleFired set deterministically by PostLifecycleTrackingInvoker
+      await postLifecycleFired.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+      // Assert — publish happened AND PostLifecycle fired
+      await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(1);
+      await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleAsync)).IsTrue()
+        .Because("OutboxWorker must fire PostLifecycleAsync when event leaves the service");
+      await Assert.That(stagesFired.Contains(LifecycleStage.PostLifecycleInline)).IsTrue()
+        .Because("OutboxWorker must fire PostLifecycleInline when event leaves the service");
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+  }
+
+  /// <summary>
+  /// IReceptorInvoker that records lifecycle stages and signals when PostLifecycle fires.
+  /// </summary>
+  private sealed class PostLifecycleTrackingInvoker(
+    ConcurrentBag<LifecycleStage> stagesFired,
+    TaskCompletionSource? postLifecycleSignal = null) : IReceptorInvoker {
+
+    public ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      stagesFired.Add(stage);
+      if (stage == LifecycleStage.PostLifecycleInline) {
+        postLifecycleSignal?.TrySetResult();
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Fake deserializer that returns the raw JsonElement payload directly.
+  /// Avoids dependency on JsonContextRegistry which requires registered types.
+  /// </summary>
+  private sealed class PassthroughLifecycleMessageDeserializer : ILifecycleMessageDeserializer {
+    public object DeserializeFromJsonElement(JsonElement jsonElement, string messageTypeName) {
+      return jsonElement;
+    }
+
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope, string envelopeTypeName) {
+      return envelope.Payload;
+    }
+
+    public object DeserializeFromEnvelope(IMessageEnvelope<JsonElement> envelope) {
+      return envelope.Payload;
+    }
+
+    public object DeserializeFromBytes(byte[] jsonBytes, string messageTypeName) {
+      using var doc = JsonDocument.Parse(jsonBytes);
+      return doc.RootElement.Clone();
+    }
+  }
+
+  // ========================================
   // Test Infrastructure
   // ========================================
 
@@ -289,6 +399,34 @@ public class OutboxPublishPipelineIntegrationTests {
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
       PollingIntervalMilliseconds = 50
     }));
+    services.AddLogging();
+    services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// Same as _buildServiceProvider but with lifecycle coordinator, tracking invoker,
+  /// and ILifecycleMessageDeserializer to enable PostLifecycle testing.
+  /// </summary>
+  private static ServiceProvider _buildServiceProviderWithLifecycle(
+    IWorkCoordinator workCoordinator,
+    IMessagePublishStrategy publishStrategy,
+    IServiceInstanceProvider instanceProvider,
+    IWorkChannelWriter channelWriter,
+    ConcurrentBag<LifecycleStage> stagesFired,
+    TaskCompletionSource postLifecycleSignal) {
+
+    var services = new ServiceCollection();
+    services.AddSingleton(workCoordinator);
+    services.AddSingleton(publishStrategy);
+    services.AddSingleton(instanceProvider);
+    services.AddSingleton(channelWriter);
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
+      PollingIntervalMilliseconds = 50
+    }));
+    services.AddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    services.AddScoped<IReceptorInvoker>(sp => new PostLifecycleTrackingInvoker(stagesFired, postLifecycleSignal));
+    services.AddSingleton<ILifecycleMessageDeserializer>(new PassthroughLifecycleMessageDeserializer());
     services.AddLogging();
     services.AddHostedService<WorkCoordinatorPublisherWorker>();
     return services.BuildServiceProvider();
