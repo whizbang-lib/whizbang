@@ -95,8 +95,8 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Simple contains check to match any perspective interface
-          return originalDef.Contains("IPerspectiveFor");
+          // Match IPerspectiveBase — unified marker for all perspective types
+          return originalDef.Contains("IPerspectiveBase");
         })
         .ToList();
 

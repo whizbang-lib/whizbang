@@ -30,7 +30,7 @@ namespace Whizbang.Generators;
 public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string IRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveBase";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover event namespaces from IPerspectiveFor implementations

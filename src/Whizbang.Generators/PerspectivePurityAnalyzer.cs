@@ -260,10 +260,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
-    // Check if type implements IPerspectiveFor<TModel, TEvent...> or IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent...>
+    // Check if type implements IPerspectiveBase<TModel, TEvent...> (unified marker) or IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent...>
     foreach (var iface in typeSymbol.AllInterfaces) {
       var interfaceName = iface.ToDisplayString();
-      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
+      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<", StringComparison.Ordinal) ||
           interfaceName.StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<", StringComparison.Ordinal)) {
         return true;
       }

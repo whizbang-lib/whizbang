@@ -46,7 +46,7 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string I_PERSPECTIVE_BASE = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -2580,8 +2580,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var iface in candidateType.AllInterfaces) {
         var ifaceName = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-        // Check if it's IPerspectiveFor<TModel, ...> (can have 2-10 type arguments)
-        if (!ifaceName.StartsWith($"global::{I_PERSPECTIVE_FOR}<", System.StringComparison.Ordinal)) {
+        // Check if it's IPerspectiveBase<TModel, ...> (unified marker for all perspective types)
+        if (!ifaceName.StartsWith($"global::{I_PERSPECTIVE_BASE}<", System.StringComparison.Ordinal)) {
           continue;
         }
 

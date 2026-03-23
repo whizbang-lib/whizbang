@@ -840,4 +840,41 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(generatedSource).Contains("wh_per_sessions_active")
       .Because("deeply nested perspective should include all parent classes with wh_per_ prefix");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_GeneratesSchemaAsync() {
+    // Arrange — Perspective using only IPerspectiveWithActionsFor
+    const string source = """
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace MyApp.Perspectives;
+
+public record OrderModel {
+  [StreamId]
+  public Guid Id { get; set; }
+  public string Status { get; set; } = "";
+}
+
+public record OrderDeletedEvent : IEvent;
+
+public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent> {
+  public ApplyResult<OrderModel> Apply(OrderModel current, OrderDeletedEvent @event)
+    => ApplyResult<OrderModel>.Purge();
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+
+    // Assert — WithActionsFor perspective must generate a schema
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("CREATE TABLE")
+      .Because("IPerspectiveWithActionsFor perspectives must generate DB schema");
+    await Assert.That(generatedSource).Contains("order_purge")
+      .Because("Table name should derive from perspective class name");
+  }
 }

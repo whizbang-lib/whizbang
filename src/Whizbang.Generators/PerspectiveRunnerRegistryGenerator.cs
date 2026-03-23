@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -56,12 +56,13 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1..50> interfaces (single-stream)
+    // Look for IPerspectiveBase<TModel, TEvent1..50> interfaces (single-stream)
+    // IPerspectiveBase is the unified marker extended by both IPerspectiveFor and IPerspectiveWithActionsFor
     var singleStreamInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
-          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
+          // Match IPerspectiveBase<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_BASE_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();

@@ -431,4 +431,43 @@ public class PerspectivePurityAnalyzerTests {
     await Assert.That(whiz104.Length).IsEqualTo(1);
     await Assert.That(whiz104[0].Severity).IsEqualTo(DiagnosticSeverity.Warning);
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Analyzer_IPerspectiveWithActionsFor_DetectsImpureApplyAsync() {
+    // Arrange — IPerspectiveWithActionsFor with impure Apply (uses DateTime.UtcNow)
+    const string source = """
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestApp;
+
+public record DeletedEvent : IEvent {
+  [StreamId]
+  public Guid Id { get; init; }
+}
+
+public record OrderModel {
+  [StreamId]
+  public Guid Id { get; init; }
+  public DateTimeOffset DeletedAt { get; init; }
+}
+
+public class ImpureWithActionsPerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+  public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event) {
+    // IMPURE: uses DateTime.UtcNow instead of event timestamp
+    return new OrderModel { Id = current.Id, DeletedAt = DateTime.UtcNow };
+  }
+}
+""";
+
+    // Act
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectivePurityAnalyzer>(source);
+
+    // Assert — Purity analyzer must detect DateTime.UtcNow in WithActionsFor Apply methods
+    var whiz103 = diagnostics.Where(d => d.Id == "WHIZ103").ToArray();
+    await Assert.That(whiz103.Length).IsGreaterThanOrEqualTo(1)
+      .Because("IPerspectiveWithActionsFor Apply methods must be checked for purity — DateTime.UtcNow is impure");
+  }
 }

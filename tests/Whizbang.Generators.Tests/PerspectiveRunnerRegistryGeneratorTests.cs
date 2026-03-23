@@ -613,6 +613,97 @@ namespace TestNamespace {
     await Assert.That(registrySource).Contains("typeof(global::TestNamespace.OrderCreatedEvent)");
   }
 
+  // ==================== IPerspectiveWithActionsFor Event Type Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_IncludesIPerspectiveWithActionsForEventsAsync() {
+    // Arrange — Perspective that uses IPerspectiveWithActionsFor for a PurgeEvent
+    // and IPerspectiveFor for a regular CreatedEvent.
+    // Both event types MUST appear in _allEventTypes.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record CreatedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record PurgeEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public class TestPerspective :
+      IPerspectiveFor<Model, CreatedEvent>,
+      IPerspectiveWithActionsFor<Model, PurgeEvent> {
+    public Model Apply(Model current, CreatedEvent @event) => current;
+    public ApplyResult<Model> Apply(Model current, PurgeEvent @event)
+        => ApplyResult<Model>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — BOTH event types must be in _allEventTypes
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+
+    // CreatedEvent from IPerspectiveFor — should be included (this already works)
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.CreatedEvent)")
+      .Because("IPerspectiveFor events must be in _allEventTypes");
+
+    // PurgeEvent from IPerspectiveWithActionsFor — MUST also be included
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.PurgeEvent)")
+      .Because("IPerspectiveWithActionsFor events must be in _allEventTypes for IEventTypeProvider — " +
+               "without this, is_event=false on inbox and perspectives never fire");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AllEventTypes_IncludesOnlyWithActionsForPerspectiveAsync() {
+    // Arrange — Perspective that ONLY uses IPerspectiveWithActionsFor (no IPerspectiveFor at all)
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record DeletedEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public class PurgeOnlyPerspective : IPerspectiveWithActionsFor<Model, DeletedEvent> {
+    public ApplyResult<Model> Apply(Model current, DeletedEvent @event)
+        => ApplyResult<Model>.Purge();
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — DeletedEvent must be in _allEventTypes even though it's only via WithActionsFor
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.DeletedEvent)")
+      .Because("A perspective-only-via-WithActionsFor must still have its events in _allEventTypes");
+  }
+
   private static int _countOccurrences(string text, string pattern) {
     int count = 0;
     int index = 0;
