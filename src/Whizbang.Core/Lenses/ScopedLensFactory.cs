@@ -170,7 +170,7 @@ public sealed class ScopedLensFactory(
 
   private void _checkPermission(Permission requiredPermission, string resourceType) {
     var context = _scopeContextAccessor.Current;
-    if (context is null || !context.HasPermission(requiredPermission)) {
+    if (context?.HasPermission(requiredPermission) != true) {
       _emitAccessDenied(requiredPermission, resourceType, context);
       throw new AccessDeniedException(
         requiredPermission,
@@ -182,7 +182,7 @@ public sealed class ScopedLensFactory(
 
   private void _checkAnyPermission(Permission[] permissions, string resourceType) {
     var context = _scopeContextAccessor.Current;
-    if (context is null || !context.HasAnyPermission(permissions)) {
+    if (context?.HasAnyPermission(permissions) != true) {
       // Report the first permission as the "required" one
       _emitAccessDenied(permissions[0], resourceType, context);
       throw new AccessDeniedException(

@@ -92,7 +92,7 @@ public static class ConfigurationUtilities {
   /// </example>
   public static TableNameConfig SelectTableNameConfig(
       AnalyzerConfigOptionsProvider provider,
-      System.Threading.CancellationToken cancellationToken) {
+      System.Threading.CancellationToken _cancellationToken) {
     return GetTableNameConfig(provider.GlobalOptions);
   }
 
@@ -128,7 +128,7 @@ public static class ConfigurationUtilities {
   /// </example>
   public static int? SelectMaxIdentifierLengthOverride(
       AnalyzerConfigOptionsProvider provider,
-      System.Threading.CancellationToken cancellationToken) {
+      System.Threading.CancellationToken _cancellationToken) {
     return GetMaxIdentifierLengthOverride(provider.GlobalOptions);
   }
 }

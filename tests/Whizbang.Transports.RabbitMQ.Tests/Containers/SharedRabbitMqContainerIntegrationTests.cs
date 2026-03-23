@@ -18,7 +18,7 @@ public class SharedRabbitMqContainerIntegrationTests {
   [Before(Test)]
   public async Task SetupAsync() {
     // Ensure container is initialized before each test
-    await SharedRabbitMqContainer.InitializeAsync();
+    await SharedRabbitMqContainer.InitializeOrSkipAsync();
   }
 
   [Test]

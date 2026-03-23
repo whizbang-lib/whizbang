@@ -9,14 +9,11 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// Handles CreateProductCommand and publishes ProductCreatedEvent (and optionally InventoryRestockedEvent)
 /// </summary>
 public class CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProductReceptor> logger) : IReceptor<CreateProductCommand, ProductCreatedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<CreateProductReceptor> _logger = logger;
-
   public async ValueTask<ProductCreatedEvent> HandleAsync(
     CreateProductCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Creating product {ProductId} with name {Name} and price {Price}",
       message.ProductId,
       message.Name,
@@ -44,14 +41,14 @@ public class CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProduct
         RestockedAt = DateTime.UtcNow
       };
 
-      await _dispatcher.PublishAsync(inventoryRestocked);
+      await dispatcher.PublishAsync(inventoryRestocked);
 
-      _logger.LogInformation(
+      logger.LogInformation(
         "Product {ProductId} created with initial stock of {InitialStock}",
         message.ProductId,
         message.InitialStock);
     } else {
-      _logger.LogInformation(
+      logger.LogInformation(
         "Product {ProductId} created without initial stock",
         message.ProductId);
     }

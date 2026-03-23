@@ -46,8 +46,7 @@ public class VectorDependencyAnalyzer : DiagnosticAnalyzer {
     // Check if any referenced assembly is Pgvector.EntityFrameworkCore
     foreach (var reference in compilation.References) {
       var assemblySymbol = compilation.GetAssemblyOrModuleSymbol(reference) as IAssemblySymbol;
-      if (assemblySymbol is not null &&
-          assemblySymbol.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal)) {
+      if (assemblySymbol?.Name.Equals(PGVECTOR_ASSEMBLY_NAME, StringComparison.Ordinal) == true) {
         return true;
       }
     }

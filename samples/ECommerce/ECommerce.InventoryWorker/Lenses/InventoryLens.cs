@@ -9,16 +9,15 @@ namespace ECommerce.InventoryWorker.Lenses;
 /// Uses ILensQuery abstraction with LINQ for type-safe queries - zero reflection, AOT compatible.
 /// </summary>
 public class InventoryLens(ILensQuery<InventoryLevelDto> query) : IInventoryLens {
-  private readonly ILensQuery<InventoryLevelDto> _query = query;
 
   /// <inheritdoc />
   public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    return await _query.DefaultScope.GetByIdAsync(productId, cancellationToken);
+    return await query.DefaultScope.GetByIdAsync(productId, cancellationToken);
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetAllAsync(CancellationToken cancellationToken = default) {
-    var results = await _query.DefaultScope.Query
+    var results = await query.DefaultScope.Query
       .AsNoTracking()
       .Select(row => row.Data)
       .ToListAsync(cancellationToken);
@@ -28,7 +27,7 @@ public class InventoryLens(ILensQuery<InventoryLevelDto> query) : IInventoryLens
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetLowStockAsync(int threshold = 10, CancellationToken cancellationToken = default) {
-    var results = await _query.DefaultScope.Query
+    var results = await query.DefaultScope.Query
       .AsNoTracking()
       .Where(row => row.Data.Quantity - row.Data.Reserved <= threshold)
       .Select(row => row.Data)

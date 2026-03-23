@@ -178,7 +178,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private sealed class OverriddenPostgresLimits(int maxLength) : IDbProviderLimits {
     private readonly int _maxLength = maxLength;
-
     public int MaxTableNameBytes => _maxLength;
     public int MaxColumnNameBytes => _maxLength;
     public int MaxIndexNameBytes => _maxLength;
@@ -574,7 +573,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Skip system types (except System.Collections)
     var ns = type.ContainingNamespace?.ToDisplayString();
-    if (ns != null && ns.StartsWith("System", StringComparison.Ordinal) &&
+    if (ns?.StartsWith("System", StringComparison.Ordinal) == true &&
         !ns.StartsWith("System.Collections", StringComparison.Ordinal)) {
       return false;
     }

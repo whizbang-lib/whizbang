@@ -8,7 +8,6 @@ namespace ECommerce.BFF.API.Endpoints.SuperAdmin;
 /// Get all orders for a specific tenant (super-admin view)
 /// </summary>
 public class GetOrdersByTenantEndpoint(IOrderLens orderLens) : EndpointWithoutRequest<IEnumerable<OrderReadModel>> {
-  private readonly IOrderLens _orderLens = orderLens;
 
   public override void Configure() {
     Get("/superadmin/orders/tenant/{tenantId}");
@@ -18,7 +17,7 @@ public class GetOrdersByTenantEndpoint(IOrderLens orderLens) : EndpointWithoutRe
   public override async Task HandleAsync(CancellationToken ct) {
     // TODO: Verify user is super-admin
     var tenantId = Route<string>("tenantId")!;
-    var orders = await _orderLens.GetByTenantIdAsync(tenantId, ct);
+    var orders = await orderLens.GetByTenantIdAsync(tenantId, ct);
     Response = orders;
   }
 }

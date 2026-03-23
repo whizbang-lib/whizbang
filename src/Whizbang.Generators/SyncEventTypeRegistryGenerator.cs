@@ -38,7 +38,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
     var syncMappings = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0 },
         transform: static (ctx, ct) => _extractSyncMappings(ctx, ct)
-    ).Where(static mappings => mappings is not null && mappings.Length > 0);
+    ).Where(static mappings => mappings?.Length > 0);
 
     // Combine with compilation to get assembly name for namespace
     var compilationAndMappings = context.CompilationProvider.Combine(syncMappings.Collect());

@@ -459,7 +459,16 @@ public partial class WorkCoordinatorPublisherWorker(
             await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, lifecycleScope.ServiceProvider, stoppingToken);
           }
 
-          // EXIT: event sent to transport
+          // PostLifecycle: OutboxWorker is the last worker when event leaves the service
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+            await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, lifecycleScope.ServiceProvider, stoppingToken);
+          }
+
+          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+            await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, lifecycleScope.ServiceProvider, stoppingToken);
+          }
+
+          // EXIT: event sent to transport, PostLifecycle complete
           coordinator.AbandonTracking(work.MessageId);
         } else if (outboxTypedEnvelope is not null && receptorInvoker is not null) {
           // Fallback: direct invocation
@@ -817,7 +826,7 @@ public partial class WorkCoordinatorPublisherWorker(
     var orderedProcessor = new OrderedStreamProcessor();
     await orderedProcessor.ProcessInboxWorkAsync(
       workToProcess,
-      processor: (work) => {
+      processor: (_) => {
         // For orphaned recovery, mark as EventStored (same as TransportConsumerWorker)
         return Task.FromResult(MessageProcessingStatus.EventStored);
       },

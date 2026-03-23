@@ -735,7 +735,7 @@ public class StreamIdGenerator : IIncrementalGenerator {
   /// Checks if a property is init-only or read-only (no settable set accessor).
   /// </summary>
   private static bool _isInitOnlyOrReadOnly(IPropertySymbol property) {
-    return property.SetMethod is null || property.SetMethod.IsInitOnly;
+    return property.SetMethod?.IsInitOnly != false;
   }
 
   /// <summary>
@@ -796,6 +796,6 @@ public class StreamIdGenerator : IIncrementalGenerator {
         a.AttributeClass is not null &&
         TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
 
-    return attr is not null ? _extractOnlyIfEmptyFromAttribute(attr) : false;
+    return attr is not null && _extractOnlyIfEmptyFromAttribute(attr);
   }
 }

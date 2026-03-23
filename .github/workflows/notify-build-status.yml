@@ -79,9 +79,9 @@ jobs:
           if [ -n "$INPUT_TITLE" ]; then
             TITLE="$INPUT_TITLE"
           elif [ -n "$PR_NUMBER" ]; then
-            TITLE="$EMOJI PR #$PR_NUMBER - ${INPUT_STATUS^}"
+            TITLE="[LIB] $EMOJI PR #$PR_NUMBER - ${INPUT_STATUS^}"
           else
-            TITLE="$EMOJI $BRANCH - ${INPUT_STATUS^}"
+            TITLE="[LIB] $EMOJI $BRANCH - ${INPUT_STATUS^}"
           fi
 
           # Build message

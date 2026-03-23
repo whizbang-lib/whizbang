@@ -2655,15 +2655,11 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Check if there are any PostLifecycle receptors registered for this message type
-    var asyncReceptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleAsync);
-    var inlineReceptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleInline);
-    if (asyncReceptors.Count == 0 && inlineReceptors.Count == 0) {
-      return;
-    }
-
     // Create a scope to resolve scoped services
     // Dispatcher is a singleton — cannot inject scoped services directly
+    // NOTE: We do NOT short-circuit on compile-time receptor count here because
+    // runtime-registered receptors (via IReceptorRegistry.Register) and tags
+    // must still fire even when no compile-time receptors exist.
     await using var scope = _scopeFactory.CreateAsyncScope();
 
     // Prefer coordinator path — handles receptors + tags + ImmediateAsync
@@ -2688,18 +2684,16 @@ public abstract partial class Dispatcher(
       MessageSource = MessageSource.Local
     };
 
-    if (asyncReceptors.Count > 0) {
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
-    }
+    // Always invoke both PostLifecycle stages — ReceptorInvoker handles
+    // the no-receptor case (still processes tags as lifecycle observers)
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
 
-    if (inlineReceptors.Count > 0) {
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
-        context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
-    }
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
+      context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
 
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;
@@ -3147,7 +3141,7 @@ public abstract partial class Dispatcher(
         // No strategy AND no deferred channel - log warning for backward compatibility
 #pragma warning disable CA1848 // Use LoggerMessage delegates for performance - acceptable in error path
         var logger = scope.ServiceProvider.GetService<ILogger<Dispatcher>>();
-        if (logger != null && logger.IsEnabled(LogLevel.Warning)) {
+        if (logger?.IsEnabled(LogLevel.Warning) == true) {
           var eventTypeName = eventType.Name;
           logger.LogWarning(
             "IWorkCoordinatorStrategy not registered and IDeferredOutboxChannel not available - " +
@@ -3318,11 +3312,9 @@ public abstract partial class Dispatcher(
       // This avoids creating MessageEnvelope<IEvent> which can't be serialized
       var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
       var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
-      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions);
-      if (jsonTypeInfo == null) {
-        throw new InvalidOperationException(
+      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
+        ?? throw new InvalidOperationException(
           $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
-      }
 
       var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
 
@@ -3684,12 +3676,8 @@ public abstract partial class Dispatcher(
     // Create ONE scope for all messages
     var scope = _scopeFactory.CreateScope();
     try {
-      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
-
-      // If no strategy is registered, throw
-      if (strategy == null) {
-        throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
-      }
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>()
+        ?? throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
 
       // Queue ALL messages to the strategy
       foreach (var (message, messageType, context) in messages) {
@@ -4319,10 +4307,8 @@ public abstract partial class Dispatcher(
   }
 
   private void _ensureReceptorExists(object message, Type messageType) {
-    var invoker = GetReceptorInvoker<object>(message, messageType);
-    if (invoker == null) {
-      throw new ReceptorNotFoundException(messageType);
-    }
+    var invoker = GetReceptorInvoker<object>(message, messageType)
+      ?? throw new ReceptorNotFoundException(messageType);
   }
 
   /// <summary>

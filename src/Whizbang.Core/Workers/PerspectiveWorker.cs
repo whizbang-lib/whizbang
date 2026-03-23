@@ -986,12 +986,10 @@ public partial class PerspectiveWorker(
       CancellationToken cancellationToken,
       ProcessingMode? processingMode = null) {
 
-    var scopedReceptorInvoker = scopedProvider.GetService<IReceptorInvoker>();
-    if (scopedReceptorInvoker is null) {
-      throw new InvalidOperationException(
+    var scopedReceptorInvoker = scopedProvider.GetService<IReceptorInvoker>()
+      ?? throw new InvalidOperationException(
         "IReceptorInvoker is required for lifecycle stage invocation but was not registered. " +
         "Ensure AddWhizbangReceptorInvoker() is called during DI setup.");
-    }
 
     try {
       // Create lifecycle context with stream and perspective information

@@ -251,19 +251,6 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extract short type name from fully qualified name.
-  /// </summary>
-  private static string _getShortTypeName(string fullyQualifiedName) {
-    // Handle "global::Namespace.TypeName" format
-    var name = fullyQualifiedName;
-    if (name.StartsWith("global::", StringComparison.Ordinal)) {
-      name = name[8..];
-    }
-    var lastDot = name.LastIndexOf('.');
-    return lastDot >= 0 ? name[(lastDot + 1)..] : name;
-  }
-
-  /// <summary>
   /// Generate a mutation info property for diagnostics.
   /// </summary>
   private static string _generateMutationInfoProperty(RestMutationInfo mutation) {

@@ -128,12 +128,8 @@ public static class MessageKindDetector {
     }
 
     // Check Event suffixes
-    foreach (var suffix in _eventSuffixes) {
-      if (name.EndsWith(suffix, StringComparison.Ordinal)) {
-        return MessageKind.Event;
-      }
-    }
-
-    return MessageKind.Unknown;
+    return _eventSuffixes.Any(suffix => name.EndsWith(suffix, StringComparison.Ordinal))
+      ? MessageKind.Event
+      : MessageKind.Unknown;
   }
 }

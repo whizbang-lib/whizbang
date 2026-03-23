@@ -139,7 +139,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var mustExistEventTypes = _extractMustExistEventTypes(classSymbol, eventTypes);
 
     // Extract return types for each Apply method
-    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
+    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes);
 
     // Compute nested-aware simple name for unique hintNames
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -575,8 +575,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// </summary>
   private static EventReturnTypeInfo[] _extractEventReturnTypes(
       INamedTypeSymbol classSymbol,
-      List<string> eventTypes,
-      ITypeSymbol modelType) {
+      List<string> eventTypes
+      ) {
 
     var returnTypes = new List<EventReturnTypeInfo>();
 

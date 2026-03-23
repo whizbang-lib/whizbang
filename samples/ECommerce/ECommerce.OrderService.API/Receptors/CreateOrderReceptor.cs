@@ -14,14 +14,12 @@ namespace ECommerce.OrderService.API.Receptors;
 /// Handles CreateOrderCommand and publishes OrderCreatedEvent
 /// </summary>
 public class CreateOrderReceptor(IDispatcher dispatcher, ILogger<CreateOrderReceptor> logger) : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<CreateOrderReceptor> _logger = logger;
 
   public async ValueTask<OrderCreatedEvent> HandleAsync(
     CreateOrderCommand message,
     CancellationToken cancellationToken = default) {
 
-    _logger.LogInformation(
+    logger.LogInformation(
       "Processing order {OrderId} for customer {CustomerId} with {ItemCount} items",
       message.OrderId,
       message.CustomerId,
@@ -47,9 +45,9 @@ public class CreateOrderReceptor(IDispatcher dispatcher, ILogger<CreateOrderRece
 
     // Publish the event for cross-service delivery
     // This will be sent to Azure Service Bus and consumed by other services
-    await _dispatcher.PublishAsync(orderCreated);
+    await dispatcher.PublishAsync(orderCreated);
 
-    _logger.LogInformation("Order {OrderId} created and event published", message.OrderId);
+    logger.LogInformation("Order {OrderId} created and event published", message.OrderId);
 
     return orderCreated;
   }

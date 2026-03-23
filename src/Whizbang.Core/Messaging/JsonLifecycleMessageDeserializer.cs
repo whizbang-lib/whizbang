@@ -108,25 +108,19 @@ public sealed class JsonLifecycleMessageDeserializer(JsonSerializerOptions? json
     }
 
     // Use JsonContextRegistry for AOT-safe type resolution (zero reflection)
-    var jsonTypeInfo = JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions);
-
-    if (jsonTypeInfo is null) {
-      throw new InvalidOperationException(
+    var jsonTypeInfo = JsonContextRegistry.GetTypeInfoByName(messageTypeName, _jsonOptions)
+      ?? throw new InvalidOperationException(
         $"Failed to resolve message type '{messageTypeName}'. " +
         "Ensure the assembly containing this type is loaded and registered via [ModuleInitializer]."
       );
-    }
 
     // Deserialize the JsonElement to the target type
     try {
-      var message = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo);
-
-      if (message is null) {
-        throw new InvalidOperationException(
+      var message = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo)
+        ?? throw new InvalidOperationException(
           $"Deserialization of type '{messageTypeName}' returned null. " +
           "This may indicate invalid JSON or a serialization configuration issue."
         );
-      }
 
       return message;
     } catch (JsonException ex) {

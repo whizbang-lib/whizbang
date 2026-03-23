@@ -9,8 +9,6 @@ namespace ECommerce.OrderService.API.Services;
 /// Demonstrates dispatchers outside of receptors/perspectives
 /// </summary>
 public class OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService> _logger) {
-  private readonly IDispatcher _dispatcher = dispatcher;
-  private readonly ILogger<OrderRetryService> _logger = _logger;
 
   /// <summary>
   /// Retries a failed order by explicitly dispatching CreateOrderCommand
@@ -36,7 +34,7 @@ public class OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService
       TotalAmount = 59.98m
     };
 
-    await _dispatcher.SendAsync(command);
+    await dispatcher.SendAsync(command);
 
     _logger.LogInformation(
       "Retry command dispatched for order {OrderId}",
@@ -59,7 +57,7 @@ public class OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService
       Type = NotificationType.Email
     };
 
-    await _dispatcher.SendAsync(command);
+    await dispatcher.SendAsync(command);
 
     _logger.LogInformation(
       "Test notification command dispatched for customer {CustomerId}",
@@ -90,7 +88,7 @@ public class OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService
       TotalAmount = 9.99m
     };
 
-    await _dispatcher.PublishAsync(@event);
+    await dispatcher.PublishAsync(@event);
 
     _logger.LogInformation(
       "Test event published for order {OrderId}",

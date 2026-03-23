@@ -284,25 +284,19 @@ public class DapperPostgresEventStore(
       };
 
       // Deserialize using the concrete type's JsonTypeInfo
-      var typeInfo = JsonOptions.GetTypeInfo(concreteType);
-      if (typeInfo == null) {
-        throw new InvalidOperationException(
+      var typeInfo = JsonOptions.GetTypeInfo(concreteType)
+        ?? throw new InvalidOperationException(
           $"No JsonTypeInfo found for type {concreteType.FullName}. " +
           "Ensure the event type is registered in your JsonSerializerContext."
         );
-      }
 
-      var eventData = JsonSerializer.Deserialize(jsonb.DataJson, typeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
-      }
+      var eventData = JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
 
       // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
       // Stored metadata uses PascalCase keys: MessageId, Hops
-      var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
-      if (metadataDictTypeInfo == null) {
-        throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
-      }
+      var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
+        ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
 
       var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
                          ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");

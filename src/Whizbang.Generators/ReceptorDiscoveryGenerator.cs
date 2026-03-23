@@ -143,7 +143,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var receptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
         classSymbol, StandardInterfaceNames.I_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
-    if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
+    if (receptorInterface?.TypeArguments.Length == 2) {
       // Found IReceptor<TMessage, TResponse> - regular async receptor with response
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
@@ -168,7 +168,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var voidReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
         classSymbol, StandardInterfaceNames.I_RECEPTOR_GENERIC_DEFINITION);
 
-    if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
+    if (voidReceptorInterface?.TypeArguments.Length == 1) {
       // Found IReceptor<TMessage> - void async receptor with no response
       var messageTypeSymbol = voidReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(
@@ -190,7 +190,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var syncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
         classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_WITH_RESPONSE_GENERIC_DEFINITION);
 
-    if (syncReceptorInterface is not null && syncReceptorInterface.TypeArguments.Length == 2) {
+    if (syncReceptorInterface?.TypeArguments.Length == 2) {
       // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
       // Keep the full response type (including Routed<T>) for DI registration
       // Unwrapping happens later in _extractUniqueEventTypes for cascade generation
@@ -215,7 +215,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var voidSyncReceptorInterface = TypeNameHelper.FindInterfaceByOriginalDefinition(
         classSymbol, StandardInterfaceNames.I_SYNC_RECEPTOR_GENERIC_DEFINITION);
 
-    if (voidSyncReceptorInterface is not null && voidSyncReceptorInterface.TypeArguments.Length == 1) {
+    if (voidSyncReceptorInterface?.TypeArguments.Length == 1) {
       // Found ISyncReceptor<TMessage> - void sync receptor with no response
       var messageTypeSymbol = voidSyncReceptorInterface.TypeArguments[0];
       return new ReceptorInfo(

@@ -166,7 +166,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(400); // Let several empty polls complete
+    await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -189,7 +189,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(400); // Let several polling cycles complete
+    await Task.Delay(1000); // Let several polling cycles complete (generous for CI contention)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -208,11 +208,11 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Start worker with database not ready
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Let several not-ready cycles happen
+    await Task.Delay(500); // Let several not-ready cycles happen
 
     // Now make database ready
     dbCheck.IsReady = true;
-    await Task.Delay(300); // Let a ready cycle happen
+    await Task.Delay(500); // Let a ready cycle happen
 
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -248,7 +248,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Start and let run briefly, then cancel
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await Task.Delay(500); // Generous delay for CI contention
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -286,7 +286,7 @@ public class PerspectiveWorkerCoverageTests {
     // Act - Let it run long enough for >10 cycles
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(500); // Should get >10 cycles at 10ms interval
+    await Task.Delay(1000); // Should get >10 cycles at 10ms interval (generous for CI)
     cts.Cancel();
 
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -861,6 +861,77 @@ public class PerspectiveWorkerCoverageTests {
     // Assert
     await Assert.That(tagProcessor.ProcessTagsCallCount).IsGreaterThanOrEqualTo(1)
       .Because("Tag processor should be invoked at PostPerspectiveInline stage");
+  }
+
+  #endregion
+
+  #region PostLifecycle Integration Tests
+
+  [Test]
+  public async Task Worker_FiresPostLifecycleAsync_AtBatchEnd_ViaCoordinatorAsync() {
+    // Arrange — real PerspectiveWorker with stage-tracking invoker
+    var trackingInvoker = new StageTrackingReceptorInvoker();
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
+    var registry = new FakePerspectiveRunnerRegistry();
+
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork {
+        StreamId = streamId,
+        PerspectiveName = "Test.FakePerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }
+    ];
+
+    var eventStore = new FakeEventStore();
+    eventStore.AddEvent(streamId, eventId, new TestCoverageEvent("postlifecycle-test"));
+    var eventTypeProvider = new FakeEventTypeProvider([typeof(TestCoverageEvent)]);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddScoped<IReceptorInvoker>(_ => trackingInvoker);
+    services.AddSingleton<Whizbang.Core.Lifecycle.ILifecycleCoordinator, Whizbang.Core.Lifecycle.LifecycleCoordinator>();
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      new InstantCompletionStrategy(),
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider
+    );
+
+    // Act — run the REAL PerspectiveWorker
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+
+    // Wait a bit for PostLifecycle to fire (it runs after completion reporting)
+    try {
+      await trackingInvoker.WaitForPostLifecycleAsync(TimeSpan.FromSeconds(5));
+    } catch (TimeoutException) {
+      // Expected to timeout if PostLifecycle doesn't fire — that's the bug we're looking for
+    }
+
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert — PostLifecycle stages MUST fire through the real worker code path
+    await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleAsync)).IsTrue()
+      .Because("PerspectiveWorker must fire PostLifecycleAsync at batch end");
+    await Assert.That(trackingInvoker.HasFired(LifecycleStage.PostLifecycleInline)).IsTrue()
+      .Because("PerspectiveWorker must fire PostLifecycleInline at batch end");
   }
 
   #endregion
@@ -1710,6 +1781,41 @@ public class PerspectiveWorkerCoverageTests {
         LifecycleStage stage,
         ILifecycleContext? context = null,
         CancellationToken cancellationToken = default) {
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Receptor invoker that tracks every stage it's called at.
+  /// Used to verify PostLifecycle stages fire through the real worker code path.
+  /// </summary>
+  private sealed class StageTrackingReceptorInvoker : IReceptorInvoker {
+    private readonly Lock _lock = new();
+    private readonly List<LifecycleStage> _firedStages = [];
+    private readonly TaskCompletionSource _postLifecycleFired = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public IReadOnlyList<LifecycleStage> FiredStages {
+      get { lock (_lock) { return [.. _firedStages]; } }
+    }
+
+    public bool HasFired(LifecycleStage stage) {
+      lock (_lock) { return _firedStages.Contains(stage); }
+    }
+
+    public Task WaitForPostLifecycleAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      return _postLifecycleFired.Task.WaitAsync(cts.Token);
+    }
+
+    public ValueTask InvokeAsync(
+        IMessageEnvelope envelope,
+        LifecycleStage stage,
+        ILifecycleContext? context = null,
+        CancellationToken cancellationToken = default) {
+      lock (_lock) { _firedStages.Add(stage); }
+      if (stage == LifecycleStage.PostLifecycleInline) {
+        _postLifecycleFired.TrySetResult();
+      }
       return ValueTask.CompletedTask;
     }
   }

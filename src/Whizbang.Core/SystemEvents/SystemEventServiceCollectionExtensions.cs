@@ -169,12 +169,10 @@ public static class SystemEventServiceCollectionExtensions {
   public static IServiceCollection DecorateEventStoreWithAuditing(
       this IServiceCollection services) {
     // Find existing IEventStore registration
-    var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore));
-    if (descriptor == null) {
-      throw new InvalidOperationException(
+    var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore))
+      ?? throw new InvalidOperationException(
           "No IEventStore registration found. Register your IEventStore implementation " +
           "before calling DecorateEventStoreWithAuditing().");
-    }
 
     // Remove existing registration
     services.Remove(descriptor);

@@ -75,7 +75,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
           var intercepted = data.Left.Left.Right;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
-          _generateInterceptors(ctx, compilation, intercepted, suppressed, enabled);
+          _generateInterceptors(ctx, intercepted, suppressed, enabled);
         }
     );
   }
@@ -201,16 +201,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     // Check assembly-level attributes
     var compilation = context.SemanticModel.Compilation;
-    foreach (var attr in compilation.Assembly.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == SUPPRESS_ATTRIBUTE ||
-          attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
-          attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME) {
-        return "SuppressGuidInterceptionAttribute on assembly";
-      }
-    }
-
-    return null;
+    return compilation.Assembly.GetAttributes().Any(attr =>
+        attr.AttributeClass?.ToDisplayString() == SUPPRESS_ATTRIBUTE ||
+        attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
+        attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME)
+      ? "SuppressGuidInterceptionAttribute on assembly"
+      : null;
   }
 
   private static bool _hasSuppressAttribute(
@@ -306,8 +302,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 #pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
-      Compilation _,
-      ImmutableArray<GuidInterceptionInfo> intercepted,
+            ImmutableArray<GuidInterceptionInfo> intercepted,
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
 #pragma warning restore S1144
