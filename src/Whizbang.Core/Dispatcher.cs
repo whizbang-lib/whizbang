@@ -2655,15 +2655,11 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    // Check if there are any PostLifecycle receptors registered for this message type
-    var asyncReceptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleAsync);
-    var inlineReceptors = _receptorRegistry.GetReceptorsFor(messageType, LifecycleStage.PostLifecycleInline);
-    if (asyncReceptors.Count == 0 && inlineReceptors.Count == 0) {
-      return;
-    }
-
     // Create a scope to resolve scoped services
     // Dispatcher is a singleton — cannot inject scoped services directly
+    // NOTE: We do NOT short-circuit on compile-time receptor count here because
+    // runtime-registered receptors (via IReceptorRegistry.Register) and tags
+    // must still fire even when no compile-time receptors exist.
     await using var scope = _scopeFactory.CreateAsyncScope();
 
     // Prefer coordinator path — handles receptors + tags + ImmediateAsync
@@ -2688,18 +2684,16 @@ public abstract partial class Dispatcher(
       MessageSource = MessageSource.Local
     };
 
-    if (asyncReceptors.Count > 0) {
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
-    }
+    // Always invoke both PostLifecycle stages — ReceptorInvoker handles
+    // the no-receptor case (still processes tags as lifecycle observers)
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleAsync, context, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
 
-    if (inlineReceptors.Count > 0) {
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
-        context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
-      await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
-        context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
-    }
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.PostLifecycleInline,
+      context with { CurrentStage = LifecycleStage.PostLifecycleInline }, ct).ConfigureAwait(false);
+    await scopedInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+      context with { CurrentStage = LifecycleStage.ImmediateAsync }, ct).ConfigureAwait(false);
 
     if (_messageTagProcessor is not null) {
       var scopeContext = ScopeContextAccessor.CurrentContext;

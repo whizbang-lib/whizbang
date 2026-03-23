@@ -614,6 +614,198 @@ public class LifecycleCoordinatorSituationTests {
 
   #endregion
 
+  #region Test 16: ServiceBusConsumer pipeline — PostLifecycle fires for events without perspectives
+
+  /// <summary>
+  /// Proves that the ServiceBusConsumer pipeline fires PostLifecycle for events
+  /// without perspectives. This mirrors what TransportConsumerWorker does (Test 2).
+  /// The ServiceBusConsumerWorker should fire PostLifecycle at the end of its pipeline
+  /// for events that have no perspectives — because it is the LAST worker to act on them.
+  /// </summary>
+  [Test]
+  public async Task ServiceBusConsumer_EventsWithoutPerspectives_FiresPostLifecycleAsync() {
+    // Arrange
+    var tracker = new StageInvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostInboxAsyncReceptor", LifecycleStage.PostInboxAsync);
+    registry.RegisterReceptor<TestEvent>("PostInboxInlineReceptor", LifecycleStage.PostInboxInline);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleAsyncReceptor", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleInlineReceptor", LifecycleStage.PostLifecycleInline);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+
+    var coordinator = new LifecycleCoordinator();
+
+    // Act — simulate ServiceBusConsumer processing 3 events without perspectives
+    // This is the EXACT pattern ServiceBusConsumerWorker should follow after PostInbox
+    using var scope = provider.CreateScope();
+    for (int i = 0; i < 3; i++) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, $"servicebus-event-{i}"));
+
+      // PostInbox stages (ServiceBusConsumerWorker already does this)
+      var invoker = scope.ServiceProvider.GetRequiredService<IReceptorInvoker>();
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostInboxAsync,
+        MessageSource = MessageSource.Inbox
+      };
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxAsync, lifecycleContext, CancellationToken.None);
+      await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline,
+        lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline }, CancellationToken.None);
+
+      // PostLifecycle via coordinator — ServiceBusConsumerWorker is MISSING this
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // Assert — PostInbox fires 3 times each
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostInboxAsync)).IsEqualTo(3);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostInboxInline)).IsEqualTo(3);
+
+    // Assert — PostLifecycle fires 3 times each (once per event at end of pipeline)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(3)
+      .Because("ServiceBusConsumer is the last worker for events without perspectives — PostLifecycle must fire");
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(3)
+      .Because("ServiceBusConsumer is the last worker for events without perspectives — PostLifecycle must fire");
+  }
+
+  #endregion
+
+  #region Test 17: Every pipeline endpoint fires PostLifecycle — comprehensive
+
+  /// <summary>
+  /// Proves that PostLifecycle fires at the end of EVERY pipeline path.
+  /// Each worker that can be the "last to act" on an event must fire PostLifecycle.
+  /// This is the pipeline diagram test — verifying the contract from the docs.
+  /// </summary>
+  [Test]
+  public async Task AllPipelineEndpoints_FirePostLifecycle_ExactlyOncePerEventAsync() {
+    // Arrange — shared tracker across all pipeline paths
+    var tracker = new StageInvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleAsync", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+
+    var coordinator = new LifecycleCoordinator();
+
+    // === Path 1: Dispatcher (local dispatch) ===
+    using (var scope = provider.CreateScope()) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, "local-dispatch"));
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // === Path 2: TransportConsumer (events without perspectives) ===
+    using (var scope = provider.CreateScope()) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, "inbox-no-perspectives"));
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // === Path 3: PerspectiveWorker (events with perspectives) ===
+    using (var scope = provider.CreateScope()) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, "perspective-batch"));
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // === Path 4: ServiceBusConsumer (events without perspectives) ===
+    using (var scope = provider.CreateScope()) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, "servicebus-no-perspectives"));
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // Assert — 4 events total, PostLifecycle fires exactly 4 times (once per pipeline endpoint)
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(4)
+      .Because("4 pipeline endpoints (Dispatcher, TransportConsumer, PerspectiveWorker, ServiceBusConsumer) each fire PostLifecycle once");
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(4)
+      .Because("4 pipeline endpoints each fire PostLifecycleInline once");
+  }
+
+  #endregion
+
+  #region Test 18: OutboxWorker fires PostLifecycle when event leaves service
+
+  /// <summary>
+  /// Proves that the OutboxWorker fires PostLifecycle when the event has no further
+  /// processing within this service (event leaves via transport to another service).
+  /// </summary>
+  [Test]
+  public async Task OutboxWorker_EventLeavesService_FiresPostLifecycleAsync() {
+    // Arrange
+    var tracker = new StageInvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PreOutboxReceptor", LifecycleStage.PreOutboxAsync);
+    registry.RegisterReceptor<TestEvent>("PostOutboxReceptor", LifecycleStage.PostOutboxInline);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleAsync", LifecycleStage.PostLifecycleAsync);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleInline", LifecycleStage.PostLifecycleInline);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+
+    var coordinator = new LifecycleCoordinator();
+
+    // Act — simulate OutboxWorker publishing 2 events that leave the service
+    using var scope = provider.CreateScope();
+    for (int i = 0; i < 2; i++) {
+      var eventId = Guid.NewGuid();
+      var envelope = _createEnvelope(new TestEvent(eventId, $"outbox-leaving-{i}"));
+
+      // Outbox stages
+      var tracking = coordinator.BeginTracking(
+        eventId, envelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, CancellationToken.None);
+
+      // Event leaves service — OutboxWorker is the last worker, fire PostLifecycle
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, CancellationToken.None);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, CancellationToken.None);
+      coordinator.AbandonTracking(eventId);
+    }
+
+    // Assert — Outbox stages fire
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PreOutboxAsync)).IsEqualTo(2);
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostOutboxInline)).IsEqualTo(2);
+
+    // Assert — PostLifecycle fires because outbox is the last worker for these events
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleAsync)).IsEqualTo(2)
+      .Because("OutboxWorker is the last worker when event leaves service — PostLifecycle must fire");
+    await Assert.That(tracker.GetFiringsForStage(LifecycleStage.PostLifecycleInline)).IsEqualTo(2)
+      .Because("OutboxWorker is the last worker when event leaves service — PostLifecycle must fire");
+  }
+
+  #endregion
+
   #region Test Helper: Order-capturing registry
 
   private sealed class OrderCapturingRegistry : IReceptorRegistry {
