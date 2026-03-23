@@ -238,12 +238,15 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     var channelWriter = new TestWorkChannelWriter();
     var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
 
-    // Act — start worker, let it process one batch, then stop
+    // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
-    await Task.Delay(400);
-    cts.Cancel();
+
+    // Wait for the deterministic requeue signal — fires when TryWrite is called after initial WriteAsync
+    await channelWriter.RequeueSignal.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — the message must be re-queued via TryWrite (WrittenWork will have >1 entry)
@@ -286,12 +289,15 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     var channelWriter = new TestWorkChannelWriter();
     var services = _createHostedServiceCollection(workCoordinator, publishStrategy, instanceProvider, channelWriter);
 
-    // Act — start worker, let it process one batch, then stop
+    // Act — start worker, wait for requeue signal (deterministic), then stop
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
-    using var cts = new CancellationTokenSource();
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     await worker.StartAsync(cts.Token);
-    await Task.Delay(400);
-    cts.Cancel();
+
+    // Wait for the deterministic requeue signal
+    await channelWriter.RequeueSignal.WaitAsync(cts.Token);
+
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
     // Assert — the message must be re-queued via TryWrite after transport exception
@@ -343,10 +349,18 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     return services.BuildServiceProvider();
   }
 
-  // Test helper - Mock work channel writer
+  // Test helper - Mock work channel writer with deterministic signals
   private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
+    private readonly TaskCompletionSource _requeueSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _writeCount;
     public List<OutboxWork> WrittenWork { get; } = [];
+
+    /// <summary>
+    /// Deterministic signal that fires when a message is re-queued (TryWrite called after initial WriteAsync).
+    /// Use this instead of Task.Delay to wait for requeue behavior.
+    /// </summary>
+    public Task RequeueSignal => _requeueSignal.Task;
 
     public TestWorkChannelWriter() {
       _channel = System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>();
@@ -356,12 +370,19 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
       WrittenWork.Add(work);
+      Interlocked.Increment(ref _writeCount);
       return _channel.Writer.WriteAsync(work, ct);
     }
 
     public bool TryWrite(OutboxWork work) {
       WrittenWork.Add(work);
-      return _channel.Writer.TryWrite(work);
+      var count = Interlocked.Increment(ref _writeCount);
+      var result = _channel.Writer.TryWrite(work);
+      // Signal when a requeue happens (write count > 1 means re-queued)
+      if (count > 1) {
+        _requeueSignal.TrySetResult();
+      }
+      return result;
     }
 
     public void Complete() {
