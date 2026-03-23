@@ -101,68 +101,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
               .ToList();
 
           // Validate identifier lengths and report diagnostics
-          var validPerspectives = new List<PerspectiveInfo>();
-          foreach (var perspective in allPerspectives) {
-            var hasError = false;
-
-            // Validate table name
-            var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
-            if (tableError is not null) {
-              ctx.ReportDiagnostic(Diagnostic.Create(
-                  DiagnosticDescriptors.TableNameExceedsLimit,
-                  Location.None,
-                  perspective.ModelTypeName,
-                  perspective.TableName,
-                  IdentifierValidation.GetByteCount(perspective.TableName),
-                  limits.ProviderName,
-                  limits.MaxTableNameBytes
-              ));
-              hasError = true;
-            }
-
-            // Validate physical field column and index names
-            foreach (var field in perspective.PhysicalFields) {
-              var columnError = IdentifierValidation.ValidateColumnName(field.ColumnName, limits);
-              if (columnError is not null) {
-                ctx.ReportDiagnostic(Diagnostic.Create(
-                    DiagnosticDescriptors.ColumnNameExceedsLimit,
-                    Location.None,
-                    field.PropertyName,
-                    perspective.ModelTypeName,
-                    field.ColumnName,
-                    IdentifierValidation.GetByteCount(field.ColumnName),
-                    limits.ProviderName,
-                    limits.MaxColumnNameBytes
-                ));
-                hasError = true;
-              }
-
-              // Validate index name if indexed
-              if (field.IsIndexed || field.IsUnique) {
-                var indexName = $"ix_{perspective.TableName}_{field.ColumnName}";
-                var indexError = IdentifierValidation.ValidateIndexName(indexName, limits);
-                if (indexError is not null) {
-                  ctx.ReportDiagnostic(Diagnostic.Create(
-                      DiagnosticDescriptors.IndexNameExceedsLimit,
-                      Location.None,
-                      indexName,
-                      field.PropertyName,
-                      perspective.ModelTypeName,
-                      IdentifierValidation.GetByteCount(indexName),
-                      limits.ProviderName,
-                      limits.MaxIndexNameBytes
-                  ));
-                  hasError = true;
-                }
-              }
-            }
-
-            if (!hasError) {
-              validPerspectives.Add(perspective);
-            }
-          }
-
-          var perspectives = validPerspectives.ToImmutableArray();
+          var perspectives = _validatePerspectiveIdentifiers(ctx, allPerspectives, limits);
 
           // Extract schema from first DbContext (typically one per project)
           // If no DbContext found or no schema specified, defaults to null and generator will derive from namespace
@@ -171,6 +110,108 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
           _generateModelBuilderExtension(ctx, perspectives, schema);
         }
     );
+  }
+
+  /// <summary>
+  /// Validates identifier lengths for all perspectives and reports diagnostics.
+  /// Returns only perspectives that pass all validation checks.
+  /// </summary>
+  private static ImmutableArray<PerspectiveInfo> _validatePerspectiveIdentifiers(
+      SourceProductionContext context,
+      List<PerspectiveInfo> allPerspectives,
+      IDbProviderLimits limits) {
+
+    var validPerspectives = new List<PerspectiveInfo>();
+
+    foreach (var perspective in allPerspectives) {
+      if (_validateSinglePerspective(context, perspective, limits)) {
+        validPerspectives.Add(perspective);
+      }
+    }
+
+    return validPerspectives.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Validates a single perspective's identifiers. Returns true if valid (no errors).
+  /// </summary>
+  private static bool _validateSinglePerspective(
+      SourceProductionContext context,
+      PerspectiveInfo perspective,
+      IDbProviderLimits limits) {
+
+    var hasError = false;
+
+    // Validate table name
+    var tableError = IdentifierValidation.ValidateTableName(perspective.TableName, limits);
+    if (tableError is not null) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.TableNameExceedsLimit,
+          Location.None,
+          perspective.ModelTypeName,
+          perspective.TableName,
+          IdentifierValidation.GetByteCount(perspective.TableName),
+          limits.ProviderName,
+          limits.MaxTableNameBytes
+      ));
+      hasError = true;
+    }
+
+    // Validate physical field column and index names
+    foreach (var field in perspective.PhysicalFields) {
+      if (_validatePhysicalField(context, perspective, field, limits)) {
+        hasError = true;
+      }
+    }
+
+    return !hasError;
+  }
+
+  /// <summary>
+  /// Validates a physical field's column and index names. Returns true if any error found.
+  /// </summary>
+  private static bool _validatePhysicalField(
+      SourceProductionContext context,
+      PerspectiveInfo perspective,
+      PhysicalFieldInfo field,
+      IDbProviderLimits limits) {
+
+    var hasError = false;
+
+    var columnError = IdentifierValidation.ValidateColumnName(field.ColumnName, limits);
+    if (columnError is not null) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.ColumnNameExceedsLimit,
+          Location.None,
+          field.PropertyName,
+          perspective.ModelTypeName,
+          field.ColumnName,
+          IdentifierValidation.GetByteCount(field.ColumnName),
+          limits.ProviderName,
+          limits.MaxColumnNameBytes
+      ));
+      hasError = true;
+    }
+
+    if (field.IsIndexed || field.IsUnique) {
+      var indexName = $"ix_{perspective.TableName}_{field.ColumnName}";
+      var indexError = IdentifierValidation.ValidateIndexName(indexName, limits);
+      if (indexError is not null) {
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.IndexNameExceedsLimit,
+            Location.None,
+            indexName,
+            field.PropertyName,
+            perspective.ModelTypeName,
+            IdentifierValidation.GetByteCount(indexName),
+            limits.ProviderName,
+            limits.MaxIndexNameBytes
+        ));
+        hasError = true;
+      }
+    }
+
+    return hasError;
   }
 
   /// <summary>
@@ -566,25 +607,18 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Recursively checks if a type or its nested types contain polymorphic properties.
   /// </summary>
   private static bool _checkForPolymorphicTypes(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    // Cycle detection
     if (!visited.Add(type)) {
       return false;
     }
 
-    // Skip system types (except System.Collections)
     var ns = type.ContainingNamespace?.ToDisplayString();
     if (ns?.StartsWith("System", StringComparison.Ordinal) == true &&
         !ns.StartsWith("System.Collections", StringComparison.Ordinal)) {
       return false;
     }
 
-    var properties = type.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => !p.IsStatic && !p.IsIndexer && !p.IsWriteOnly);
-
-    foreach (var property in properties) {
-      // Skip ignored properties
-      if (_isPropertyIgnored(property)) {
+    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
+      if (property.IsStatic || property.IsIndexer || property.IsWriteOnly || _isPropertyIgnored(property)) {
         continue;
       }
 
@@ -592,30 +626,37 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // Get the element type if this is a collection
-      var elementType = _getCollectionElementType(propType);
-      var typeToCheck = elementType ?? propType;
-
-      // Check if this type is polymorphic
-      if (_isPolymorphicType(typeToCheck)) {
+      if (_isPropertyTypePolymorphic(propType, visited)) {
         return true;
       }
+    }
 
-      // Recursively check nested types
-      if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-          !_isSystemPrimitiveType(typeToCheck) &&
-          _checkForPolymorphicTypes(typeToCheck, visited)) {
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a property type (or its element/argument types) contains polymorphic types.
+  /// </summary>
+  private static bool _isPropertyTypePolymorphic(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
+    var elementType = _getCollectionElementType(propType);
+    var typeToCheck = elementType ?? propType;
+
+    if (_isPolymorphicType(typeToCheck)) {
+      return true;
+    }
+
+    if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
+        !_isSystemPrimitiveType(typeToCheck) &&
+        _checkForPolymorphicTypes(typeToCheck, visited)) {
+      return true;
+    }
+
+    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
+      if (_isPolymorphicType(typeArg)) {
         return true;
       }
-
-      // Check generic type arguments
-      foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-        if (_isPolymorphicType(typeArg)) {
-          return true;
-        }
-        if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
-          return true;
-        }
+      if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
+        return true;
       }
     }
 
@@ -940,23 +981,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // No need to extract and inject infrastructure snippets here
 
     // Generate diagnostic perspective list
-    var diagnosticList = new StringBuilder();
-    if (uniquePerspectives.Length > 0) {
-      if (uniquePerspectives.Length == perspectives.Length) {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} perspective(s)\");");
-      } else {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} unique model type(s) from {perspectives.Length} perspective(s)\");");
-      }
-      diagnosticList.AppendLine("    logger.LogInformation(\"\");");
-
-      foreach (var perspective in uniquePerspectives) {
-        diagnosticList.AppendLine($"    logger.LogInformation(\"  - {perspective.ModelTypeName} (table: {perspective.TableName})\");");
-      }
-    } else {
-      diagnosticList.AppendLine("    logger.LogInformation(\"Discovered Perspectives: 0 perspective(s)\");");
-    }
-
-    template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList.ToString());
+    var diagnosticList = _generateDiagnosticPerspectiveList(uniquePerspectives, perspectives.Length);
+    template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList);
 
     // Replace diagnostic placeholders
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
@@ -970,5 +996,32 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     template = template.Replace("__SCHEMA__", schema ?? "public");
 
     context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
+  }
+
+  /// <summary>
+  /// Generates the diagnostic perspective list for logger output in generated code.
+  /// </summary>
+  private static string _generateDiagnosticPerspectiveList(
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      int totalPerspectiveCount) {
+
+    var sb = new StringBuilder();
+
+    if (uniquePerspectives.Length > 0) {
+      if (uniquePerspectives.Length == totalPerspectiveCount) {
+        sb.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} perspective(s)\");");
+      } else {
+        sb.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} unique model type(s) from {totalPerspectiveCount} perspective(s)\");");
+      }
+      sb.AppendLine("    logger.LogInformation(\"\");");
+
+      foreach (var perspective in uniquePerspectives) {
+        sb.AppendLine($"    logger.LogInformation(\"  - {perspective.ModelTypeName} (table: {perspective.TableName})\");");
+      }
+    } else {
+      sb.AppendLine("    logger.LogInformation(\"Discovered Perspectives: 0 perspective(s)\");");
+    }
+
+    return sb.ToString();
   }
 }

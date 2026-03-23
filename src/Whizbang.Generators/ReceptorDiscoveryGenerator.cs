@@ -737,72 +737,83 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var responseType = receptor.ResponseType!;
-
-      // Handle tuple types: (Type1, Type2, ...) - extract all elements
-      if (responseType.StartsWith("(", StringComparison.Ordinal) && responseType.EndsWith(")", StringComparison.Ordinal)) {
-        var tupleElements = _extractTupleElements(responseType);
-        foreach (var element in tupleElements) {
-          // Unwrap Routed<T> if present
-          var unwrappedElement = _unwrapRoutedTypeString(element);
-          if (unwrappedElement is null) {
-            continue;  // Skip RoutedNone
-          }
-
-          // Elements may be arrays, collections, or simple types - extract element type appropriately
-          if (unwrappedElement.EndsWith("[]", StringComparison.Ordinal)) {
-            // Array type: Type[] - extract element type
-            var elementType = unwrappedElement[..^2];
-            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-            eventTypes.Add(_stripNullableAnnotation(elementType));
-          } else {
-            // Check if it's a generic collection like List<T>
-            var collectionElementType = _extractCollectionElementType(unwrappedElement);
-            if (collectionElementType is not null) {
-              // Collection type: List<T>, IEnumerable<T>, etc. - extract element type
-              // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-              eventTypes.Add(_stripNullableAnnotation(collectionElementType));
-            } else {
-              // Simple type - add as-is
-              // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-              eventTypes.Add(_stripNullableAnnotation(unwrappedElement));
-            }
-          }
-        }
-      }
-      // Handle array types: Type[] - extract element type
-      else if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
-        var elementType = responseType[..^2];
-        // Unwrap Routed<T> if present
-        var unwrappedElementType = _unwrapRoutedTypeString(elementType);
-        if (unwrappedElementType is not null) {
-          // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-          eventTypes.Add(_stripNullableAnnotation(unwrappedElementType));
-        }
-      }
-      // Check if it's a generic collection like List<T> (not in a tuple)
-      else {
-        var collectionElementType = _extractCollectionElementType(responseType);
-        if (collectionElementType is not null) {
-          // Collection type: List<T>, IEnumerable<T>, etc. - extract element type
-          // Unwrap Routed<T> if present in the element type
-          var unwrappedCollectionElement = _unwrapRoutedTypeString(collectionElementType);
-          if (unwrappedCollectionElement is not null) {
-            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-            eventTypes.Add(_stripNullableAnnotation(unwrappedCollectionElement));
-          }
-        } else {
-          // Simple type - unwrap Routed<T> if present
-          var unwrappedType = _unwrapRoutedTypeString(responseType);
-          if (unwrappedType is not null) {
-            // Strip nullable annotation to avoid CS8639 (typeof cannot use nullable reference types)
-            eventTypes.Add(_stripNullableAnnotation(unwrappedType));
-          }
-        }
-      }
+      _extractEventTypesFromResponseType(receptor.ResponseType!, eventTypes);
     }
 
     return eventTypes;
+  }
+
+  /// <summary>
+  /// Extracts event types from a single response type string and adds them to the set.
+  /// Handles tuples, arrays, collections, and simple types.
+  /// </summary>
+  private static void _extractEventTypesFromResponseType(string responseType, HashSet<string> eventTypes) {
+    // Handle tuple types: (Type1, Type2, ...) - extract all elements
+    if (responseType.StartsWith("(", StringComparison.Ordinal) && responseType.EndsWith(")", StringComparison.Ordinal)) {
+      _extractEventTypesFromTuple(responseType, eventTypes);
+      return;
+    }
+
+    // Handle array types: Type[] - extract element type
+    if (responseType.EndsWith("[]", StringComparison.Ordinal)) {
+      var elementType = responseType[..^2];
+      _addUnwrappedEventType(elementType, eventTypes);
+      return;
+    }
+
+    // Check if it's a generic collection like List<T> (not in a tuple)
+    var collectionElementType = _extractCollectionElementType(responseType);
+    if (collectionElementType is not null) {
+      _addUnwrappedEventType(collectionElementType, eventTypes);
+      return;
+    }
+
+    // Simple type - unwrap Routed<T> if present
+    _addUnwrappedEventType(responseType, eventTypes);
+  }
+
+  /// <summary>
+  /// Extracts event types from all elements of a tuple response type.
+  /// </summary>
+  private static void _extractEventTypesFromTuple(string tupleType, HashSet<string> eventTypes) {
+    var tupleElements = _extractTupleElements(tupleType);
+    foreach (var element in tupleElements) {
+      var unwrappedElement = _unwrapRoutedTypeString(element);
+      if (unwrappedElement is null) {
+        continue;  // Skip RoutedNone
+      }
+
+      _addElementTypeFromUnwrapped(unwrappedElement, eventTypes);
+    }
+  }
+
+  /// <summary>
+  /// Adds an event type from an unwrapped (non-Routed) type string, handling arrays and collections.
+  /// </summary>
+  private static void _addElementTypeFromUnwrapped(string unwrappedType, HashSet<string> eventTypes) {
+    if (unwrappedType.EndsWith("[]", StringComparison.Ordinal)) {
+      var elementType = unwrappedType[..^2];
+      eventTypes.Add(_stripNullableAnnotation(elementType));
+      return;
+    }
+
+    var collectionElementType = _extractCollectionElementType(unwrappedType);
+    if (collectionElementType is not null) {
+      eventTypes.Add(_stripNullableAnnotation(collectionElementType));
+      return;
+    }
+
+    eventTypes.Add(_stripNullableAnnotation(unwrappedType));
+  }
+
+  /// <summary>
+  /// Unwraps a Routed wrapper and adds the resulting type to the event types set.
+  /// </summary>
+  private static void _addUnwrappedEventType(string typeName, HashSet<string> eventTypes) {
+    var unwrappedType = _unwrapRoutedTypeString(typeName);
+    if (unwrappedType is not null) {
+      eventTypes.Add(_stripNullableAnnotation(unwrappedType));
+    }
   }
 
   /// <summary>
