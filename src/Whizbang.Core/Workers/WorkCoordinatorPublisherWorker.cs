@@ -233,8 +233,32 @@ public partial class WorkCoordinatorPublisherWorker(
   }
 
   private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
-    // Process any pending outbox messages IMMEDIATELY on startup (before first polling delay)
-    // This ensures seeded or pre-existing messages are published right away
+    await _processInitialWorkBatchAsync(stoppingToken);
+
+    while (!stoppingToken.IsCancellationRequested) {
+      try {
+        if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
+          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          continue;
+        }
+        await _processWorkBatchAsync(stoppingToken);
+      } catch (ObjectDisposedException) {
+        break;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogErrorProcessingWorkBatch(_logger, ex);
+      }
+
+      try {
+        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+      } catch (OperationCanceledException) {
+        break;
+      }
+    }
+
+    _workChannelWriter.Complete();
+  }
+
+  private async Task _processInitialWorkBatchAsync(CancellationToken stoppingToken) {
     try {
       LogCheckingPendingMessages(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
@@ -247,50 +271,21 @@ public partial class WorkCoordinatorPublisherWorker(
     } catch (Exception ex) when (ex is not OperationCanceledException and not ObjectDisposedException) {
       LogErrorProcessingInitialWorkBatch(_logger, ex);
     }
+  }
 
-    while (!stoppingToken.IsCancellationRequested) {
-      try {
-        // Check database readiness before attempting work coordinator call
-        var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
-        if (!isDatabaseReady) {
-          // Database not ready - skip ProcessWorkBatchAsync, keep buffering in memory
-          Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
-
-          // Log at Information level (important operational event)
-          LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
-
-          // Warn if database has been continuously unavailable
-          if (_consecutiveDatabaseNotReadyChecks > 10) {
-            LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
-          }
-
-          // Wait before retry
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
-          continue;
-        }
-
-        // Database is ready - reset consecutive counter
-        Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
-
-        await _processWorkBatchAsync(stoppingToken);
-      } catch (ObjectDisposedException) {
-        // Service provider disposed during host shutdown — exit gracefully
-        break;
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingWorkBatch(_logger, ex);
-      }
-
-      // Wait before next poll (unless cancelled)
-      try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
-      } catch (OperationCanceledException) {
-        // Graceful shutdown
-        break;
-      }
+  private async Task<bool> _checkDatabaseReadinessAsync(CancellationToken stoppingToken) {
+    var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
+    if (isDatabaseReady) {
+      Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
+      return true;
     }
 
-    // Signal publisher loop to finish
-    _workChannelWriter.Complete();
+    Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
+    LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
+    if (_consecutiveDatabaseNotReadyChecks > 10) {
+      LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
+    }
+    return false;
   }
 
   private async Task _publisherLoopAsync(CancellationToken stoppingToken) {
@@ -619,75 +614,8 @@ public partial class WorkCoordinatorPublisherWorker(
       return; // Exit early, retry on next cycle
     }
 
-    // 5. Extract acknowledgement counts from workBatch metadata (from first row)
-    var completionsProcessed = 0;
-    var failuresProcessed = 0;
-    var leaseRenewalsProcessed = 0;
-    var inboxCompletionsProcessed = 0;
-    var inboxFailuresProcessed = 0;
-    var inboxLeaseRenewalsProcessed = 0;
-
-    // Extract ack counts from the first available metadata row (outbox → inbox → perspective)
-    Dictionary<string, JsonElement>? metadataRow = null;
-    var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
-    if (outboxFirstRow?.Metadata != null) {
-      metadataRow = outboxFirstRow.Metadata;
-    } else {
-      var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
-      if (inboxFirstRow?.Metadata != null) {
-        metadataRow = inboxFirstRow.Metadata;
-      } else {
-        var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
-        if (perspectiveFirstRow?.Metadata != null) {
-          metadataRow = perspectiveFirstRow.Metadata;
-        }
-      }
-    }
-
-    if (metadataRow != null) {
-      if (metadataRow.TryGetValue("outbox_completions_processed", out var compCount)) {
-        completionsProcessed = compCount.GetInt32();
-      }
-      if (metadataRow.TryGetValue("outbox_failures_processed", out var failCount)) {
-        failuresProcessed = failCount.GetInt32();
-      }
-      if (metadataRow.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
-        leaseRenewalsProcessed = renewCount.GetInt32();
-      }
-      if (metadataRow.TryGetValue("inbox_completions_processed", out var inboxCompCount)) {
-        inboxCompletionsProcessed = inboxCompCount.GetInt32();
-      }
-      if (metadataRow.TryGetValue("inbox_failures_processed", out var inboxFailCount)) {
-        inboxFailuresProcessed = inboxFailCount.GetInt32();
-      }
-      if (metadataRow.TryGetValue("inbox_lease_renewals_processed", out var inboxRenewCount)) {
-        inboxLeaseRenewalsProcessed = inboxRenewCount.GetInt32();
-      }
-    }
-
-    // 6. Mark as Acknowledged based on counts from SQL
-    _completions.MarkAsAcknowledged(completionsProcessed);
-    _failures.MarkAsAcknowledged(failuresProcessed);
-    _leaseRenewals.MarkAsAcknowledged(leaseRenewalsProcessed);
-    _inboxCompletions.MarkAsAcknowledged(inboxCompletionsProcessed);
-    _inboxFailures.MarkAsAcknowledged(inboxFailuresProcessed);
-    _inboxLeaseRenewals.MarkAsAcknowledged(inboxLeaseRenewalsProcessed);
-
-    // 7. Clear only Acknowledged items
-    _completions.ClearAcknowledged();
-    _failures.ClearAcknowledged();
-    _leaseRenewals.ClearAcknowledged();
-    _inboxCompletions.ClearAcknowledged();
-    _inboxFailures.ClearAcknowledged();
-    _inboxLeaseRenewals.ClearAcknowledged();
-
-    // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
-    _completions.ResetStale(DateTimeOffset.UtcNow);
-    _failures.ResetStale(DateTimeOffset.UtcNow);
-    _leaseRenewals.ResetStale(DateTimeOffset.UtcNow);
-    _inboxCompletions.ResetStale(DateTimeOffset.UtcNow);
-    _inboxFailures.ResetStale(DateTimeOffset.UtcNow);
-    _inboxLeaseRenewals.ResetStale(DateTimeOffset.UtcNow);
+    // 5-8. Extract ack counts, mark acknowledged, clear, and reset stale
+    _processAcknowledgements(workBatch);
 
     // Log a summary of message processing activity
     int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length
@@ -722,30 +650,74 @@ public partial class WorkCoordinatorPublisherWorker(
       await _processInboxWorkAsync(workBatch.InboxWork, cancellationToken);
     }
 
-    // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
-    bool hasWork = workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0;
+    _trackWorkStateTransitions(workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0);
+  }
 
+  private void _trackWorkStateTransitions(bool hasWork) {
     if (hasWork) {
-      // Reset empty poll counter
       Interlocked.Exchange(ref _consecutiveEmptyPolls, 0);
-
-      // Transition to active if was idle
       if (_isIdle) {
         _isIdle = false;
         OnWorkProcessingStarted?.Invoke();
         LogWorkProcessingStarted(_logger);
       }
     } else {
-      // Increment empty poll counter
       Interlocked.Increment(ref _consecutiveEmptyPolls);
-
-      // Check if should transition to idle
       if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
         _isIdle = true;
         OnWorkProcessingIdle?.Invoke();
         LogWorkProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
     }
+  }
+
+  /// <summary>
+  /// Extracts acknowledgement counts from work batch metadata and processes tracker state.
+  /// </summary>
+  private void _processAcknowledgements(WorkBatch workBatch) {
+    var metadataRow = _extractMetadataRow(workBatch);
+
+    _completions.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_completions_processed"));
+    _failures.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_failures_processed"));
+    _leaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "outbox_lease_renewals_processed"));
+    _inboxCompletions.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_completions_processed"));
+    _inboxFailures.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_failures_processed"));
+    _inboxLeaseRenewals.MarkAsAcknowledged(_extractAckCount(metadataRow, "inbox_lease_renewals_processed"));
+
+    _completions.ClearAcknowledged();
+    _failures.ClearAcknowledged();
+    _leaseRenewals.ClearAcknowledged();
+    _inboxCompletions.ClearAcknowledged();
+    _inboxFailures.ClearAcknowledged();
+    _inboxLeaseRenewals.ClearAcknowledged();
+
+    var now = DateTimeOffset.UtcNow;
+    _completions.ResetStale(now);
+    _failures.ResetStale(now);
+    _leaseRenewals.ResetStale(now);
+    _inboxCompletions.ResetStale(now);
+    _inboxFailures.ResetStale(now);
+    _inboxLeaseRenewals.ResetStale(now);
+  }
+
+  private static Dictionary<string, JsonElement>? _extractMetadataRow(WorkBatch workBatch) {
+    var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
+    if (outboxFirstRow?.Metadata != null) {
+      return outboxFirstRow.Metadata;
+    }
+    var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
+    if (inboxFirstRow?.Metadata != null) {
+      return inboxFirstRow.Metadata;
+    }
+    var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
+    return perspectiveFirstRow?.Metadata;
+  }
+
+  private static int _extractAckCount(Dictionary<string, JsonElement>? metadataRow, string key) {
+    if (metadataRow != null && metadataRow.TryGetValue(key, out var value)) {
+      return value.GetInt32();
+    }
+    return 0;
   }
 
   /// <summary>
@@ -793,48 +765,15 @@ public partial class WorkCoordinatorPublisherWorker(
       inboxScope.ServiceProvider,
       cancellationToken);
 
-    // PreInbox lifecycle stages
-    foreach (var work in workToProcess) {
-      if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-        try {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = work.Attempts
-          };
+    await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
+      LifecycleStage.PreInboxAsync, LifecycleStage.PreInboxInline, "PreInbox", cancellationToken);
 
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
-
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
-        } catch (Exception ex) {
-          LogInboxLifecycleError(_logger, work.MessageId, "PreInbox", ex);
-        }
-      }
-    }
-
-    // Process via OrderedStreamProcessor (maintains stream ordering)
     var orderedProcessor = new OrderedStreamProcessor();
     await orderedProcessor.ProcessInboxWorkAsync(
       workToProcess,
-      processor: (_) => {
-        // For orphaned recovery, mark as EventStored (same as TransportConsumerWorker)
-        return Task.FromResult(MessageProcessingStatus.EventStored);
-      },
+      processor: (_) => Task.FromResult(MessageProcessingStatus.EventStored),
       completionHandler: (msgId, status) => {
-        _inboxCompletions.Add(new MessageCompletion {
-          MessageId = msgId,
-          Status = status
-        });
+        _inboxCompletions.Add(new MessageCompletion { MessageId = msgId, Status = status });
       },
       failureHandler: (msgId, status, error) => {
         _inboxFailures.Add(new MessageFailure {
@@ -847,32 +786,44 @@ public partial class WorkCoordinatorPublisherWorker(
       cancellationToken
     );
 
-    // PostInbox lifecycle stages
+    await _invokeInboxLifecycleStagesAsync(workToProcess, receptorInvoker,
+      LifecycleStage.PostInboxAsync, LifecycleStage.PostInboxInline, "PostInbox", cancellationToken);
+  }
+
+  /// <summary>
+  /// Invokes inbox lifecycle stages (async + inline) for all work items with error isolation.
+  /// </summary>
+  private async Task _invokeInboxLifecycleStagesAsync(
+    List<InboxWork> workToProcess, IReceptorInvoker? receptorInvoker,
+    LifecycleStage asyncStage, LifecycleStage inlineStage,
+    string stageName, CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
     foreach (var work in workToProcess) {
-      if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-        try {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = work.Attempts
-          };
+      try {
+        var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+        var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = asyncStage,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Inbox,
+          AttemptNumber = work.Attempts
+        };
 
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, asyncStage, lifecycleContext, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
 
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
-            lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
-        } catch (Exception ex) {
-          LogInboxLifecycleError(_logger, work.MessageId, "PostInbox", ex);
-        }
+        lifecycleContext = lifecycleContext with { CurrentStage = inlineStage };
+        await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, lifecycleContext, cancellationToken);
+        await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+          lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+      } catch (Exception ex) {
+        LogInboxLifecycleError(_logger, work.MessageId, stageName, ex);
       }
     }
   }

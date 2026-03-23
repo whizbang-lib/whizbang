@@ -189,7 +189,6 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
   /// <param name="typeFullName">Assembly-qualified type name (e.g., "MyApp.Commands.CreateTenantCommand, MyApp")</param>
   /// <returns>Detected MessageKind or Unknown</returns>
   private static MessageKind _detectMessageKindFromTypeName(string typeFullName) {
-    // Extract namespace and type name from assembly-qualified name
     var ns = _extractNamespace(typeFullName);
     var typeName = _extractTypeName(typeFullName);
 
@@ -197,23 +196,42 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
       return MessageKind.Unknown;
     }
 
-    // Check namespace convention (Commands, Events, Queries)
-    if (!string.IsNullOrEmpty(ns)) {
-      var segments = ns.Split('.');
-      foreach (var segment in segments) {
-        if (string.Equals(segment, "Commands", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Command;
-        }
-        if (string.Equals(segment, "Events", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Event;
-        }
-        if (string.Equals(segment, "Queries", StringComparison.OrdinalIgnoreCase)) {
-          return MessageKind.Query;
-        }
+    var kindFromNamespace = _detectMessageKindFromNamespace(ns);
+    if (kindFromNamespace != MessageKind.Unknown) {
+      return kindFromNamespace;
+    }
+
+    return _detectMessageKindFromSuffix(typeName);
+  }
+
+  /// <summary>
+  /// Detects MessageKind from namespace segments (e.g., "MyApp.Commands" returns Command).
+  /// </summary>
+  private static MessageKind _detectMessageKindFromNamespace(string? ns) {
+    if (string.IsNullOrEmpty(ns)) {
+      return MessageKind.Unknown;
+    }
+
+    var segments = ns.Split('.');
+    foreach (var segment in segments) {
+      if (string.Equals(segment, "Commands", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Command;
+      }
+      if (string.Equals(segment, "Events", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Event;
+      }
+      if (string.Equals(segment, "Queries", StringComparison.OrdinalIgnoreCase)) {
+        return MessageKind.Query;
       }
     }
 
-    // Check type name suffix
+    return MessageKind.Unknown;
+  }
+
+  /// <summary>
+  /// Detects MessageKind from type name suffix (e.g., "CreateTenantCommand" returns Command).
+  /// </summary>
+  private static MessageKind _detectMessageKindFromSuffix(string typeName) {
     if (typeName.EndsWith("Command", StringComparison.Ordinal)) {
       return MessageKind.Command;
     }
