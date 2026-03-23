@@ -704,6 +704,108 @@ namespace TestNamespace {
       .Because("A perspective-only-via-WithActionsFor must still have its events in _allEventTypes");
   }
 
+  // ==================== IPerspectiveBase Extensibility Lock-in ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CustomInterfaceExtendingIPerspectiveBase_EventsDiscoveredAsync() {
+    // Arrange — a FUTURE interface extending IPerspectiveBase directly
+    // Proves any new interface that extends IPerspectiveBase will be discovered
+    // without modifying any generator code.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record FutureEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  // A hypothetical future interface that extends IPerspectiveBase
+  public interface ICustomPerspective<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent {
+    TModel CustomApply(TModel current, TEvent e);
+  }
+
+  public class FuturePerspective : ICustomPerspective<Model, FutureEvent> {
+    public Model CustomApply(Model current, FutureEvent e) => current;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — FutureEvent must be discovered via IPerspectiveBase inheritance
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.FutureEvent)")
+      .Because("Any interface extending IPerspectiveBase must have its events discovered — this is the extensibility guarantee");
+  }
+
+  // ==================== Cross-interface lock-in ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task LockIn_AllThreeInterfaceTypes_DiscoveredInSameCompilationAsync() {
+    // Arrange — one perspective class using IPerspectiveFor, one using IPerspectiveWithActionsFor,
+    // one using a custom interface extending IPerspectiveBase.
+    // ALL three must have their events in _allEventTypes.
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EventA : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record EventB : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record EventC : IEvent {
+    [StreamId] public Guid Id { get; init; }
+  }
+  public record Model {
+    [StreamId] public Guid Id { get; init; }
+  }
+
+  // IPerspectiveFor
+  public class StandardPerspective : IPerspectiveFor<Model, EventA> {
+    public Model Apply(Model current, EventA e) => current;
+  }
+
+  // IPerspectiveWithActionsFor
+  public class ActionsPerspective : IPerspectiveWithActionsFor<Model, EventB> {
+    public ApplyResult<Model> Apply(Model current, EventB e) => ApplyResult<Model>.Purge();
+  }
+
+  // Custom interface extending IPerspectiveBase
+  public interface ICustom<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent { }
+  public class CustomPerspective : ICustom<Model, EventC> { }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerRegistryGenerator>(source);
+
+    // Assert — ALL three event types discovered
+    var registrySource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRunnerRegistry.g.cs");
+    await Assert.That(registrySource).IsNotNull();
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventA)")
+      .Because("IPerspectiveFor events must be discovered");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventB)")
+      .Because("IPerspectiveWithActionsFor events must be discovered");
+    await Assert.That(registrySource).Contains("typeof(global::TestNamespace.EventC)")
+      .Because("Custom interface extending IPerspectiveBase events must be discovered");
+  }
+
   private static int _countOccurrences(string text, string pattern) {
     int count = 0;
     int index = 0;
