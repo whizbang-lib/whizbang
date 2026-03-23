@@ -406,4 +406,82 @@ namespace TestNamespace {
     await Assert.That(generatedSource).Contains("OrderPurgePerspective")
       .Because("The perspective class must be the target in the association");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_CustomInterfaceExtendingIPerspectiveBase_IncludesAssociationAsync() {
+    // Arrange — future interface extending IPerspectiveBase
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record FutureEvent : IEvent {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public record Model {
+    [StreamId]
+    public Guid Id { get; init; }
+  }
+
+  public interface ICustomPerspective<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent { }
+
+  public class FuturePerspective : ICustomPerspective<Model, FutureEvent> { }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert — FutureEvent must be in generated DB associations
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("FutureEvent")
+      .Because("Custom interface extending IPerspectiveBase must have its events in DB associations");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task LockIn_AllThreeInterfaceTypes_InAssociationsAsync() {
+    // Arrange — all three interface types in one compilation
+    const string source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record EventA : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record EventB : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record EventC : IEvent { [StreamId] public Guid Id { get; init; } }
+  public record Model { [StreamId] public Guid Id { get; init; } }
+
+  public class StandardPerspective : IPerspectiveFor<Model, EventA> {
+    public Model Apply(Model c, EventA e) => c;
+  }
+
+  public class ActionsPerspective : IPerspectiveWithActionsFor<Model, EventB> {
+    public ApplyResult<Model> Apply(Model c, EventB e) => ApplyResult<Model>.Purge();
+  }
+
+  public interface ICustom<TModel, TEvent> : IPerspectiveBase<TModel, TEvent>
+      where TModel : class where TEvent : IEvent { }
+  public class CustomPerspective : ICustom<Model, EventC> { }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert — ALL three event types in associations
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("EventA")
+      .Because("IPerspectiveFor events must be in DB associations");
+    await Assert.That(generatedSource).Contains("EventB")
+      .Because("IPerspectiveWithActionsFor events must be in DB associations");
+    await Assert.That(generatedSource).Contains("EventC")
+      .Because("Custom IPerspectiveBase events must be in DB associations");
+  }
 }
