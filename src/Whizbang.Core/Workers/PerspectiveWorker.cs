@@ -39,7 +39,9 @@ public partial class PerspectiveWorker(
   PerspectiveMetrics? metrics = null,
   IPerspectiveSnapshotStore? snapshotStore = null,
   IPerspectiveStreamLocker? streamLocker = null,
-  IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null
+  IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null,
+  IProcessedEventCacheObserver? processedEventCacheObserver = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -68,6 +70,13 @@ public partial class PerspectiveWorker(
 
   // Cache of streams that have been bootstrapped this session (skip re-check)
   private readonly HashSet<(Guid StreamId, string PerspectiveName)> _bootstrappedThisSession = [];
+
+  // Two-phase TTL cache to prevent duplicate Apply when SQL re-delivers events during batched completion window
+  private readonly ProcessedEventCache _processedEventCache = new(
+    TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.LeaseSeconds),
+    timeProvider: timeProvider,
+    observer: processedEventCacheObserver
+  );
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -219,6 +228,9 @@ public partial class PerspectiveWorker(
     var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
     var lifecycleCoordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
+    // Evict expired entries from the dedup cache (cheap scan each cycle)
+    _processedEventCache.EvictExpired();
+
     // DIAGNOSTIC: Log which service/instance is processing checkpoints
     LogProcessingWorkBatchForService(_logger, _instanceProvider.ServiceName, _instanceProvider.InstanceId);
 
@@ -319,16 +331,22 @@ public partial class PerspectiveWorker(
     // 6. Mark as Acknowledged based on counts from SQL
     _completionStrategy.MarkAsAcknowledged(completionsProcessed, failuresProcessed);
 
+    // 6a. DB confirmed completion — start TTL countdown for in-flight dedup entries
+    _processedEventCache.ActivateRetention();
+
     // 7. Clear only Acknowledged items
     _completionStrategy.ClearAcknowledged();
 
     // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
     _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
 
+    // 9. Dedup: filter out work items already processed within retention window
+    var dedupedWork = _filterDuplicateWorkItems(workBatch.PerspectiveWork);
+
     // Group perspective work items by (StreamId, PerspectiveName)
     // Each work item represents a single event, but the runner processes ALL events for a stream
     // So we only call RunAsync() ONCE per (stream, perspective) pair
-    var groupedWork = workBatch.PerspectiveWork
+    var groupedWork = dedupedWork
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
@@ -787,12 +805,17 @@ public partial class PerspectiveWorker(
         LogPerspectiveCursorCompleted(_logger, perspectiveName, streamId, result.LastEventId);
 
         // Buffer perspective event completions for next batch (triggers wh_perspective_events deletion)
+        var completedWorkIds = new List<Guid>(group.Count());
         foreach (var workItem in group) {
           _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
             EventWorkId = workItem.WorkId,
             StatusFlags = (int)PerspectiveProcessingStatus.Completed
           });
+          completedWorkIds.Add(workItem.WorkId);
         }
+
+        // Mark processed WorkIds as in-flight in dedup cache (no TTL until DB acks)
+        _processedEventCache.AddRange(completedWorkIds);
 
         // Record per-stream metrics
         _metrics?.StreamsUpdated.Add(1);
@@ -1482,6 +1505,46 @@ public partial class PerspectiveWorker(
     Message = "Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring"
   )]
   static partial void LogFailedToAcquireRewindLock(ILogger logger, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 44,
+    Level = LogLevel.Debug,
+    Message = "Dedup: skipped {SkippedCount} already-processed work items out of {TotalCount}"
+  )]
+  static partial void LogDedupSkipped(ILogger logger, int skippedCount, int totalCount);
+
+  /// <summary>
+  /// Filters out work items whose WorkIds are already in the processed event cache.
+  /// Notifies the observer for each group of deduped items.
+  /// </summary>
+  private List<PerspectiveWork> _filterDuplicateWorkItems(List<PerspectiveWork> workItems) {
+    if (workItems.Count == 0) {
+      return workItems;
+    }
+
+    var dedupedWork = new List<PerspectiveWork>(workItems.Count);
+    var skippedWork = new List<PerspectiveWork>();
+
+    foreach (var item in workItems) {
+      if (_processedEventCache.Contains(item.WorkId)) {
+        skippedWork.Add(item);
+      } else {
+        dedupedWork.Add(item);
+      }
+    }
+
+    // Notify observer for each group of deduped items
+    if (skippedWork.Count > 0) {
+      foreach (var g in skippedWork.GroupBy(w => new { w.StreamId, w.PerspectiveName })) {
+        var skippedIds = g.Select(w => w.WorkId).ToList();
+        _processedEventCache.Observer.OnEventsDeduped(skippedIds, g.Key.PerspectiveName, g.Key.StreamId);
+      }
+
+      LogDedupSkipped(_logger, skippedWork.Count, workItems.Count);
+    }
+
+    return dedupedWork;
+  }
 }
 
 /// <summary>
