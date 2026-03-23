@@ -30,7 +30,9 @@ namespace Whizbang.Generators;
 public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
   private const string IRECEPTOR_INTERFACE_NAME = "global::Whizbang.Core.IReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "global::Whizbang.Core.Perspectives.IPerspectiveBase";
+  private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
+  private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover event namespaces from IPerspectiveFor implementations
@@ -76,22 +78,17 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1, TEvent2, ...> interface
-    // Use FullyQualifiedFormat to include global:: prefix which matches our constant
-    var perspectiveInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal));
+    // Use shared discovery helper for consistent perspective interface scanning
+    var eventTypes = Utilities.PerspectiveDiscoveryHelper.ExtractEventTypes(classSymbol);
 
-    if (perspectiveInterface is null) {
+    if (eventTypes.Count == 0) {
       return null;
     }
 
-    // Extract event types from type arguments (skip first which is TModel)
+    // Extract event namespaces
     var eventNamespaces = new List<string>();
-    var typeArguments = perspectiveInterface.TypeArguments;
 
-    // First type argument is TModel, rest are event types
-    for (var i = 1; i < typeArguments.Length; i++) {
-      var eventType = typeArguments[i];
+    foreach (var eventType in eventTypes) {
 
       // Verify it's an IEvent implementation
       // Use FullyQualifiedFormat to include global:: prefix which matches our constant
