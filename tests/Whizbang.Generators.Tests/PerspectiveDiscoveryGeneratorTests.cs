@@ -1628,4 +1628,70 @@ namespace TestNamespace {
     // The target name should use '+' for each level of nesting
     await Assert.That(generatedSource).Contains(@"""TestNamespace.Sessions+Active+Projection""");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_WithActionsForInterface_GeneratesMessageAssociationAsync() {
+    // Arrange - Perspective uses IPerspectiveFor for normal events and
+    // IPerspectiveWithActionsFor for events that trigger Purge/Delete.
+    // Bug: PerspectiveDiscoveryGenerator only matched "IPerspectiveFor" substring,
+    // which does NOT match "IPerspectiveWithActionsFor" — so events on
+    // IPerspectiveWithActionsFor were never registered as MessageAssociations.
+    const string source = """
+
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderDeletedEvent : IEvent {
+    [StreamId]
+    public Guid OrderId { get; init; }
+  }
+
+  public record OrderModel {
+    [StreamId]
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+  }
+
+  public class OrderPerspective :
+      IPerspectiveFor<OrderModel, OrderCreatedEvent>,
+      IPerspectiveWithActionsFor<OrderModel, OrderDeletedEvent> {
+
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderDeletedEvent @event) {
+      return ApplyResult<OrderModel>.Purge();
+    }
+  }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate registrations for BOTH event types
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource).Contains("OrderPerspective");
+    await Assert.That(generatedSource).Contains("OrderCreatedEvent");
+
+    // This is the critical assertion: OrderDeletedEvent (on IPerspectiveWithActionsFor) must appear
+    // in MessageAssociations so the work coordinator routes it to the perspective
+    await Assert.That(generatedSource).Contains("OrderDeletedEvent");
+
+    // Both events should have MessageAssociation entries
+    var createdCount = _countOccurrences(generatedSource!, "OrderCreatedEvent");
+    var deletedCount = _countOccurrences(generatedSource!, "OrderDeletedEvent");
+    await Assert.That(createdCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(deletedCount).IsGreaterThanOrEqualTo(1);
+  }
 }
