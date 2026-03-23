@@ -318,238 +318,66 @@ public partial class TransportConsumerWorker : BackgroundService {
     var receiveSw = Stopwatch.StartNew();
     var messageType = envelopeType is not null ? TypeNameFormatter.GetSimpleName(envelopeType) : "Unknown";
     var messageTypeTag = new KeyValuePair<string, object?>("message_type", messageType);
-
     _metrics?.InboxMessagesReceived.Add(1, messageTypeTag);
 
-    // Restore distributed trace context from the incoming message's TraceParent
-    // This enables cross-service tracing by linking spans from sender to receiver
-    Activity? inboxActivity = null;
-    var traceParent = envelope.Hops?
-      .Where(h => h.Type == HopType.Current)
-      .Select(h => h.TraceParent)
-      .LastOrDefault(tp => tp is not null);
-
-    if (traceParent is not null && ActivityContext.TryParse(traceParent, null, out var parentContext)) {
-      // Start a new activity as child of the sender's span
-      inboxActivity = WhizbangActivitySource.Transport.StartActivity(
-        $"Inbox {messageType}",
-        ActivityKind.Consumer,
-        parentContext
-      );
-      inboxActivity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
-      inboxActivity?.SetTag("messaging.operation", "receive");
-      inboxActivity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
-    }
+    var inboxActivity = _startInboxActivity(envelope, messageType);
 
     try {
-      // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IReceptorInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
 
-      // Establish FULL security context FIRST (before any business logic)
-      // This sets BOTH IScopeContextAccessor.Current AND IMessageContextAccessor.Current
       var securitySw = Stopwatch.StartNew();
       await SecurityContextHelper.EstablishFullContextAsync(envelope, scope.ServiceProvider, cancellationToken);
       securitySw.Stop();
       _metrics?.InboxSecurityContextDuration.Record(securitySw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-
-      // Resolve IReceptorInvoker from scope (scoped service following MediatR/MassTransit pattern)
       var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        _logger.LogDebug(
-          "Processing message {MessageId} from transport",
-          messageId
-        );
+        _logger.LogDebug("Processing message {MessageId} from transport", envelope.MessageId);
       }
 
-      // Populate DeliveredAt timestamp on the message payload (JSON-level, AOT-safe)
       _populateDeliveredAtTimestamp(envelope, envelopeType);
 
-      // 1. Serialize envelope to InboxMessage
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
-
-      // 2. Queue for atomic deduplication via process_work_batch
-      strategy.QueueInboxMessage(newInboxMessage);
-
-      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      var dedupSw = Stopwatch.StartNew();
-      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
-      dedupSw.Stop();
-      _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
-
-      // 4. Check if work was returned - empty means duplicate (already processed)
-      var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
-
+      // 1. Serialize and deduplicate
+      var myWork = await _serializeAndDeduplicateAsync(envelope, envelopeType, strategy, scope.ServiceProvider, messageTypeTag, cancellationToken);
       if (myWork.Count == 0) {
         _metrics?.InboxMessagesDeduplicated.Add(1, messageTypeTag);
         if (_logger.IsEnabled(LogLevel.Information)) {
-          var messageId = envelope.MessageId;
-          _logger.LogInformation(
-            "Message {MessageId} already processed (duplicate), skipping",
-            messageId
-          );
+          _logger.LogInformation("Message {MessageId} already processed (duplicate), skipping", envelope.MessageId);
         }
         return;
       }
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        var workCount = myWork.Count;
-        _logger.LogDebug(
-          "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
-          messageId,
-          workCount
-        );
+        _logger.LogDebug("Message {MessageId} accepted for processing ({WorkCount} inbox work items)", envelope.MessageId, myWork.Count);
       }
 
-      // 5. Invoke PreInbox lifecycle stages (ALL receptors registered at PreInbox stages)
-      foreach (var work in myWork) {
-        object? message = null;
-        IMessageEnvelope? typedEnvelope = null;
+      // 2. PreInbox lifecycle
+      await _invokePreInboxLifecycleAsync(myWork, receptorInvoker, cancellationToken);
 
-        // Deserialize message if we have an invoker
-        if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-        }
-
-        if (typedEnvelope is not null && receptorInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PreInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
-
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
-
-          // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-
-          // PreInboxInline stage
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
-
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
-
-          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-        }
-      }
-
-      // 6. Process using OrderedStreamProcessor (maintains stream ordering)
-      // Perspectives are created automatically by process_work_batch and processed by PerspectiveWorker
+      // 3. Process via OrderedStreamProcessor
       var processingSw = Stopwatch.StartNew();
-      await _orderedProcessor.ProcessInboxWorkAsync(
-        myWork,
-        processor: async (work) => {
-          // Deserialize event from work item
-          var @event = _deserializeEvent(work);
-
-          // Mark as EventStored - perspectives will be processed via PerspectiveWorker
-          if (@event is IEvent) {
-            return MessageProcessingStatus.EventStored;
-          }
-
-          // Non-event messages - just mark as stored
-          return MessageProcessingStatus.EventStored;
-        },
-        completionHandler: (msgId, status) => {
-          strategy.QueueInboxCompletion(msgId, status);
-          if (_logger.IsEnabled(LogLevel.Debug)) {
-            _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
-          }
-        },
-        failureHandler: (msgId, status, error) => {
-          strategy.QueueInboxFailure(msgId, status, error);
-          _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
-        },
-        cancellationToken
-      );
+      await _processInboxWorkItemsAsync(myWork, strategy, cancellationToken);
       processingSw.Stop();
       _metrics?.InboxProcessingDuration.Record(processingSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
-      // 7. Invoke PostInbox lifecycle stages (ALL receptors registered at PostInbox stages)
-      // This is where DEFAULT receptors (without [FireAt]) fire for the distributed receive path
-      foreach (var work in myWork) {
-        object? message = null;
-        IMessageEnvelope? typedEnvelope = null;
+      // 4. PostInbox lifecycle
+      await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scope.ServiceProvider, cancellationToken);
 
-        // Deserialize message if we have an invoker
-        if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-          message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          // Reconstruct envelope with deserialized payload to preserve security context
-          typedEnvelope = work.Envelope.ReconstructWithPayload(message);
-        }
-
-        if (typedEnvelope is not null && receptorInvoker is not null) {
-          var lifecycleContext = new LifecycleExecutionContext {
-            CurrentStage = LifecycleStage.PostInboxAsync,
-            EventId = null,
-            StreamId = null,
-            LastProcessedEventId = null,
-            MessageSource = MessageSource.Inbox,
-            AttemptNumber = null // Attempt info not tracked for inbox work
-          };
-
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
-
-          // ImmediateAsync lifecycle receptors fire at the end of each stage
-          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-
-          // PostInboxInline stage
-          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
-
-          await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
-
-          await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-
-          // PostLifecycle stages for events WITHOUT perspectives
-          // Events with perspectives get PostLifecycle from PerspectiveWorker at batch end
-          if (_isEventWithoutPerspectives(work.MessageType, scope.ServiceProvider)) {
-            var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
-            if (coordinator is not null) {
-              // Use coordinator for PostLifecycle — guarantees once-per-event firing
-              var eventId = work.Envelope.MessageId.Value;
-              var tracking = coordinator.BeginTracking(
-                eventId, typedEnvelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
-              await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
-              await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
-              coordinator.AbandonTracking(eventId);
-            } else {
-              // Fallback: direct invocation when coordinator not registered
-              lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, cancellationToken);
-              await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-
-              lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
-              await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, cancellationToken);
-              await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
-            }
-          }
-        }
-      }
-
-      // 8. Report completions/failures back to database
+      // 5. Report completions/failures
       var completionSw = Stopwatch.StartNew();
       await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, cancellationToken);
       completionSw.Stop();
       _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var messageId = envelope.MessageId;
-        _logger.LogDebug("Successfully processed message {MessageId}", messageId);
+        _logger.LogDebug("Successfully processed message {MessageId}", envelope.MessageId);
       }
 
       _metrics?.InboxMessagesProcessed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (ObjectDisposedException) {
-      // Service provider or strategy disposed during host shutdown — drop message gracefully.
-      // It will be redelivered from the transport on next startup.
       LogMessageDroppedDuringShutdown(_logger, envelope.MessageId.Value);
       return;
     } catch (Exception ex) {
@@ -559,12 +387,147 @@ public partial class TransportConsumerWorker : BackgroundService {
       inboxActivity?.SetTag("exception.message", ex.Message);
 #pragma warning disable S2139 // Log + rethrow is intentional: transport needs the exception for retry/dead-letter, but we need the log for observability
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
-      throw; // Let the transport handle retry/dead-letter
+      throw;
 #pragma warning restore S2139
     } finally {
       receiveSw.Stop();
       _metrics?.InboxReceiveDuration.Record(receiveSw.Elapsed.TotalMilliseconds, messageTypeTag);
       inboxActivity?.Dispose();
+    }
+  }
+
+  private static Activity? _startInboxActivity(IMessageEnvelope envelope, string messageType) {
+    var traceParent = envelope.Hops?
+      .Where(h => h.Type == HopType.Current)
+      .Select(h => h.TraceParent)
+      .LastOrDefault(tp => tp is not null);
+
+    if (traceParent is null || !ActivityContext.TryParse(traceParent, null, out var parentContext)) {
+      return null;
+    }
+
+    var activity = WhizbangActivitySource.Transport.StartActivity(
+      $"Inbox {messageType}", ActivityKind.Consumer, parentContext);
+    activity?.SetTag("messaging.message_id", envelope.MessageId.ToString());
+    activity?.SetTag("messaging.operation", "receive");
+    activity?.SetTag("whizbang.hop_count", envelope.Hops?.Count ?? 0);
+    return activity;
+  }
+
+  private async Task<List<InboxWork>> _serializeAndDeduplicateAsync(
+    IMessageEnvelope envelope, string? envelopeType, IWorkCoordinatorStrategy strategy,
+    IServiceProvider scopedProvider, KeyValuePair<string, object?> messageTypeTag,
+    CancellationToken cancellationToken) {
+    var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
+    strategy.QueueInboxMessage(newInboxMessage);
+
+    var dedupSw = Stopwatch.StartNew();
+    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
+    dedupSw.Stop();
+    _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
+
+    return workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
+  }
+
+  private async Task _invokePreInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker, CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PreInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PreInboxInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+    }
+  }
+
+  private async Task _processInboxWorkItemsAsync(
+    List<InboxWork> myWork, IWorkCoordinatorStrategy strategy, CancellationToken cancellationToken) {
+    await _orderedProcessor.ProcessInboxWorkAsync(
+      myWork,
+      processor: async (work) => {
+        var @event = _deserializeEvent(work);
+        return MessageProcessingStatus.EventStored;
+      },
+      completionHandler: (msgId, status) => {
+        strategy.QueueInboxCompletion(msgId, status);
+        if (_logger.IsEnabled(LogLevel.Debug)) {
+          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+        }
+      },
+      failureHandler: (msgId, status, error) => {
+        strategy.QueueInboxFailure(msgId, status, error);
+        _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
+      },
+      cancellationToken
+    );
+  }
+
+  private async Task _invokePostInboxLifecycleAsync(
+    List<InboxWork> myWork, IReceptorInvoker? receptorInvoker,
+    IServiceProvider scopedProvider, CancellationToken cancellationToken) {
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return;
+    }
+
+    foreach (var work in myWork) {
+      var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+      var typedEnvelope = work.Envelope.ReconstructWithPayload(message);
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostInboxAsync,
+        EventId = null,
+        StreamId = null,
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Inbox,
+        AttemptNumber = null
+      };
+
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostInboxInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      if (_isEventWithoutPerspectives(work.MessageType, scopedProvider)) {
+        await _invokePostLifecycleForEventAsync(work, typedEnvelope, receptorInvoker, lifecycleContext, scopedProvider, cancellationToken);
+      }
+    }
+  }
+
+  private static async Task _invokePostLifecycleForEventAsync(
+    InboxWork work, IMessageEnvelope typedEnvelope, IReceptorInvoker receptorInvoker,
+    LifecycleExecutionContext lifecycleContext, IServiceProvider scopedProvider,
+    CancellationToken cancellationToken) {
+    var coordinator = scopedProvider.GetService<ILifecycleCoordinator>();
+    if (coordinator is not null) {
+      var eventId = work.Envelope.MessageId.Value;
+      var tracking = coordinator.BeginTracking(
+        eventId, typedEnvelope, LifecycleStage.PostLifecycleAsync, MessageSource.Inbox);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, cancellationToken);
+      await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, cancellationToken);
+      coordinator.AbandonTracking(eventId);
+    } else {
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleAsync };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleAsync, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
+
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostLifecycleInline };
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.PostLifecycleInline, lifecycleContext, cancellationToken);
+      await _invokeImmediateAsyncAsync(receptorInvoker, typedEnvelope, lifecycleContext, cancellationToken);
     }
   }
 

@@ -81,14 +81,34 @@ public sealed class DefaultMessageSecurityContextProvider(
     IServiceProvider scopedProvider,
     Type payloadType,
     CancellationToken cancellationToken) {
-    // Track if payload is JsonElement - an intermediate representation from outbox
-    // before deserialization. For JsonElement, we try extractors but don't REQUIRE
-    // security (it will be checked again after deserialization with the real type).
     var isJsonElement = payloadType == typeof(System.Text.Json.JsonElement);
 
     // Try extractors in priority order with timeout
-    SecurityExtraction? extraction = null;
+    var extraction = await _tryExtractWithTimeoutAsync(envelope, cancellationToken);
 
+    // No extraction and anonymous not allowed
+    if (extraction is null) {
+      return _handleNoExtraction(envelope, payloadType, isJsonElement);
+    }
+
+    // Wrap in immutable context
+    var context = new ImmutableScopeContext(extraction, _options.PropagateToOutgoingMessages);
+
+    // Emit audit event if enabled
+    _emitAuditEventIfEnabled(extraction);
+
+    // Call all callbacks
+    await _invokeCallbacksAsync(context, envelope, scopedProvider, cancellationToken);
+
+    return context;
+  }
+
+  /// <summary>
+  /// Tries extractors in priority order with a timeout.
+  /// </summary>
+  private async ValueTask<SecurityExtraction?> _tryExtractWithTimeoutAsync(
+      IMessageEnvelope envelope,
+      CancellationToken cancellationToken) {
     using var timeoutCts = new CancellationTokenSource(_options.Timeout);
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
@@ -101,10 +121,10 @@ public sealed class DefaultMessageSecurityContextProvider(
 
         linkedCts.Token.ThrowIfCancellationRequested();
 
-        extraction = await extractor.ExtractAsync(envelope, _options, linkedCts.Token);
+        var extraction = await extractor.ExtractAsync(envelope, _options, linkedCts.Token);
 
         if (extraction is not null) {
-          break;
+          return extraction;
         }
       }
     } catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested) {
@@ -112,27 +132,32 @@ public sealed class DefaultMessageSecurityContextProvider(
         $"Security context establishment timed out after {_options.Timeout.TotalSeconds:F1} seconds.");
     }
 
-    // No extraction and anonymous not allowed
-    if (extraction is null) {
-      // JsonElement is an intermediate representation (outbox) - don't require security
-      // The real message type will be checked after deserialization
-      if (!_options.AllowAnonymous && !isJsonElement) {
-        // Check if envelope already carries scope from an upstream security check.
-        // After outbox/transport serialization, the typed message may have no extractor,
-        // but the envelope's hops contain the ScopeDelta from the original authentication.
-        // If scope data exists on the envelope, the message was already authenticated —
-        // return null so callers can use envelope.GetCurrentScope() as fallback.
-        _ = envelope.GetCurrentScope()
-          ?? throw new SecurityContextRequiredException(payloadType);
-      }
+    return null;
+  }
 
-      return null;
+  /// <summary>
+  /// Handles the case where no extractor produced a result.
+  /// </summary>
+  private IScopeContext? _handleNoExtraction(IMessageEnvelope envelope, Type payloadType, bool isJsonElement) {
+    // JsonElement is an intermediate representation (outbox) - don't require security
+    // The real message type will be checked after deserialization
+    if (!_options.AllowAnonymous && !isJsonElement) {
+      // Check if envelope already carries scope from an upstream security check.
+      // After outbox/transport serialization, the typed message may have no extractor,
+      // but the envelope's hops contain the ScopeDelta from the original authentication.
+      // If scope data exists on the envelope, the message was already authenticated -
+      // return null so callers can use envelope.GetCurrentScope() as fallback.
+      _ = envelope.GetCurrentScope()
+        ?? throw new SecurityContextRequiredException(payloadType);
     }
 
-    // Wrap in immutable context
-    var context = new ImmutableScopeContext(extraction, _options.PropagateToOutgoingMessages);
+    return null;
+  }
 
-    // Emit audit event if enabled
+  /// <summary>
+  /// Emits an audit event if audit logging is enabled.
+  /// </summary>
+  private void _emitAuditEventIfEnabled(SecurityExtraction extraction) {
     if (_options.EnableAuditLogging && _onAuditEvent is not null) {
       _onAuditEvent(new ScopeContextEstablished {
         Scope = extraction.Scope,
@@ -142,13 +167,19 @@ public sealed class DefaultMessageSecurityContextProvider(
         Timestamp = DateTimeOffset.UtcNow
       });
     }
+  }
 
-    // Call all callbacks
+  /// <summary>
+  /// Invokes all security context callbacks.
+  /// </summary>
+  private async ValueTask _invokeCallbacksAsync(
+      ImmutableScopeContext context,
+      IMessageEnvelope envelope,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
     foreach (var callback in _callbacks) {
       cancellationToken.ThrowIfCancellationRequested();
       await callback.OnContextEstablishedAsync(context, envelope, scopedProvider, cancellationToken);
     }
-
-    return context;
   }
 }
