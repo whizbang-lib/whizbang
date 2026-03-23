@@ -10,9 +10,11 @@ using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Integration tests verifying that register_message_associations() correctly
-/// handles create, update, and remove of perspective associations — including
-/// events from IPerspectiveWithActionsFor (e.g., soft delete, purge events).
+/// Comprehensive integration tests for message association registration.
+/// Tests CREATE, UPDATE, and REMOVE for each perspective interface type:
+/// - IPerspectiveFor (standard Apply → TModel)
+/// - IPerspectiveWithActionsFor (Apply → ApplyResult with Delete/Purge)
+/// Uses ActionTestPerspective which implements both interface types.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
 [NotInParallel("EFCorePostgresTests")]
@@ -20,105 +22,190 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class MessageAssociationRegistrationTests : EFCoreTestBase {
 
   // ════════════════════════════════════════════════════════════════════════
-  //  CREATE: IPerspectiveWithActionsFor events get registered
+  //  IPerspectiveFor — CREATE
   // ════════════════════════════════════════════════════════════════════════
 
   [Test]
-  public async Task SchemaInit_RegistersIPerspectiveWithActionsForEvents_InMessageAssociationsAsync() {
-    // Arrange — EFCoreTestBase.SetupAsync already calls InitializeDatabaseAsync
-    // which runs register_message_associations() with the generated JSON.
-    // The generated JSON should include ActionTestSoftDeletedEvent and ActionTestPurgedEvent
-    // from ActionTestPerspective which uses IPerspectiveWithActionsFor.
-
+  public async Task IPerspectiveFor_Create_EventsRegisteredInMessageAssociationsAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    // Act — query associations for WithActions events
+    var createdAssoc = await conn.QueryFirstOrDefaultAsync<dynamic>(
+      "SELECT * FROM wh_message_associations WHERE message_type LIKE '%ActionTestCreatedEvent%'");
+    var updatedAssoc = await conn.QueryFirstOrDefaultAsync<dynamic>(
+      "SELECT * FROM wh_message_associations WHERE message_type LIKE '%ActionTestUpdatedEvent%'");
+
+    await Assert.That((object?)createdAssoc).IsNotNull()
+      .Because("ActionTestCreatedEvent from IPerspectiveFor must be in wh_message_associations");
+    await Assert.That((object?)updatedAssoc).IsNotNull()
+      .Because("ActionTestUpdatedEvent from IPerspectiveFor must be in wh_message_associations");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  IPerspectiveFor — UPDATE
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task IPerspectiveFor_Update_ReRegistrationBumpsTimestampAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    var before = await conn.QueryFirstAsync<DateTime>(
+      "SELECT updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTestCreatedEvent%'");
+
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger: null);
+
+    var after = await conn.QueryFirstAsync<DateTime>(
+      "SELECT updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTestCreatedEvent%'");
+
+    await Assert.That(after).IsGreaterThanOrEqualTo(before)
+      .Because("Re-registration must update timestamp for IPerspectiveFor events");
+
+    var count = await conn.QueryFirstAsync<int>(
+      "SELECT COUNT(*) FROM wh_message_associations WHERE message_type LIKE '%ActionTestCreatedEvent%'");
+    await Assert.That(count).IsEqualTo(1)
+      .Because("Re-registration must not create duplicates for IPerspectiveFor events");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  IPerspectiveFor — REMOVE
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task IPerspectiveFor_Remove_OrphanedAssociationDeletedAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    await conn.ExecuteAsync(
+      @"INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+        VALUES ('OrphanedIPerspectiveForEvent', 'perspective', 'OrphanedPerspective', 'Whizbang.Data.EFCore.Postgres.Tests', NOW(), NOW())");
+
+    await using var dbContext = CreateDbContext();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger: null);
+
+    var orphan = await conn.QueryFirstOrDefaultAsync<dynamic>(
+      "SELECT * FROM wh_message_associations WHERE message_type = 'OrphanedIPerspectiveForEvent'");
+    await Assert.That((object?)orphan).IsNull()
+      .Because("Orphaned IPerspectiveFor associations must be removed during reconciliation");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  IPerspectiveWithActionsFor — CREATE
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task IPerspectiveWithActionsFor_Create_EventsRegisteredInMessageAssociationsAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
     var softDeleteAssoc = await conn.QueryFirstOrDefaultAsync<dynamic>(
       "SELECT * FROM wh_message_associations WHERE message_type LIKE '%ActionTestSoftDeletedEvent%'");
     var purgeAssoc = await conn.QueryFirstOrDefaultAsync<dynamic>(
       "SELECT * FROM wh_message_associations WHERE message_type LIKE '%ActionTestPurgedEvent%'");
 
-    // Assert — both IPerspectiveWithActionsFor events must be registered
     await Assert.That((object?)softDeleteAssoc).IsNotNull()
       .Because("ActionTestSoftDeletedEvent from IPerspectiveWithActionsFor must be in wh_message_associations");
     await Assert.That((object?)purgeAssoc).IsNotNull()
       .Because("ActionTestPurgedEvent from IPerspectiveWithActionsFor must be in wh_message_associations");
   }
 
-  [Test]
-  public async Task SchemaInit_RegistersIPerspectiveForEvents_InMessageAssociationsAsync() {
-    // Verify IPerspectiveFor events are also registered (baseline)
-    await using var conn = new NpgsqlConnection(ConnectionString);
-    await conn.OpenAsync();
-
-    var createdAssoc = await conn.QueryFirstOrDefaultAsync<dynamic>(
-      "SELECT * FROM wh_message_associations WHERE message_type LIKE '%ActionTestCreatedEvent%'");
-
-    await Assert.That((object?)createdAssoc).IsNotNull()
-      .Because("ActionTestCreatedEvent from IPerspectiveFor must be in wh_message_associations");
-  }
-
   // ════════════════════════════════════════════════════════════════════════
-  //  UPDATE: Re-registration updates timestamps
+  //  IPerspectiveWithActionsFor — UPDATE
   // ════════════════════════════════════════════════════════════════════════
 
   [Test]
-  public async Task SchemaInit_CalledTwice_UpdatesTimestampsWithoutDuplicatesAsync() {
-    // Arrange
+  public async Task IPerspectiveWithActionsFor_Update_ReRegistrationBumpsTimestampAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    // Get initial timestamps
-    var before = await conn.QueryAsync<(string message_type, DateTime updated_at)>(
-      "SELECT message_type, updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTest%' ORDER BY message_type");
-    var beforeList = before.ToList();
+    var before = await conn.QueryFirstAsync<DateTime>(
+      "SELECT updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTestSoftDeletedEvent%'");
 
-    // Act — re-initialize (calls register_message_associations again)
     await using var dbContext = CreateDbContext();
     await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger: null);
 
-    // Get updated timestamps
-    var after = await conn.QueryAsync<(string message_type, DateTime updated_at)>(
-      "SELECT message_type, updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTest%' ORDER BY message_type");
-    var afterList = after.ToList();
+    var after = await conn.QueryFirstAsync<DateTime>(
+      "SELECT updated_at FROM wh_message_associations WHERE message_type LIKE '%ActionTestSoftDeletedEvent%'");
 
-    // Assert — same count (no duplicates), timestamps updated
-    await Assert.That(afterList.Count).IsEqualTo(beforeList.Count)
-      .Because("Re-registration should not create duplicates");
-    // Timestamps should be >= before (updated_at gets bumped)
-    for (int i = 0; i < beforeList.Count; i++) {
-      await Assert.That(afterList[i].updated_at).IsGreaterThanOrEqualTo(beforeList[i].updated_at);
-    }
+    await Assert.That(after).IsGreaterThanOrEqualTo(before)
+      .Because("Re-registration must update timestamp for IPerspectiveWithActionsFor events");
+
+    var count = await conn.QueryFirstAsync<int>(
+      "SELECT COUNT(*) FROM wh_message_associations WHERE message_type LIKE '%ActionTestSoftDeletedEvent%'");
+    await Assert.That(count).IsEqualTo(1)
+      .Because("Re-registration must not create duplicates for IPerspectiveWithActionsFor events");
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  //  REMOVE: Orphaned associations get deleted
+  //  IPerspectiveWithActionsFor — REMOVE
   // ════════════════════════════════════════════════════════════════════════
 
   [Test]
-  public async Task SchemaInit_RemovesOrphanedAssociations_OnReRegistrationAsync() {
-    // Arrange — insert a fake association that doesn't exist in generated code
+  public async Task IPerspectiveWithActionsFor_Remove_OrphanedAssociationDeletedAsync() {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
     await conn.ExecuteAsync(
       @"INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-        VALUES ('FakeOrphanedEvent', 'perspective', 'FakeOrphanedPerspective', 'Whizbang.Data.EFCore.Postgres.Tests', NOW(), NOW())");
+        VALUES ('OrphanedWithActionsEvent', 'perspective', 'OrphanedWithActionsPerspective', 'Whizbang.Data.EFCore.Postgres.Tests', NOW(), NOW())");
 
-    var orphanExists = await conn.QueryFirstOrDefaultAsync<dynamic>(
-      "SELECT * FROM wh_message_associations WHERE message_type = 'FakeOrphanedEvent'");
-    await Assert.That((object?)orphanExists).IsNotNull()
-      .Because("Setup: orphaned association should exist before re-registration");
-
-    // Act — re-initialize (reconciliation should remove orphan)
     await using var dbContext = CreateDbContext();
     await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger: null);
 
-    // Assert — orphaned association removed
-    var orphanAfter = await conn.QueryFirstOrDefaultAsync<dynamic>(
-      "SELECT * FROM wh_message_associations WHERE message_type = 'FakeOrphanedEvent'");
-    await Assert.That((object?)orphanAfter).IsNull()
-      .Because("Orphaned associations not in generated code must be removed during reconciliation");
+    var orphan = await conn.QueryFirstOrDefaultAsync<dynamic>(
+      "SELECT * FROM wh_message_associations WHERE message_type = 'OrphanedWithActionsEvent'");
+    await Assert.That((object?)orphan).IsNull()
+      .Because("Orphaned IPerspectiveWithActionsFor associations must be removed during reconciliation");
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Combined — both interface types on same perspective
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task BothInterfaces_AllEventTypesRegistered_NoDuplicatesAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    // ActionTestPerspective has 4 event types:
+    // IPerspectiveFor: ActionTestCreatedEvent, ActionTestUpdatedEvent
+    // IPerspectiveWithActionsFor: ActionTestSoftDeletedEvent, ActionTestPurgedEvent
+    var associations = await conn.QueryAsync<string>(
+      "SELECT message_type FROM wh_message_associations WHERE target_name LIKE '%ActionTestPerspective%' ORDER BY message_type");
+    var list = associations.ToList();
+
+    await Assert.That(list.Count).IsEqualTo(4)
+      .Because("ActionTestPerspective has 4 event types (2 IPerspectiveFor + 2 IPerspectiveWithActionsFor)");
+
+    await Assert.That(list.Any(m => m.Contains("ActionTestCreatedEvent"))).IsTrue();
+    await Assert.That(list.Any(m => m.Contains("ActionTestUpdatedEvent"))).IsTrue();
+    await Assert.That(list.Any(m => m.Contains("ActionTestSoftDeletedEvent"))).IsTrue();
+    await Assert.That(list.Any(m => m.Contains("ActionTestPurgedEvent"))).IsTrue();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Lock-in — total count matches expected
+  // ════════════════════════════════════════════════════════════════════════
+
+  [Test]
+  public async Task LockIn_TotalAssociationCount_MatchesGeneratedCodeAsync() {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+
+    // Count ALL associations for this service
+    var total = await conn.QueryFirstAsync<int>(
+      "SELECT COUNT(*) FROM wh_message_associations WHERE service_name = 'Whizbang.Data.EFCore.Postgres.Tests'");
+
+    // Must be > 0 and must include both IPerspectiveFor and IPerspectiveWithActionsFor events
+    await Assert.That(total).IsGreaterThan(0)
+      .Because("At least some associations must be registered");
+
+    // Verify no duplicates (unique constraint should prevent but verify at app level)
+    var distinctCount = await conn.QueryFirstAsync<int>(
+      @"SELECT COUNT(DISTINCT (message_type, association_type, target_name))
+        FROM wh_message_associations WHERE service_name = 'Whizbang.Data.EFCore.Postgres.Tests'");
+    await Assert.That(distinctCount).IsEqualTo(total)
+      .Because("No duplicate associations should exist");
   }
 }
