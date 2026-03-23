@@ -251,13 +251,16 @@ public class DispatcherTagProcessingTests {
       Action<WhizbangCoreOptions>? configure = null) {
     var services = new ServiceCollection();
 
-    // Register Whizbang with options
+    // Exempt test message types from security — these tests are about tag processing, not security
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(TestCommand));
+    });
+
     services.AddWhizbang(options => {
       configure?.Invoke(options);
     });
 
     // Replace the registered IMessageTagProcessor with our spy
-    // Remove the default registration and add our spy
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
     if (descriptor != null) {
       services.Remove(descriptor);
@@ -280,7 +283,11 @@ public class DispatcherTagProcessingTests {
   private static IDispatcher _createDispatcherWithoutProcessor(Action<WhizbangCoreOptions>? configure = null) {
     var services = new ServiceCollection();
 
-    // Register Whizbang with options
+    // Exempt test message types from security — these tests are about tag processing, not security
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(TestCommand));
+    });
+
     services.AddWhizbang(options => {
       configure?.Invoke(options);
     });
