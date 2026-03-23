@@ -331,7 +331,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var typeArgs = string.Join(", ", perspective.InterfaceTypeArguments);
 
       var generatedCode = registrationSnippet
-          .Replace("__PERSPECTIVE_INTERFACE__", PERSPECTIVE_INTERFACE_NAME)
+          .Replace("__PERSPECTIVE_INTERFACE__", perspective.IsWithActionsInterface
+              ? "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor"
+              : PERSPECTIVE_INTERFACE_NAME)
           .Replace("__TYPE_ARGUMENTS__", typeArgs)
           .Replace("__PERSPECTIVE_CLASS__", perspective.ClassName);
 
