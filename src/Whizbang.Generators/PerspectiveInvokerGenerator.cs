@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// <tests>No tests found</tests>
 [Generator]
 public class PerspectiveInvokerGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
 
   /// <summary>
   /// Initializes the incremental generator by discovering perspective implementations and registering source generation.
@@ -69,8 +69,8 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Simple contains check to match any perspective interface
-          return originalDef.Contains("IPerspectiveFor");
+          // Match IPerspectiveBase — unified marker for all perspective types
+          return originalDef.Contains("IPerspectiveBase");
         })
         .ToList();
 

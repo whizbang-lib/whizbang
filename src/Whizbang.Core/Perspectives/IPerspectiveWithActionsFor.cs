@@ -65,7 +65,7 @@ public interface IPerspectiveWithActionsFor<TModel> where TModel : class {
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1>
   where TModel : class
   where TEvent1 : IEvent {
   /// <summary>
@@ -85,7 +85,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1> : IPerspectiveWithA
 /// <summary>
 /// Perspective with action support for two event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
@@ -96,7 +96,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2> : IPerspec
 /// <summary>
 /// Perspective with action support for three event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -109,7 +109,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3> :
 /// <summary>
 /// Perspective with action support for four event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -124,7 +124,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for five event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -141,7 +141,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for six event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -160,7 +160,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for seven event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -181,7 +181,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for eight event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -204,7 +204,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for nine event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent
@@ -229,7 +229,7 @@ public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, T
 /// <summary>
 /// Perspective with action support for ten event types.
 /// </summary>
-public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10> : IPerspectiveWithActionsFor<TModel>
+public interface IPerspectiveWithActionsFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10> : IPerspectiveWithActionsFor<TModel>, IPerspectiveBase<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5, TEvent6, TEvent7, TEvent8, TEvent9, TEvent10>
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent

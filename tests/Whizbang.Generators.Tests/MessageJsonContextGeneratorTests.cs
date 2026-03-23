@@ -5948,4 +5948,46 @@ public record CreateOrder(string OrderId) : ICommand;
   }
 
   #endregion
+
+  #region IPerspectiveWithActionsFor event type discovery
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync() {
+    // Arrange — Perspective using only IPerspectiveWithActionsFor (Purge pattern)
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestApp;
+
+public record PurgeEvent : IEvent {
+  [StreamId]
+  public Guid Id { get; init; }
+}
+
+public record PurgeModel {
+  [StreamId]
+  public Guid Id { get; init; }
+  public string Name { get; init; } = "";
+}
+
+public class PurgePerspective : IPerspectiveWithActionsFor<PurgeModel, PurgeEvent> {
+  public ApplyResult<PurgeModel> Apply(PurgeModel current, PurgeEvent @event)
+    => ApplyResult<PurgeModel>.Purge();
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert — PurgeModel must be discovered and included in JSON context
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("PurgeModel")
+      .Because("IPerspectiveWithActionsFor models must be included in MessageJsonContext for serialization");
+  }
+
+  #endregion
 }

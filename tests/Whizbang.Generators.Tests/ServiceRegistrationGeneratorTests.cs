@@ -588,4 +588,45 @@ public class ServiceRegistrationGeneratorTests {
     var diagnostics = result.Diagnostics;
     await Assert.That(diagnostics.Any(d => d.Id == "WHIZ041")).IsTrue();
   }
+
+  // ===========================================
+  // IPerspectiveWithActionsFor TESTS
+  // ===========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_IPerspectiveWithActionsFor_RegistersServiceAsync() {
+    // Arrange — Perspective using only IPerspectiveWithActionsFor
+    const string source = """
+            using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
+            using System;
+
+            namespace TestApp;
+
+            public record DeletedEvent : IEvent {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public record OrderModel {
+              [StreamId]
+              public Guid Id { get; init; }
+            }
+
+            public class OrderPurgePerspective : IPerspectiveWithActionsFor<OrderModel, DeletedEvent> {
+              public ApplyResult<OrderModel> Apply(OrderModel current, DeletedEvent @event)
+                => ApplyResult<OrderModel>.Purge();
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ServiceRegistrationGenerator>(source);
+
+    // Assert — WithActionsFor perspective must be registered in DI
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "ServiceRegistrations.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("OrderPurgePerspective")
+      .Because("IPerspectiveWithActionsFor perspectives must be registered in DI");
+  }
 }
