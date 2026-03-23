@@ -69,10 +69,19 @@ jobs:
 
       - name: Determine Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
-        with:
-          useConfigFile: true
-          configFilePath: GitVersion.yml
+        run: |
+          # Run GitVersion directly and strip BOM from output (6.1.x adds UTF-8 BOM)
+          OUTFILE="${RUNNER_TEMP}/gitversion.json"
+          dotnet-gitversion /config GitVersion.yml /output file /outputfile "$OUTFILE"
+          # Strip BOM if present
+          sed -i '1s/^\xEF\xBB\xBF//' "$OUTFILE"
+          # Parse and set outputs
+          SEMVER=$(jq -r '.SemVer' "$OUTFILE")
+          FULLSEMVER=$(jq -r '.FullSemVer' "$OUTFILE")
+          PRERELEASE=$(jq -r '.PreReleaseTag' "$OUTFILE")
+          echo "semVer=$SEMVER" >> $GITHUB_OUTPUT
+          echo "fullSemVer=$FULLSEMVER" >> $GITHUB_OUTPUT
+          echo "preReleaseTag=$PRERELEASE" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Fallback Version (if GitVersion fails)

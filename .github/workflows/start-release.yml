@@ -48,11 +48,20 @@ jobs:
       - name: Determine Base Version
         if: inputs.release_type != 'manual'
         id: gitversion
-        uses: gittools/actions/gitversion/execute@e0d584e657c606912e8fd522aeed29025975705f # v4.4.2
-        with:
-          useConfigFile: true
-          configFilePath: GitVersion.yml
-          disableNormalization: true
+        run: |
+          OUTFILE="${RUNNER_TEMP}/gitversion.json"
+          dotnet-gitversion /config GitVersion.yml /output file /outputfile "$OUTFILE"
+          sed -i '1s/^\xEF\xBB\xBF//' "$OUTFILE"
+          SEMVER=$(jq -r '.SemVer' "$OUTFILE")
+          FULLSEMVER=$(jq -r '.FullSemVer' "$OUTFILE")
+          MAJOR=$(jq -r '.Major' "$OUTFILE")
+          MINOR=$(jq -r '.Minor' "$OUTFILE")
+          PATCH=$(jq -r '.Patch' "$OUTFILE")
+          echo "semVer=$SEMVER" >> $GITHUB_OUTPUT
+          echo "fullSemVer=$FULLSEMVER" >> $GITHUB_OUTPUT
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
         continue-on-error: true
 
       - name: Fallback Version (if GitVersion fails)
