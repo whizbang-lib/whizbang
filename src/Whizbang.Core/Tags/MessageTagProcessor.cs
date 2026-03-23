@@ -143,7 +143,6 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       IScopeContext? scope,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
-    // Get all hooks that match this attribute type (hooks filter by stage via context.Stage)
     var attributeType = attribute.GetType();
     var hooks = _options.GetHooksFor(attributeType).ToList();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -154,53 +153,76 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     var currentPayload = payload;
 
     foreach (var registration in hooks) {
-      if (TagLogger.IsEnabled(LogLevel.Debug)) {
-        TagLogger.LogDebug("[TAG PROCESSOR] Resolving hook {HookType}", registration.HookType.Name);
-      }
-      var hookInstance = hookResolver(registration.HookType);
+      var hookInstance = _resolveHookInstance(registration, hookResolver);
       if (hookInstance is null) {
-        if (TagLogger.IsEnabled(LogLevel.Debug)) {
-          TagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved to NULL - skipping", registration.HookType.Name);
-        }
         continue;
       }
-      if (TagLogger.IsEnabled(LogLevel.Debug)) {
-        TagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", registration.HookType.Name);
-      }
 
-      // Create context based on registration's attribute type (not the actual attribute type)
-      // For universal hooks (AttributeType == MessageTagAttribute), we need TagContext<MessageTagAttribute>
-      // For typed hooks, we use the actual attribute type for the context
-      var contextAttributeType = registration.AttributeType == typeof(MessageTagAttribute) ? typeof(MessageTagAttribute) : attribute.GetType();
-      var hookContext = contextAttributeType == typeof(MessageTagAttribute)
-        ? (object)new TagContext<MessageTagAttribute> {
-          Attribute = attribute,
-          Message = message,
-          MessageType = messageType,
-          Payload = currentPayload,
-          Scope = scope,
-          Stage = stage
-        }
-        : _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope, stage);
-      if (TagLogger.IsEnabled(LogLevel.Debug)) {
-        TagLogger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", hookContext.GetType().Name);
-      }
-
-      // Invoke the hook
-      if (TagLogger.IsEnabled(LogLevel.Debug)) {
-        TagLogger.LogDebug("[TAG PROCESSOR] Invoking hook...");
-      }
-      var result = await _invokeHookAsync(hookInstance, hookContext, registration.AttributeType, ct);
-      if (TagLogger.IsEnabled(LogLevel.Debug)) {
-        TagLogger.LogDebug("[TAG PROCESSOR] Hook invocation complete, result: {Result}", result.HasValue ? "modified payload" : "null");
-      }
-
-      // Update payload if hook returned a modified one
-      if (result.HasValue) {
-        currentPayload = result.Value;
-      }
+      var hookContext = _createContextForRegistration(registration, attribute, message, messageType, currentPayload, scope, stage);
+      currentPayload = await _invokeAndUpdatePayloadAsync(hookInstance, hookContext, registration.AttributeType, currentPayload, ct);
     }
 #pragma warning restore CA1848
+  }
+
+  private object? _resolveHookInstance(TagHookRegistration registration, Func<Type, object?> hookResolver) {
+#pragma warning disable CA1848
+    if (TagLogger.IsEnabled(LogLevel.Debug)) {
+      TagLogger.LogDebug("[TAG PROCESSOR] Resolving hook {HookType}", registration.HookType.Name);
+    }
+    var hookInstance = hookResolver(registration.HookType);
+    if (hookInstance is null) {
+      if (TagLogger.IsEnabled(LogLevel.Debug)) {
+        TagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved to NULL - skipping", registration.HookType.Name);
+      }
+      return null;
+    }
+    if (TagLogger.IsEnabled(LogLevel.Debug)) {
+      TagLogger.LogDebug("[TAG PROCESSOR] Hook {HookType} resolved successfully", registration.HookType.Name);
+    }
+#pragma warning restore CA1848
+    return hookInstance;
+  }
+
+  private static object _createContextForRegistration(
+      TagHookRegistration registration,
+      MessageTagAttribute attribute,
+      object message,
+      Type messageType,
+      JsonElement currentPayload,
+      IScopeContext? scope,
+      LifecycleStage stage) {
+    // For universal hooks (AttributeType == MessageTagAttribute), we need TagContext<MessageTagAttribute>
+    // For typed hooks, we use the actual attribute type for the context
+    var contextAttributeType = registration.AttributeType == typeof(MessageTagAttribute) ? typeof(MessageTagAttribute) : attribute.GetType();
+    return contextAttributeType == typeof(MessageTagAttribute)
+      ? new TagContext<MessageTagAttribute> {
+        Attribute = attribute,
+        Message = message,
+        MessageType = messageType,
+        Payload = currentPayload,
+        Scope = scope,
+        Stage = stage
+      }
+      : _createHookContextForAttribute(attribute, message, messageType, currentPayload, scope, stage);
+  }
+
+  private async ValueTask<JsonElement> _invokeAndUpdatePayloadAsync(
+      object hookInstance,
+      object hookContext,
+      Type attributeType,
+      JsonElement currentPayload,
+      CancellationToken ct) {
+#pragma warning disable CA1848
+    if (TagLogger.IsEnabled(LogLevel.Debug)) {
+      TagLogger.LogDebug("[TAG PROCESSOR] Created hook context of type {ContextType}", hookContext.GetType().Name);
+      TagLogger.LogDebug("[TAG PROCESSOR] Invoking hook...");
+    }
+    var result = await _invokeHookAsync(hookInstance, hookContext, attributeType, ct);
+    if (TagLogger.IsEnabled(LogLevel.Debug)) {
+      TagLogger.LogDebug("[TAG PROCESSOR] Hook invocation complete, result: {Result}", result.HasValue ? "modified payload" : "null");
+    }
+#pragma warning restore CA1848
+    return result ?? currentPayload;
   }
 
   private static object _createHookContextForAttribute(
@@ -330,34 +352,13 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       object context,
       Type attributeType,
       CancellationToken ct) {
-    // Invoke the hook using the correct generic interface
-    // This is a controlled set of known types, not arbitrary reflection
-    if (attributeType == typeof(MessageTagAttribute) &&
-        hookInstance is IMessageTagHook<MessageTagAttribute> universalHook &&
-        context is TagContext<MessageTagAttribute> universalContext) {
-      return await universalHook.OnTaggedMessageAsync(universalContext, ct);
-    }
-
-    if (attributeType == typeof(SignalTagAttribute) &&
-        hookInstance is IMessageTagHook<SignalTagAttribute> notificationHook &&
-        context is TagContext<SignalTagAttribute> notificationContext) {
-      return await notificationHook.OnTaggedMessageAsync(notificationContext, ct);
-    }
-
-    if (attributeType == typeof(TelemetryTagAttribute) &&
-        hookInstance is IMessageTagHook<TelemetryTagAttribute> telemetryHook &&
-        context is TagContext<TelemetryTagAttribute> telemetryContext) {
-      return await telemetryHook.OnTaggedMessageAsync(telemetryContext, ct);
-    }
-
-    if (attributeType == typeof(MetricTagAttribute) &&
-        hookInstance is IMessageTagHook<MetricTagAttribute> metricHook &&
-        context is TagContext<MetricTagAttribute> metricContext) {
-      return await metricHook.OnTaggedMessageAsync(metricContext, ct);
+    // Try known built-in attribute types first
+    var builtInResult = await _tryInvokeBuiltInHookAsync(hookInstance, context, attributeType, ct);
+    if (builtInResult.Matched) {
+      return builtInResult.Result;
     }
 
     // Try dispatcher registry for custom attribute types
-    // Source-generated dispatchers handle AOT-compatible dispatch without reflection
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (TagLogger.IsEnabled(LogLevel.Debug)) {
       TagLogger.LogDebug("[TAG PROCESSOR] Trying dispatcher registry for {AttributeType}", attributeType.Name);
@@ -369,5 +370,37 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
     }
 #pragma warning restore CA1848
     return dispatchResult;
+  }
+
+  private static async ValueTask<(bool Matched, JsonElement? Result)> _tryInvokeBuiltInHookAsync(
+      object hookInstance,
+      object context,
+      Type attributeType,
+      CancellationToken ct) {
+    if (attributeType == typeof(MessageTagAttribute) &&
+        hookInstance is IMessageTagHook<MessageTagAttribute> universalHook &&
+        context is TagContext<MessageTagAttribute> universalContext) {
+      return (true, await universalHook.OnTaggedMessageAsync(universalContext, ct));
+    }
+
+    if (attributeType == typeof(SignalTagAttribute) &&
+        hookInstance is IMessageTagHook<SignalTagAttribute> notificationHook &&
+        context is TagContext<SignalTagAttribute> notificationContext) {
+      return (true, await notificationHook.OnTaggedMessageAsync(notificationContext, ct));
+    }
+
+    if (attributeType == typeof(TelemetryTagAttribute) &&
+        hookInstance is IMessageTagHook<TelemetryTagAttribute> telemetryHook &&
+        context is TagContext<TelemetryTagAttribute> telemetryContext) {
+      return (true, await telemetryHook.OnTaggedMessageAsync(telemetryContext, ct));
+    }
+
+    if (attributeType == typeof(MetricTagAttribute) &&
+        hookInstance is IMessageTagHook<MetricTagAttribute> metricHook &&
+        context is TagContext<MetricTagAttribute> metricContext) {
+      return (true, await metricHook.OnTaggedMessageAsync(metricContext, ct));
+    }
+
+    return (false, null);
   }
 }

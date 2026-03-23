@@ -261,7 +261,6 @@ public static partial class SecurityContextHelper {
     }
 
     // Check if an explicit security context is already set (e.g., by AsSystem/RunAs).
-    // If yes, read from that context rather than AsyncLocal.
     var scopeAccessor = serviceProvider?.GetService<IScopeContextAccessor>();
     var explicitContext = scopeAccessor?.Current;
     var hasExplicitContext = explicitContext is not null;
@@ -272,6 +271,24 @@ public static partial class SecurityContextHelper {
 #pragma warning restore CA1848
     }
 
+    // Extract userId and tenantId from available contexts
+    var (userId, tenantId) = _extractSecurityValuesForCascade(
+      hasExplicitContext, explicitContext, logger);
+
+    if (logger is not null) {
+      Log.ExtractedSecurityValues(logger, userId, tenantId);
+#pragma warning disable CA1873 // !string.IsNullOrEmpty is not expensive to evaluate
+      Log.ContextEstablishmentCondition(logger, !string.IsNullOrEmpty(userId), !string.IsNullOrEmpty(tenantId));
+#pragma warning restore CA1873
+    }
+
+    // CRITICAL: Establish BOTH contexts in cascade scope
+    _establishScopeContextForCascade(hasExplicitContext, userId, tenantId, logger);
+    _establishMessageContextForCascade(userId, tenantId, logger);
+  }
+
+  private static (string? UserId, string? TenantId) _extractSecurityValuesForCascade(
+      bool hasExplicitContext, IScopeContext? explicitContext, ILogger? logger) {
     string? userId = null;
     string? tenantId = null;
 
@@ -282,77 +299,76 @@ public static partial class SecurityContextHelper {
       if (logger is not null) {
         Log.ReadFromExplicitContext(logger, userId, tenantId);
       }
+      return (userId, tenantId);
     }
+
     // Priority 2: Try to read from parent's MessageContextAccessor (AsyncLocal from parent receptor)
-    else {
-      var parentMessageContext = MessageContextAccessor.CurrentContext;
-      if (logger is not null) {
-        Log.ParentMessageContextChecked(logger, parentMessageContext is null);
-      }
-
-      if (parentMessageContext is not null) {
-        userId = parentMessageContext.UserId;
-        tenantId = parentMessageContext.TenantId;
-        if (logger is not null) {
-          Log.ReadFromMessageContextAccessor(logger, userId, tenantId);
-        }
-      }
-      // Fallback: try ScopeContextAccessor (for transport workers)
-      else if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
-        userId = ctx.Scope.UserId;
-        tenantId = ctx.Scope.TenantId;
-        if (logger is not null) {
-          Log.ReadFromScopeContextAccessorFallback(logger, userId, tenantId);
-        }
-      }
-    }
-
+    var parentMessageContext = MessageContextAccessor.CurrentContext;
     if (logger is not null) {
-      Log.ExtractedSecurityValues(logger, userId, tenantId);
-#pragma warning disable CA1873 // !string.IsNullOrEmpty is not expensive to evaluate
-      Log.ContextEstablishmentCondition(logger, !string.IsNullOrEmpty(userId), !string.IsNullOrEmpty(tenantId));
-#pragma warning restore CA1873
+      Log.ParentMessageContextChecked(logger, parentMessageContext is null);
     }
 
-    // CRITICAL: Establish BOTH contexts in cascade scope
-
-    // 1. Set ScopeContextAccessor (for ScopedMessageContext.UserId priority 1)
-    // Skip if explicit context already set (AsSystem/RunAs) - don't overwrite it
-    if (!hasExplicitContext) {
-      if (!string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(tenantId)) {
-        if (logger is not null) {
-          Log.CreatingScopeContext(logger);
-        }
-        var extraction = new SecurityExtraction {
-          Scope = new PerspectiveScope {
-            TenantId = tenantId,
-            UserId = userId
-          },
-          Roles = new HashSet<string>(),
-          Permissions = new HashSet<Permission>(),
-          SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
-          Claims = new Dictionary<string, string>(),
-          Source = "Cascade:AsyncLocal"
-        };
-        ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
-          extraction,
-          shouldPropagate: true
-        );
-        if (logger is not null) {
-          Log.ScopeContextEstablished(logger, ScopeContextAccessor.CurrentContext is null);
-        }
-      } else {
-        if (logger is not null) {
-          Log.SkippingScopeContextSetup(logger);
-        }
+    if (parentMessageContext is not null) {
+      userId = parentMessageContext.UserId;
+      tenantId = parentMessageContext.TenantId;
+      if (logger is not null) {
+        Log.ReadFromMessageContextAccessor(logger, userId, tenantId);
       }
-    } else {
+    }
+    // Fallback: try ScopeContextAccessor (for transport workers)
+    else if (ScopeContextAccessor.CurrentContext is ImmutableScopeContext ctx) {
+      userId = ctx.Scope.UserId;
+      tenantId = ctx.Scope.TenantId;
+      if (logger is not null) {
+        Log.ReadFromScopeContextAccessorFallback(logger, userId, tenantId);
+      }
+    }
+
+    return (userId, tenantId);
+  }
+
+  private static void _establishScopeContextForCascade(
+      bool hasExplicitContext, string? userId, string? tenantId, ILogger? logger) {
+    // Skip if explicit context already set (AsSystem/RunAs) - don't overwrite it
+    if (hasExplicitContext) {
       if (logger is not null) {
         Log.SkippingScopeContextDueToExplicit(logger);
       }
+      return;
     }
 
-    // 2. Set MessageContextAccessor (for fallback + other consumers)
+    if (!string.IsNullOrEmpty(userId) || !string.IsNullOrEmpty(tenantId)) {
+      if (logger is not null) {
+        Log.CreatingScopeContext(logger);
+      }
+      var extraction = new SecurityExtraction {
+        Scope = new PerspectiveScope {
+          TenantId = tenantId,
+          UserId = userId
+        },
+        Roles = new HashSet<string>(),
+        Permissions = new HashSet<Permission>(),
+        SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+        Claims = new Dictionary<string, string>(),
+        Source = "Cascade:AsyncLocal"
+      };
+      ScopeContextAccessor.CurrentContext = new ImmutableScopeContext(
+        extraction,
+        shouldPropagate: true
+      );
+      if (logger is not null) {
+        Log.ScopeContextEstablished(logger, ScopeContextAccessor.CurrentContext is null);
+      }
+    } else {
+      if (logger is not null) {
+        Log.SkippingScopeContextSetup(logger);
+      }
+    }
+  }
+
+  private static void _establishMessageContextForCascade(
+      string? userId, string? tenantId, ILogger? logger) {
+    // Set MessageContextAccessor (for fallback + other consumers)
     var messageContext = new MessageContext {
       MessageId = MessageId.New(),
       CorrelationId = CorrelationId.New(),
@@ -363,8 +379,7 @@ public static partial class SecurityContextHelper {
     };
     MessageContextAccessor.CurrentContext = messageContext;
 
-    // 3. Set InitiatingContext on IScopeContextAccessor (SOURCE OF TRUTH pattern)
-    // This ensures IMessageContext is the source of truth for security context.
+    // Set InitiatingContext on IScopeContextAccessor (SOURCE OF TRUTH pattern)
     ScopeContextAccessor.CurrentInitiatingContext = messageContext;
 
     if (logger is not null) {

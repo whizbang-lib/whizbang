@@ -50,23 +50,10 @@ public static partial class WhizbangBanner {
     var random = Random.Shared;
     var sb = new StringBuilder(4096);
 
-    void Seg(string text, int r, int g, int b) {
-      var isBg = r == BACKGROUND_R && g == BACKGROUND_G && b == BACKGROUND_B;
-      foreach (var ch in text) {
-        if (isBg && ch == ' ' && random.Next(12) == 0) {
-          var brightness = random.Next(220, 256);
-          var star = _starChars[random.Next(_starChars.Length)];
-          sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{brightness};{brightness + 5};{brightness + 10}m{star}{_reset}");
-        } else {
-          sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
-        }
-      }
-    }
+    void Seg(string text, int r, int g, int b) =>
+      _appendSegment(sb, text, r, g, b, random);
 
-    void Eol() {
-      sb.Append(CultureInfo.InvariantCulture, $"{_background}  {_reset}");
-      sb.AppendLine();
-    }
+    void Eol() => _appendEndOfLine(sb);
 
     sb.AppendLine();
 
@@ -231,28 +218,11 @@ public static partial class WhizbangBanner {
     var random = Random.Shared;
     var sb = new StringBuilder(4096);
 
-    void Seg(string text, int r, int g, int b) {
-      var isBg = r == BACKGROUND_R && g == BACKGROUND_G && b == BACKGROUND_B;
-      foreach (var ch in text) {
-        if (isBg && ch == ' ') {
-          bgPositions.Add((row, col));
-          if (random.Next(12) == 0) {
-            var brightness = random.Next(220, 256);
-            var star = _starChars[random.Next(_starChars.Length)];
-            sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{brightness};{brightness + 5};{brightness + 10}m{star}{_reset}");
-          } else {
-            sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
-          }
-        } else {
-          sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
-        }
-        col++;
-      }
-    }
+    void Seg(string text, int r, int g, int b) =>
+      _appendSegmentAnimated(sb, text, r, g, b, random, bgPositions, row, ref col);
 
     void Eol() {
-      sb.Append(CultureInfo.InvariantCulture, $"{_background}  {_reset}");
-      sb.AppendLine();
+      _appendEndOfLine(sb);
       row++;
       col = 0;
     }
@@ -282,45 +252,89 @@ public static partial class WhizbangBanner {
       var positions = bgPositions.ToArray();
       var startRow = bannerStartRow;
 
-      _ = Task.Run(() => {
-        var rng = Random.Shared;
-        try {
-          for (var frame = 0; frame < durationSeconds && !ct.IsCancellationRequested; frame++) {
-            Thread.Sleep(1000);
-            if (ct.IsCancellationRequested) {
-              break;
-            }
-
-            lock (_consoleLock) {
-              // Save cursor
-              Console.Write($"{ESC_CODE}[s");
-
-              // Update ~25 random background positions
-              for (var i = 0; i < 25; i++) {
-                var pos = positions[rng.Next(positions.Length)];
-                var absRow = startRow + pos.Row + 1; // +1 for 1-based ANSI
-                var absCol = pos.Col + 1;            // +1 for 1-based ANSI
-
-                Console.Write($"{ESC_CODE}[{absRow};{absCol}H");
-                if (rng.Next(3) == 0) {
-                  var b = rng.Next(220, 256);
-                  var star = _starChars[rng.Next(_starChars.Length)];
-                  Console.Write($"{_background}{ESC_CODE}[38;2;{b};{b + 5};{b + 10}m{star}{_reset}");
-                } else {
-                  Console.Write($"{_background}{ESC_CODE}[38;2;{BACKGROUND_R};{BACKGROUND_G};{BACKGROUND_B}m {_reset}");
-                }
-              }
-
-              // Restore cursor
-              Console.Write($"{ESC_CODE}[u");
-              Console.Out.Flush();
-            }
-          }
-        } catch {
-          // Terminal resized or closed — stop gracefully
-        }
-      }, ct);
+      _ = Task.Run(() => _runTwinkleLoop(positions, startRow, durationSeconds, ct), ct);
     }
+  }
+
+  private static void _runTwinkleLoop(
+      (int Row, int Col)[] positions, int startRow, int durationSeconds, CancellationToken ct) {
+    var rng = Random.Shared;
+    try {
+      for (var frame = 0; frame < durationSeconds && !ct.IsCancellationRequested; frame++) {
+        Thread.Sleep(1000);
+        if (ct.IsCancellationRequested) {
+          break;
+        }
+
+        lock (_consoleLock) {
+          Console.Write($"{ESC_CODE}[s");
+          _updateTwinklePositions(positions, startRow, rng);
+          Console.Write($"{ESC_CODE}[u");
+          Console.Out.Flush();
+        }
+      }
+    } catch {
+      // Terminal resized or closed - stop gracefully
+    }
+  }
+
+  private static void _updateTwinklePositions(
+      (int Row, int Col)[] positions, int startRow, Random rng) {
+    for (var i = 0; i < 25; i++) {
+      var pos = positions[rng.Next(positions.Length)];
+      var absRow = startRow + pos.Row + 1; // +1 for 1-based ANSI
+      var absCol = pos.Col + 1;            // +1 for 1-based ANSI
+
+      Console.Write($"{ESC_CODE}[{absRow};{absCol}H");
+      if (rng.Next(3) == 0) {
+        var b = rng.Next(220, 256);
+        var star = _starChars[rng.Next(_starChars.Length)];
+        Console.Write($"{_background}{ESC_CODE}[38;2;{b};{b + 5};{b + 10}m{star}{_reset}");
+      } else {
+        Console.Write($"{_background}{ESC_CODE}[38;2;{BACKGROUND_R};{BACKGROUND_G};{BACKGROUND_B}m {_reset}");
+      }
+    }
+  }
+
+  private static void _appendSegment(StringBuilder sb, string text, int r, int g, int b, Random random) {
+    var isBg = r == BACKGROUND_R && g == BACKGROUND_G && b == BACKGROUND_B;
+    foreach (var ch in text) {
+      if (isBg && ch == ' ' && random.Next(12) == 0) {
+        _appendStarChar(sb, random);
+      } else {
+        sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
+      }
+    }
+  }
+
+  private static void _appendSegmentAnimated(
+      StringBuilder sb, string text, int r, int g, int b,
+      Random random, List<(int Row, int Col)> bgPositions, int row, ref int col) {
+    var isBg = r == BACKGROUND_R && g == BACKGROUND_G && b == BACKGROUND_B;
+    foreach (var ch in text) {
+      if (isBg && ch == ' ') {
+        bgPositions.Add((row, col));
+        if (random.Next(12) == 0) {
+          _appendStarChar(sb, random);
+        } else {
+          sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
+        }
+      } else {
+        sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{r};{g};{b}m{ch}{_reset}");
+      }
+      col++;
+    }
+  }
+
+  private static void _appendStarChar(StringBuilder sb, Random random) {
+    var brightness = random.Next(220, 256);
+    var star = _starChars[random.Next(_starChars.Length)];
+    sb.Append(CultureInfo.InvariantCulture, $"{_background}{ESC_CODE}[38;2;{brightness};{brightness + 5};{brightness + 10}m{star}{_reset}");
+  }
+
+  private static void _appendEndOfLine(StringBuilder sb) {
+    sb.Append(CultureInfo.InvariantCulture, $"{_background}  {_reset}");
+    sb.AppendLine();
   }
 
   /// <summary>

@@ -261,17 +261,28 @@ public sealed class ScopeDelta {
   /// <param name="previous">The previous scope context (can be null).</param>
   /// <returns>A new ScopeContext with delta changes applied.</returns>
   public ScopeContext ApplyTo(ScopeContext? previous) {
-    // Start with previous values or defaults
+    var (scope, actualPrincipal, effectivePrincipal, contextType) = _applyValueChanges(previous);
+    var (roles, permissions, principals, claims) = _applyCollectionChanges(previous);
+
+    return new ScopeContext {
+      Scope = scope,
+      Roles = roles,
+      Permissions = permissions,
+      SecurityPrincipals = principals,
+      Claims = claims,
+      ActualPrincipal = actualPrincipal,
+      EffectivePrincipal = effectivePrincipal,
+      ContextType = contextType
+    };
+  }
+
+  private (PerspectiveScope Scope, string? ActualPrincipal, string? EffectivePrincipal, SecurityContextType ContextType) _applyValueChanges(
+      ScopeContext? previous) {
     var scope = previous?.Scope ?? new PerspectiveScope();
-    var roles = previous?.Roles ?? new HashSet<string>();
-    var permissions = previous?.Permissions ?? new HashSet<Permission>();
-    var principals = previous?.SecurityPrincipals ?? new HashSet<SecurityPrincipalId>();
-    var claims = previous?.Claims ?? new Dictionary<string, string>();
     var actualPrincipal = previous?.ActualPrincipal;
     var effectivePrincipal = previous?.EffectivePrincipal;
     var contextType = previous?.ContextType ?? SecurityContextType.User;
 
-    // Apply value changes
     if (Values != null) {
       if (Values.TryGetValue(ScopeProp.Scope, out var scopeElement)) {
         scope = _deserializeScope(scopeElement);
@@ -287,7 +298,16 @@ public sealed class ScopeDelta {
       }
     }
 
-    // Apply collection changes
+    return (scope, actualPrincipal, effectivePrincipal, contextType);
+  }
+
+  private (IReadOnlySet<string> Roles, IReadOnlySet<Permission> Permissions, IReadOnlySet<SecurityPrincipalId> Principals, IReadOnlyDictionary<string, string> Claims) _applyCollectionChanges(
+      ScopeContext? previous) {
+    IReadOnlySet<string> roles = previous?.Roles ?? new HashSet<string>();
+    IReadOnlySet<Permission> permissions = previous?.Permissions ?? new HashSet<Permission>();
+    IReadOnlySet<SecurityPrincipalId> principals = previous?.SecurityPrincipals ?? new HashSet<SecurityPrincipalId>();
+    IReadOnlyDictionary<string, string> claims = previous?.Claims ?? new Dictionary<string, string>();
+
     if (Collections != null) {
       if (Collections.TryGetValue(ScopeProp.Roles, out var rolesChanges)) {
         roles = _applyChanges(roles, rolesChanges, s => s);
@@ -303,16 +323,7 @@ public sealed class ScopeDelta {
       }
     }
 
-    return new ScopeContext {
-      Scope = scope,
-      Roles = roles,
-      Permissions = permissions,
-      SecurityPrincipals = principals,
-      Claims = claims,
-      ActualPrincipal = actualPrincipal,
-      EffectivePrincipal = effectivePrincipal,
-      ContextType = contextType
-    };
+    return (roles, permissions, principals, claims);
   }
 
   private static string? _deserializeString(JsonElement element) =>
@@ -357,48 +368,43 @@ public sealed class ScopeDelta {
     sb.Append('{');
     var first = true;
 
-    if (scope.TenantId != null) {
-      sb.Append("\"t\":\"").Append(JsonEncodedText.Encode(scope.TenantId)).Append('"');
-      first = false;
-    }
-    if (scope.UserId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"u\":\"").Append(JsonEncodedText.Encode(scope.UserId)).Append('"');
-      first = false;
-    }
-    if (scope.CustomerId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"c\":\"").Append(JsonEncodedText.Encode(scope.CustomerId)).Append('"');
-      first = false;
-    }
-    if (scope.OrganizationId != null) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"o\":\"").Append(JsonEncodedText.Encode(scope.OrganizationId)).Append('"');
-      first = false;
-    }
-    if (scope.AllowedPrincipals.Count > 0) {
-      if (!first) {
-        sb.Append(',');
-      }
-      sb.Append("\"ap\":[");
-      for (var i = 0; i < scope.AllowedPrincipals.Count; i++) {
-        if (i > 0) {
-          sb.Append(',');
-        }
-        sb.Append('"').Append(JsonEncodedText.Encode(scope.AllowedPrincipals[i])).Append('"');
-      }
-      sb.Append(']');
-    }
+    _appendJsonStringProperty(sb, "t", scope.TenantId, ref first);
+    _appendJsonStringProperty(sb, "u", scope.UserId, ref first);
+    _appendJsonStringProperty(sb, "c", scope.CustomerId, ref first);
+    _appendJsonStringProperty(sb, "o", scope.OrganizationId, ref first);
+    _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
 
     sb.Append('}');
     using var doc = JsonDocument.Parse(sb.ToString());
     return doc.RootElement.Clone();
+  }
+
+  private static void _appendJsonStringProperty(StringBuilder sb, string key, string? value, ref bool first) {
+    if (value == null) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append('"').Append(key).Append("\":\"").Append(JsonEncodedText.Encode(value)).Append('"');
+    first = false;
+  }
+
+  private static void _appendAllowedPrincipals(StringBuilder sb, List<string> principals, ref bool first) {
+    if (principals.Count == 0) {
+      return;
+    }
+    if (!first) {
+      sb.Append(',');
+    }
+    sb.Append("\"ap\":[");
+    for (var i = 0; i < principals.Count; i++) {
+      if (i > 0) {
+        sb.Append(',');
+      }
+      sb.Append('"').Append(JsonEncodedText.Encode(principals[i])).Append('"');
+    }
+    sb.Append(']');
   }
 
   private static PerspectiveScope _deserializeScope(JsonElement element) {

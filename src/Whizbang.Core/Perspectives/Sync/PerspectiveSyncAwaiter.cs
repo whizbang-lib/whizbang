@@ -209,99 +209,103 @@ public sealed partial class PerspectiveSyncAwaiter(
       TimeSpan timeout,
       Guid? eventIdToAwait,
       CancellationToken ct) {
-    // Create span for stream-based perspective sync wait - shows blocking time in traces
     using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"PerspectiveSync {perspectiveType.Name} Stream",
       ActivityKind.Internal);
+    _setStreamSyncActivityTags(syncActivity, perspectiveType, streamId, timeout, eventIdToAwait);
+
+    var stopwatch = _clock.StartNew();
+    var perspectiveName = _getPerspectiveName(perspectiveType);
+    var expectedEventIds = _resolveExpectedEventIds(eventIdToAwait, streamId, perspectiveName, eventTypes);
+
+    LogStreamSyncWaitStarting(_logger, perspectiveName, streamId);
+
+    // EVENT-DRIVEN WAITING: If we have expected event IDs, use the tracker
+    if (expectedEventIds is { Length: > 0 }) {
+      return await _waitForExpectedEventsAsync(
+        expectedEventIds, perspectiveName, streamId, timeout, stopwatch, syncActivity, ct);
+    }
+
+    // No event IDs to wait for
+    stopwatch.Halt();
+    _setSyncActivityOutcome(syncActivity, "NoPendingEvents", 0, stopwatch.ActiveElapsed);
+    LogSyncDebugNoEventsFound(_logger, streamId);
+    return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
+  }
+
+  private static void _setStreamSyncActivityTags(
+      Activity? syncActivity, Type perspectiveType, Guid streamId, TimeSpan timeout, Guid? eventIdToAwait) {
     syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
     syncActivity?.SetTag("whizbang.sync.stream_id", streamId.ToString());
     syncActivity?.SetTag("whizbang.sync.timeout_ms", timeout.TotalMilliseconds);
     if (eventIdToAwait.HasValue) {
       syncActivity?.SetTag("whizbang.sync.event_id", eventIdToAwait.Value.ToString());
     }
+  }
 
-    var stopwatch = _clock.StartNew();
-    var perspectiveName = _getPerspectiveName(perspectiveType);
-
-    // Build expected event IDs (in order of priority):
-    // 1. Explicit eventIdToAwait parameter (for attribute-based sync with incoming event)
-    // 2. Singleton ISyncEventTracker (for cross-scope sync - events tracked before DB)
-
-    Guid[]? expectedEventIds = null;
-
+  private Guid[]? _resolveExpectedEventIds(
+      Guid? eventIdToAwait, Guid streamId, string perspectiveName, Type[]? eventTypes) {
     // Priority 1: Use explicit event ID if provided
     if (eventIdToAwait.HasValue) {
-      expectedEventIds = [eventIdToAwait.Value];
 #pragma warning disable CA1848
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Using explicit eventIdToAwait={EventId}", eventIdToAwait.Value);
       }
 #pragma warning restore CA1848
+      return [eventIdToAwait.Value];
     }
+
     // Priority 2: Use singleton ISyncEventTracker for cross-scope sync
-    else {
-      var trackedSyncEvents = _syncEventTracker.GetPendingEvents(streamId, perspectiveName, eventTypes);
-
+    var trackedSyncEvents = _syncEventTracker.GetPendingEvents(streamId, perspectiveName, eventTypes);
 #pragma warning disable CA1848
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        var eventTypeNames = eventTypes?.Select(t => t.Name).ToArray() ?? [];
-        _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Queried singleton tracker - StreamId={StreamId}, Perspective={Perspective}, EventTypes=[{Types}], FoundCount={Count}",
-          streamId, perspectiveName, string.Join(", ", eventTypeNames), trackedSyncEvents.Count);
-        if (trackedSyncEvents.Count > 0) {
-          _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Tracked events - [{Events}]",
-            string.Join(", ", trackedSyncEvents.Select(e => $"{e.EventType.Name}:{e.EventId}")));
-        }
-      }
-#pragma warning restore CA1848
-
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var eventTypeNames = eventTypes?.Select(t => t.Name).ToArray() ?? [];
+      _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Queried singleton tracker - StreamId={StreamId}, Perspective={Perspective}, EventTypes=[{Types}], FoundCount={Count}",
+        streamId, perspectiveName, string.Join(", ", eventTypeNames), trackedSyncEvents.Count);
       if (trackedSyncEvents.Count > 0) {
-        expectedEventIds = [.. trackedSyncEvents.Select(e => e.EventId)];
+        _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Tracked events - [{Events}]",
+          string.Join(", ", trackedSyncEvents.Select(e => $"{e.EventType.Name}:{e.EventId}")));
       }
     }
-
-    LogStreamSyncWaitStarting(_logger, perspectiveName, streamId);
-
-    // EVENT-DRIVEN WAITING: If we have expected event IDs, use the tracker's
-    // WaitForPerspectiveEventsAsync for efficient completion notification.
-    if (expectedEventIds is { Length: > 0 }) {
-#pragma warning disable CA1848
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Starting event-driven wait for {Count} events - [{Ids}]",
-          expectedEventIds.Length, string.Join(", ", expectedEventIds));
-      }
 #pragma warning restore CA1848
-      var success = await _syncEventTracker.WaitForPerspectiveEventsAsync(expectedEventIds, perspectiveName, timeout, AwaiterId, ct);
-      stopwatch.Halt();
+    return trackedSyncEvents.Count > 0
+      ? [.. trackedSyncEvents.Select(e => e.EventId)]
+      : null;
+  }
 
-      if (success) {
-        syncActivity?.SetTag("whizbang.sync.outcome", "Synced");
-        syncActivity?.SetTag("whizbang.sync.event_count", expectedEventIds.Length);
-        syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
-        LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, expectedEventIds.Length, stopwatch.ActiveElapsed.TotalMilliseconds);
-        return new SyncResult(SyncOutcome.Synced, expectedEventIds.Length, stopwatch.ActiveElapsed);
-      }
-
+  private async Task<SyncResult> _waitForExpectedEventsAsync(
+      Guid[] expectedEventIds, string perspectiveName, Guid streamId,
+      TimeSpan timeout, IActiveStopwatch stopwatch, Activity? syncActivity, CancellationToken ct) {
 #pragma warning disable CA1848
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Event-driven wait TIMED OUT after {Ms}ms waiting for [{Ids}]",
-          stopwatch.ActiveElapsed.TotalMilliseconds, string.Join(", ", expectedEventIds));
-      }
-#pragma warning restore CA1848
-      syncActivity?.SetTag("whizbang.sync.outcome", "TimedOut");
-      syncActivity?.SetTag("whizbang.sync.event_count", expectedEventIds.Length);
-      syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
-      LogStreamSyncWaitTimedOut(_logger, perspectiveName, streamId, stopwatch.ActiveElapsed.TotalMilliseconds);
-      return new SyncResult(SyncOutcome.TimedOut, expectedEventIds.Length, stopwatch.ActiveElapsed);
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Starting event-driven wait for {Count} events - [{Ids}]",
+        expectedEventIds.Length, string.Join(", ", expectedEventIds));
     }
-
-    // No event IDs to wait for — if the tracker doesn't know about any events,
-    // there's nothing to wait for.
+#pragma warning restore CA1848
+    var success = await _syncEventTracker.WaitForPerspectiveEventsAsync(expectedEventIds, perspectiveName, timeout, AwaiterId, ct);
     stopwatch.Halt();
-    syncActivity?.SetTag("whizbang.sync.outcome", "NoPendingEvents");
-    syncActivity?.SetTag("whizbang.sync.event_count", 0);
-    syncActivity?.SetTag("whizbang.sync.elapsed_ms", stopwatch.ActiveElapsed.TotalMilliseconds);
-    LogSyncDebugNoEventsFound(_logger, streamId);
-    return new SyncResult(SyncOutcome.NoPendingEvents, 0, stopwatch.ActiveElapsed);
+
+    if (success) {
+      _setSyncActivityOutcome(syncActivity, "Synced", expectedEventIds.Length, stopwatch.ActiveElapsed);
+      LogStreamSyncWaitCompleted(_logger, perspectiveName, streamId, expectedEventIds.Length, stopwatch.ActiveElapsed.TotalMilliseconds);
+      return new SyncResult(SyncOutcome.Synced, expectedEventIds.Length, stopwatch.ActiveElapsed);
+    }
+
+#pragma warning disable CA1848
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug("[SYNC_DEBUG] WaitForStreamAsync: Event-driven wait TIMED OUT after {Ms}ms waiting for [{Ids}]",
+        stopwatch.ActiveElapsed.TotalMilliseconds, string.Join(", ", expectedEventIds));
+    }
+#pragma warning restore CA1848
+    _setSyncActivityOutcome(syncActivity, "TimedOut", expectedEventIds.Length, stopwatch.ActiveElapsed);
+    LogStreamSyncWaitTimedOut(_logger, perspectiveName, streamId, stopwatch.ActiveElapsed.TotalMilliseconds);
+    return new SyncResult(SyncOutcome.TimedOut, expectedEventIds.Length, stopwatch.ActiveElapsed);
+  }
+
+  private static void _setSyncActivityOutcome(Activity? syncActivity, string outcome, int eventCount, TimeSpan elapsed) {
+    syncActivity?.SetTag("whizbang.sync.outcome", outcome);
+    syncActivity?.SetTag("whizbang.sync.event_count", eventCount);
+    syncActivity?.SetTag("whizbang.sync.elapsed_ms", elapsed.TotalMilliseconds);
   }
 
   /// <summary>

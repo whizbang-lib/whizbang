@@ -238,142 +238,17 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
       throw new JsonException("Expected start of object for MessageHop");
     }
 
-    // Read entire object as JsonElement first to handle property name variations
     using var doc = JsonDocument.ParseValue(ref reader);
     var root = doc.RootElement;
 
-    // ServiceInstance is required - get type info only for required types
-    var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
-
-    JsonElement siElem;
-    if (!root.TryGetProperty("si", out siElem) && !root.TryGetProperty("ServiceInstance", out siElem)) {
-      throw new JsonException("Missing required property: ServiceInstance (or si)");
-    }
-    var serviceInstance = siElem.Deserialize(serviceInstanceTypeInfo)
-      ?? throw new JsonException("Failed to deserialize ServiceInstance");
-
-    // Type (optional, defaults to Current)
-    var hopType = HopType.Current;
-    if (root.TryGetProperty("ty", out var tyElem) || root.TryGetProperty("Type", out tyElem)) {
-      hopType = (HopType)tyElem.GetInt32();
-    }
-
-    // CausationId (optional) - deserialize using UUID7 format directly
-    MessageId? causationId = null;
-    if ((root.TryGetProperty("ca", out var caElem) || root.TryGetProperty("CausationId", out caElem)) &&
-        caElem.ValueKind != JsonValueKind.Null) {
-      var uuid7String = caElem.GetString()!;
-      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-      causationId = MessageId.From(uuid7.ToGuid());
-    }
-
-    // CorrelationId (optional) - deserialize using UUID7 format directly
-    CorrelationId? correlationId = null;
-    if ((root.TryGetProperty("co", out var coElem) || root.TryGetProperty("CorrelationId", out coElem)) &&
-        coElem.ValueKind != JsonValueKind.Null) {
-      var uuid7String = coElem.GetString()!;
-      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
-      correlationId = CorrelationId.From(uuid7.ToGuid());
-    }
-
-    // CausationType (optional)
-    string? causationType = null;
-    if (root.TryGetProperty("ct", out var ctElem) || root.TryGetProperty("CausationType", out ctElem)) {
-      causationType = ctElem.GetString();
-    }
-
-    // Timestamp (optional, defaults to now)
-    var timestamp = DateTimeOffset.UtcNow;
-    if (root.TryGetProperty("ts", out var tsElem) || root.TryGetProperty("Timestamp", out tsElem)) {
-      timestamp = tsElem.GetDateTimeOffset();
-    }
-
-    // Topic (optional, defaults to empty)
-    string topic = string.Empty;
-    if (root.TryGetProperty("to", out var toElem) || root.TryGetProperty("Topic", out toElem)) {
-      topic = toElem.GetString() ?? string.Empty;
-    }
-
-    // StreamId (optional, defaults to empty)
-    string streamId = string.Empty;
-    if (root.TryGetProperty("st", out var stElem) || root.TryGetProperty("StreamId", out stElem)) {
-      streamId = stElem.GetString() ?? string.Empty;
-    }
-
-    // PartitionIndex (optional)
-    int? partitionIndex = null;
-    if ((root.TryGetProperty("pi", out var piElem) || root.TryGetProperty("PartitionIndex", out piElem)) &&
-        piElem.ValueKind != JsonValueKind.Null) {
-      partitionIndex = piElem.GetInt32();
-    }
-
-    // SequenceNumber (optional)
-    long? sequenceNumber = null;
-    if ((root.TryGetProperty("sn", out var snElem) || root.TryGetProperty("SequenceNumber", out snElem)) &&
-        snElem.ValueKind != JsonValueKind.Null) {
-      sequenceNumber = snElem.GetInt64();
-    }
-
-    // ExecutionStrategy (optional, defaults to empty)
-    string executionStrategy = string.Empty;
-    if (root.TryGetProperty("es", out var esElem) || root.TryGetProperty("ExecutionStrategy", out esElem)) {
-      executionStrategy = esElem.GetString() ?? string.Empty;
-    }
-
-    // Scope (optional) - only get type info if property exists
-    ScopeDelta? scope = null;
-    if ((root.TryGetProperty("sc", out var scElem) || root.TryGetProperty("Scope", out scElem)) &&
-        scElem.ValueKind != JsonValueKind.Null) {
-      var scopeDeltaTypeInfo = (JsonTypeInfo<ScopeDelta>)options.GetTypeInfo(typeof(ScopeDelta));
-      scope = scElem.Deserialize(scopeDeltaTypeInfo);
-    }
-
-    // Metadata (optional) - only get type info if property exists
-    IReadOnlyDictionary<string, JsonElement>? metadata = null;
-    if ((root.TryGetProperty("md", out var mdElem) || root.TryGetProperty("Metadata", out mdElem)) &&
-        mdElem.ValueKind != JsonValueKind.Null) {
-      var metadataTypeInfo = (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
-      metadata = mdElem.Deserialize(metadataTypeInfo);
-    }
-
-    // Trail (optional) - only get type info if property exists
-    PolicyDecisionTrail? trail = null;
-    if ((root.TryGetProperty("tr", out var trElem) || root.TryGetProperty("Trail", out trElem)) &&
-        trElem.ValueKind != JsonValueKind.Null) {
-      var trailTypeInfo = (JsonTypeInfo<PolicyDecisionTrail>)options.GetTypeInfo(typeof(PolicyDecisionTrail));
-      trail = trElem.Deserialize(trailTypeInfo);
-    }
-
-    // CallerMemberName (optional)
-    string? callerMemberName = null;
-    if (root.TryGetProperty("cm", out var cmElem) || root.TryGetProperty("CallerMemberName", out cmElem)) {
-      callerMemberName = cmElem.GetString();
-    }
-
-    // CallerFilePath (optional)
-    string? callerFilePath = null;
-    if (root.TryGetProperty("cf", out var cfElem) || root.TryGetProperty("CallerFilePath", out cfElem)) {
-      callerFilePath = cfElem.GetString();
-    }
-
-    // CallerLineNumber (optional)
-    int? callerLineNumber = null;
-    if ((root.TryGetProperty("cl", out var clElem) || root.TryGetProperty("CallerLineNumber", out clElem)) &&
-        clElem.ValueKind != JsonValueKind.Null) {
-      callerLineNumber = clElem.GetInt32();
-    }
-
-    // Duration (optional)
-    TimeSpan duration = default;
-    if (root.TryGetProperty("du", out var duElem) || root.TryGetProperty("Duration", out duElem)) {
-      duration = TimeSpan.Parse(duElem.GetString() ?? "00:00:00", System.Globalization.CultureInfo.InvariantCulture);
-    }
-
-    // TraceParent (optional)
-    string? traceParent = null;
-    if (root.TryGetProperty("tp", out var tpElem) || root.TryGetProperty("TraceParent", out tpElem)) {
-      traceParent = tpElem.GetString();
-    }
+    var serviceInstance = _readServiceInstance(root, options);
+    var hopType = _readHopType(root);
+    var (causationId, correlationId, causationType) = _readCausationProperties(root);
+    var (timestamp, topic, streamId) = _readRoutingProperties(root);
+    var (partitionIndex, sequenceNumber, executionStrategy) = _readProcessingProperties(root);
+    var (scope, metadata, trail) = _readComplexProperties(root, options);
+    var (callerMemberName, callerFilePath, callerLineNumber) = _readCallerProperties(root);
+    var (duration, traceParent) = _readDiagnosticProperties(root);
 
     return new MessageHop {
       Type = hopType,
@@ -399,11 +274,162 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
   }
 
   public override void Write(Utf8JsonWriter writer, MessageHop value, JsonSerializerOptions options) {
-    // Get type info for ServiceInstance (always required)
-    var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
-
     writer.WriteStartObject();
 
+    _writeCausationProperties(writer, value);
+    _writeServiceInstanceAndRouting(writer, value, options);
+    _writeProcessingProperties(writer, value);
+    _writeComplexProperties(writer, value, options);
+    _writeCallerProperties(writer, value);
+    _writeDiagnosticProperties(writer, value);
+
+    writer.WriteEndObject();
+  }
+
+  private static ServiceInstanceInfo _readServiceInstance(JsonElement root, JsonSerializerOptions options) {
+    var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
+
+    JsonElement siElem;
+    if (!root.TryGetProperty("si", out siElem) && !root.TryGetProperty("ServiceInstance", out siElem)) {
+      throw new JsonException("Missing required property: ServiceInstance (or si)");
+    }
+    return siElem.Deserialize(serviceInstanceTypeInfo)
+      ?? throw new JsonException("Failed to deserialize ServiceInstance");
+  }
+
+  private static HopType _readHopType(JsonElement root) {
+    if (root.TryGetProperty("ty", out var tyElem) || root.TryGetProperty("Type", out tyElem)) {
+      return (HopType)tyElem.GetInt32();
+    }
+    return HopType.Current;
+  }
+
+  private static (MessageId? CausationId, CorrelationId? CorrelationId, string? CausationType) _readCausationProperties(JsonElement root) {
+    MessageId? causationId = null;
+    if ((root.TryGetProperty("ca", out var caElem) || root.TryGetProperty("CausationId", out caElem)) &&
+        caElem.ValueKind != JsonValueKind.Null) {
+      var uuid7String = caElem.GetString()!;
+      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
+      causationId = MessageId.From(uuid7.ToGuid());
+    }
+
+    CorrelationId? correlationId = null;
+    if ((root.TryGetProperty("co", out var coElem) || root.TryGetProperty("CorrelationId", out coElem)) &&
+        coElem.ValueKind != JsonValueKind.Null) {
+      var uuid7String = coElem.GetString()!;
+      var uuid7 = Uuid7.Parse(uuid7String, System.Globalization.CultureInfo.InvariantCulture);
+      correlationId = CorrelationId.From(uuid7.ToGuid());
+    }
+
+    string? causationType = null;
+    if (root.TryGetProperty("ct", out var ctElem) || root.TryGetProperty("CausationType", out ctElem)) {
+      causationType = ctElem.GetString();
+    }
+
+    return (causationId, correlationId, causationType);
+  }
+
+  private static (DateTimeOffset Timestamp, string Topic, string StreamId) _readRoutingProperties(JsonElement root) {
+    var timestamp = DateTimeOffset.UtcNow;
+    if (root.TryGetProperty("ts", out var tsElem) || root.TryGetProperty("Timestamp", out tsElem)) {
+      timestamp = tsElem.GetDateTimeOffset();
+    }
+
+    string topic = string.Empty;
+    if (root.TryGetProperty("to", out var toElem) || root.TryGetProperty("Topic", out toElem)) {
+      topic = toElem.GetString() ?? string.Empty;
+    }
+
+    string streamId = string.Empty;
+    if (root.TryGetProperty("st", out var stElem) || root.TryGetProperty("StreamId", out stElem)) {
+      streamId = stElem.GetString() ?? string.Empty;
+    }
+
+    return (timestamp, topic, streamId);
+  }
+
+  private static (int? PartitionIndex, long? SequenceNumber, string ExecutionStrategy) _readProcessingProperties(JsonElement root) {
+    int? partitionIndex = null;
+    if ((root.TryGetProperty("pi", out var piElem) || root.TryGetProperty("PartitionIndex", out piElem)) &&
+        piElem.ValueKind != JsonValueKind.Null) {
+      partitionIndex = piElem.GetInt32();
+    }
+
+    long? sequenceNumber = null;
+    if ((root.TryGetProperty("sn", out var snElem) || root.TryGetProperty("SequenceNumber", out snElem)) &&
+        snElem.ValueKind != JsonValueKind.Null) {
+      sequenceNumber = snElem.GetInt64();
+    }
+
+    string executionStrategy = string.Empty;
+    if (root.TryGetProperty("es", out var esElem) || root.TryGetProperty("ExecutionStrategy", out esElem)) {
+      executionStrategy = esElem.GetString() ?? string.Empty;
+    }
+
+    return (partitionIndex, sequenceNumber, executionStrategy);
+  }
+
+  private static (ScopeDelta? Scope, IReadOnlyDictionary<string, JsonElement>? Metadata, PolicyDecisionTrail? Trail) _readComplexProperties(
+      JsonElement root, JsonSerializerOptions options) {
+    ScopeDelta? scope = null;
+    if ((root.TryGetProperty("sc", out var scElem) || root.TryGetProperty("Scope", out scElem)) &&
+        scElem.ValueKind != JsonValueKind.Null) {
+      var scopeDeltaTypeInfo = (JsonTypeInfo<ScopeDelta>)options.GetTypeInfo(typeof(ScopeDelta));
+      scope = scElem.Deserialize(scopeDeltaTypeInfo);
+    }
+
+    IReadOnlyDictionary<string, JsonElement>? metadata = null;
+    if ((root.TryGetProperty("md", out var mdElem) || root.TryGetProperty("Metadata", out mdElem)) &&
+        mdElem.ValueKind != JsonValueKind.Null) {
+      var metadataTypeInfo = (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+      metadata = mdElem.Deserialize(metadataTypeInfo);
+    }
+
+    PolicyDecisionTrail? trail = null;
+    if ((root.TryGetProperty("tr", out var trElem) || root.TryGetProperty("Trail", out trElem)) &&
+        trElem.ValueKind != JsonValueKind.Null) {
+      var trailTypeInfo = (JsonTypeInfo<PolicyDecisionTrail>)options.GetTypeInfo(typeof(PolicyDecisionTrail));
+      trail = trElem.Deserialize(trailTypeInfo);
+    }
+
+    return (scope, metadata, trail);
+  }
+
+  private static (string? CallerMemberName, string? CallerFilePath, int? CallerLineNumber) _readCallerProperties(JsonElement root) {
+    string? callerMemberName = null;
+    if (root.TryGetProperty("cm", out var cmElem) || root.TryGetProperty("CallerMemberName", out cmElem)) {
+      callerMemberName = cmElem.GetString();
+    }
+
+    string? callerFilePath = null;
+    if (root.TryGetProperty("cf", out var cfElem) || root.TryGetProperty("CallerFilePath", out cfElem)) {
+      callerFilePath = cfElem.GetString();
+    }
+
+    int? callerLineNumber = null;
+    if ((root.TryGetProperty("cl", out var clElem) || root.TryGetProperty("CallerLineNumber", out clElem)) &&
+        clElem.ValueKind != JsonValueKind.Null) {
+      callerLineNumber = clElem.GetInt32();
+    }
+
+    return (callerMemberName, callerFilePath, callerLineNumber);
+  }
+
+  private static (TimeSpan Duration, string? TraceParent) _readDiagnosticProperties(JsonElement root) {
+    TimeSpan duration = default;
+    if (root.TryGetProperty("du", out var duElem) || root.TryGetProperty("Duration", out duElem)) {
+      duration = TimeSpan.Parse(duElem.GetString() ?? "00:00:00", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    string? traceParent = null;
+    if (root.TryGetProperty("tp", out var tpElem) || root.TryGetProperty("TraceParent", out tpElem)) {
+      traceParent = tpElem.GetString();
+    }
+
+    return (duration, traceParent);
+  }
+
+  private static void _writeCausationProperties(Utf8JsonWriter writer, MessageHop value) {
     // Type (only if not default)
     if (value.Type != HopType.Current) {
       writer.WriteNumber("ty", (int)value.Type);
@@ -425,8 +451,11 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     if (value.CausationType is not null) {
       writer.WriteString("ct", value.CausationType);
     }
+  }
 
+  private static void _writeServiceInstanceAndRouting(Utf8JsonWriter writer, MessageHop value, JsonSerializerOptions options) {
     // ServiceInstance (required)
+    var serviceInstanceTypeInfo = (JsonTypeInfo<ServiceInstanceInfo>)options.GetTypeInfo(typeof(ServiceInstanceInfo));
     writer.WritePropertyName("si");
     JsonSerializer.Serialize(writer, value.ServiceInstance, serviceInstanceTypeInfo);
 
@@ -442,7 +471,9 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     if (!string.IsNullOrEmpty(value.StreamId)) {
       writer.WriteString("st", value.StreamId);
     }
+  }
 
+  private static void _writeProcessingProperties(Utf8JsonWriter writer, MessageHop value) {
     // PartitionIndex (only if not null)
     if (value.PartitionIndex is not null) {
       writer.WriteNumber("pi", value.PartitionIndex.Value);
@@ -457,7 +488,9 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     if (!string.IsNullOrEmpty(value.ExecutionStrategy)) {
       writer.WriteString("es", value.ExecutionStrategy);
     }
+  }
 
+  private static void _writeComplexProperties(Utf8JsonWriter writer, MessageHop value, JsonSerializerOptions options) {
     // Scope (only if not null)
     if (value.Scope is not null) {
       var scopeDeltaTypeInfo = (JsonTypeInfo<ScopeDelta>)options.GetTypeInfo(typeof(ScopeDelta));
@@ -466,8 +499,6 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     }
 
     // Metadata (only if not null)
-    // Note: Use Dictionary<string, JsonElement> type info since IReadOnlyDictionary is an interface
-    // and source generators have limited support for interface serialization
     if (value.Metadata is not null) {
       writer.WritePropertyName("md");
       writer.WriteStartObject();
@@ -484,22 +515,23 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
       writer.WritePropertyName("tr");
       JsonSerializer.Serialize(writer, value.Trail, trailTypeInfo);
     }
+  }
 
-    // CallerMemberName (only if not null)
+  private static void _writeCallerProperties(Utf8JsonWriter writer, MessageHop value) {
     if (value.CallerMemberName is not null) {
       writer.WriteString("cm", value.CallerMemberName);
     }
 
-    // CallerFilePath (only if not null)
     if (value.CallerFilePath is not null) {
       writer.WriteString("cf", value.CallerFilePath);
     }
 
-    // CallerLineNumber (only if not null)
     if (value.CallerLineNumber is not null) {
       writer.WriteNumber("cl", value.CallerLineNumber.Value);
     }
+  }
 
+  private static void _writeDiagnosticProperties(Utf8JsonWriter writer, MessageHop value) {
     // Duration (only if not default)
     if (value.Duration != default) {
       writer.WriteString("du", value.Duration.ToString());
@@ -509,7 +541,5 @@ public sealed class MessageHopConverter : JsonConverter<MessageHop> {
     if (value.TraceParent is not null) {
       writer.WriteString("tp", value.TraceParent);
     }
-
-    writer.WriteEndObject();
   }
 }

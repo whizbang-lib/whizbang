@@ -301,72 +301,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     try {
-      // Create dedicated channel for this consumer (long-lived, one per subscription)
-      var channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
-
-      // Set QoS prefetch count
-      await channel.BasicQosAsync(
-        prefetchSize: 0,
-        prefetchCount: _options.PrefetchCount,
-        global: false,
-        cancellationToken: cancellationToken
-      );
-
-      // Declare exchange (idempotent)
-      await channel.ExchangeDeclareAsync(
-        exchange: exchangeName,
-        type: "topic",
-        durable: true,
-        autoDelete: false,
-        arguments: null,
-        passive: false,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
-
-      // Declare dead-letter exchange and queue if enabled
-      if (_options.AutoDeclareDeadLetterExchange) {
-        await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
-      }
-
-      // Declare consumer queue with dead-letter exchange
-      var queueArgs = new Dictionary<string, object?>();
-      if (_options.AutoDeclareDeadLetterExchange) {
-        queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
-      }
-
-      await channel.QueueDeclareAsync(
-        queue: queueName,
-        durable: true,
-        exclusive: false,
-        autoDelete: false,
-        arguments: queueArgs,
-        passive: false,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
-
-      // Bind queue to exchange with routing patterns
-      // Create one binding per pattern for proper topic exchange filtering
-      foreach (var pattern in routingPatterns) {
-        if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-          _logger.LogDebug(
-            "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
-            queueName,
-            exchangeName,
-            pattern
-          );
-        }
-
-        await channel.QueueBindAsync(
-          queue: queueName,
-          exchange: exchangeName,
-          routingKey: pattern,
-          arguments: null,
-          noWait: false,
-          cancellationToken: cancellationToken
-        );
-      }
+      // Set up channel with exchange, queue, and bindings
+      var channel = await _setupChannelAndInfrastructureAsync(
+        exchangeName, queueName, routingPatterns, cancellationToken);
 
       // Create async consumer
       var consumer = new AsyncEventingBasicConsumer(channel);
@@ -489,6 +426,78 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       "Request/response pattern is not supported by RabbitMQ transport in v0.1.0. " +
       "Use publish/subscribe pattern instead."
     );
+  }
+
+  /// <summary>
+  /// Creates and configures a channel with exchange, queue declarations, and bindings.
+  /// </summary>
+  private async Task<IChannel> _setupChannelAndInfrastructureAsync(
+    string exchangeName,
+    string queueName,
+    List<string> routingPatterns,
+    CancellationToken cancellationToken
+  ) {
+    var channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+    await channel.BasicQosAsync(
+      prefetchSize: 0,
+      prefetchCount: _options.PrefetchCount,
+      global: false,
+      cancellationToken: cancellationToken
+    );
+
+    await channel.ExchangeDeclareAsync(
+      exchange: exchangeName,
+      type: "topic",
+      durable: true,
+      autoDelete: false,
+      arguments: null,
+      passive: false,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+
+    if (_options.AutoDeclareDeadLetterExchange) {
+      await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
+    }
+
+    var queueArgs = new Dictionary<string, object?>();
+    if (_options.AutoDeclareDeadLetterExchange) {
+      queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
+    }
+
+    await channel.QueueDeclareAsync(
+      queue: queueName,
+      durable: true,
+      exclusive: false,
+      autoDelete: false,
+      arguments: queueArgs,
+      passive: false,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+
+    foreach (var pattern in routingPatterns) {
+      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+        _logger.LogDebug(
+          "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
+          queueName,
+          exchangeName,
+          pattern
+        );
+      }
+
+      await channel.QueueBindAsync(
+        queue: queueName,
+        exchange: exchangeName,
+        routingKey: pattern,
+        arguments: null,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+    }
+
+    return channel;
   }
 
   /// <summary>
