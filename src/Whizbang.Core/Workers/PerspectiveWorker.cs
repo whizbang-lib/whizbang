@@ -78,6 +78,12 @@ public partial class PerspectiveWorker(
     observer: processedEventCacheObserver
   );
 
+  // Registry-based map: event type (CLR format) → all perspective CLR names that handle it.
+  // Built once at startup from IPerspectiveRunnerRegistry. Used to register complete WhenAll
+  // expectations per event so PostAllPerspectivesAsync fires once after ALL perspectives complete,
+  // not once per batch cycle.
+  private Dictionary<string, IReadOnlyList<string>>? _perspectivesPerEventType;
+
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
   private int _consecutiveEmptyPolls;
@@ -129,6 +135,23 @@ public partial class PerspectiveWorker(
               LogRegisteredPerspective(_logger, p.ClrTypeName, p.ModelType, p.EventTypes.Count, eventTypesStr);
             }
           }
+
+          // Build reverse map: event type → all perspectives that handle it.
+          // Used for WhenAll expectations so PostAllPerspectivesAsync fires once
+          // after ALL perspectives complete, not once per batch cycle.
+          var map = new Dictionary<string, List<string>>();
+          foreach (var p in registeredPerspectives) {
+            foreach (var eventType in p.EventTypes) {
+              if (!map.TryGetValue(eventType, out var list)) {
+                list = [];
+                map[eventType] = list;
+              }
+              list.Add(p.ClrTypeName);
+            }
+          }
+          _perspectivesPerEventType = map.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (IReadOnlyList<string>)kvp.Value);
         } else {
           LogNoPerspectivesRegistered(_logger);
         }
@@ -350,13 +373,9 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
-    // Build expected perspectives per stream for coordinator WhenAll
-    // All perspectives for a stream arrive in the same batch (partitioning guarantee)
-    var perspectivesPerStream = lifecycleCoordinator is not null
-      ? groupedWork
-          .GroupBy(g => g.Key.StreamId)
-          .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(gg => gg.Key.PerspectiveName).ToList())
-      : null;
+    // perspectivesPerEventType is built once at startup from the registry.
+    // It maps event_type → ALL perspective names, ensuring WhenAll expectations
+    // are complete regardless of which perspectives are in this batch.
 
     // Record batch composition metrics
     _metrics?.BatchWorkItems.Record(workBatch.PerspectiveWork.Count);
@@ -792,13 +811,14 @@ public partial class PerspectiveWorker(
     // The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
     if (batchProcessedEvents.Count > 0) {
       if (lifecycleCoordinator is not null) {
-        // Register expected perspectives and replay signals for each event.
-        // ExpectPerspectiveCompletions is idempotent (TryAdd). SignalPerspectiveComplete
-        // was already called per perspective after runner succeeded — replay here to ensure
-        // the WhenAll state is complete even if expectations were registered late.
-        if (perspectivesPerStream is not null) {
-          foreach (var (eventId, (_, evtStreamId)) in batchProcessedEvents) {
-            if (perspectivesPerStream.TryGetValue(evtStreamId, out var expected)) {
+        // Register expected perspectives for each event using the FULL registry map.
+        // This ensures WhenAll expectations include ALL perspectives that handle the event type,
+        // not just the ones claimed in this batch. ExpectPerspectiveCompletions is idempotent (TryAdd).
+        if (_perspectivesPerEventType is not null) {
+          foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
+            var eventType = envelope.Payload.GetType();
+            var eventTypeKey = $"{eventType.FullName}, {eventType.Assembly.GetName().Name}";
+            if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
               lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
             }
           }
@@ -814,10 +834,11 @@ public partial class PerspectiveWorker(
         }
 
         foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
-          // WhenAll gate: PostLifecycle fires only when all perspectives signaled complete
+          // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete
           if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
-            // Partial failure — abandon tracking, next batch will retry with remaining perspectives
-            lifecycleCoordinator.AbandonTracking(eventId);
+            // Not all perspectives have completed yet — keep tracking alive for next batch.
+            // Don't abandon: the tracking instance preserves the stage guard so
+            // PostAllPerspectivesAsync fires exactly once across all batch cycles.
             continue;
           }
 
@@ -835,8 +856,11 @@ public partial class PerspectiveWorker(
             await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
           }
 
-          // EXIT: all perspectives complete, PostLifecycle fired — clean up
-          lifecycleCoordinator.AbandonTracking(eventId);
+          // DON'T abandon tracking after stages fire — the tracking instance's stage guard
+          // prevents PostAllPerspectivesAsync from firing again in subsequent batch cycles.
+          // The tracking is marked _isComplete after PostLifecycleInline (see LifecycleTrackingState),
+          // so all future AdvanceToAsync calls return immediately.
+          // Memory cleanup happens naturally as events age out of batchProcessedEvents.
         }
       } else if (receptorInvoker is not null) {
         // Fallback: direct invocation when coordinator not registered (no WhenAll guarantee)
@@ -1523,6 +1547,7 @@ public partial class PerspectiveWorker(
 
     return dedupedWork;
   }
+
 }
 
 /// <summary>
