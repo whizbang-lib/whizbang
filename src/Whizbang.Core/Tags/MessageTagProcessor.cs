@@ -144,7 +144,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
     var attributeType = attribute.GetType();
-    var hooks = _options.GetHooksFor(attributeType).ToList();
+    var hooks = _options.GetHooksFor(attributeType, stage).ToList();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (TagLogger.IsEnabled(LogLevel.Debug)) {
       TagLogger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, stage, hooks.Count);
