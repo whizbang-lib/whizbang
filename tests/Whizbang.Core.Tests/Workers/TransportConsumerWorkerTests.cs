@@ -65,7 +65,7 @@ public class TransportConsumerWorkerTests {
   [Test]
   public async Task ExecuteAsync_WaitsForReadinessCheck_BeforeSubscribingAsync() {
     // Arrange
-    var readinessCheck = new DelayedReadinessCheck(millisecondsDelay: 500);
+    var readinessCheck = new DelayedReadinessCheck(millisecondsDelay: 1000);
     var transport = new FakeTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("topic1"));
@@ -94,14 +94,14 @@ public class TransportConsumerWorkerTests {
 
     // Act
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Well before 500ms readiness delay
+    await Task.Delay(200); // Well before 1000ms readiness delay
 
     // Assert - should not have subscribed yet
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
       .Because("Worker should wait for readiness check before subscribing");
 
-    // Wait for readiness to complete (500ms) plus buffer for subscription creation
-    await Task.Delay(800);
+    // Wait for readiness to complete (1000ms from start) plus generous buffer for CI
+    await Task.Delay(2000);
 
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
       .Because("Worker should subscribe after readiness check completes");
