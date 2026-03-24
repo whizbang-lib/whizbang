@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -319,7 +321,144 @@ public class PerspectiveWorkerDedupTests {
       .Because("Dedup cache should prevent duplicate Apply with instant strategy too");
   }
 
+  // ==================== PostLifecycle WhenAll RED/GREEN Test ====================
+
+  [Test]
+  public async Task Worker_WithCoordinator_NoEventStore_PostLifecycleInline_DoesNotFire_Async() {
+    // Without IEventStore, processedEvents is empty → batchProcessedEvents is empty →
+    // Phase 5 doesn't run → PostLifecycle correctly doesn't fire (no events to process).
+    // This verifies the correct behavior for services without event store.
+    var coordinator = new DedupFakeWorkCoordinator();
+    var runner = new CountingPerspectiveRunner();
+    var registry = new SingleRunnerRegistry(runner);
+    var lifecycleCoordinator = new LifecycleCoordinator();
+    var postLifecycleSpy = new PostLifecycleInlineSpyInvoker();
+    var streamId = Guid.CreateVersion7();
+
+    coordinator.PerspectiveWorkToReturn = [new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = "Test.FakePerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }];
+
+    // Wire worker WITH coordinator and spy invoker, but WITHOUT IEventStore
+    // This means upcomingEvents will be null → ExpectPerspectiveCompletions never called (bug)
+    var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
+    var instanceProvider = new DedupFakeServiceInstanceProvider();
+    IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<ILifecycleCoordinator>(lifecycleCoordinator);
+    services.AddScoped<IReceptorInvoker>(_ => postLifecycleSpy);
+    // NO IEventStore registered — this is the key to reproducing the bug
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      strategy,
+      databaseReadiness
+    );
+
+    // Act — run one cycle + wait for processing to complete
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await Task.Delay(200);
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert — Without IEventStore, processedEvents is empty, so PostLifecycle correctly doesn't fire
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(0)
+      .Because("Without IEventStore, no events are loaded for PostLifecycle processing. " +
+               "PostLifecycle correctly doesn't fire when there are no processed events.");
+  }
+
+  [Test]
+  public async Task Worker_WithCoordinator_WithEventStore_PostLifecycleInline_Fires_Async() {
+    // Companion test: same scenario but WITH IEventStore — proves the fix works for both paths.
+    var coordinator = new DedupFakeWorkCoordinator();
+    var runner = new CountingPerspectiveRunner();
+    var registry = new SingleRunnerRegistry(runner);
+    var lifecycleCoordinator = new LifecycleCoordinator();
+    var postLifecycleSpy = new PostLifecycleInlineSpyInvoker();
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var fakeEventStore = new MinimalFakeEventStore(streamId, eventId);
+    var fakeEventTypeProvider = new MinimalFakeEventTypeProvider();
+
+    coordinator.PerspectiveWorkToReturn = [new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = "Test.FakePerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }];
+
+    var worker = _createWorkerWithFullDI(
+      coordinator, registry, lifecycleCoordinator, postLifecycleSpy, fakeEventStore, fakeEventTypeProvider);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForProcessWorkBatchCallsAsync(2, TimeSpan.FromSeconds(5));
+    await Task.Delay(200);
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsGreaterThanOrEqualTo(1)
+      .Because("LOCK-IN: PostLifecycleInline must fire when IEventStore IS registered too.");
+  }
+
   // ==================== Helpers ====================
+
+  private static PerspectiveWorker _createWorkerWithFullDI(
+    DedupFakeWorkCoordinator coordinator,
+    IPerspectiveRunnerRegistry registry,
+    ILifecycleCoordinator lifecycleCoordinator,
+    IReceptorInvoker spyInvoker,
+    IEventStore eventStore,
+    IEventTypeProvider eventTypeProvider) {
+    var databaseReadiness = new DedupFakeDatabaseReadinessCheck { IsReady = true };
+    var instanceProvider = new DedupFakeServiceInstanceProvider();
+    IPerspectiveCompletionStrategy strategy = new BatchedCompletionStrategy();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IPerspectiveCompletionStrategy>(strategy);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton(lifecycleCoordinator);
+    services.AddScoped<IReceptorInvoker>(_ => spyInvoker);
+    services.AddScoped<IEventStore>(_ => eventStore);
+    services.AddSingleton(eventTypeProvider);
+    services.AddLogging();
+
+    var serviceProvider = services.BuildServiceProvider();
+
+    return new PerspectiveWorker(
+      instanceProvider,
+      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      strategy,
+      databaseReadiness,
+      eventTypeProvider: eventTypeProvider
+    );
+  }
 
   private static PerspectiveWorker _createWorker(
     DedupFakeWorkCoordinator coordinator,
@@ -492,7 +631,7 @@ public class PerspectiveWorkerDedupTests {
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
     public int ProcessId { get; } = 12345;
-    public ServiceInstanceInfo ToInfo() =>
+    public Whizbang.Core.Observability.ServiceInstanceInfo ToInfo() =>
       new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
 
@@ -500,5 +639,78 @@ public class PerspectiveWorkerDedupTests {
     public bool IsReady { get; set; } = true;
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(IsReady);
+  }
+
+  /// <summary>
+  /// Spy invoker that counts PostLifecycleInline invocations.
+  /// Detects whether PostLifecycle actually fires (not just whether tracking was abandoned).
+  /// </summary>
+  private sealed class PostLifecycleInlineSpyInvoker : IReceptorInvoker {
+    private int _postLifecycleInlineCount;
+    public int PostLifecycleInlineCount => _postLifecycleInlineCount;
+
+    public ValueTask InvokeAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      ILifecycleContext? context = null,
+      CancellationToken cancellationToken = default) {
+      if (stage == LifecycleStage.PostLifecycleInline) {
+        Interlocked.Increment(ref _postLifecycleInlineCount);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed record _fakeEvent(Guid Id) : IEvent;
+
+  /// <summary>
+  /// Minimal fake event store that returns a single event for GetEventsBetweenPolymorphicAsync.
+  /// All other methods throw NotImplementedException.
+  /// </summary>
+  private sealed class MinimalFakeEventStore : IEventStore {
+    private readonly Guid _streamId;
+    private readonly Guid _eventId;
+
+    public MinimalFakeEventStore(Guid streamId, Guid eventId) {
+      _streamId = streamId;
+      _eventId = eventId;
+    }
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+      if (streamId != _streamId) {
+        return Task.FromResult(new List<MessageEnvelope<IEvent>>());
+      }
+
+      var envelope = new MessageEnvelope<IEvent> {
+        MessageId = MessageId.From(TrackedGuid.FromExternal(_eventId)),
+        Payload = new _fakeEvent(_eventId),
+        Hops = []
+      };
+      return Task.FromResult(new List<MessageEnvelope<IEvent>> { envelope });
+    }
+
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken ct = default) where TMessage : notnull =>
+      throw new NotImplementedException();
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken ct = default) =>
+      throw new NotImplementedException();
+  }
+
+  /// <summary>
+  /// Minimal fake event type provider that returns a single event type.
+  /// </summary>
+  private sealed class MinimalFakeEventTypeProvider : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
   }
 }

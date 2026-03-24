@@ -26,6 +26,7 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
   private readonly Type? _perspectiveType;
   private readonly DebugAwareStopwatch _totalStopwatch;
   private readonly List<StageRecord> _stageHistory = [];
+  private readonly HashSet<LifecycleStage> _firedStages = [];
   private readonly Lock _lock = new();
   private LifecycleStage _currentStage;
   private bool _isComplete;
@@ -76,6 +77,10 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
     var startedAt = DateTimeOffset.UtcNow;
 
     lock (_lock) {
+      // Stage guard: each stage fires at most once per event (exactly-once guarantee)
+      if (_isComplete || !_firedStages.Add(stage)) {
+        return;
+      }
       _currentStage = stage;
     }
 

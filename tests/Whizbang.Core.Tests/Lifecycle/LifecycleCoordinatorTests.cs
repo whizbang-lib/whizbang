@@ -690,6 +690,204 @@ public class LifecycleCoordinatorTests {
 
   #endregion
 
+  #region BeginTracking — same instance
+
+  [Test]
+  public async Task BeginTracking_SameEventTwice_ReturnsSameInstanceAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope1 = _createEnvelope(new TestEvent(eventId, "first"));
+    var envelope2 = _createEnvelope(new TestEvent(eventId, "second"));
+
+    // Act
+    var tracking1 = coordinator.BeginTracking(
+      eventId, envelope1, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    var tracking2 = coordinator.BeginTracking(
+      eventId, envelope2, LifecycleStage.PostInboxAsync, MessageSource.Inbox);
+
+    // Assert — GetOrAdd returns the exact same object
+    await Assert.That(ReferenceEquals(tracking1, tracking2)).IsTrue();
+  }
+
+  #endregion
+
+  #region AdvanceToAsync — duplicate and post-complete
+
+  [Test]
+  public async Task AdvanceToAsync_SameStageCalledTwice_InvokesOnceAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PostLifecycleReceptor", LifecycleStage.PostLifecycleAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "dup-advance"));
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local);
+
+    // Act — advance to PostLifecycleAsync twice
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, CancellationToken.None);
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, CancellationToken.None);
+
+    // Assert — receptor fires exactly once (stage guard)
+    var firings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PostLifecycleAsync);
+    await Assert.That(firings).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task AdvanceToAsync_AfterComplete_NoOpAsync() {
+    // Arrange
+    var tracker = new InvocationTracker();
+    var registry = new TrackingReceptorRegistry(tracker);
+    registry.RegisterReceptor<TestEvent>("PrePerspReceptor", LifecycleStage.PrePerspectiveAsync);
+
+    var services = new ServiceCollection();
+    services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
+    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var provider = services.BuildServiceProvider();
+    var scopedProvider = provider.CreateScope().ServiceProvider;
+
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "post-complete"));
+    var tracking = coordinator.BeginTracking(
+      eventId, envelope, LifecycleStage.PostLifecycleInline, MessageSource.Local);
+
+    // Act — advance to PostLifecycleInline (sets IsComplete=true), then try another stage
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, CancellationToken.None);
+    await Assert.That(tracking.IsComplete).IsTrue();
+
+    await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveAsync, scopedProvider, CancellationToken.None);
+
+    // Assert — PrePerspectiveAsync receptor should not fire after complete
+    var preFirings = tracker.Invocations.Count(i => i.Stage == LifecycleStage.PrePerspectiveAsync);
+    await Assert.That(preFirings).IsEqualTo(0);
+  }
+
+  #endregion
+
+  #region Perspective completions
+
+  [Test]
+  public async Task ExpectPerspectiveCompletions_AllSignal_ReturnsTrueAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "all-perspectives"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["P1", "P2", "P3"]);
+
+    // Act
+    coordinator.SignalPerspectiveComplete(eventId, "P1");
+    coordinator.SignalPerspectiveComplete(eventId, "P2");
+    var lastSignalResult = coordinator.SignalPerspectiveComplete(eventId, "P3");
+
+    // Assert
+    await Assert.That(lastSignalResult).IsTrue();
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  [Test]
+  public async Task ExpectPerspectiveCompletions_PartialSignal_ReturnsFalseAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "partial-perspectives"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["P1", "P2", "P3"]);
+
+    // Act — only signal 2 of 3
+    coordinator.SignalPerspectiveComplete(eventId, "P1");
+    coordinator.SignalPerspectiveComplete(eventId, "P2");
+
+    // Assert
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+  }
+
+  [Test]
+  public async Task SignalPerspectiveComplete_ExactNameTracking_Async() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "name-tracking"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C"]);
+
+    // Act & Assert — signal A and B, not yet complete
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+    coordinator.SignalPerspectiveComplete(eventId, "B");
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+
+    // Signal C — now complete
+    coordinator.SignalPerspectiveComplete(eventId, "C");
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  [Test]
+  public async Task SignalPerspectiveComplete_DuplicateSignal_IdempotentAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "dup-signal"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["X", "Y"]);
+
+    // Act — signal X twice, then Y
+    coordinator.SignalPerspectiveComplete(eventId, "X");
+    coordinator.SignalPerspectiveComplete(eventId, "X"); // duplicate — should be idempotent
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+
+    coordinator.SignalPerspectiveComplete(eventId, "Y");
+
+    // Assert — completes normally despite duplicate
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  [Test]
+  public async Task SignalPerspectiveComplete_UnknownPerspective_IgnoredAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "unknown-perspective"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
+
+    // Act — signal an unknown perspective name that was never registered
+    var result = coordinator.SignalPerspectiveComplete(eventId, "Z");
+
+    // Assert — no error thrown, returns false (not complete)
+    await Assert.That(result).IsFalse();
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+  }
+
+  [Test]
+  public async Task AbandonTracking_ClearsPerspectiveStateAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "abandon-perspective"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C"]);
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+    coordinator.SignalPerspectiveComplete(eventId, "B");
+
+    // Act
+    coordinator.AbandonTracking(eventId);
+
+    // Assert — perspective state is cleared, AreAllPerspectivesComplete returns false
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+  }
+
+  #endregion
+
   #region Test Helpers
 
   /// <summary>

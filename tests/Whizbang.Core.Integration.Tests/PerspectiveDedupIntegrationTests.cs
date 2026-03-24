@@ -1,13 +1,16 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Integration.Tests;
@@ -318,6 +321,168 @@ public class PerspectiveDedupIntegrationTests {
       .Because("LOCK-IN: InstantCompletionStrategy must be protected by dedup cache.");
   }
 
+  // ==================== CONTRACT: Lifecycle coordinator WhenAll — PostLifecycle fires exactly once ====================
+
+  [Test]
+  public async Task Contract_20Perspectives_AllSucceed_PostLifecycleFiresExactlyOnce_Async() {
+    // 20 perspectives for the same stream, all succeed in one batch.
+    // PostLifecycle must fire exactly once after all 20 signal complete.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
+
+    var lifecycleCoordinator = new LifecycleCoordinator();
+    var postLifecycleSpy = new PostLifecycleSpyInvoker();
+    var eventStore = new FakeEventStore();
+    var eventTypeProvider = new FakeEventTypeProvider();
+
+    // Pre-configure event store: each stream returns a single event with our known eventId
+    eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
+
+    // Build work items: one per perspective, all for the same stream
+    var workItems = perspectiveNames.Select(name => new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = name,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }).ToList();
+
+    // Runner returns a LastEventId matching the event in the store
+    var runner = new FixedEventIdRunner(eventId);
+    var registry = new MultiPerspectiveRunnerRegistry(perspectiveNames, runner);
+
+    // Coordinator returns all 20 work items in a single batch, then empty
+    var workCoordinator = new SequentialWorkCoordinator();
+    workCoordinator.WorkPerCycle.Add(workItems);
+
+    var worker = _createWorker(
+      workCoordinator, registry,
+      lifecycleCoordinator: lifecycleCoordinator,
+      receptorInvoker: postLifecycleSpy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
+
+    // Allow a couple more cycles for PostLifecycle to fire
+    await Task.Delay(300);
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: PostLifecycleInline must fire exactly once (not 0, not 20)
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
+      .Because("LOCK-IN: PostLifecycleInline must fire exactly once after all 20 perspectives complete, via coordinator WhenAll.");
+  }
+
+  [Test]
+  public async Task Contract_20Perspectives_5SucceedPerBatch_4BatchesUntilPostLifecycle_Async() {
+    // 20 perspectives processed in batch 1 (all succeed, PostLifecycle fires once).
+    // Then all 20 re-delivered across 3 more batches (deduped, PostLifecycle must NOT fire again).
+    // This locks in the contract that re-delivery after PostLifecycle does not cause duplicates.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var perspectiveNames = Enumerable.Range(1, 20).Select(i => $"Test.Perspective{i:D2}").ToList();
+
+    var lifecycleCoordinator = new LifecycleCoordinator();
+    var postLifecycleSpy = new PostLifecycleSpyInvoker();
+    var eventStore = new FakeEventStore();
+    var eventTypeProvider = new FakeEventTypeProvider();
+
+    eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
+
+    // Batch 1: all 20 perspectives succeed. Batches 2-4: re-deliver all 20 (should be deduped).
+    var allWorkItems = perspectiveNames.Select(name => new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = name,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }).ToList();
+
+    var workCoordinator = new SequentialThenRedeliveryCoordinator {
+      InitialWork = allWorkItems,
+      RedeliverAfterInitial = true
+    };
+
+    var runner = new FixedEventIdRunner(eventId);
+    var registry = new MultiPerspectiveRunnerRegistry(perspectiveNames, runner);
+
+    var worker = _createWorker(
+      workCoordinator, registry,
+      lifecycleCoordinator: lifecycleCoordinator,
+      receptorInvoker: postLifecycleSpy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
+    await workCoordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
+
+    // Allow time for PostLifecycle processing
+    await Task.Delay(200);
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: PostLifecycleInline fires exactly once on batch 1. Re-delivery batches are deduped.
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
+      .Because("LOCK-IN: PostLifecycleInline must fire exactly once. Re-delivered work items after completion must be deduped.");
+
+    // LOCK-IN: Runner must be called exactly 20 times (once per perspective, no re-processing)
+    await Assert.That(runner.CallCount).IsEqualTo(20)
+      .Because("LOCK-IN: Each perspective must be processed exactly once despite re-delivery.");
+  }
+
+  [Test]
+  public async Task Contract_SinglePerspective_PostLifecycleFiresImmediately_Async() {
+    // Degenerate case: 1 perspective. PostLifecycle fires at batch end.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var perspectiveName = "Test.SinglePerspective";
+
+    var lifecycleCoordinator = new LifecycleCoordinator();
+    var postLifecycleSpy = new PostLifecycleSpyInvoker();
+    var eventStore = new FakeEventStore();
+    var eventTypeProvider = new FakeEventTypeProvider();
+
+    eventStore.EventsPerStream[streamId] = [_createFakeEnvelope(eventId)];
+
+    var workCoordinator = new SequentialWorkCoordinator();
+    workCoordinator.WorkPerCycle.Add([new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = streamId,
+      PerspectiveName = perspectiveName,
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    }]);
+
+    var runner = new FixedEventIdRunner(eventId);
+    var registry = new MultiPerspectiveRunnerRegistry([perspectiveName], runner);
+
+    var worker = _createWorker(
+      workCoordinator, registry,
+      lifecycleCoordinator: lifecycleCoordinator,
+      receptorInvoker: postLifecycleSpy,
+      eventStore: eventStore,
+      eventTypeProvider: eventTypeProvider);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await runner.WaitForCallCountAsync(1, TimeSpan.FromSeconds(5));
+
+    // Allow time for PostLifecycle to fire
+    await Task.Delay(200);
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: PostLifecycleInline fires exactly once with 1 perspective
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
+      .Because("LOCK-IN: Single perspective must trigger PostLifecycleInline exactly once at batch end.");
+  }
+
   // ==================== CONTRACT: Concurrent streams don't interfere ====================
 
   [Test]
@@ -361,7 +526,11 @@ public class PerspectiveDedupIntegrationTests {
     IPerspectiveRunnerRegistry registry,
     IProcessedEventCacheObserver? observer = null,
     TimeProvider? timeProvider = null,
-    bool useBatchedStrategy = true) {
+    bool useBatchedStrategy = true,
+    ILifecycleCoordinator? lifecycleCoordinator = null,
+    IReceptorInvoker? receptorInvoker = null,
+    IEventStore? eventStore = null,
+    IEventTypeProvider? eventTypeProvider = null) {
     var instanceProvider = new _fakeInstanceProvider();
     var databaseReadiness = new _fakeDatabaseReadiness();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
@@ -375,6 +544,16 @@ public class PerspectiveDedupIntegrationTests {
     services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
     services.AddLogging();
 
+    if (lifecycleCoordinator is not null) {
+      services.AddSingleton(lifecycleCoordinator);
+    }
+    if (receptorInvoker is not null) {
+      services.AddSingleton(receptorInvoker);
+    }
+    if (eventStore is not null) {
+      services.AddSingleton(eventStore);
+    }
+
     var serviceProvider = services.BuildServiceProvider();
 
     return new PerspectiveWorker(
@@ -384,6 +563,7 @@ public class PerspectiveDedupIntegrationTests {
       tracingOptions: null,
       strategy,
       databaseReadiness,
+      eventTypeProvider: eventTypeProvider,
       processedEventCacheObserver: observer,
       timeProvider: timeProvider
     );
@@ -584,10 +764,156 @@ public class PerspectiveDedupIntegrationTests {
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
     public int ProcessId { get; } = 12345;
-    public ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
+    public Observability.ServiceInstanceInfo ToInfo() => new() { ServiceName = ServiceName, InstanceId = InstanceId, HostName = HostName, ProcessId = ProcessId };
   }
 
   private sealed class _fakeDatabaseReadiness : IDatabaseReadinessCheck {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+  }
+
+  // ==================== Lifecycle Integration Test Fakes ====================
+
+  /// <summary>
+  /// Creates a minimal MessageEnvelope for IEvent with a specific MessageId.
+  /// Used to wire the event store response to the lifecycle coordinator's tracking.
+  /// </summary>
+  private static MessageEnvelope<IEvent> _createFakeEnvelope(Guid eventId) {
+    return new MessageEnvelope<IEvent> {
+      MessageId = MessageId.From(eventId),
+      Payload = new _fakeEvent(),
+      Hops = []
+    };
+  }
+
+  /// <summary>
+  /// Minimal IEvent implementation for test envelope creation.
+  /// </summary>
+  private sealed record _fakeEvent : IEvent;
+
+  /// <summary>
+  /// Spy IReceptorInvoker that counts PostLifecycleInline invocations.
+  /// All other stage invocations are no-ops.
+  /// </summary>
+  private sealed class PostLifecycleSpyInvoker : IReceptorInvoker {
+    private int _postLifecycleInlineCount;
+
+    public int PostLifecycleInlineCount => _postLifecycleInlineCount;
+
+    public ValueTask InvokeAsync(
+      IMessageEnvelope envelope,
+      LifecycleStage stage,
+      ILifecycleContext? context = null,
+      CancellationToken cancellationToken = default) {
+      if (stage == LifecycleStage.PostLifecycleInline) {
+        Interlocked.Increment(ref _postLifecycleInlineCount);
+      }
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Fake IEventStore that returns pre-configured events per stream.
+  /// Only GetEventsBetweenPolymorphicAsync is wired; other methods are stubs.
+  /// </summary>
+  private sealed class FakeEventStore : IEventStore {
+    public ConcurrentDictionary<Guid, List<MessageEnvelope<IEvent>>> EventsPerStream { get; } = new();
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+      var events = EventsPerStream.TryGetValue(streamId, out var list) ? list : [];
+      return Task.FromResult(events);
+    }
+
+    // Stubs — not used by PerspectiveWorker lifecycle path
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<TMessage>(cancellationToken);
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) => _emptyAsyncEnumerable<IEvent>(cancellationToken);
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) => Task.FromResult(new List<MessageEnvelope<TMessage>>());
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) => Task.FromResult(-1L);
+
+    private static async IAsyncEnumerable<MessageEnvelope<T>> _emptyAsyncEnumerable<T>([EnumeratorCancellation] CancellationToken cancellationToken = default) {
+      await Task.CompletedTask;
+      yield break;
+    }
+  }
+
+  /// <summary>
+  /// Fake IEventTypeProvider that returns a single dummy event type.
+  /// Required for the PerspectiveWorker to attempt event loading.
+  /// </summary>
+  private sealed class FakeEventTypeProvider : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [typeof(_fakeEvent)];
+  }
+
+  /// <summary>
+  /// Runner that returns a fixed LastEventId for all perspectives.
+  /// Tracks calls per perspective name and supports WaitForCallCount.
+  /// </summary>
+  private sealed class FixedEventIdRunner : IPerspectiveRunner {
+    private readonly Guid _lastEventId;
+    private int _callCount;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
+    private readonly ConcurrentBag<string> _calledPerspectives = [];
+
+    public FixedEventIdRunner(Guid lastEventId) {
+      _lastEventId = lastEventId;
+    }
+
+    public int CallCount => _callCount;
+    public IReadOnlyCollection<string> CalledPerspectives => [.. _calledPerspectives];
+
+    public async Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var waiter = _callCountWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      await waiter.Task.WaitAsync(timeout);
+    }
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+      Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      var current = Interlocked.Increment(ref _callCount);
+      _calledPerspectives.Add(perspectiveName);
+
+      foreach (var kvp in _callCountWaiters) {
+        if (current >= kvp.Key) {
+          kvp.Value.TrySetResult();
+        }
+      }
+
+      return Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = _lastEventId,
+        Status = PerspectiveProcessingStatus.Completed
+      });
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) =>
+      RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Registry that maps multiple perspective names to a shared runner.
+  /// Used by lifecycle tests where many perspectives share the same behavior.
+  /// </summary>
+  private sealed class MultiPerspectiveRunnerRegistry : IPerspectiveRunnerRegistry {
+    private readonly HashSet<string> _knownNames;
+    private readonly IPerspectiveRunner _runner;
+
+    public MultiPerspectiveRunnerRegistry(IEnumerable<string> perspectiveNames, IPerspectiveRunner runner) {
+      _knownNames = [.. perspectiveNames];
+      _runner = runner;
+    }
+
+    public IPerspectiveRunner? GetRunner(string perspectiveName, IServiceProvider serviceProvider) =>
+      _knownNames.Contains(perspectiveName) ? _runner : null;
+
+    public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() =>
+      _knownNames.Select(name => new PerspectiveRegistrationInfo(name, $"global::{name}", "global::Test.Model", ["global::Test.Event"])).ToList();
+
+    public IReadOnlyList<Type> GetEventTypes() => [];
   }
 }
