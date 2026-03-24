@@ -265,15 +265,15 @@ public class TagOptionsTests {
   // ============================================
 
   [Test]
-  public async Task UseHook_UsesDefaultFireAtAfterReceptorCompletionAsync() {
+  public async Task UseHook_UsesDefaultFireAtNullForAllStagesAsync() {
     // Arrange
     var options = new TagOptions();
 
     // Act
     options.UseHook<SignalTagAttribute, TestNotificationHook>();
 
-    // Assert
-    await Assert.That(options.HookRegistrations[0].FireAt).IsEqualTo(LifecycleStage.AfterReceptorCompletion);
+    // Assert — null means fire at all stages
+    await Assert.That(options.HookRegistrations[0].FireAt).IsNull();
   }
 
   [Test]
