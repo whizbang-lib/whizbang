@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Lifecycle;
 
@@ -69,12 +70,3 @@ public interface ILifecycleTrackingContext : ILifecycleContext {
   /// <param name="hook">The hook delegate to invoke.</param>
   void OnStage(LifecycleStage stage, Func<ILifecycleTrackingContext, CancellationToken, ValueTask> hook);
 }
-
-/// <summary>
-/// Contains service instance identification information.
-/// </summary>
-/// <param name="InstanceId">The unique instance identifier.</param>
-/// <param name="ServiceName">The service name.</param>
-public sealed record ServiceInstanceInfo(
-  string InstanceId,
-  string? ServiceName = null);
