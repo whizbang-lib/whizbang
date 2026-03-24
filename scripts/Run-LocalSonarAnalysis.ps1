@@ -178,7 +178,7 @@ if (-not $SkipTests) {
     }
 
     # Merge coverage files
-    $coverageFiles = Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml"
+    $coverageFiles = @(Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml")
     if ($coverageFiles.Count -gt 0) {
         Write-Success "Coverage collected: $($coverageFiles.Count) report(s)"
     } else {
@@ -195,7 +195,7 @@ if (Test-Path $sonarCoverageReport) {
     Write-Info "Using merged SonarQube coverage report"
     $coveragePaths = $sonarCoverageReport
 } else {
-    $coverageFiles = Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml" -ErrorAction SilentlyContinue
+    $coverageFiles = @(Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml") -ErrorAction SilentlyContinue
     if ($coverageFiles) {
         $coveragePaths = ($coverageFiles | ForEach-Object { $_.FullName }) -join ","
     }
