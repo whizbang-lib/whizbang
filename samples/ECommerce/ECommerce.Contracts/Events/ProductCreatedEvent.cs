@@ -1,10 +1,12 @@
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
 
 namespace ECommerce.Contracts.Events;
 
 /// <summary>
 /// Event published when a new product is added to the catalog
 /// </summary>
+[AuditEvent(Reason = "Product catalog change", Level = Whizbang.Core.Audit.AuditLevel.Info)]
 public record ProductCreatedEvent : IEvent {
   [StreamId]
   public required Guid ProductId { get; init; }

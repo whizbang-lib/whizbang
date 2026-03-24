@@ -13,13 +13,16 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using ECommerce.InMemory.Integration.Tests.Workflows;
 using Whizbang.Core;
+using Whizbang.Core.Attributes;
 using Whizbang.Core.Configuration;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tags;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -444,7 +447,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ServiceRegistrationCallbacks.Dispatcher = null;
 
     _ = builder.Services
-      .AddWhizbang()
+      .AddWhizbang(options => {
+        // Register tracking tag hook at PostLifecycleInline — verifies tag hooks fire after perspective processing
+        options.Tags.UseHook<Whizbang.Core.Attributes.AuditEventAttribute, TrackingAuditTagHook>(
+          fireAt: Whizbang.Core.Messaging.LifecycleStage.PostLifecycleInline);
+      })
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
 
@@ -1195,5 +1202,20 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         _connectionString = null;
       }
     }
+  }
+}
+
+/// <summary>
+/// Tag hook that tracks invocations via static counter for integration test assertions.
+/// Registered at PostLifecycleInline to verify the full lifecycle pipeline fires correctly.
+/// </summary>
+public sealed class TrackingAuditTagHook : IMessageTagHook<AuditEventAttribute> {
+  public ValueTask<System.Text.Json.JsonElement?> OnTaggedMessageAsync(
+    TagContext<AuditEventAttribute> context,
+    CancellationToken ct) {
+    if (context.Stage == LifecycleStage.PostLifecycleInline) {
+      TagHookCallTracker.RecordPostLifecycleInline();
+    }
+    return ValueTask.FromResult<System.Text.Json.JsonElement?>(null);
   }
 }
