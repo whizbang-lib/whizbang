@@ -515,11 +515,6 @@ public partial class PerspectiveWorker(
                     envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveAsync,
                     MessageSource.Local, streamId);
 
-                  // Register expected perspectives for this event (idempotent — first call only takes effect)
-                  if (perspectivesPerStream is not null && perspectivesPerStream.TryGetValue(streamId, out var expectedPerspectives)) {
-                    lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expectedPerspectives);
-                  }
-
                   // Stage guard ensures these fire once per event, not once per perspective group
                   await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveAsync, scope.ServiceProvider, cancellationToken);
                   await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, scope.ServiceProvider, cancellationToken);
@@ -808,6 +803,27 @@ public partial class PerspectiveWorker(
     // The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
     if (batchProcessedEvents.Count > 0) {
       if (lifecycleCoordinator is not null) {
+        // Register expected perspectives and replay signals for each event.
+        // ExpectPerspectiveCompletions is idempotent (TryAdd). SignalPerspectiveComplete
+        // was already called per perspective after runner succeeded — replay here to ensure
+        // the WhenAll state is complete even if expectations were registered late.
+        if (perspectivesPerStream is not null) {
+          foreach (var (eventId, (_, evtStreamId)) in batchProcessedEvents) {
+            if (perspectivesPerStream.TryGetValue(evtStreamId, out var expected)) {
+              lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+            }
+          }
+        }
+
+        // Replay signals — perspectives already completed during the group loop, but
+        // expectations may have been registered just above. Replaying ensures WhenAll resolves.
+        foreach (var group in groupedWork) {
+          var gPerspectiveName = group.Key.PerspectiveName;
+          foreach (var (eventId, _) in batchProcessedEvents.Where(e => e.Value.StreamId == group.Key.StreamId)) {
+            lifecycleCoordinator.SignalPerspectiveComplete(eventId, gPerspectiveName);
+          }
+        }
+
         foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
           // WhenAll gate: PostLifecycle fires only when all perspectives signaled complete
           if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
