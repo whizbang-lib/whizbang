@@ -195,7 +195,7 @@ if (Test-Path $sonarCoverageReport) {
     Write-Info "Using merged SonarQube coverage report"
     $coveragePaths = $sonarCoverageReport
 } else {
-    $coverageFiles = @(Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml") -ErrorAction SilentlyContinue
+    $coverageFiles = @(Get-ChildItem -Path $CoverageDir -Recurse -Filter "coverage.opencover.xml" -ErrorAction SilentlyContinue)
     if ($coverageFiles) {
         $coveragePaths = ($coverageFiles | ForEach-Object { $_.FullName }) -join ","
     }
