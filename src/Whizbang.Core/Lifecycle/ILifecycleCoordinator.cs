@@ -79,6 +79,32 @@ public interface ILifecycleCoordinator {
   /// </summary>
   /// <param name="eventId">The event ID to stop tracking.</param>
   void AbandonTracking(Guid eventId);
+
+  /// <summary>
+  /// Registers which perspectives must complete before PostLifecycle fires.
+  /// Tracked by exact (eventId, perspectiveName) pairs.
+  /// Idempotent — calling again with the same eventId is a no-op.
+  /// </summary>
+  /// <param name="eventId">The event ID to register perspective completions for.</param>
+  /// <param name="perspectiveNames">The perspective names that must complete.</param>
+  void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames);
+
+  /// <summary>
+  /// Signals that a specific perspective completed processing an event.
+  /// Returns true if this was the LAST perspective (all expected are now complete).
+  /// </summary>
+  /// <param name="eventId">The event ID that the perspective completed.</param>
+  /// <param name="perspectiveName">The name of the perspective that completed.</param>
+  /// <returns>True if all expected perspectives are now complete; false otherwise.</returns>
+  bool SignalPerspectiveComplete(Guid eventId, string perspectiveName);
+
+  /// <summary>
+  /// Checks if all expected perspectives have completed for an event.
+  /// Returns false if no expectations are registered (fail-safe).
+  /// </summary>
+  /// <param name="eventId">The event ID to check.</param>
+  /// <returns>True if all expected perspectives have signaled complete.</returns>
+  bool AreAllPerspectivesComplete(Guid eventId);
 }
 
 /// <summary>

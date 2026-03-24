@@ -218,6 +218,34 @@ public enum LifecycleStage {
   PostPerspectiveInline,
 
   /// <summary>
+  /// Executed once per event after ALL perspectives have completed processing it.
+  /// Async processing, does not block perspective worker.
+  /// Unlike PostPerspective (which fires per-perspective), this fires exactly once
+  /// after the last perspective signals completion (WhenAll pattern).
+  /// Best for: Cross-perspective aggregation, notifications that need all data committed.
+  /// </summary>
+  /// <remarks>
+  /// Managed by <see cref="Whizbang.Core.Lifecycle.ILifecycleCoordinator"/> via WhenAll.
+  /// Fires before PostLifecycle stages.
+  /// </remarks>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#post-all-perspectives</docs>
+  PostAllPerspectivesAsync,
+
+  /// <summary>
+  /// Executed once per event after ALL perspectives have completed processing it.
+  /// Blocks perspective processing for this unit until completion.
+  /// Unlike PostPerspective (which fires per-perspective), this fires exactly once
+  /// after the last perspective signals completion (WhenAll pattern).
+  /// Best for: Critical cross-perspective consistency, notifications requiring all perspectives committed.
+  /// </summary>
+  /// <remarks>
+  /// Managed by <see cref="Whizbang.Core.Lifecycle.ILifecycleCoordinator"/> via WhenAll.
+  /// Fires before PostLifecycle stages.
+  /// </remarks>
+  /// <docs>fundamentals/lifecycle/lifecycle-stages#post-all-perspectives</docs>
+  PostAllPerspectivesInline,
+
+  /// <summary>
   /// Executed once per event after all perspectives in the batch have processed it.
   /// Async processing, does not block perspective worker.
   /// For events without perspectives, fires immediately after PostInbox.
