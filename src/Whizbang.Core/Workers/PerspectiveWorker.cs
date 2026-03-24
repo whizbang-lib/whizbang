@@ -350,6 +350,14 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
+    // Build expected perspectives per stream for coordinator WhenAll
+    // All perspectives for a stream arrive in the same batch (partitioning guarantee)
+    var perspectivesPerStream = lifecycleCoordinator is not null
+      ? groupedWork
+          .GroupBy(g => g.Key.StreamId)
+          .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(gg => gg.Key.PerspectiveName).ToList())
+      : null;
+
     // Record batch composition metrics
     _metrics?.BatchWorkItems.Record(workBatch.PerspectiveWork.Count);
     _metrics?.BatchStreamGroups.Record(groupedWork.Count);
@@ -492,74 +500,46 @@ public partial class PerspectiveWorker(
       var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
       try {
-        // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
-        // This allows receptors to prepare or validate before perspective updates
-        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-        // Events are already loaded above for trace context extraction
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveAsync", ActivityKind.Internal) : null) {
-          if (receptorInvoker is not null && upcomingEvents is { Count: > 0 }) {
+        // Phase 3.1: Invoke PrePerspective lifecycle stages via coordinator (exactly-once per event)
+        // The coordinator's stage guard ensures these fire only once even if multiple perspective groups
+        // process the same event. Falls back to direct invocation when coordinator not registered.
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspective", ActivityKind.Internal) : null) {
+          if (upcomingEvents is { Count: > 0 }) {
             try {
-              var context = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PrePerspectiveAsync,
-                StreamId = streamId,
-                LastProcessedEventId = lastProcessedEventId,
-                MessageSource = MessageSource.Local,
-                AttemptNumber = 1 // Perspectives process from local event store
-              };
-
-              // PrePerspectiveAsync (non-blocking)
               foreach (var envelope in upcomingEvents) {
                 await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                await receptorInvoker.InvokeAsync(
-                  envelope,
-                  LifecycleStage.PrePerspectiveAsync,
-                  context,
-                  cancellationToken
-                );
 
-                // ImmediateAsync lifecycle receptors fire at the end of each stage
-                await receptorInvoker.InvokeAsync(
-                  envelope,
-                  LifecycleStage.ImmediateAsync,
-                  context with { CurrentStage = LifecycleStage.ImmediateAsync },
-                  cancellationToken
-                );
-              }
-            } catch (Exception ex) {
-              LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
-              throw; // Never swallow exceptions
-            }
-          }
-        }
+                if (lifecycleCoordinator is not null) {
+                  // Coordinator path: BeginTracking + AdvanceToAsync (stage guard = exactly-once)
+                  var tracking = lifecycleCoordinator.BeginTracking(
+                    envelope.MessageId.Value, envelope, LifecycleStage.PrePerspectiveAsync,
+                    MessageSource.Local, streamId);
 
-        // PrePerspectiveInline (blocking) - reuse already loaded events
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PrePerspectiveInline", ActivityKind.Internal) : null) {
-          if (receptorInvoker is not null && upcomingEvents is { Count: > 0 }) {
-            try {
-              var context = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PrePerspectiveInline,
-                StreamId = streamId,
-                LastProcessedEventId = lastProcessedEventId,
-                MessageSource = MessageSource.Local,
-                AttemptNumber = 1
-              };
+                  // Register expected perspectives for this event (idempotent — first call only takes effect)
+                  if (perspectivesPerStream is not null && perspectivesPerStream.TryGetValue(streamId, out var expectedPerspectives)) {
+                    lifecycleCoordinator.ExpectPerspectiveCompletions(envelope.MessageId.Value, expectedPerspectives);
+                  }
 
-              foreach (var envelope in upcomingEvents) {
-                await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                await receptorInvoker.InvokeAsync(
-                  envelope,
-                  LifecycleStage.PrePerspectiveInline,
-                  context,
-                  cancellationToken
-                );
-
-                // ImmediateAsync lifecycle receptors fire at the end of each stage
-                await receptorInvoker.InvokeAsync(
-                  envelope,
-                  LifecycleStage.ImmediateAsync,
-                  context with { CurrentStage = LifecycleStage.ImmediateAsync },
-                  cancellationToken
-                );
+                  // Stage guard ensures these fire once per event, not once per perspective group
+                  await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveAsync, scope.ServiceProvider, cancellationToken);
+                  await tracking.AdvanceToAsync(LifecycleStage.PrePerspectiveInline, scope.ServiceProvider, cancellationToken);
+                } else if (receptorInvoker is not null) {
+                  // Fallback: direct invocation when coordinator not registered
+                  var context = new LifecycleExecutionContext {
+                    CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                    StreamId = streamId,
+                    LastProcessedEventId = lastProcessedEventId,
+                    MessageSource = MessageSource.Local,
+                    AttemptNumber = 1
+                  };
+                  await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveAsync, context, cancellationToken);
+                  await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+                    context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+                  await receptorInvoker.InvokeAsync(envelope, LifecycleStage.PrePerspectiveInline,
+                    context with { CurrentStage = LifecycleStage.PrePerspectiveInline }, cancellationToken);
+                  await receptorInvoker.InvokeAsync(envelope, LifecycleStage.ImmediateAsync,
+                    context with { CurrentStage = LifecycleStage.ImmediateAsync }, cancellationToken);
+                }
               }
             } catch (Exception ex) {
               LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
@@ -728,77 +708,53 @@ public partial class PerspectiveWorker(
           _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
         }
 
-        // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
+        // Phase 3d: Invoke PostPerspective lifecycle stages via coordinator (exactly-once per event)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
-        // Always trace lifecycle stages even when no receptors are registered
+        // The coordinator's AdvanceToAsync handles receptor invocation, tag processing, and ImmediateAsync
         LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, receptorInvoker is not null);
 
-        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspectiveInline", ActivityKind.Internal) : null) {
-          if (processedEvents.Count > 0 && receptorInvoker is not null) {
-            LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
-
-            await _invokeLifecycleReceptorsForEventsAsync(
-              processedEvents,
-              streamId,
-              perspectiveName,
-              result.PerspectiveType,
-              result.LastEventId,
-              LifecycleStage.PostPerspectiveInline,
-              scope.ServiceProvider,
-              cancellationToken,
-              processingMode
-            );
-
-            // ImmediateAsync lifecycle receptors fire at the end of each stage
-            await _invokeLifecycleReceptorsForEventsAsync(
-              processedEvents,
-              streamId,
-              perspectiveName,
-              result.PerspectiveType,
-              result.LastEventId,
-              LifecycleStage.ImmediateAsync,
-              scope.ServiceProvider,
-              cancellationToken,
-              processingMode
-            );
-            LogPostPerspectiveInlineCompleted(_logger);
-          } else {
-            if (processedEvents.Count == 0) {
-              LogSkippingPostPerspectiveInlineNoEvents(_logger);
-              if (_logger.IsEnabled(LogLevel.Debug)) {
-                var lastProcessed = lastProcessedEventId.GetValueOrDefault();
-                var current = result.LastEventId;
-                LogDiagnosticNoEvents(_logger, perspectiveName, streamId, lastProcessed, current);
-              }
-            }
-            if (receptorInvoker is null) {
-              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
-              if (_logger.IsEnabled(LogLevel.Debug)) {
-                LogDiagnosticNoInvoker(_logger, perspectiveName, streamId);
-              }
-            }
-          }
-
-          // Phase 3e: Process message tags at PostPerspectiveInline stage
-          // This enables notification hooks to fire after events are persisted
-          // (e.g., BffService firing SignalR notifications after event consumption)
+        using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspective", ActivityKind.Internal) : null) {
           if (processedEvents.Count > 0) {
-            var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
-            if (tagProcessor is not null) {
+            if (lifecycleCoordinator is not null) {
+              // Coordinator path: AdvanceToAsync fires once per event (stage guard)
+              // Tags are processed by the invoker inside AdvanceToAsync
               foreach (var envelope in processedEvents) {
-                var eventPayload = envelope.Payload;
-                var eventType = eventPayload.GetType();
-                // Extract scope from envelope hops using shared helper
-                var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
-                await tagProcessor.ProcessTagsAsync(
-                  eventPayload,
-                  eventType,
-                  LifecycleStage.PostPerspectiveInline,
-                  extractedScope,
-                  cancellationToken
-                ).ConfigureAwait(false);
+                await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
+                var tracking = lifecycleCoordinator.GetTracking(envelope.MessageId.Value);
+                if (tracking is not null) {
+                  await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveAsync, scope.ServiceProvider, cancellationToken);
+                  await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, cancellationToken);
+                }
               }
+              LogPostPerspectiveInlineCompleted(_logger);
+            } else if (receptorInvoker is not null) {
+              // Fallback: direct invocation when coordinator not registered
+              LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
+              await _invokeLifecycleReceptorsForEventsAsync(
+                processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
+                LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, cancellationToken, processingMode);
+              await _invokeLifecycleReceptorsForEventsAsync(
+                processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
+                LifecycleStage.ImmediateAsync, scope.ServiceProvider, cancellationToken, processingMode);
+              LogPostPerspectiveInlineCompleted(_logger);
+
+              // Fallback tag processing (coordinator handles this via invoker)
+              var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+              if (tagProcessor is not null) {
+                foreach (var envelope in processedEvents) {
+                  var eventPayload = envelope.Payload;
+                  var eventType = eventPayload.GetType();
+                  var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
+                  await tagProcessor.ProcessTagsAsync(
+                    eventPayload, eventType, LifecycleStage.PostPerspectiveInline,
+                    extractedScope, cancellationToken).ConfigureAwait(false);
+                }
+              }
+            } else {
+              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
             }
+          } else {
+            LogSkippingPostPerspectiveInlineNoEvents(_logger);
           }
         }
 
@@ -816,6 +772,14 @@ public partial class PerspectiveWorker(
 
         // Mark processed WorkIds as in-flight in dedup cache (no TTL until DB acks)
         _processedEventCache.AddRange(completedWorkIds);
+
+        // Signal this perspective completed for WhenAll tracking
+        // PostLifecycle fires only after ALL perspectives signal complete for each event
+        if (lifecycleCoordinator is not null) {
+          foreach (var envelope in processedEvents) {
+            lifecycleCoordinator.SignalPerspectiveComplete(envelope.MessageId.Value, perspectiveName);
+          }
+        }
 
         // Record per-stream metrics
         _metrics?.StreamsUpdated.Add(1);
@@ -840,28 +804,33 @@ public partial class PerspectiveWorker(
       }
     }
 
-    // Phase 5: Fire PostLifecycle once per unique event processed in this batch
-    // Uses LifecycleCoordinator to guarantee exactly-once PostLifecycle per event.
-    // The coordinator handles receptor invocation, ImmediateAsync chaining, and tag processing.
+    // Phase 5: Fire PostLifecycle once per unique event — ONLY after ALL perspectives complete (WhenAll)
+    // The coordinator guarantees exactly-once PostLifecycle via stage guards + perspective WhenAll.
     if (batchProcessedEvents.Count > 0) {
       if (lifecycleCoordinator is not null) {
         foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
-          // Establish security context from envelope hops
+          // WhenAll gate: PostLifecycle fires only when all perspectives signaled complete
+          if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
+            // Partial failure — abandon tracking, next batch will retry with remaining perspectives
+            lifecycleCoordinator.AbandonTracking(eventId);
+            continue;
+          }
+
           await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
 
-          // Begin tracking at PostLifecycleAsync (entry point for this segment)
-          var tracking = lifecycleCoordinator.BeginTracking(
-            eventId, envelope, LifecycleStage.PostLifecycleAsync, MessageSource.Local, streamId);
+          // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
+          var tracking = lifecycleCoordinator.GetTracking(eventId);
+          if (tracking is not null) {
+            // Stage guard ensures these fire once even if event somehow reaches Phase 5 again
+            await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
+            await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
+          }
 
-          // Advance through PostLifecycle stages — coordinator fires receptors + tags + ImmediateAsync
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
-          await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
-
-          // EXIT: processing complete
+          // EXIT: all perspectives complete, PostLifecycle fired — clean up
           lifecycleCoordinator.AbandonTracking(eventId);
         }
       } else if (receptorInvoker is not null) {
-        // Fallback: direct invocation when coordinator not registered
+        // Fallback: direct invocation when coordinator not registered (no WhenAll guarantee)
         foreach (var (_, (envelope, streamId)) in batchProcessedEvents) {
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostLifecycleAsync,
