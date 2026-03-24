@@ -26,6 +26,7 @@ namespace Whizbang.Core.Lifecycle;
 public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
+  private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(
@@ -35,9 +36,8 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     MessageSource source,
     Guid? streamId = null,
     Type? perspectiveType = null) {
-    var state = new LifecycleTrackingState(eventId, envelope, entryStage, source, streamId, perspectiveType);
-    _tracked.TryAdd(eventId, state);
-    return state;
+    return _tracked.GetOrAdd(eventId,
+      _ => new LifecycleTrackingState(eventId, envelope, entryStage, source, streamId, perspectiveType));
   }
 
   /// <inheritdoc/>
@@ -78,12 +78,88 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   public void AbandonTracking(Guid eventId) {
     _tracked.TryRemove(eventId, out _);
     _whenAllStates.TryRemove(eventId, out _);
+    _perspectiveStates.TryRemove(eventId, out _);
+  }
+
+  /// <inheritdoc/>
+  public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) {
+    _perspectiveStates.TryAdd(eventId, new PerspectiveWhenAllState(perspectiveNames));
+  }
+
+  /// <inheritdoc/>
+  public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) {
+    if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
+      return false;
+    }
+    return state.TrySignalAndCheck(perspectiveName);
+  }
+
+  /// <inheritdoc/>
+  public bool AreAllPerspectivesComplete(Guid eventId) {
+    if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
+      return false; // No expectations registered = fail-safe (don't fire PostLifecycle)
+    }
+    return state.IsComplete;
   }
 
   /// <summary>
   /// Tracks expected completions for the WhenAll pattern.
   /// Thread-safe — uses interlocked operations for completion tracking.
   /// </summary>
+  /// <summary>
+  /// Tracks expected perspective completions for per-event WhenAll.
+  /// PostLifecycle fires only after all expected perspectives signal complete.
+  /// Thread-safe with full state exposure for debugging/observers.
+  /// </summary>
+  private sealed class PerspectiveWhenAllState {
+    private readonly HashSet<string> _expected;
+    private readonly HashSet<string> _completed = [];
+    private readonly Lock _lock = new();
+    private bool _allComplete;
+
+    public PerspectiveWhenAllState(IReadOnlyList<string> perspectiveNames) {
+      _expected = [.. perspectiveNames];
+    }
+
+    /// <summary>Fast-path check for completion.</summary>
+    public bool IsComplete {
+      get { lock (_lock) { return _allComplete; } }
+    }
+
+    /// <summary>Perspectives expected to complete (inspectable for debugging).</summary>
+    public IReadOnlySet<string> Expected {
+      get { lock (_lock) { return new HashSet<string>(_expected); } }
+    }
+
+    /// <summary>Perspectives that have signaled complete (inspectable for debugging).</summary>
+    public IReadOnlySet<string> Completed {
+      get { lock (_lock) { return new HashSet<string>(_completed); } }
+    }
+
+    /// <summary>Perspectives still pending (inspectable for debugging).</summary>
+    public IReadOnlyCollection<string> Pending {
+      get { lock (_lock) { return _expected.Except(_completed).ToList(); } }
+    }
+
+    /// <summary>
+    /// Signals a perspective as complete. Returns true exactly once — when all expected
+    /// perspectives are complete. Subsequent calls always return false.
+    /// </summary>
+    public bool TrySignalAndCheck(string perspectiveName) {
+      lock (_lock) {
+        if (_allComplete) {
+          return false;
+        }
+        _completed.Add(perspectiveName);
+        if (!_expected.SetEquals(_completed)) {
+          return false;
+        }
+        _allComplete = true;
+        return true;
+      }
+    }
+  }
+
   private sealed class WhenAllState {
     private readonly HashSet<PostLifecycleCompletionSource> _expected;
     private readonly ConcurrentDictionary<PostLifecycleCompletionSource, bool> _completed = new();
