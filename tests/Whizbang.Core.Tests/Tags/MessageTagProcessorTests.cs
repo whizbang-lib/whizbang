@@ -1515,5 +1515,72 @@ public class MessageTagProcessorTests {
     }
   }
 
+  // FireAt-aware hooks for testing stage filtering in ProcessTagsAsync
+  private sealed class FireAtHookA : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  private sealed class FireAtHookB : IMessageTagHook<SignalTagAttribute> {
+    public int InvokedCount { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<SignalTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
   #endregion
+
+  [Test]
+  [NotInParallel]
+  public async Task ProcessTagsAsync_FireAtFiltering_OnlyInvokesHookAtRegisteredStageAsync() {
+    // Arrange — two hooks for the same attribute, registered at different stages
+    // Bug: MessageTagProcessor._processTagRegistrationAsync (line 147) calls
+    // GetHooksFor(attributeType) without passing stage, so FireAt is ignored
+    // and BOTH hooks fire at EVERY stage.
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "fireat-test");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var hookA = new FireAtHookA();
+    var hookB = new FireAtHookB();
+    var options = new TagOptions();
+    options.UseHook<SignalTagAttribute, FireAtHookA>(fireAt: LifecycleStage.PostPerspectiveInline);
+    options.UseHook<SignalTagAttribute, FireAtHookB>(fireAt: LifecycleStage.PostAllPerspectivesAsync);
+
+    var processor = new MessageTagProcessor(options, type => {
+      if (type == typeof(FireAtHookA)) {
+        return hookA;
+      }
+      if (type == typeof(FireAtHookB)) {
+        return hookB;
+      }
+      return null;
+    });
+    var message = new TaggedTestMessage("123");
+
+    // Act — fire at PostPerspectiveInline: only hookA should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostPerspectiveInline);
+
+    // Assert — hookA fires, hookB does NOT
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(0);
+
+    // Act — fire at PostAllPerspectivesAsync: only hookB should fire
+    await processor.ProcessTagsAsync(message, typeof(TaggedTestMessage), LifecycleStage.PostAllPerspectivesAsync);
+
+    // Assert — hookA still 1, hookB now 1
+    await Assert.That(hookA.InvokedCount).IsEqualTo(1);
+    await Assert.That(hookB.InvokedCount).IsEqualTo(1);
+  }
 }
