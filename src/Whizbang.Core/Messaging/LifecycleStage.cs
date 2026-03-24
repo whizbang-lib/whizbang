@@ -1,7 +1,7 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Defines the 22 lifecycle stages where receptors can execute.
+/// Defines the 24 lifecycle stages where receptors can execute.
 /// Controls timing of receptor execution relative to database operations and message processing.
 /// Stages fall into pairs: Async (non-blocking) and Inline (blocks per unit of work).
 /// </summary>
