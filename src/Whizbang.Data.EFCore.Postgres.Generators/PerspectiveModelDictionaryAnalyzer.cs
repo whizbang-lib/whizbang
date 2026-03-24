@@ -79,27 +79,50 @@ public sealed class PerspectiveModelDictionaryAnalyzer : DiagnosticAnalyzer {
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
-      if (_shouldSkipProperty(member)) {
-        continue;
-      }
+      _checkPropertyForDictionary(context, member, type, visited);
+    }
+  }
 
-      if (member.Type is not INamedTypeSymbol propType) {
-        continue;
-      }
+  /// <summary>
+  /// Checks a single property for Dictionary usage and recursively inspects nested types.
+  /// </summary>
+  private static void _checkPropertyForDictionary(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      HashSet<INamedTypeSymbol> visited) {
 
-      // Check if this property is a Dictionary<,> or IDictionary<,>
-      if (_reportDictionaryIfFound(context, member, type, propType)) {
-        continue;
-      }
+    if (_shouldSkipProperty(member)) {
+      return;
+    }
 
-      // Recursively check nested class/struct types
-      if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
-          !_isSystemPrimitiveType(propType)) {
-        _checkForDictionary(context, propType, visited);
-      }
+    if (member.Type is not INamedTypeSymbol propType) {
+      return;
+    }
 
-      // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)
-      _checkTypeArgumentsForDictionary(context, member, type, propType, visited);
+    // Check if this property is a Dictionary<,> or IDictionary<,>
+    if (_reportDictionaryIfFound(context, member, containingType, propType)) {
+      return;
+    }
+
+    // Recursively check nested class/struct types
+    _checkNestedTypeForDictionary(context, propType, visited);
+
+    // Check generic type arguments (e.g., List<NestedType> where NestedType has Dictionary)
+    _checkTypeArgumentsForDictionary(context, member, containingType, propType, visited);
+  }
+
+  /// <summary>
+  /// Recursively checks a nested class/struct type for Dictionary properties.
+  /// </summary>
+  private static void _checkNestedTypeForDictionary(
+      SymbolAnalysisContext context,
+      INamedTypeSymbol propType,
+      HashSet<INamedTypeSymbol> visited) {
+
+    if ((propType.TypeKind == TypeKind.Class || propType.TypeKind == TypeKind.Struct) &&
+        !_isSystemPrimitiveType(propType)) {
+      _checkForDictionary(context, propType, visited);
     }
   }
 

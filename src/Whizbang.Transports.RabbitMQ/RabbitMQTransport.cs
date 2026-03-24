@@ -272,11 +272,24 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     CancellationToken cancellationToken
   ) {
     var exchangeName = destination.Address;
+    var queueName = _resolveQueueName(destination, exchangeName);
+    var routingPatterns = _getRoutingPatterns(destination);
 
-    // Queue name priority:
-    // 1. Explicit DefaultQueueName from options (for specific use cases)
-    // 2. SubscriberName from metadata (REQUIRED for competing consumers)
-    // SubscriberName ensures deterministic queue naming across service instances
+    _logSubscriptionCreation(exchangeName, queueName, routingPatterns);
+
+    try {
+      return await _createSubscriptionAsync(handler, exchangeName, queueName, routingPatterns, cancellationToken);
+    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
+      return _throwTimeoutException(exchangeName, queueName, ex);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      return _throwSubscriptionException(exchangeName, queueName, ex);
+    }
+  }
+
+  /// <summary>
+  /// Resolves the queue name from options or destination metadata.
+  /// </summary>
+  private string _resolveQueueName(TransportDestination destination, string exchangeName) {
     var subscriberName = _getSubscriberName(destination);
     if (_options.DefaultQueueName is null && subscriberName is null) {
       throw new InvalidOperationException(
@@ -285,11 +298,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         $"Exchange: '{exchangeName}'");
     }
 
-    var queueName = _options.DefaultQueueName ?? $"{subscriberName}-{exchangeName}";
+    return _options.DefaultQueueName ?? $"{subscriberName}-{exchangeName}";
+  }
 
-    // Get routing patterns - may be multiple for topic exchange filtering
-    var routingPatterns = _getRoutingPatterns(destination);
-
+  /// <summary>
+  /// Logs subscription creation details if debug logging is enabled.
+  /// </summary>
+  private void _logSubscriptionCreation(string exchangeName, string queueName, List<string> routingPatterns) {
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
       var routingPatternsStr = string.Join(", ", routingPatterns);
       _logger.LogDebug(
@@ -299,118 +314,165 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         routingPatternsStr
       );
     }
+  }
 
-    try {
-      // Set up channel with exchange, queue, and bindings
-      var channel = await _setupChannelAndInfrastructureAsync(
-        exchangeName, queueName, routingPatterns, cancellationToken);
+  /// <summary>
+  /// Creates the subscription by setting up infrastructure, consumer, and starting consumption.
+  /// </summary>
+  private async Task<ISubscription> _createSubscriptionAsync(
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    string exchangeName,
+    string queueName,
+    List<string> routingPatterns,
+    CancellationToken cancellationToken
+  ) {
+    var channel = await _setupChannelAndInfrastructureAsync(
+      exchangeName, queueName, routingPatterns, cancellationToken);
 
-      // Create async consumer
-      var consumer = new AsyncEventingBasicConsumer(channel);
+    var consumer = new AsyncEventingBasicConsumer(channel);
+    RabbitMQSubscription? subscription = null;
 
-      // Temporary subscription reference for use in handler (will be set after BasicConsumeAsync)
-      RabbitMQSubscription? subscription = null;
+    consumer.ReceivedAsync += (_, args) =>
+      _onMessageReceivedAsync(channel, args, handler, subscription, queueName, cancellationToken);
 
-      // Set up message received handler
-      consumer.ReceivedAsync += async (_, args) => {
-        try {
-          if (subscription is { IsActive: false }) {
-            _logger?.LogWarning(
-              "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
-              args.BasicProperties.MessageId ?? "unknown",
-              queueName
-            );
-            await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
-            return;
-          }
+    var consumerTag = await channel.BasicConsumeAsync(
+      queue: queueName,
+      autoAck: false,
+      consumerTag: $"{queueName}-{Guid.NewGuid():N}",
+      noLocal: false,
+      exclusive: false,
+      arguments: null,
+      consumer: consumer,
+      cancellationToken: cancellationToken
+    );
 
-          try {
-            var envelope = _deserializeMessage(args, out var envelopeTypeName);
-            if (envelope == null) {
-              _logger?.LogWarning(
-                "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
-                args.BasicProperties.MessageId ?? "unknown",
-                queueName
-              );
-              await channel.BasicNackAsync(args.DeliveryTag, false, false);
-              return;
-            }
+    subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
 
-            await handler(envelope, envelopeTypeName, cancellationToken);
-            await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
-
-            if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-              var messageId = args.BasicProperties.MessageId;
-              _logger.LogDebug(
-                "Processed message {MessageId} from queue {QueueName}",
-                messageId,
-                queueName
-              );
-            }
-          } catch (Exception ex) when (ex is not AlreadyClosedException) {
-            // Handle message processing failures (but not channel closure - that propagates to outer catch)
-            await _handleMessageFailureAsync(channel, args, queueName, ex);
-          }
-        } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
-          // Channel/connection closed or disposed during message handling - this is expected during shutdown
-          // Message will be redelivered when consumer reconnects
-          _logger?.LogWarning(
-            "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
-            args.BasicProperties.MessageId ?? "unknown",
-            queueName
-          );
-        }
-      };
-
-      // Start consuming
-      var consumerTag = await channel.BasicConsumeAsync(
-        queue: queueName,
-        autoAck: false, // Manual acknowledgment for reliability
-        consumerTag: $"{queueName}-{Guid.NewGuid():N}",
-        noLocal: false,
-        exclusive: false,
-        arguments: null,
-        consumer: consumer,
-        cancellationToken: cancellationToken
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      _logger.LogDebug(
+        "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
+        exchangeName,
+        queueName,
+        consumerTag
       );
+    }
 
-      // Create subscription wrapper with consumer tag (so Dispose can cancel consumer explicitly)
-      subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+    return subscription;
+  }
+
+  /// <summary>
+  /// Handles a received message: checks subscription state, deserializes, invokes handler, and acks/nacks.
+  /// </summary>
+  private async Task _onMessageReceivedAsync(
+    IChannel channel,
+    BasicDeliverEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    RabbitMQSubscription? subscription,
+    string queueName,
+    CancellationToken cancellationToken
+  ) {
+    try {
+      if (subscription is { IsActive: false }) {
+        await _nackPausedMessageAsync(channel, args, queueName);
+        return;
+      }
+
+      await _processMessageAsync(channel, args, handler, queueName, cancellationToken);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(
+        "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
+        args.BasicProperties.MessageId ?? "unknown",
+        queueName
+      );
+    }
+  }
+
+  /// <summary>
+  /// Nacks a message when the subscription is paused, requeueing for later delivery.
+  /// </summary>
+  private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
+    _logger?.LogWarning(
+      "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
+      args.BasicProperties.MessageId ?? "unknown",
+      queueName
+    );
+    await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
+  }
+
+  /// <summary>
+  /// Deserializes and processes a single message, acking on success and handling failures.
+  /// </summary>
+  private async Task _processMessageAsync(
+    IChannel channel,
+    BasicDeliverEventArgs args,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
+    string queueName,
+    CancellationToken cancellationToken
+  ) {
+    try {
+      var envelope = _deserializeMessage(args, out var envelopeTypeName);
+      if (envelope == null) {
+        await _nackDeserializationFailureAsync(channel, args, queueName);
+        return;
+      }
+
+      await handler(envelope, envelopeTypeName, cancellationToken);
+      await channel.BasicAckAsync(args.DeliveryTag, multiple: false, CancellationToken.None);
 
       if (_logger?.IsEnabled(LogLevel.Debug) == true) {
         _logger.LogDebug(
-          "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
-          exchangeName,
-          queueName,
-          consumerTag
+          "Processed message {MessageId} from queue {QueueName}",
+          args.BasicProperties.MessageId,
+          queueName
         );
       }
-
-      return subscription;
-    } catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested) {
-      // TaskCanceledException thrown by RabbitMQ (network timeout, not user cancellation)
-      _logger?.LogError(
-        ex,
-        "RabbitMQ operation timed out while creating subscription for exchange {ExchangeName}, queue {QueueName}",
-        exchangeName,
-        queueName
-      );
-      throw new InvalidOperationException(
-        $"RabbitMQ operation timed out while creating subscription for exchange '{exchangeName}', queue '{queueName}'. This may indicate network issues or broker unavailability.",
-        ex
-      );
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger?.LogError(
-        ex,
-        "Failed to create subscription for exchange {ExchangeName}, queue {QueueName}",
-        exchangeName,
-        queueName
-      );
-      throw new InvalidOperationException(
-        $"Failed to create RabbitMQ subscription for exchange '{exchangeName}', queue '{queueName}'. See inner exception for details.",
-        ex
-      );
+    } catch (Exception ex) when (ex is not AlreadyClosedException) {
+      await _handleMessageFailureAsync(channel, args, queueName, ex);
     }
+  }
+
+  /// <summary>
+  /// Nacks a message that failed deserialization, sending it to the dead letter queue.
+  /// </summary>
+  private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
+    _logger?.LogWarning(
+      "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
+      args.BasicProperties.MessageId ?? "unknown",
+      queueName
+    );
+    await channel.BasicNackAsync(args.DeliveryTag, false, false);
+  }
+
+  /// <summary>
+  /// Throws an InvalidOperationException for RabbitMQ operation timeouts.
+  /// </summary>
+  private ISubscription _throwTimeoutException(string exchangeName, string queueName, OperationCanceledException ex) {
+    _logger?.LogError(
+      ex,
+      "RabbitMQ operation timed out while creating subscription for exchange {ExchangeName}, queue {QueueName}",
+      exchangeName,
+      queueName
+    );
+    throw new InvalidOperationException(
+      $"RabbitMQ operation timed out while creating subscription for exchange '{exchangeName}', queue '{queueName}'. This may indicate network issues or broker unavailability.",
+      ex
+    );
+  }
+
+  /// <summary>
+  /// Throws an InvalidOperationException for subscription creation failures.
+  /// </summary>
+  private ISubscription _throwSubscriptionException(string exchangeName, string queueName, Exception ex) {
+    _logger?.LogError(
+      ex,
+      "Failed to create subscription for exchange {ExchangeName}, queue {QueueName}",
+      exchangeName,
+      queueName
+    );
+    throw new InvalidOperationException(
+      $"Failed to create RabbitMQ subscription for exchange '{exchangeName}', queue '{queueName}'. See inner exception for details.",
+      ex
+    );
   }
 
   /// <inheritdoc />
