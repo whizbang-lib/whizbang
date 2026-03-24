@@ -137,47 +137,4 @@ public class DebugAwareStopwatchTests {
   }
 
   #endregion
-
-  #region ServiceInstanceInfo tests
-
-  [Test]
-  public async Task ServiceInstanceInfo_Properties_AreAccessibleAsync() {
-    var info = new ServiceInstanceInfo("instance-1", "MyService");
-
-    await Assert.That(info.InstanceId).IsEqualTo("instance-1");
-    await Assert.That(info.ServiceName).IsEqualTo("MyService");
-  }
-
-  [Test]
-  public async Task ServiceInstanceInfo_ServiceName_DefaultsToNullAsync() {
-    var info = new ServiceInstanceInfo("instance-2");
-
-    await Assert.That(info.InstanceId).IsEqualTo("instance-2");
-    await Assert.That(info.ServiceName).IsNull();
-  }
-
-  [Test]
-  public async Task ServiceInstanceInfo_Equality_WorksAsync() {
-    var info1 = new ServiceInstanceInfo("id-1", "Svc");
-    var info2 = new ServiceInstanceInfo("id-1", "Svc");
-    var info3 = new ServiceInstanceInfo("id-2", "Svc");
-
-    await Assert.That(info1).IsEqualTo(info2);
-    await Assert.That(info1).IsNotEqualTo(info3);
-  }
-
-  [Test]
-  public async Task ServiceInstanceInfo_ToString_ContainsIdAsync() {
-    var info = new ServiceInstanceInfo("my-instance", "TestService");
-    await Assert.That(info.ToString()).Contains("my-instance");
-  }
-
-  [Test]
-  public async Task ServiceInstanceInfo_GetHashCode_ConsistentAsync() {
-    var info1 = new ServiceInstanceInfo("id-1", "Svc");
-    var info2 = new ServiceInstanceInfo("id-1", "Svc");
-    await Assert.That(info1.GetHashCode()).IsEqualTo(info2.GetHashCode());
-  }
-
-  #endregion
 }
