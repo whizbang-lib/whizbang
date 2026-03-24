@@ -136,35 +136,58 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       return;
     }
 
-    string? tenantId = null;
-    string? userId = null;
-
-    // Try new PerspectiveScope format first (short keys: t, u, c, o, ap, ex)
-    var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
-    if (perspectiveScopeTypeInfo != null) {
-      try {
-        if (JsonSerializer.Deserialize(scopeJson, perspectiveScopeTypeInfo) is PerspectiveScope perspectiveScope) {
-          tenantId = perspectiveScope.TenantId;
-          userId = perspectiveScope.UserId;
-        }
-      } catch (JsonException) {
-        // Fall back to legacy format below
-      }
-    }
-
-    // Fallback: legacy snake_case format {"tenant_id":"...","user_id":"..."}
-    if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)) {
-      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
-                              ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>.");
-      if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is Dictionary<string, JsonElement?> scopeDict) {
-        tenantId = _extractScopeValue(scopeDict, "tenant_id");
-        userId = _extractScopeValue(scopeDict, "user_id");
-      }
-    }
+    var (tenantId, userId) = _parseScopeValues(scopeJson);
 
     if (!string.IsNullOrEmpty(tenantId) || !string.IsNullOrEmpty(userId)) {
       hops[0] = hops[0] with { Scope = ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = tenantId, UserId = userId }) };
     }
+  }
+
+  /// <summary>
+  /// Parses tenant and user IDs from scope JSON, trying PerspectiveScope format first, then legacy.
+  /// </summary>
+  private (string? TenantId, string? UserId) _parseScopeValues(string scopeJson) {
+    var (tenantId, userId) = _tryParsePerspectiveScope(scopeJson);
+
+    if (string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(userId)) {
+      (tenantId, userId) = _tryParseLegacyScope(scopeJson);
+    }
+
+    return (tenantId, userId);
+  }
+
+  /// <summary>
+  /// Attempts to parse scope values from the PerspectiveScope format (short keys: t, u, c, o, ap, ex).
+  /// </summary>
+  private (string? TenantId, string? UserId) _tryParsePerspectiveScope(string scopeJson) {
+    var perspectiveScopeTypeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveScope));
+    if (perspectiveScopeTypeInfo == null) {
+      return (null, null);
+    }
+
+    try {
+      if (JsonSerializer.Deserialize(scopeJson, perspectiveScopeTypeInfo) is PerspectiveScope perspectiveScope) {
+        return (perspectiveScope.TenantId, perspectiveScope.UserId);
+      }
+    } catch (JsonException) {
+      // Fall back to legacy format
+    }
+
+    return (null, null);
+  }
+
+  /// <summary>
+  /// Attempts to parse scope values from the legacy snake_case format (tenant_id, user_id).
+  /// </summary>
+  private (string? TenantId, string? UserId) _tryParseLegacyScope(string scopeJson) {
+    var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>))
+                            ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>.");
+
+    if (JsonSerializer.Deserialize(scopeJson, scopeDictTypeInfo) is not Dictionary<string, JsonElement?> scopeDict) {
+      return (null, null);
+    }
+
+    return (_extractScopeValue(scopeDict, "tenant_id"), _extractScopeValue(scopeDict, "user_id"));
   }
 
   private static string? _extractScopeValue(Dictionary<string, JsonElement?> scopeDict, string key) {

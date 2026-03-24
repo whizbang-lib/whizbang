@@ -83,32 +83,55 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     }
 
     foreach (var member in type.GetMembers().OfType<IPropertySymbol>()) {
-      if (_shouldSkipProperty(member)) {
-        continue;
-      }
+      _checkPropertyForPolymorphicTypes(context, member, type, visited);
+    }
+  }
 
-      if (member.Type is not INamedTypeSymbol propType) {
-        continue;
-      }
+  /// <summary>
+  /// Checks a single property for polymorphic types and recursively inspects nested types.
+  /// </summary>
+  private static void _checkPropertyForPolymorphicTypes(
+      SymbolAnalysisContext context,
+      IPropertySymbol member,
+      INamedTypeSymbol containingType,
+      HashSet<INamedTypeSymbol> visited) {
 
-      // Get the element type if this is a collection
-      var elementType = _getCollectionElementType(propType);
-      var typeToCheck = elementType ?? propType;
+    if (_shouldSkipProperty(member)) {
+      return;
+    }
 
-      // Check if this property type is polymorphic (abstract or has [JsonPolymorphic])
-      if (_isPolymorphicType(typeToCheck)) {
-        _reportPolymorphicDiagnostic(context, member, type, typeToCheck);
-        continue;
-      }
+    if (member.Type is not INamedTypeSymbol propType) {
+      return;
+    }
 
-      // Recursively check nested class/struct types
-      if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-          !_isSystemPrimitiveType(typeToCheck)) {
-        _checkForPolymorphicTypes(context, typeToCheck, visited);
-      }
+    // Get the element type if this is a collection
+    var elementType = _getCollectionElementType(propType);
+    var typeToCheck = elementType ?? propType;
 
-      // Check generic type arguments (e.g., List<NestedType> where NestedType has polymorphic property)
-      _checkTypeArgumentsForPolymorphic(context, propType, visited);
+    // Check if this property type is polymorphic (abstract or has [JsonPolymorphic])
+    if (_isPolymorphicType(typeToCheck)) {
+      _reportPolymorphicDiagnostic(context, member, containingType, typeToCheck);
+      return;
+    }
+
+    // Recursively check nested class/struct types
+    _checkNestedTypeForPolymorphic(context, typeToCheck, visited);
+
+    // Check generic type arguments (e.g., List<NestedType> where NestedType has polymorphic property)
+    _checkTypeArgumentsForPolymorphic(context, propType, visited);
+  }
+
+  /// <summary>
+  /// Recursively checks a nested class/struct type for polymorphic properties.
+  /// </summary>
+  private static void _checkNestedTypeForPolymorphic(
+      SymbolAnalysisContext context,
+      INamedTypeSymbol typeToCheck,
+      HashSet<INamedTypeSymbol> visited) {
+
+    if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
+        !_isSystemPrimitiveType(typeToCheck)) {
+      _checkForPolymorphicTypes(context, typeToCheck, visited);
     }
   }
 
