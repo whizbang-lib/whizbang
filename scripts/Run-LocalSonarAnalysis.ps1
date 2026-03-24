@@ -236,7 +236,7 @@ try {
         "begin",
         "/k:$ProjectKey",
         "/n:$ProjectName",
-        "/d:sonar.login=$Token",
+        "/d:sonar.token=$Token",
         "/d:sonar.host.url=$SonarUrl",
         "/d:sonar.exclusions=$sonarExclusions",
         "/d:sonar.coverage.exclusions=$sonarCoverageExclusions"
@@ -258,7 +258,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
     Write-Info "Finishing analysis..."
-    & dotnet-sonarscanner end /d:sonar.login="$Token"
+    & dotnet-sonarscanner end /d:sonar.token="$Token"
     if ($LASTEXITCODE -ne 0) { throw "sonarscanner end failed" }
 } finally {
     Pop-Location
