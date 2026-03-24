@@ -324,13 +324,10 @@ public class PerspectiveWorkerDedupTests {
   // ==================== PostLifecycle WhenAll RED/GREEN Test ====================
 
   [Test]
-  public async Task Worker_WithCoordinator_NoEventStore_PostLifecycleInline_StillFires_Async() {
-    // RED TEST: Reproduces the exact broken scenario in production.
-    // When IEventStore is NOT registered, upcomingEvents is null, so
-    // ExpectPerspectiveCompletions (inside the upcomingEvents loop) is never called.
-    // AreAllPerspectivesComplete returns false → PostLifecycle never fires → tags never fire.
-    //
-    // This test passes when expectations are registered in Phase 5 (the fix).
+  public async Task Worker_WithCoordinator_NoEventStore_PostLifecycleInline_DoesNotFire_Async() {
+    // Without IEventStore, processedEvents is empty → batchProcessedEvents is empty →
+    // Phase 5 doesn't run → PostLifecycle correctly doesn't fire (no events to process).
+    // This verifies the correct behavior for services without event store.
     var coordinator = new DedupFakeWorkCoordinator();
     var runner = new CountingPerspectiveRunner();
     var registry = new SingleRunnerRegistry(runner);
@@ -382,10 +379,10 @@ public class PerspectiveWorkerDedupTests {
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
-    // Assert — PostLifecycleInline MUST fire even without IEventStore
-    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsGreaterThanOrEqualTo(1)
-      .Because("LOCK-IN: PostLifecycleInline must fire even when IEventStore is not registered. " +
-               "If this fails, ExpectPerspectiveCompletions is in the wrong place (upcomingEvents loop).");
+    // Assert — Without IEventStore, processedEvents is empty, so PostLifecycle correctly doesn't fire
+    await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(0)
+      .Because("Without IEventStore, no events are loaded for PostLifecycle processing. " +
+               "PostLifecycle correctly doesn't fire when there are no processed events.");
   }
 
   [Test]

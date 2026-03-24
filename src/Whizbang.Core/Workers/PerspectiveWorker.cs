@@ -703,53 +703,42 @@ public partial class PerspectiveWorker(
           _syncSignaler?.SignalCheckpointUpdated(result.PerspectiveType, streamId, result.LastEventId);
         }
 
-        // Phase 3d: Invoke PostPerspective lifecycle stages via coordinator (exactly-once per event)
-        // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
-        // The coordinator's AdvanceToAsync handles receptor invocation, tag processing, and ImmediateAsync
+        // Phase 3d: PostPerspective fires PER PERSPECTIVE via direct invoker (not coordinator)
+        // Carries PerspectiveType context. Tags at this stage fire per-perspective.
+        // PostAllPerspectives (once per event, after ALL perspectives) fires in Phase 5 via coordinator.
         LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, receptorInvoker is not null);
 
         using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostPerspective", ActivityKind.Internal) : null) {
-          if (processedEvents.Count > 0) {
-            if (lifecycleCoordinator is not null) {
-              // Coordinator path: AdvanceToAsync fires once per event (stage guard)
-              // Tags are processed by the invoker inside AdvanceToAsync
-              foreach (var envelope in processedEvents) {
-                await _establishSecurityContextAsync(envelope, scope.ServiceProvider, cancellationToken);
-                var tracking = lifecycleCoordinator.GetTracking(envelope.MessageId.Value);
-                if (tracking is not null) {
-                  await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveAsync, scope.ServiceProvider, cancellationToken);
-                  await tracking.AdvanceToAsync(LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, cancellationToken);
-                }
-              }
-              LogPostPerspectiveInlineCompleted(_logger);
-            } else if (receptorInvoker is not null) {
-              // Fallback: direct invocation when coordinator not registered
-              LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
-              await _invokeLifecycleReceptorsForEventsAsync(
-                processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
-                LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, cancellationToken, processingMode);
-              await _invokeLifecycleReceptorsForEventsAsync(
-                processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
-                LifecycleStage.ImmediateAsync, scope.ServiceProvider, cancellationToken, processingMode);
-              LogPostPerspectiveInlineCompleted(_logger);
+          if (processedEvents.Count > 0 && receptorInvoker is not null) {
+            LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
 
-              // Fallback tag processing (coordinator handles this via invoker)
-              var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
-              if (tagProcessor is not null) {
-                foreach (var envelope in processedEvents) {
-                  var eventPayload = envelope.Payload;
-                  var eventType = eventPayload.GetType();
-                  var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
-                  await tagProcessor.ProcessTagsAsync(
-                    eventPayload, eventType, LifecycleStage.PostPerspectiveInline,
-                    extractedScope, cancellationToken).ConfigureAwait(false);
-                }
+            await _invokeLifecycleReceptorsForEventsAsync(
+              processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
+              LifecycleStage.PostPerspectiveInline, scope.ServiceProvider, cancellationToken, processingMode);
+            await _invokeLifecycleReceptorsForEventsAsync(
+              processedEvents, streamId, perspectiveName, result.PerspectiveType, result.LastEventId,
+              LifecycleStage.ImmediateAsync, scope.ServiceProvider, cancellationToken, processingMode);
+            LogPostPerspectiveInlineCompleted(_logger);
+
+            // Process tags at PostPerspectiveInline (per-perspective, with scope context)
+            var tagProcessor = scope.ServiceProvider.GetService<IMessageTagProcessor>();
+            if (tagProcessor is not null) {
+              foreach (var envelope in processedEvents) {
+                var eventPayload = envelope.Payload;
+                var eventType = eventPayload.GetType();
+                var extractedScope = EnvelopeContextExtractor.ExtractScope(envelope.Hops);
+                await tagProcessor.ProcessTagsAsync(
+                  eventPayload, eventType, LifecycleStage.PostPerspectiveInline,
+                  extractedScope, cancellationToken).ConfigureAwait(false);
               }
-            } else {
-              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
             }
           } else {
-            LogSkippingPostPerspectiveInlineNoEvents(_logger);
+            if (processedEvents.Count == 0) {
+              LogSkippingPostPerspectiveInlineNoEvents(_logger);
+            }
+            if (receptorInvoker is null) {
+              LogSkippingPostPerspectiveInlineNoInvoker(_logger);
+            }
           }
         }
 
@@ -837,7 +826,11 @@ public partial class PerspectiveWorker(
           // Get existing tracking (created during PrePerspective via BeginTracking/GetOrAdd)
           var tracking = lifecycleCoordinator.GetTracking(eventId);
           if (tracking is not null) {
-            // Stage guard ensures these fire once even if event somehow reaches Phase 5 again
+            // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
+            await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesAsync, scope.ServiceProvider, cancellationToken);
+            await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scope.ServiceProvider, cancellationToken);
+
+            // PostLifecycle: fires once per event as the final lifecycle stage
             await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
             await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
           }
