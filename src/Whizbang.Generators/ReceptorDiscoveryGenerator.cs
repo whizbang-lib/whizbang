@@ -553,31 +553,42 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // [DefaultRouting(DispatchMode.Local)]
-      // Constructor argument is DispatchMode enum value
-      if (attribute.ConstructorArguments.Length > 0) {
-        var modeArg = attribute.ConstructorArguments[0];
-        if (modeArg.Value is int modeValue) {
-          // Get the enum type to convert int to enum name
-          var modeType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
-              .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
-              ?.Parameters.FirstOrDefault()?.Type;
-
-          if (modeType is INamedTypeSymbol enumType) {
-            // Find the enum member with this value
-            var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
-                .FirstOrDefault(f => f.ConstantValue is int val && val == modeValue);
-
-            if (enumMember is not null) {
-              // Return fully qualified enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchMode.Local")
-              return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
-            }
-          }
-        }
+      if (attribute.ConstructorArguments.Length == 0) {
+        continue;
       }
+
+      var modeArg = attribute.ConstructorArguments[0];
+      if (modeArg.Value is not int modeValue) {
+        continue;
+      }
+
+      return _resolveEnumValueName(attribute.AttributeClass, modeValue);
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Resolves an enum constant value back to its fully qualified member name.
+  /// Inspects the first constructor parameter type of the attribute class to find the enum.
+  /// </summary>
+  private static string? _resolveEnumValueName(INamedTypeSymbol attributeClass, int modeValue) {
+    var modeType = attributeClass.GetMembers().OfType<IMethodSymbol>()
+        .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
+        ?.Parameters.FirstOrDefault()?.Type;
+
+    if (modeType is not INamedTypeSymbol enumType) {
+      return null;
+    }
+
+    var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
+        .FirstOrDefault(f => f.ConstantValue is int val && val == modeValue);
+
+    if (enumMember is null) {
+      return null;
+    }
+
+    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -843,16 +854,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         depth--;
         current.Append(c);
       } else if (c == ',' && depth == 0) {
-        // Found a comma at top level - this separates elements
-        var element = current.ToString().Trim();
-        if (!string.IsNullOrEmpty(element)) {
-          // If element is a nested tuple, recursively extract
-          if (element.StartsWith("(", StringComparison.Ordinal)) {
-            elements.AddRange(_extractTupleElements(element));
-          } else {
-            elements.Add(element);
-          }
-        }
+        _addTupleElement(elements, current.ToString().Trim());
         current.Clear();
       } else {
         current.Append(c);
@@ -860,16 +862,24 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Don't forget the last element
-    var lastElement = current.ToString().Trim();
-    if (!string.IsNullOrEmpty(lastElement)) {
-      if (lastElement.StartsWith("(", StringComparison.Ordinal)) {
-        elements.AddRange(_extractTupleElements(lastElement));
-      } else {
-        elements.Add(lastElement);
-      }
-    }
+    _addTupleElement(elements, current.ToString().Trim());
 
     return elements;
+  }
+
+  /// <summary>
+  /// Adds a parsed tuple element to the list. Recursively extracts nested tuples.
+  /// </summary>
+  private static void _addTupleElement(List<string> elements, string element) {
+    if (string.IsNullOrEmpty(element)) {
+      return;
+    }
+
+    if (element.StartsWith("(", StringComparison.Ordinal)) {
+      elements.AddRange(_extractTupleElements(element));
+    } else {
+      elements.Add(element);
+    }
   }
 
   /// <summary>
@@ -1430,42 +1440,58 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "ReceptorRegistryTemplate.cs"
     );
 
-    // Load snippets for receptor registry routing
-    var responseSnippet = TemplateUtilities.ExtractSnippet(
-        typeof(ReceptorDiscoveryGenerator).Assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "RECEPTOR_REGISTRY_ROUTING_SNIPPET"
-    );
+    // Load all required snippets
+    var snippets = _loadRegistrySnippets();
 
-    var voidSnippet = TemplateUtilities.ExtractSnippet(
-        typeof(ReceptorDiscoveryGenerator).Assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"
-    );
+    // Build routing entries with polymorphic expansion
+    var routingEntries = _buildRoutingEntries(compilation, receptors);
 
-    // Load traced snippets for receptors with [WhizbangTrace] attribute
-    var tracedResponseSnippet = TemplateUtilities.ExtractSnippet(
-        typeof(ReceptorDiscoveryGenerator).Assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "RECEPTOR_REGISTRY_TRACED_ROUTING_SNIPPET"
-    );
+    // Group by (routingMessageType, stage) and generate routing code
+    var routingCode = _generateRoutingCode(routingEntries, snippets);
 
-    var tracedVoidSnippet = TemplateUtilities.ExtractSnippet(
-        typeof(ReceptorDiscoveryGenerator).Assembly,
-        TEMPLATE_SNIPPET_FILE,
-        "RECEPTOR_REGISTRY_TRACED_VOID_ROUTING_SNIPPET"
-    );
+    // Replace template markers
+    var result = template;
+    result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode);
 
-    // Default stages for receptors WITHOUT [FireAt] attribute
+    return result;
+  }
+
+  /// <summary>
+  /// Holds the four snippet variants used for receptor registry code generation.
+  /// </summary>
+  private sealed record RegistrySnippets(
+      string Response,
+      string Void,
+      string TracedResponse,
+      string TracedVoid);
+
+  /// <summary>
+  /// Loads all required snippet templates for receptor registry routing.
+  /// </summary>
+  private static RegistrySnippets _loadRegistrySnippets() {
+    var asm = typeof(ReceptorDiscoveryGenerator).Assembly;
+    return new RegistrySnippets(
+        Response: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_ROUTING_SNIPPET"),
+        Void: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_VOID_ROUTING_SNIPPET"),
+        TracedResponse: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_TRACED_ROUTING_SNIPPET"),
+        TracedVoid: TemplateUtilities.ExtractSnippet(asm, TEMPLATE_SNIPPET_FILE, "RECEPTOR_REGISTRY_TRACED_VOID_ROUTING_SNIPPET"));
+  }
+
+  /// <summary>
+  /// Builds routing entries from all receptors, expanding polymorphic types to concrete subtypes.
+  /// </summary>
+  private static System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> _buildRoutingEntries(
+      Compilation compilation,
+      ImmutableArray<ReceptorInfo> receptors) {
     var defaultStages = new[] {
       "global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateInline",
       "global::Whizbang.Core.Messaging.LifecycleStage.PreOutboxInline",
       "global::Whizbang.Core.Messaging.LifecycleStage.PostInboxInline"
     };
 
-    // Build list of routing entries from ALL receptors.
-    // RoutingMessageType is the type used in the if-condition (concrete type for expanded entries),
-    // while Receptor.MessageType is the interface/base type used for DI resolution and casting.
     var routingEntries = new System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)>();
     foreach (var receptor in receptors) {
       var stages = receptor.HasDefaultStage ? defaultStages : receptor.LifecycleStages;
@@ -1475,7 +1501,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Expand polymorphic receptors: for each concrete subtype, add a routing entry
-    // so the receptor fires when a concrete event is dispatched
     foreach (var entry in routingEntries.ToList()) {
       if (entry.Receptor.IsPolymorphicMessageType) {
         var concreteTypes = _findConcreteSubtypes(compilation, entry.Receptor.MessageType);
@@ -1485,62 +1510,48 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    // Group routing entries by (routingMessageType, stage) to generate combined if-blocks
-    // This ensures all receptors for the same (routingMessageType, stage) are in a single array
+    return routingEntries;
+  }
+
+  /// <summary>
+  /// Generates routing code for all grouped (messageType, stage) combinations.
+  /// </summary>
+  private static string _generateRoutingCode(
+      System.Collections.Generic.List<(string RoutingMessageType, ReceptorInfo Receptor, string Stage)> routingEntries,
+      RegistrySnippets snippets) {
     var groupedRoutingPairs = routingEntries
         .GroupBy(e => (e.RoutingMessageType, e.Stage))
         .ToList();
 
-    // Generate routing code for each (routingMessageType, stage) group
     var routingCode = new StringBuilder();
     foreach (var group in groupedRoutingPairs) {
       var (messageType, stage) = group.Key;
       var receptorsInGroup = group.Select(g => g.Receptor).ToList();
       var handlerCount = receptorsInGroup.Count;
 
-      // Generate if-block header
       routingCode.AppendLine($"    if (messageType == typeof({messageType}) && stage == {stage}) {{");
       routingCode.AppendLine("      compileTimeEntries = new global::Whizbang.Core.Messaging.ReceptorInfo[] {");
 
-      // Generate each ReceptorInfo entry in the array
       for (int i = 0; i < receptorsInGroup.Count; i++) {
         var receptor = receptorsInGroup[i];
-        var isLast = (i == receptorsInGroup.Count - 1);
-
-        // Generate the sync attributes code for this receptor
         var syncAttributesCode = _generateSyncAttributesCode(receptor.SyncAttributes);
 
-        // Generate ReceptorInfo entry
         var receptorEntry = _generateReceptorInfoEntry(
-            receptor,
-            syncAttributesCode,
-            handlerCount,
-            responseSnippet,
-            voidSnippet,
-            tracedResponseSnippet,
-            tracedVoidSnippet);
+            receptor, syncAttributesCode, handlerCount,
+            snippets.Response, snippets.Void, snippets.TracedResponse, snippets.TracedVoid);
 
-        // Add comma if not last entry
-        if (!isLast) {
+        if (i < receptorsInGroup.Count - 1) {
           receptorEntry = receptorEntry.TrimEnd() + ",";
         }
 
         routingCode.AppendLine(TemplateUtilities.IndentCode(receptorEntry, "        "));
       }
 
-      // Generate if-block footer
       routingCode.AppendLine("      };");
       routingCode.AppendLine("    }");
     }
 
-    // Replace template markers
-    var result = template;
-    result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
-    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
-    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
-    result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_ROUTING", routingCode.ToString());
-
-    return result;
+    return routingCode.ToString();
   }
 
   /// <summary>
@@ -1556,40 +1567,65 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       string tracedResponseSnippet,
       string tracedVoidSnippet) {
 
-    string snippet;
-    if (receptor.HasTraceAttribute) {
-      snippet = receptor.IsVoid ? tracedVoidSnippet : tracedResponseSnippet;
-    } else {
-      snippet = receptor.IsVoid ? voidSnippet : responseSnippet;
-    }
+    var snippet = _selectSnippet(receptor, responseSnippet, voidSnippet, tracedResponseSnippet, tracedVoidSnippet);
 
-    // Extract just the ReceptorInfo entry from the snippet (skip the if-block wrapper)
-    // The snippets have structure: if (...) { return new ReceptorInfo[] { <entry> }; }
-    // We need just the <entry> part
-    var entryStart = snippet.IndexOf("new global::Whizbang.Core.Messaging.ReceptorInfo(", StringComparison.Ordinal);
-    if (entryStart < 0) {
-      // Fallback: generate manually if snippet structure is unexpected
+    var entryTemplate = _extractReceptorInfoFromSnippet(snippet);
+    if (entryTemplate is null) {
       return _generateReceptorInfoEntryManually(receptor, syncAttributesCode);
     }
 
-    // Find matching closing parenthesis for the ReceptorInfo constructor
+    return _applyReceptorReplacements(entryTemplate, receptor, syncAttributesCode, handlerCount);
+  }
+
+  /// <summary>
+  /// Selects the appropriate snippet based on receptor trace and void attributes.
+  /// </summary>
+  private static string _selectSnippet(
+      ReceptorInfo receptor,
+      string responseSnippet,
+      string voidSnippet,
+      string tracedResponseSnippet,
+      string tracedVoidSnippet) {
+    if (receptor.HasTraceAttribute) {
+      return receptor.IsVoid ? tracedVoidSnippet : tracedResponseSnippet;
+    }
+    return receptor.IsVoid ? voidSnippet : responseSnippet;
+  }
+
+  /// <summary>
+  /// Extracts the ReceptorInfo constructor call from a snippet by matching parentheses.
+  /// Returns null if the expected pattern is not found.
+  /// </summary>
+  private static string? _extractReceptorInfoFromSnippet(string snippet) {
+    const string marker = "new global::Whizbang.Core.Messaging.ReceptorInfo(";
+    var entryStart = snippet.IndexOf(marker, StringComparison.Ordinal);
+    if (entryStart < 0) {
+      return null;
+    }
+
     int parenDepth = 0;
-    int entryEnd = entryStart;
     for (int i = entryStart; i < snippet.Length; i++) {
       if (snippet[i] == '(') {
         parenDepth++;
       } else if (snippet[i] == ')') {
         parenDepth--;
         if (parenDepth == 0) {
-          entryEnd = i + 1;
-          break;
+          return snippet[entryStart..(i + 1)];
         }
       }
     }
 
-    var entryTemplate = snippet[entryStart..entryEnd];
+    return null;
+  }
 
-    // Apply replacements
+  /// <summary>
+  /// Applies placeholder replacements to a ReceptorInfo entry template.
+  /// </summary>
+  private static string _applyReceptorReplacements(
+      string entryTemplate,
+      ReceptorInfo receptor,
+      string syncAttributesCode,
+      int handlerCount) {
     var result = entryTemplate
         .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR)
         .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)

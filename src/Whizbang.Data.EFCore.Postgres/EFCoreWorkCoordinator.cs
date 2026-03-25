@@ -715,9 +715,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCursorCompletion completion,
     CancellationToken cancellationToken = default) {
-    // CRITICAL FIX: Use existing DbContext and commit transaction explicitly
-    // The DbContext's current transaction scope must be committed for changes to be visible
-    // to subsequent ProcessWorkBatchAsync calls that create new transactions
     if (_logger?.IsEnabled(LogLevel.Information) == true) {
       var streamId = completion.StreamId;
       var perspectiveName = completion.PerspectiveName;
@@ -731,17 +728,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // CRITICAL: Skip if no events were processed (LastEventId = Guid.Empty)
     // This prevents FK constraint violation when event doesn't exist in wh_event_store
     if (completion.LastEventId == Guid.Empty) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-        var streamId = completion.StreamId;
-        var perspectiveName = completion.PerspectiveName;
-        _logger.LogDebug(
-          "[DIAGNOSTIC] Skipping checkpoint update for stream={StreamId}, perspective={PerspectiveName} - no events processed (LastEventId is Empty)",
-          streamId, perspectiveName);
-      }
+      _logSkippingEmptyCheckpoint(completion.StreamId, completion.PerspectiveName);
       return;
     }
 
-    // Begin explicit transaction if one doesn't exist
+    await _executeCursorCompletionAsync(
+      completion.StreamId, completion.PerspectiveName,
+      completion.LastEventId, (short)completion.Status, null,
+      cancellationToken);
+
+    await _logCheckpointDiagnosticAsync(completion.StreamId, completion.PerspectiveName, cancellationToken);
+  }
+
+  /// <summary>
+  /// Executes the complete_perspective_cursor_work SQL function within a managed transaction.
+  /// Creates a new transaction if one does not already exist on the DbContext.
+  /// </summary>
+  private async Task _executeCursorCompletionAsync(
+    Guid streamId, string perspectiveName, Guid lastEventId,
+    short status, string? error,
+    CancellationToken cancellationToken) {
     var transaction = _dbContext.Database.CurrentTransaction;
     var needsCommit = transaction == null;
 
@@ -750,7 +756,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     try {
-      // Get schema from DbContext configuration for schema-qualified function call
       var schema = GetSchemaWithFallback(
         _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
         DEFAULT_SCHEMA,
@@ -760,15 +765,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
       await _dbContext.Database.ExecuteSqlRawAsync(
         sql,
-        [completion.StreamId, completion.PerspectiveName, completion.LastEventId, (short)completion.Status, null!],
+        [streamId, perspectiveName, lastEventId, status, error!],
         cancellationToken);
 
-      // Commit transaction IMMEDIATELY so changes are visible to next ProcessWorkBatchAsync
       if (needsCommit && transaction != null) {
         await transaction.CommitAsync(cancellationToken);
         if (_logger?.IsEnabled(LogLevel.Information) == true) {
-          var streamId = completion.StreamId;
-          var perspectiveName = completion.PerspectiveName;
           _logger.LogInformation(
             "[DIAGNOSTIC] Transaction committed for stream={StreamId}, perspective={PerspectiveName}",
             streamId, perspectiveName);
@@ -786,15 +788,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     if (_logger?.IsEnabled(LogLevel.Information) == true) {
-      var streamId = completion.StreamId;
-      var perspectiveName = completion.PerspectiveName;
       _logger.LogInformation(
         "[DIAGNOSTIC] complete_perspective_cursor_work completed for stream={StreamId}, perspective={PerspectiveName}",
         streamId, perspectiveName);
     }
+  }
 
-    // DIAGNOSTIC: Verify the checkpoint was actually updated
-    // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
+  /// <summary>
+  /// Logs a debug message when skipping checkpoint update for empty LastEventId.
+  /// </summary>
+  private void _logSkippingEmptyCheckpoint(Guid streamId, string perspectiveName) {
+    if (_logger?.IsEnabled(LogLevel.Debug) == true) {
+      _logger.LogDebug(
+        "[DIAGNOSTIC] Skipping checkpoint update for stream={StreamId}, perspective={PerspectiveName} - no events processed (LastEventId is Empty)",
+        streamId, perspectiveName);
+    }
+  }
+
+  /// <summary>
+  /// Queries and logs the checkpoint state after a cursor completion update for diagnostics.
+  /// </summary>
+  private async Task _logCheckpointDiagnosticAsync(
+    Guid streamId, string perspectiveName,
+    CancellationToken cancellationToken) {
     var diagnosticSchema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
@@ -803,25 +819,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var diagnosticSql = $"SELECT stream_id, perspective_name, status, last_event_id, error FROM {diagnosticTable} WHERE stream_id = {{0}} AND perspective_name = {{1}}";
 
     var checkpointState = await _dbContext.Database
-      .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, completion.StreamId, completion.PerspectiveName)
+      .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, streamId, perspectiveName)
       .OrderBy(c => c.StreamId)
       .FirstOrDefaultAsync(cancellationToken);
 
     if (checkpointState != null) {
       if (_logger?.IsEnabled(LogLevel.Information) == true) {
-        var streamIdVal = checkpointState.StreamId;
-        var perspectiveNameVal = checkpointState.PerspectiveName;
-        var statusVal = checkpointState.Status;
-        var lastEventIdVal = checkpointState.LastEventId;
-        var errorVal = checkpointState.Error;
         _logger.LogInformation(
           "[DIAGNOSTIC] After update - checkpoint state: stream={StreamId}, perspective={PerspectiveName}, status={Status}, lastEvent={LastEventId}, error={Error}",
-          streamIdVal, perspectiveNameVal, statusVal, lastEventIdVal, errorVal);
+          checkpointState.StreamId, checkpointState.PerspectiveName, checkpointState.Status, checkpointState.LastEventId, checkpointState.Error);
       }
     } else {
       if (_logger?.IsEnabled(LogLevel.Warning) == true) {
-        var streamId = completion.StreamId;
-        var perspectiveName = completion.PerspectiveName;
         _logger.LogWarning(
           "[DIAGNOSTIC] Checkpoint not found after update: stream={StreamId}, perspective={PerspectiveName}",
           streamId, perspectiveName);

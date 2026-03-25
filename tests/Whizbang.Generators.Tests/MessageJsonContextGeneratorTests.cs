@@ -3512,6 +3512,55 @@ public class ChatSession : IPerspectiveFor<ChatSession.ChatSessionModel, ChatSes
   }
 
   /// <summary>
+  /// Tests that a nested perspective model discovered through both the model record path
+  /// (syntactic predicate matches nested type) AND the perspective class path
+  /// (_extractPerspectiveModelFromPerspectiveClass) is only registered once.
+  /// Regression test for CS0111 duplicate method errors.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NestedPerspectiveModel_IsNotDuplicatedAsync() {
+    // Arrange - Perspective with nested model (triggers both discovery paths)
+    const string source = """
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestApp;
+
+public class ChatSession : IPerspectiveFor<ChatSession.ChatSessionModel, ChatSession.MessageSent> {
+    public record ChatSessionModel {
+        public string SessionId { get; init; } = "";
+        public string Title { get; init; } = "";
+    }
+
+    public record MessageSent : IEvent {
+        public string SessionId { get; init; } = "";
+    }
+
+    public ChatSessionModel Apply(ChatSessionModel model, MessageSent e) => model;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - No generator errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Model should be present
+    await Assert.That(code).Contains("Create_TestApp_ChatSession_ChatSessionModel");
+
+    // Count factory method definitions — must be exactly 1 (not duplicated)
+    var factoryCount = code!.Split("Create_TestApp_ChatSession_ChatSessionModel(JsonSerializerOptions options)").Length - 1;
+    await Assert.That(factoryCount).IsEqualTo(1)
+      .Because("perspective model should not be registered twice via both the nested type path and the perspective class extraction path");
+  }
+
+  /// <summary>
   /// Tests that types with [WhizbangSerializable] attribute are discovered even without base types.
   /// This covers scenarios like DTOs that need JSON serialization but aren't messages.
   /// </summary>

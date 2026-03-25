@@ -1202,4 +1202,79 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
     await Assert.That(eventStoreExists).IsTrue();
   }
+
+  /// <summary>
+  /// Test 42: Migration 033 renames wh_perspective_checkpoints → wh_perspective_cursors.
+  /// On a fresh database the old table never existed — the migration must not throw.
+  /// Regression test for: ERR log noise on fresh database deployments.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_FreshDatabase_Migration033DoesNotThrowAsync() {
+    // Arrange — fresh database, no pre-existing wh_perspective_checkpoints table
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
+
+    // Act & Assert — must not throw
+    await initializer.InitializeSchemaAsync();
+
+    // Verify the cursors table exists (created by infrastructure schema)
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+
+    var tableExists = await connection.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_perspective_cursors')");
+    await Assert.That(tableExists).IsTrue();
+
+    // Verify migration 033 was recorded as applied (not failed)
+    var status = await connection.ExecuteScalarAsync<short?>(
+      "SELECT status FROM wh_schema_migrations WHERE file_name = '033_RenamePerspectiveCheckpointsToCursors'");
+    await Assert.That((int?)status).IsNotNull();
+    await Assert.That((int)status!.Value).IsNotEqualTo(-1); // -1 = Failed
+  }
+
+  /// <summary>
+  /// Test 43: Migration 033 upgrade scenario — when the OLD table exists, it should be
+  /// renamed to wh_perspective_cursors and new columns added.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_UpgradeWithOldTable_RenamesCheckpointsToCursorsAsync() {
+    // Arrange — simulate upgrade: create old table before initialization
+    await using var setupConn = new NpgsqlConnection(_testConnectionString);
+    await setupConn.OpenAsync();
+
+    // Create the old table shape (before rename)
+    await setupConn.ExecuteAsync(@"
+      CREATE TABLE wh_perspective_checkpoints (
+        stream_id UUID NOT NULL,
+        perspective_name VARCHAR(500) NOT NULL,
+        last_event_id UUID,
+        status SMALLINT NOT NULL DEFAULT 0,
+        processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        error TEXT,
+        PRIMARY KEY (stream_id, perspective_name)
+      );
+      CREATE INDEX idx_perspective_checkpoints_perspective_name ON wh_perspective_checkpoints (perspective_name);
+      CREATE INDEX idx_perspective_checkpoints_last_event_id ON wh_perspective_checkpoints (last_event_id);
+
+      INSERT INTO wh_perspective_checkpoints (stream_id, perspective_name)
+      VALUES (gen_random_uuid(), 'TestPerspective');
+    ");
+
+    // Act
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
+    await initializer.InitializeSchemaAsync();
+
+    // Assert — old table gone, new table exists with data preserved
+    var oldTableExists = await setupConn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_perspective_checkpoints')");
+    await Assert.That(oldTableExists).IsFalse();
+
+    var newTableExists = await setupConn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_perspective_cursors')");
+    await Assert.That(newTableExists).IsTrue();
+
+    // Verify the new columns were added
+    var hasRewindColumn = await setupConn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'wh_perspective_cursors' AND column_name = 'rewind_trigger_event_id')");
+    await Assert.That(hasRewindColumn).IsTrue();
+  }
 }

@@ -571,11 +571,27 @@ public record FailedMessage {
 }
 
 /// <summary>
+/// Shared constraint for work items that expose a MessageId and Status.
+/// Used by <see cref="OrderedStreamProcessor"/> to generically process inbox and outbox messages.
+/// </summary>
+public interface IHasMessageIdAndStatus {
+  /// <summary>
+  /// Unique message ID.
+  /// </summary>
+  Guid MessageId { get; }
+
+  /// <summary>
+  /// Current processing status flags.
+  /// </summary>
+  MessageProcessingStatus Status { get; }
+}
+
+/// <summary>
 /// Represents outbox work that needs to be published.
 /// Includes both new pending messages and messages with expired leases (orphaned).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxWork {
+public record OutboxWork : IHasMessageIdAndStatus {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -651,7 +667,7 @@ public record OutboxWork {
 /// From the application's perspective, these are the next messages to handle.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxWork {
+public record InboxWork : IHasMessageIdAndStatus {
   /// <summary>
   /// Unique message ID.
   /// </summary>

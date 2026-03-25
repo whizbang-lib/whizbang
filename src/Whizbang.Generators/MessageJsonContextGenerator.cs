@@ -377,8 +377,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateWhizbangJsonContext(
       SourceProductionContext context,
-      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<JsonMessageTypeInfo> allMessages,
       Compilation compilation) {
+
+    // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
+    // through both the nested type path (syntactic predicate) and the perspective class
+    // extraction path (_extractPerspectiveModelFromPerspectiveClass), producing duplicates.
+    var seen = new HashSet<string>();
+    var messages = allMessages.Where(m => seen.Add(m.FullyQualifiedName)).ToImmutableArray();
 
     // Report that generator is running
     context.ReportDiagnostic(Diagnostic.Create(
@@ -1230,101 +1236,119 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      // Generate the main factory method with deferred property initialization
-      // This enables support for self-referencing types (e.g., Event with List<Event> property)
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
-
-      // Filter to only writable properties for constructor params and object initializer
-      // Computed properties (CanWrite = false) cannot be assigned and are excluded
       var writableProperties = message.Properties.Where(p => p.CanWrite).ToArray();
 
-      // Generate different code based on constructor type
-      if (message.HasParameterizedConstructor) {
-        // Type has parameterized constructor (e.g., record with primary constructor)
-        // Create JsonObjectInfoValues with DEFERRED property initialization
-        sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-        sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
-        for (int i = 0; i < writableProperties.Length; i++) {
-          var prop = writableProperties[i];
-          var comma = i < writableProperties.Length - 1 ? "," : "";
-          sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
-        }
-        sb.AppendLine("      ),");
-        sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
-        sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine("  };");
-      } else {
-        // Type has no parameterized constructor but has init-only properties
-        // Create JsonObjectInfoValues with DEFERRED property initialization
-        sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-        sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
-        for (int i = 0; i < writableProperties.Length; i++) {
-          var prop = writableProperties[i];
-          var comma = i < writableProperties.Length - 1 ? "," : "";
-          sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
-        }
-        sb.AppendLine("      },");
-        sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
-        sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
-        sb.AppendLine("  };");
-      }
-      sb.AppendLine();
-
-      // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
-      // This is critical for self-referencing types - the cache must be populated
-      // before the deferred PropertyMetadataInitializer runs
-      sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
-      sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
-      sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
-      sb.AppendLine("  return jsonTypeInfo;");
-      sb.AppendLine("}");
-      sb.AppendLine();
-
-      // Generate the deferred property creation method
-      sb.AppendLine($"private JsonPropertyInfo[] CreatePropertiesFor_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
-      sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
-      sb.AppendLine();
-
-      for (int i = 0; i < message.Properties.Length; i++) {
-        var prop = message.Properties[i];
-        var setter = !prop.CanWrite || prop.IsInitOnly
-            ? "null"
-            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
-
-        // For regular messages, JSON name equals C# property name (no [JsonPropertyName] attribute overrides)
-        var propertyCode = propertyCreationSnippet
-            .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
-            .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
-            .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, prop.Name)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
-            .Replace(PLACEHOLDER_SETTER, setter);
-
-        sb.AppendLine(propertyCode);
-        sb.AppendLine();
-      }
-      sb.AppendLine("  return properties;");
-      sb.AppendLine("}");
-      sb.AppendLine();
-
-      // Generate the deferred constructor params creation method
-      sb.AppendLine($"private JsonParameterInfoValues[] CreateCtorParamsFor_{message.UniqueIdentifier}() {{");
-      sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
-      for (int i = 0; i < writableProperties.Length; i++) {
-        var prop = writableProperties[i];
-        var parameterCode = parameterInfoSnippet
-            .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
-            .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
-
-        sb.AppendLine(parameterCode);
-      }
-      sb.AppendLine("  return ctorParams;");
-      sb.AppendLine("}");
-      sb.AppendLine();
+      _generateFactoryMethod(sb, message, writableProperties);
+      _generatePropertyCreationMethod(sb, message, propertyCreationSnippet);
+      _generateCtorParamsMethod(sb, message, writableProperties, parameterInfoSnippet);
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates the main Create_ factory method with deferred property initialization.
+  /// Supports both parameterized constructors and object initializers.
+  /// </summary>
+  private static void _generateFactoryMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties) {
+    sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
+
+    // Generate different code based on constructor type
+    sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
+    if (message.HasParameterizedConstructor) {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}(");
+      _appendConstructorArgs(sb, writableProperties);
+      sb.AppendLine("      ),");
+    } else {
+      sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
+      _appendObjectInitializerArgs(sb, writableProperties);
+      sb.AppendLine("      },");
+    }
+    sb.AppendLine($"      PropertyMetadataInitializer = _ => CreatePropertiesFor_{message.UniqueIdentifier}(options),");
+    sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => CreateCtorParamsFor_{message.UniqueIdentifier}()");
+    sb.AppendLine("  };");
+    sb.AppendLine();
+
+    // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
+    // This is critical for self-referencing types
+    sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
+    sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
+    sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
+    sb.AppendLine("  return jsonTypeInfo;");
+    sb.AppendLine("}");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Appends typed constructor argument casts for parameterized constructors.
+  /// </summary>
+  private static void _appendConstructorArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var comma = i < writableProperties.Length - 1 ? "," : "";
+      sb.AppendLine($"          ({prop.Type})args[{i}]{comma}");
+    }
+  }
+
+  /// <summary>
+  /// Appends object initializer assignments for types without parameterized constructors.
+  /// </summary>
+  private static void _appendObjectInitializerArgs(StringBuilder sb, PropertyInfo[] writableProperties) {
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var comma = i < writableProperties.Length - 1 ? "," : "";
+      sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
+    }
+  }
+
+  /// <summary>
+  /// Generates the deferred property creation method for a message type.
+  /// </summary>
+  private static void _generatePropertyCreationMethod(StringBuilder sb, JsonMessageTypeInfo message, string propertyCreationSnippet) {
+    sb.AppendLine($"private JsonPropertyInfo[] CreatePropertiesFor_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
+    sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
+    sb.AppendLine();
+
+    for (int i = 0; i < message.Properties.Length; i++) {
+      var prop = message.Properties[i];
+      var setter = !prop.CanWrite || prop.IsInitOnly
+          ? "null"
+          : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
+
+      var propertyCode = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, prop.Name)
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SETTER, setter);
+
+      sb.AppendLine(propertyCode);
+      sb.AppendLine();
+    }
+    sb.AppendLine("  return properties;");
+    sb.AppendLine("}");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Generates the deferred constructor params creation method for a message type.
+  /// </summary>
+  private static void _generateCtorParamsMethod(StringBuilder sb, JsonMessageTypeInfo message, PropertyInfo[] writableProperties, string parameterInfoSnippet) {
+    sb.AppendLine($"private JsonParameterInfoValues[] CreateCtorParamsFor_{message.UniqueIdentifier}() {{");
+    sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{writableProperties.Length}];");
+    for (int i = 0; i < writableProperties.Length; i++) {
+      var prop = writableProperties[i];
+      var parameterCode = parameterInfoSnippet
+          .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
+
+      sb.AppendLine(parameterCode);
+    }
+    sb.AppendLine("  return ctorParams;");
+    sb.AppendLine("}");
+    sb.AppendLine();
   }
 
   private static string _generateMessageEnvelopeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
@@ -1638,54 +1662,48 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
-        // Get the property type (handle nullable and collection wrappers)
-        var propertyTypeName = property.Type;
-
-        // Strip nullable suffix if present
-        if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
-          propertyTypeName = propertyTypeName[..^1];
-        }
-
-        // Check if it's already discovered
-        if (discoveredEnums.ContainsKey(propertyTypeName)) {
-          continue;
-        }
-
-        // Skip collection types (their element types are handled separately)
-        if (_extractElementType(property.Type) != null) {
-          continue;
-        }
-
-        // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(propertyTypeName)) {
-          continue;
-        }
-
-        // Skip framework enums (DayOfWeek, etc.) - they're handled by STJ
-        if (_isFrameworkEnum(propertyTypeName)) {
-          continue;
-        }
-
-        // Try to get the type symbol
-        var typeSymbol = _tryGetPublicTypeSymbol(propertyTypeName, compilation);
-        if (typeSymbol == null) {
-          continue;
-        }
-
-        // Check if it's an enum
-        if (typeSymbol.TypeKind != TypeKind.Enum) {
-          continue;
-        }
-
-        // Add to discovered enums
-        discoveredEnums[propertyTypeName] = new JsonEnumInfo(
-            FullyQualifiedName: propertyTypeName,
-            SimpleName: typeSymbol.Name
-        );
+        _tryDiscoverEnumFromProperty(property, compilation, discoveredEnums);
       }
     }
 
     return [.. discoveredEnums.Values];
+  }
+
+  /// <summary>
+  /// Inspects a single property and adds it to the enum dictionary if it is a user-defined enum type.
+  /// Skips nullable wrappers, collections, primitives, framework types, and framework enums.
+  /// </summary>
+  private static void _tryDiscoverEnumFromProperty(
+      PropertyInfo property,
+      Compilation compilation,
+      Dictionary<string, JsonEnumInfo> discoveredEnums) {
+    var propertyTypeName = property.Type;
+
+    // Strip nullable suffix if present
+    if (propertyTypeName.EndsWith("?", StringComparison.Ordinal)) {
+      propertyTypeName = propertyTypeName[..^1];
+    }
+
+    if (discoveredEnums.ContainsKey(propertyTypeName)) {
+      return;
+    }
+
+    // Skip collection types, primitives, and framework enums
+    if (_extractElementType(property.Type) != null ||
+        _isPrimitiveOrFrameworkType(propertyTypeName) ||
+        _isFrameworkEnum(propertyTypeName)) {
+      return;
+    }
+
+    var typeSymbol = _tryGetPublicTypeSymbol(propertyTypeName, compilation);
+    if (typeSymbol is null || typeSymbol.TypeKind != TypeKind.Enum) {
+      return;
+    }
+
+    discoveredEnums[propertyTypeName] = new JsonEnumInfo(
+        FullyQualifiedName: propertyTypeName,
+        SimpleName: typeSymbol.Name
+    );
   }
 
   /// <summary>
@@ -3010,51 +3028,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var baseTypeName = group.Key;
       var isInterface = group.First().IsInterface;
 
-      // Try to get the base type symbol to check for [JsonPolymorphic]
-      var baseSymbol = _tryGetTypeSymbolByName(baseTypeName, compilation);
-      if (baseSymbol != null) {
-        // Skip if base type already has explicit [JsonPolymorphic] attribute
-        if (_hasJsonPolymorphicAttribute(baseSymbol)) {
-          continue;
-        }
-
-        // Skip non-public base types
-        if (baseSymbol.DeclaredAccessibility != Accessibility.Public) {
-          continue;
-        }
-
-        // Skip abstract base types that are not interfaces
-        // Abstract classes can't be instantiated, so no point in generating polymorphic factories
-        // Interfaces (ICommand, IEvent) ARE allowed even though they can't be instantiated
-        if (!isInterface && baseSymbol.IsAbstract) {
-          continue;
-        }
+      // Skip base types that are ineligible for polymorphic generation
+      if (_shouldSkipBaseType(baseTypeName, isInterface, compilation)) {
+        continue;
       }
 
-      // Extract simple name from fully qualified base type name
       var simpleName = _extractSimpleName(baseTypeName);
 
-      // Get all derived type names, excluding abstract types
-      var derivedTypes = group
-          .Select(i => i.DerivedTypeName)
-          .Distinct()
-          .Where(derivedName => {
-            // Exclude abstract derived types - they can't be instantiated
-            var derivedSymbol = _tryGetTypeSymbolByName(derivedName, compilation);
-            if (derivedSymbol == null) {
-              return false;
-            }
-            if (derivedSymbol.IsAbstract) {
-              return false;
-            }
-            if (derivedSymbol.DeclaredAccessibility != Accessibility.Public) {
-              return false;
-            }
-            return true;
-          })
-          .ToImmutableArray();
-
-      // Only create polymorphic info if there are concrete derived types
+      // Get all derived type names, excluding abstract and non-public types
+      var derivedTypes = _getConcretePublicDerivedTypes(group, compilation);
       if (derivedTypes.Length == 0) {
         continue;
       }
@@ -3068,6 +3050,53 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return [.. registry];
+  }
+
+  /// <summary>
+  /// Determines whether a base type should be skipped for polymorphic registry generation.
+  /// Skips types with explicit [JsonPolymorphic], non-public types, and abstract non-interface types.
+  /// </summary>
+  private static bool _shouldSkipBaseType(string baseTypeName, bool isInterface, Compilation compilation) {
+    var baseSymbol = _tryGetTypeSymbolByName(baseTypeName, compilation);
+    if (baseSymbol == null) {
+      return false;
+    }
+
+    if (_hasJsonPolymorphicAttribute(baseSymbol)) {
+      return true;
+    }
+
+    if (baseSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return true;
+    }
+
+    // Abstract classes can't be instantiated; interfaces are allowed
+    if (!isInterface && baseSymbol.IsAbstract) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Filters derived types to only include concrete, public types that can be instantiated.
+  /// </summary>
+  private static ImmutableArray<string> _getConcretePublicDerivedTypes(
+      IGrouping<string, InheritanceInfo> group,
+      Compilation compilation) {
+    return group
+        .Select(i => i.DerivedTypeName)
+        .Distinct()
+        .Where(derivedName => _isConcretePublicType(derivedName, compilation))
+        .ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Checks whether a type is concrete (non-abstract) and public.
+  /// </summary>
+  private static bool _isConcretePublicType(string typeName, Compilation compilation) {
+    var symbol = _tryGetTypeSymbolByName(typeName, compilation);
+    return symbol is not null && !symbol.IsAbstract && symbol.DeclaredAccessibility == Accessibility.Public;
   }
 
   /// <summary>
