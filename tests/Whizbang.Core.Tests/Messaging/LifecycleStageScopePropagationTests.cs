@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -104,7 +103,9 @@ public class LifecycleStageScopePropagationTests {
     // Arrange - verify IMessageContextAccessor also gets TenantId/UserId from the hop scope
     const string expectedTenantId = "msg-context-tenant";
     const string expectedUserId = "msg-context-user";
-    IMessageContext? capturedMessageContext = null;
+
+    // Use capturing accessor to snapshot the value at assignment time (AsyncLocal doesn't flow back from child async methods)
+    var capturingMessageAccessor = new CapturingMessageContextAccessor();
 
     var registry = new StageTestReceptorRegistry();
     registry.AddReceptor(stage, new ReceptorInfo(
@@ -115,14 +116,9 @@ public class LifecycleStageScopePropagationTests {
       }
     ));
 
-    var singletonScopeAccessor = new ScopeContextAccessor();
-    var singletonMessageAccessor = new MessageContextAccessor();
-
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
-    // Replace scoped with singleton so ReceptorInvoker and test assertions share the same instance
-    services.Replace(ServiceDescriptor.Singleton<IScopeContextAccessor>(singletonScopeAccessor));
-    services.Replace(ServiceDescriptor.Singleton<IMessageContextAccessor>(singletonMessageAccessor));
+    services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -134,10 +130,9 @@ public class LifecycleStageScopePropagationTests {
     await invoker.InvokeAsync(envelope, stage);
 
     // Assert - MessageContext should contain UserId and TenantId from envelope scope
-    capturedMessageContext = singletonMessageAccessor.Current;
-    await Assert.That(capturedMessageContext).IsNotNull();
-    await Assert.That(capturedMessageContext!.TenantId).IsEqualTo(expectedTenantId);
-    await Assert.That(capturedMessageContext!.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(capturingMessageAccessor.CapturedContext).IsNotNull();
+    await Assert.That(capturingMessageAccessor.CapturedContext!.TenantId).IsEqualTo(expectedTenantId);
+    await Assert.That(capturingMessageAccessor.CapturedContext!.UserId).IsEqualTo(expectedUserId);
   }
 
   [Test]
@@ -213,7 +208,9 @@ public class LifecycleStageScopePropagationTests {
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task InvokeAsync_WithScopeDelta_SetsInitiatingContext_AtStageAsync(LifecycleStage stage) {
     // Arrange - verify IScopeContextAccessor.InitiatingContext is set at every stage
-    IMessageContext? capturedInitiatingContext = null;
+    // Use capturing accessor to snapshot the value at assignment time (AsyncLocal doesn't flow back from child async methods)
+    var capturingScopeAccessor = new CapturingScopeContextAccessor();
+
     var registry = new StageTestReceptorRegistry();
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
@@ -223,14 +220,9 @@ public class LifecycleStageScopePropagationTests {
       }
     ));
 
-    var singletonScopeAccessor = new ScopeContextAccessor();
-    var singletonMessageAccessor = new MessageContextAccessor();
-
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
-    // Replace scoped with singleton so ReceptorInvoker and test assertions share the same instance
-    services.Replace(ServiceDescriptor.Singleton<IScopeContextAccessor>(singletonScopeAccessor));
-    services.Replace(ServiceDescriptor.Singleton<IMessageContextAccessor>(singletonMessageAccessor));
+    services.AddSingleton<IScopeContextAccessor>(capturingScopeAccessor);
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -242,11 +234,10 @@ public class LifecycleStageScopePropagationTests {
     await invoker.InvokeAsync(envelope, stage);
 
     // Assert - InitiatingContext should be set with message context from envelope
-    capturedInitiatingContext = singletonScopeAccessor.InitiatingContext;
-    await Assert.That(capturedInitiatingContext).IsNotNull();
-    await Assert.That(capturedInitiatingContext!.UserId).IsEqualTo("initiating-user");
-    await Assert.That(capturedInitiatingContext!.TenantId).IsEqualTo("initiating-tenant");
-    await Assert.That(capturedInitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext).IsNotNull();
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.UserId).IsEqualTo("initiating-user");
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.TenantId).IsEqualTo("initiating-tenant");
+    await Assert.That(capturingScopeAccessor.CapturedInitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
   }
 
   #region Data Sources
@@ -388,6 +379,47 @@ public class LifecycleStageScopePropagationTests {
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
     public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
+  /// <summary>
+  /// Captures IScopeContextAccessor values at assignment time into instance fields.
+  /// Required because AsyncLocal values set inside child async methods (like _setMessageContextAsync)
+  /// don't flow back to the parent context after the await completes.
+  /// </summary>
+  private sealed class CapturingScopeContextAccessor : IScopeContextAccessor {
+    public IScopeContext? CapturedContext { get; private set; }
+    public IMessageContext? CapturedInitiatingContext { get; private set; }
+
+    public IScopeContext? Current {
+      get => ScopeContextAccessor.CurrentContext;
+      set {
+        CapturedContext = value;
+        ScopeContextAccessor.CurrentContext = value;
+      }
+    }
+
+    public IMessageContext? InitiatingContext {
+      get => ScopeContextAccessor.CurrentInitiatingContext;
+      set {
+        CapturedInitiatingContext = value;
+        ScopeContextAccessor.CurrentInitiatingContext = value;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Captures IMessageContextAccessor values at assignment time into instance fields.
+  /// </summary>
+  private sealed class CapturingMessageContextAccessor : IMessageContextAccessor {
+    public IMessageContext? CapturedContext { get; private set; }
+
+    public IMessageContext? Current {
+      get => MessageContextAccessor.CurrentContext;
+      set {
+        CapturedContext = value;
+        MessageContextAccessor.CurrentContext = value;
+      }
+    }
   }
 
   #endregion
