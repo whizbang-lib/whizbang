@@ -6,7 +6,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Messaging;
+namespace Whizbang.Testing.Contracts;
 
 /// <summary>
 /// Test response type for request/response store tests.

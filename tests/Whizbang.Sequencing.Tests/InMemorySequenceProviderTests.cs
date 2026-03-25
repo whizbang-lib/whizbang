@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Sequencing;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Sequencing.Tests;
 

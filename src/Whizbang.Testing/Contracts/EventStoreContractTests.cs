@@ -8,7 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
-namespace Whizbang.Core.Tests.Messaging;
+namespace Whizbang.Testing.Contracts;
 
 /// <summary>
 /// Test event with StreamId for stream ID inference.
