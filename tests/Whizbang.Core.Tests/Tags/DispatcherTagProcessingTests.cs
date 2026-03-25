@@ -314,7 +314,33 @@ public class DispatcherTagProcessingTests {
   private static IDispatcher _createDispatcherWithProcessorForThrowing(
       SpyMessageTagProcessor spyProcessor,
       Action<WhizbangCoreOptions>? configure = null) {
-    // For now, use the same setup - the generated dispatcher should handle both
-    return _createDispatcherWithProcessor(spyProcessor, configure);
+    var services = new ServiceCollection();
+
+    // Exempt ThrowingCommand from security — this test is about tag processing, not security
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(ThrowingCommand));
+    });
+
+    services.AddWhizbang(options => {
+      configure?.Invoke(options);
+    });
+
+    // Replace the registered IMessageTagProcessor with our spy
+    var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IMessageTagProcessor));
+    if (descriptor != null) {
+      services.Remove(descriptor);
+    }
+    services.AddSingleton<IMessageTagProcessor>(spyProcessor);
+
+    // Register service instance provider (required dependency)
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+        new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+
+    // Register receptors and dispatcher
+    services.AddReceptors();
+    services.AddWhizbangDispatcher();
+
+    var serviceProvider = services.BuildServiceProvider();
+    return serviceProvider.GetRequiredService<IDispatcher>();
   }
 }
