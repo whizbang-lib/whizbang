@@ -69,37 +69,42 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
     var mappings = new List<SyncTypeMapping>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
-        continue;
-      }
-
-      // Extract PerspectiveType from constructor argument
-      if (attribute.ConstructorArguments.Length == 0) {
-        continue;
-      }
-
-      var perspectiveTypeArg = attribute.ConstructorArguments[0];
-      if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
-        continue;
-      }
-
-      // Use CLR type name format to match database storage and PerspectiveSyncAwaiter
-      // This produces "Namespace.Type" for top-level and "Namespace.Parent+Nested" for nested types
-      var perspectiveType = TypeNameUtilities.BuildClrTypeName(perspectiveTypeSymbol);
-
-      // Extract EventTypes from named argument (Type[]?)
-      var eventTypesArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "EventTypes");
-      if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
-        foreach (var typeConstant in eventTypesArg.Value.Values) {
-          if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-            var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            mappings.Add(new SyncTypeMapping(eventType, perspectiveType));
-          }
-        }
-      }
+      _extractMappingsFromAttribute(attribute, mappings);
     }
 
     return mappings.Count > 0 ? [.. mappings] : null;
+  }
+
+  /// <summary>
+  /// Extracts sync type mappings from a single [AwaitPerspectiveSync] attribute.
+  /// Skips attributes that are not [AwaitPerspectiveSync] or are malformed.
+  /// </summary>
+  private static void _extractMappingsFromAttribute(AttributeData attribute, List<SyncTypeMapping> mappings) {
+    if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
+      return;
+    }
+
+    if (attribute.ConstructorArguments.Length == 0) {
+      return;
+    }
+
+    if (attribute.ConstructorArguments[0].Value is not INamedTypeSymbol perspectiveTypeSymbol) {
+      return;
+    }
+
+    var perspectiveType = TypeNameUtilities.BuildClrTypeName(perspectiveTypeSymbol);
+
+    var eventTypesArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "EventTypes");
+    if (eventTypesArg.Value.Kind != TypedConstantKind.Array || eventTypesArg.Value.IsNull) {
+      return;
+    }
+
+    foreach (var typeConstant in eventTypesArg.Value.Values) {
+      if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
+        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        mappings.Add(new SyncTypeMapping(eventType, perspectiveType));
+      }
+    }
   }
 
   /// <summary>

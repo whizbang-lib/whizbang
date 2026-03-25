@@ -163,31 +163,19 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
     }
 
     // Process messages in this stream SEQUENTIALLY (strict ordering)
-    foreach (var message in streamBatch.Messages) {
+    for (int idx = 0; idx < streamBatch.Messages.Count; idx++) {
       if (ct.IsCancellationRequested) {
         break;
       }
 
-      try {
-        var completedStatus = await processor(message);
-        completionHandler(message.MessageId, completedStatus);
-
-        if (_logger != null) {
-          LogSuccessfullyProcessedMessage(_logger, message.MessageId, streamBatch.StreamId, completedStatus);
-        }
-      } catch (Exception ex) {
-        if (_logger != null) {
-          LogFailedToProcessMessage(_logger, ex, message.MessageId, streamBatch.StreamId);
-        }
-
-        // Determine what succeeded before failure
-        var partialStatus = message.Status;  // What was already completed
-        failureHandler(message.MessageId, partialStatus, ex.Message);
-
+      var message = streamBatch.Messages[idx];
+      if (!await _tryProcessSingleMessageAsync(
+        message, message.MessageId, message.Status, streamBatch.StreamId,
+        processor, completionHandler, failureHandler,
+        _logInboxMessageSuccess, _logInboxMessageFailure)) {
         // STOP processing this stream on failure (maintain ordering)
-        // Remaining messages will be retried in next batch
         if (_logger != null) {
-          LogStoppingStreamProcessing(_logger, streamBatch.StreamId, streamBatch.Messages.Count - streamBatch.Messages.IndexOf(message) - 1);
+          LogStoppingStreamProcessing(_logger, streamBatch.StreamId, streamBatch.Messages.Count - idx - 1);
         }
         break;
       }
@@ -214,27 +202,60 @@ public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILo
         break;
       }
 
-      try {
-        var completedStatus = await processor(message);
-        completionHandler(message.MessageId, completedStatus);
-
-        if (_logger != null) {
-          LogSuccessfullyProcessedOutboxMessage(_logger, message.MessageId, streamBatch.StreamId);
-        }
-      } catch (Exception ex) {
-        if (_logger != null) {
-          LogFailedToProcessOutboxMessage(_logger, ex, message.MessageId, streamBatch.StreamId);
-        }
-
-        var partialStatus = message.Status;
-        failureHandler(message.MessageId, partialStatus, ex.Message);
-
-        if (_logger != null) {
-          LogStoppingOutboxStreamProcessing(_logger, streamBatch.StreamId);
-        }
+      if (!await _tryProcessSingleMessageAsync(
+        message, message.MessageId, message.Status, streamBatch.StreamId,
+        processor, completionHandler, failureHandler,
+        _logOutboxMessageSuccess, _logOutboxMessageFailure)) {
         break;
       }
     }
+  }
+
+  /// <summary>
+  /// Tries to process a single message. Returns false if processing failed (caller should stop the stream).
+  /// </summary>
+  private async Task<bool> _tryProcessSingleMessageAsync<TWork>(
+    TWork message,
+    Guid messageId,
+    MessageProcessingStatus currentStatus,
+    Guid streamId,
+    Func<TWork, Task<MessageProcessingStatus>> processor,
+    Action<Guid, MessageProcessingStatus> completionHandler,
+    Action<Guid, MessageProcessingStatus, string> failureHandler,
+    Action<ILogger, Guid, Guid, MessageProcessingStatus> successLogger,
+    Action<ILogger, Exception, Guid, Guid> failureLogger) {
+    try {
+      var completedStatus = await processor(message);
+      completionHandler(messageId, completedStatus);
+
+      if (_logger != null) {
+        successLogger(_logger, messageId, streamId, completedStatus);
+      }
+      return true;
+    } catch (Exception ex) {
+      if (_logger != null) {
+        failureLogger(_logger, ex, messageId, streamId);
+      }
+
+      failureHandler(messageId, currentStatus, ex.Message);
+      return false;
+    }
+  }
+
+  private static void _logInboxMessageSuccess(ILogger logger, Guid messageId, Guid streamId, MessageProcessingStatus status) {
+    LogSuccessfullyProcessedMessage(logger, messageId, streamId, status);
+  }
+
+  private static void _logInboxMessageFailure(ILogger logger, Exception ex, Guid messageId, Guid streamId) {
+    LogFailedToProcessMessage(logger, ex, messageId, streamId);
+  }
+
+  private static void _logOutboxMessageSuccess(ILogger logger, Guid messageId, Guid streamId, MessageProcessingStatus _) {
+    LogSuccessfullyProcessedOutboxMessage(logger, messageId, streamId);
+  }
+
+  private static void _logOutboxMessageFailure(ILogger logger, Exception ex, Guid messageId, Guid streamId) {
+    LogFailedToProcessOutboxMessage(logger, ex, messageId, streamId);
   }
 
   /// <summary>
