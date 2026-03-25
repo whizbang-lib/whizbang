@@ -1,6 +1,6 @@
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Postgres;
-using Whizbang.Sequencing.Tests;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 

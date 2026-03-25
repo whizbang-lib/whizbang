@@ -1,6 +1,6 @@
 using Whizbang.Core.Sequencing;
 using Whizbang.Data.Dapper.Sqlite;
-using Whizbang.Sequencing.Tests;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Tests;
 

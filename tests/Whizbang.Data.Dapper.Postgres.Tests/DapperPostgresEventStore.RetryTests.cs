@@ -8,12 +8,13 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Dapper.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 

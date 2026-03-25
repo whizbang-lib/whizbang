@@ -2,6 +2,10 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <Description>Testing utilities, fixtures, and helpers for testing Whizbang-based applications using TUnit and Bogus.</Description>
+    <!-- Suppress CA1707: Contract test base classes use underscores for readability (Given_When_Then pattern) -->
+    <!-- Suppress WHIZ055: Test code uses Guid.NewGuid() for stream IDs intentionally -->
+    <!-- Suppress IL2066: Generated dispatcher registrations in a library context -->
+    <NoWarn>$(NoWarn);CA1707;WHIZ055;IL2066</NoWarn>
     <OutputType>Library</OutputType>
     <IsTestProject>false</IsTestProject>
   </PropertyGroup>
