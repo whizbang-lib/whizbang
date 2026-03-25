@@ -247,6 +247,7 @@ public static partial class WhizbangBanner {
     // Start background twinkle thread
     if (bgPositions.Count > 0) {
       _twinkleCts?.Cancel();
+      _twinkleCts?.Dispose();
       _twinkleCts = new CancellationTokenSource();
       var ct = _twinkleCts.Token;
       var positions = bgPositions.ToArray();
@@ -342,6 +343,7 @@ public static partial class WhizbangBanner {
   /// </summary>
   public static void StopTwinkle() {
     _twinkleCts?.Cancel();
+    _twinkleCts?.Dispose();
     _twinkleCts = null;
   }
 
