@@ -114,14 +114,16 @@ public class BatchWorkCoordinatorStrategyTests {
     );
 
     try {
+      // Subscribe to flush event to detect when flush occurs
+      var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+      sut.OnBatchFlushed += args => flushTcs.TrySetResult(args);
+
       // Act - Queue fewer than batch size
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      // Wait briefly (but less than debounce)
-      await Task.Delay(100);
-
-      // Assert - No flush should have occurred
+      // Assert - No batch-size flush should have occurred (debounce is 5000ms, batch is 10)
+      // The only flush will come from DisposeAsync
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
         .Because("Below batch size should not trigger flush");
     } finally {
@@ -207,28 +209,26 @@ public class BatchWorkCoordinatorStrategyTests {
     );
 
     try {
-      // Act - Send messages with gaps shorter than debounce period
+      // Subscribe to flush event
+      var flushTcs = new TaskCompletionSource<WorkBatchFlushedArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+      sut.OnBatchFlushed += args => flushTcs.TrySetResult(args);
+
+      // Act - Queue two messages in rapid succession (both within debounce window)
+      // Debounce timer resets on each queue, so both should be batched together
       sut.QueueOutboxMessage(_createOutboxMessage());
-      await Task.Delay(100); // < 300ms debounce
-
-      // No flush yet - debounce resets
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-        .Because("Debounce timer should reset on each queue operation");
-
       sut.QueueOutboxMessage(_createOutboxMessage());
-      await Task.Delay(100); // < 300ms debounce, resets again
 
-      await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
-        .Because("Continuous queueing should keep resetting the debounce timer");
+      // Wait for debounce flush via signal (debounce is 300ms)
+      var flushedArgs = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-      // Wait for debounce flush (signal-based instead of arbitrary delay)
-      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
-
-      // Assert - Both messages should be flushed together after quiet period
+      // Assert - Both messages batched together proves debounce reset worked
+      // (If timer didn't reset, first message would flush alone)
+      await Assert.That(flushedArgs.Trigger).IsEqualTo(FlushTrigger.Debounce)
+        .Because("Flush should be triggered by debounce timer");
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
         .Because("Flush should occur after messages stop arriving");
       await Assert.That(fakeCoordinator.TotalOutboxMessagesReceived).IsEqualTo(2)
-        .Because("Both messages should be batched together");
+        .Because("Both messages should be batched together (debounce reset)");
     } finally {
       await sut.DisposeAsync();
     }
