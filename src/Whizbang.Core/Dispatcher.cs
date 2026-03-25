@@ -2383,7 +2383,7 @@ public abstract partial class Dispatcher(
     }
 
     // Fast path: Skip if result is null
-    if (result == null) {
+    if (object.Equals(result, default(TResult))) {
       CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: Result is null, skipping cascade");
       return;
     }
@@ -2524,7 +2524,7 @@ public abstract partial class Dispatcher(
 
     if (extractedCount == 0) {
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        var resultTypeName = result.GetType().Name;
+        var resultTypeName = result?.GetType().Name ?? "null";
         CascadeLogger.LogWarning("[CASCADE] CascadeEventsFromResult: No messages extracted from result type {ResultType}. " +
           "This may indicate the result does not implement IMessage or is not wrapped in a supported collection/tuple.",
           resultTypeName);
