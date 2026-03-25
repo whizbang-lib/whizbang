@@ -46,9 +46,6 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_PERSPECTIVE_BASE = "Whizbang.Core.Perspectives.IPerspectiveBase";
-  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
-  private const string I_PERSPECTIVE_WITH_ACTIONS_FOR = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";

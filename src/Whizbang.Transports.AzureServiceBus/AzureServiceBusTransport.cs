@@ -369,7 +369,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           return;
         }
 
-        await _processReceivedMessageAsync(args, handler, destination, cancellationToken);
+        await _processReceivedMessageAsync(args, handler, destination);
       };
 
       // Configure error handler
@@ -409,9 +409,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private async Task _processReceivedMessageAsync(
     ProcessMessageEventArgs args,
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-    TransportDestination destination,
-    CancellationToken cancellationToken
-  ) {
+    TransportDestination destination
+      ) {
     try {
       var (envelope, envelopeTypeName) = await _deserializeReceivedMessageAsync(args, destination);
       if (envelope is null) {

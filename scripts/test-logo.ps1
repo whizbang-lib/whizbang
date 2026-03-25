@@ -2,6 +2,31 @@
 # Whizbang ASCII art logo - true color via ANSI escape codes
 # Run: pwsh scripts/test-logo.ps1
 
+# Detect ANSI color support - fall back to plain text if unsupported
+$supportsAnsi = $false
+if (-not [Console]::IsOutputRedirected) {
+    $colorTerm = $env:COLORTERM
+    $term = $env:TERM
+    $supportsAnsi = ($colorTerm -eq 'truecolor') -or ($colorTerm -eq '24bit') -or
+                    $env:CI -or $env:TF_BUILD -or
+                    ($term -and $term -ne 'dumb') -or $env:WT_SESSION -or
+                    ($env:TERM_PROGRAM -eq 'vscode') -or [Environment]::UserInteractive
+}
+
+if (-not $supportsAnsi) {
+    Write-Host ""
+    Write-Host "  Φ▌▌     ,▄▄         ▌▌H      ╒██⌐         ▓▓L"
+    Write-Host "   ██W   █████    ▄▄m ▓█▄▄▌▌▄   ▄▄  ▄▄▄▄▄▄╕ ██▌▌▌▌▄_   ,▄▌▌▄▄▄⌐ ╔▄▄▄▌▌▄    ²▌▌▌▄▄▄"
+    Write-Host '   ▀██  ▌██ ╟██  ▐▓▓  ▓█▓"''▀██  ██  ""╠▓▓▀  ███╙"╨██╕▄██▀╙╙▀██M ▓██▀²▀██ ┌██▀"╙▓██'
+    Write-Host "    ██▄▄██   ██▌_▓▓Ñ  ▓█H   ██  ██  _Φ▓▌    ██▌   ▄▓██▌▓▄   ██M ╫▓▌   ██ ▐██   ╓██"
+    Write-Host '    ╙████     ▀██▓▀   ▓█M   ██  ██ ▐▓▓▓▓▓▓▌ ███████▌" ''▓███▀▀█M ▓█▌   ██  ╨███████'
+    Write-Host "                                                                          ▓▄▄▄▄▓█▌"
+    Write-Host ""
+    Write-Host "                                W! - https://whizba.ng/"
+    Write-Host ""
+    exit 0
+}
+
 $esc = [char]27
 # Dark navy background matching the logo
 $bg = "${esc}[48;2;45;55;72m"
@@ -167,7 +192,7 @@ Write-EOL
 
 # Line 6: g descender
 Write-Seg "                                                                          " 45 55 72
-Write-Seg "▓█▌▄▄▓█▌" 150 152 154
+Write-Seg "▓▄▄▄▄▓█▌" 150 152 154
 Write-Seg "  " 45 55 72
 Write-EOL
 

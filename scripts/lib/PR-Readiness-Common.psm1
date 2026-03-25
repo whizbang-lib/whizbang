@@ -33,6 +33,46 @@ $script:Reset = "${script:Esc}[0m"
 
 $script:StarChars = @('.', '·', '∙', '*', '⋅', '✦')
 
+$script:PlainBanner = @(
+    ""
+    "  Φ▌▌     ,▄▄         ▌▌H      ╒██⌐         ▓▓L"
+    "   ██W   █████    ▄▄m ▓█▄▄▌▌▄   ▄▄  ▄▄▄▄▄▄╕ ██▌▌▌▌▄_   ,▄▌▌▄▄▄⌐ ╔▄▄▄▌▌▄    ²▌▌▌▄▄▄"
+    '   ▀██  ▌██ ╟██  ▐▓▓  ▓█▓"''▀██  ██  ""╠▓▓▀  ███╙"╨██╕▄██▀╙╙▀██M ▓██▀²▀██ ┌██▀"╙▓██'
+    "    ██▄▄██   ██▌_▓▓Ñ  ▓█H   ██  ██  _Φ▓▌    ██▌   ▄▓██▌▓▄   ██M ╫▓▌   ██ ▐██   ╓██"
+    '    ╙████     ▀██▓▀   ▓█M   ██  ██ ▐▓▓▓▓▓▓▌ ███████▌" ''▓███▀▀█M ▓█▌   ██  ╨███████'
+    "                                                                          ▓▄▄▄▄▓█▌"
+    ""
+    "                                W! - https://whizba.ng/"
+    ""
+)
+
+function Test-AnsiColorSupport {
+    <# Returns $true when the terminal supports ANSI color escape codes. #>
+    if ([Console]::IsOutputRedirected) { return $false }
+
+    # COLORTERM=truecolor or 24bit is definitive
+    $colorTerm = $env:COLORTERM
+    if ($colorTerm -eq 'truecolor' -or $colorTerm -eq '24bit') { return $true }
+
+    # CI environments that render ANSI colors in their log output
+    if ($env:CI -or $env:TF_BUILD) { return $true }
+
+    # PowerShell 7+ exposes VT support directly
+    if ($PSVersionTable.PSVersion.Major -ge 7 -and $Host.UI.SupportsVirtualTerminal) {
+        return $true
+    }
+
+    # TERM set to anything other than "dumb" indicates color support
+    $term = $env:TERM
+    if ($term -and $term -ne 'dumb') { return $true }
+
+    # Known color-capable terminal programs
+    if ($env:WT_SESSION -or $env:TERM_PROGRAM -eq 'vscode') { return $true }
+
+    # Modern Windows consoles (Win10+) and all Unix terminals generally support ANSI
+    return [Environment]::UserInteractive
+}
+
 function Write-LogoSeg {
     <# Write a segment of text with true RGB foreground on dark background.
        Background spaces randomly get bright star characters. #>
@@ -184,7 +224,7 @@ function Write-BannerBody {
 
     # Line 6: g descender
     Write-LogoSeg "                                                                          " 45 55 72
-    Write-LogoSeg "▓█▌▄▄▓█▌" 150 152 154
+    Write-LogoSeg "▓▄▄▄▄▓█▌" 150 152 154
     Write-LogoSeg "  " 45 55 72
     Write-LogoEOL
 
@@ -204,9 +244,17 @@ function Write-WhizbangBanner {
     <#
     .SYNOPSIS
         Prints the Whizbang ASCII art banner with true-color gradient and random stars.
+        Falls back to plain text when output is redirected or the terminal lacks ANSI support.
     #>
     [CmdletBinding()]
     param()
+
+    if (-not (Test-AnsiColorSupport)) {
+        foreach ($line in $script:PlainBanner) {
+            Write-Host $line
+        }
+        return
+    }
 
     Write-Host ""
     Write-BannerBody
