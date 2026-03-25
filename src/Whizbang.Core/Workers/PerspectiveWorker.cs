@@ -41,7 +41,8 @@ public partial class PerspectiveWorker(
   IPerspectiveStreamLocker? streamLocker = null,
   IOptions<PerspectiveStreamLockOptions>? streamLockOptions = null,
   IProcessedEventCacheObserver? processedEventCacheObserver = null,
-  TimeProvider? timeProvider = null
+  TimeProvider? timeProvider = null,
+  LifecycleCoordinatorMetrics? coordinatorMetrics = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
@@ -852,10 +853,12 @@ public partial class PerspectiveWorker(
             // PostAllPerspectives: fires once per event after ALL perspectives complete (new stage)
             await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesAsync, scope.ServiceProvider, cancellationToken);
             await tracking.AdvanceToAsync(LifecycleStage.PostAllPerspectivesInline, scope.ServiceProvider, cancellationToken);
+            coordinatorMetrics?.PostAllPerspectivesFired.Add(1);
 
             // PostLifecycle: fires once per event as the final lifecycle stage
             await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, cancellationToken);
             await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, cancellationToken);
+            coordinatorMetrics?.PostLifecycleFired.Add(1);
           }
 
           // DON'T abandon tracking after stages fire — the tracking instance's stage guard
