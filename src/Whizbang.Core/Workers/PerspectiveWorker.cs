@@ -820,6 +820,8 @@ public partial class PerspectiveWorker(
             var eventTypeKey = $"{eventType.FullName}, {eventType.Assembly.GetName().Name}";
             if (_perspectivesPerEventType.TryGetValue(eventTypeKey, out var expected)) {
               lifecycleCoordinator.ExpectPerspectiveCompletions(eventId, expected);
+            } else {
+              LogEventTypeNotInPerspectiveRegistry(_logger, eventTypeKey);
             }
           }
         }
@@ -1548,6 +1550,12 @@ public partial class PerspectiveWorker(
     return dedupedWork;
   }
 
+  [LoggerMessage(
+    EventId = 45,
+    Level = LogLevel.Warning,
+    Message = "Event type key '{EventTypeKey}' not found in perspective registry. PostAllPerspectives/PostLifecycle will fire without WhenAll gate."
+  )]
+  static partial void LogEventTypeNotInPerspectiveRegistry(ILogger logger, string eventTypeKey);
 }
 
 /// <summary>

@@ -868,6 +868,28 @@ public class LifecycleCoordinatorTests {
     await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
   }
 
+  /// <summary>
+  /// When no expectations are registered for an event, AreAllPerspectivesComplete should return true.
+  /// PostAllPerspectives/PostLifecycle are terminal stages that must always fire — the WhenAll gate
+  /// controls timing (wait for all to complete), not whether these stages fire.
+  /// Without this, events with no expectations get stuck forever (no PostLifecycle, no tag hooks).
+  /// </summary>
+  [Test]
+  public async Task AreAllPerspectivesComplete_NoExpectationsRegistered_ReturnsTrueAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "no-expectations"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    // Note: NO call to ExpectPerspectiveCompletions — simulates event type key mismatch
+
+    // Act
+    var result = coordinator.AreAllPerspectivesComplete(eventId);
+
+    // Assert — should return true so PostAllPerspectives/PostLifecycle fire
+    await Assert.That(result).IsTrue();
+  }
+
   [Test]
   public async Task AbandonTracking_ClearsPerspectiveStateAsync() {
     // Arrange
@@ -882,8 +904,9 @@ public class LifecycleCoordinatorTests {
     // Act
     coordinator.AbandonTracking(eventId);
 
-    // Assert — perspective state is cleared, AreAllPerspectivesComplete returns false
-    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+    // Assert — perspective state is cleared, AreAllPerspectivesComplete returns true
+    // (no expectations = no WhenAll gate needed, terminal stages fire immediately)
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
   }
 
   #endregion
