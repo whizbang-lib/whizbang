@@ -235,6 +235,8 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     var maxObservedConcurrency = 0;
     var tasks = new List<Task<int>>();
     var tcs = new TaskCompletionSource<bool>();
+    // Signal: handlers release this when they enter the semaphore-gated section
+    var handlerStarted = new SemaphoreSlim(0);
 
     // Act - Start 10 operations that wait
     for (int i = 0; i < 10; i++) {
@@ -251,6 +253,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
             newMax = Math.Max(observed, current);
           } while (Interlocked.CompareExchange(ref maxObservedConcurrency, newMax, observed) != observed);
 
+          handlerStarted.Release(); // Signal that handler has started
           await tcs.Task; // Wait for signal
 
           Interlocked.Decrement(ref concurrentCount);
@@ -261,8 +264,10 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
       tasks.Add(task);
     }
 
-    // Give tasks time to start and hit semaphore limit
-    await Task.Delay(100);
+    // Wait for exactly maxConcurrency handlers to start (semaphore is full)
+    for (int i = 0; i < maxConcurrency; i++) {
+      await handlerStarted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 
     // Assert - Should have exactly maxConcurrency running
     await Assert.That(concurrentCount).IsEqualTo(maxConcurrency);
@@ -285,35 +290,38 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     var envelope = CreateTestEnvelope("test");
     var context = CreateTestContext();
 
-    var tcs1 = new TaskCompletionSource<int>();
-    var tcs2 = new TaskCompletionSource<int>();
-    var tcs3 = new TaskCompletionSource<int>();
+    var tcs1 = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcs2 = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var tcs3 = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var allStarted = new SemaphoreSlim(0, 3);
 
     // Act - Start 3 async operations
-    var task1 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs1.Task, context).AsTask();
-    var task2 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs2.Task, context).AsTask();
-    var task3 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs3.Task, context).AsTask();
+    var task1 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs1.Task; }, context).AsTask();
+    var task2 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs2.Task; }, context).AsTask();
+    var task3 = executor.ExecuteAsync<int>(envelope, async (env, ctx) => { allStarted.Release(); return await tcs3.Task; }, context).AsTask();
 
-    await Task.Delay(50); // Let tasks start
+    // Wait for all 3 handlers to start (all semaphore slots taken)
+    for (int i = 0; i < 3; i++) {
+      await allStarted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 
     // Start drain (should wait for all 3 tasks)
     var drainTask = executor.DrainAsync();
 
-    // Drain should not complete yet
-    await Task.Delay(50);
+    // Drain cannot complete — all 3 semaphore slots are held by running tasks
     await Assert.That(drainTask.IsCompleted).IsFalse();
 
     // Complete first task
     tcs1.SetResult(1);
     await task1;
-    await Task.Delay(50);
-    await Assert.That(drainTask.IsCompleted).IsFalse(); // Still waiting
+    // Drain still waiting — 2 tasks still hold semaphore slots
+    await Assert.That(drainTask.IsCompleted).IsFalse();
 
     // Complete second task
     tcs2.SetResult(2);
     await task2;
-    await Task.Delay(50);
-    await Assert.That(drainTask.IsCompleted).IsFalse(); // Still waiting
+    // Drain still waiting — 1 task still holds a semaphore slot
+    await Assert.That(drainTask.IsCompleted).IsFalse();
 
     // Complete third task
     tcs3.SetResult(3);
