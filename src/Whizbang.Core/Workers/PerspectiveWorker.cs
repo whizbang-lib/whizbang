@@ -89,6 +89,7 @@ public partial class PerspectiveWorker(
   private int _consecutiveDatabaseNotReadyChecks;
   private int _consecutiveEmptyPolls;
   private bool _isIdle = true;  // Start in idle state
+  private int _batchCycleCount;
 
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
@@ -201,6 +202,16 @@ public partial class PerspectiveWorker(
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
         await _processWorkBatchAsync(stoppingToken);
+
+        // Periodic stale tracking cleanup (every 10 cycles, 5-minute inactivity threshold)
+        if (++_batchCycleCount % 10 == 0) {
+          using var cleanupScope = _scopeFactory.CreateScope();
+          var lifecycleCoordinator = cleanupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
+          var cleaned = lifecycleCoordinator?.CleanupStaleTracking(TimeSpan.FromMinutes(5)) ?? 0;
+          if (cleaned > 0) {
+            LogStaleTrackingCleaned(_logger, cleaned);
+          }
+        }
       } catch (ObjectDisposedException) {
         // Service provider disposed during host shutdown — exit gracefully
         break;
@@ -1559,6 +1570,13 @@ public partial class PerspectiveWorker(
     Message = "Event type key '{EventTypeKey}' not found in perspective registry. PostAllPerspectives/PostLifecycle will fire without WhenAll gate."
   )]
   static partial void LogEventTypeNotInPerspectiveRegistry(ILogger logger, string eventTypeKey);
+
+  [LoggerMessage(
+    EventId = 46,
+    Level = LogLevel.Information,
+    Message = "Cleaned {Count} stale lifecycle tracking entries (inactive > 5 minutes)"
+  )]
+  static partial void LogStaleTrackingCleaned(ILogger logger, int count);
 }
 
 /// <summary>

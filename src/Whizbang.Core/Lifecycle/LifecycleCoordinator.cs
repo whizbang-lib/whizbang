@@ -113,6 +113,10 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// <inheritdoc/>
   public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) {
     _metrics?.PerspectiveCompletionsSignaled.Add(1);
+    // Reset inactivity timer — perspectives are still arriving, keep tracking alive
+    if (_tracked.TryGetValue(eventId, out var tracking)) {
+      tracking.TouchActivity();
+    }
     if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
       return false;
     }
@@ -133,6 +137,30 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
       // The WhenAll gate controls timing (wait for all to complete), not whether stages fire.
     }
     return state.IsComplete;
+  }
+
+  /// <inheritdoc/>
+  public int CleanupStaleTracking(TimeSpan inactivityThreshold) {
+    var cutoff = DateTimeOffset.UtcNow - inactivityThreshold;
+    var cleaned = 0;
+
+    foreach (var kvp in _tracked) {
+      var state = kvp.Value;
+      if (state.IsComplete || state.LastActivityUtc >= cutoff) {
+        continue;
+      }
+
+      // Stale and incomplete — remove all associated state
+      if (_tracked.TryRemove(kvp.Key, out _)) {
+        _perspectiveStates.TryRemove(kvp.Key, out _);
+        _whenAllStates.TryRemove(kvp.Key, out _);
+        _metrics?.ActiveTrackedEvents.Add(-1);
+        _metrics?.StaleTrackingCleaned.Add(1);
+        cleaned++;
+      }
+    }
+
+    return cleaned;
   }
 
   /// <summary>
