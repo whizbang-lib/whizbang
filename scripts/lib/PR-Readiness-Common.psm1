@@ -172,7 +172,7 @@ function Write-BannerBody {
     Write-LogoSeg " " 45 55 72
     Write-LogoSeg "███████▌" 140 142 144; Write-LogoSeg '"' 165 167 169
     Write-LogoSeg " " 45 55 72
-    Write-LogoSeg "'" 170 172 174; Write-LogoSeg "▓██████" 143 145 147; Write-LogoSeg "M" 160 162 164
+    Write-LogoSeg "'" 170 172 174; Write-LogoSeg "▓███▀▀█" 143 145 147; Write-LogoSeg "M" 160 162 164
     Write-LogoSeg " " 45 55 72
     Write-LogoSeg "▓█▌" 210 212 214
     Write-LogoSeg "   " 45 55 72

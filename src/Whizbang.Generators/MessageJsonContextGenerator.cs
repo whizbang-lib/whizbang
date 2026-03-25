@@ -377,8 +377,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static void _generateWhizbangJsonContext(
       SourceProductionContext context,
-      ImmutableArray<JsonMessageTypeInfo> messages,
+      ImmutableArray<JsonMessageTypeInfo> allMessages,
       Compilation compilation) {
+
+    // Deduplicate messages by FullyQualifiedName — perspective models can be discovered
+    // through both the nested type path (syntactic predicate) and the perspective class
+    // extraction path (_extractPerspectiveModelFromPerspectiveClass), producing duplicates.
+    var seen = new HashSet<string>();
+    var messages = allMessages.Where(m => seen.Add(m.FullyQualifiedName)).ToImmutableArray();
 
     // Report that generator is running
     context.ReportDiagnostic(Diagnostic.Create(
