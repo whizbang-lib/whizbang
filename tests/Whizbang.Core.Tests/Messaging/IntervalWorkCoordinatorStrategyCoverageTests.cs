@@ -462,8 +462,10 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
     var messageId = Guid.CreateVersion7();
     sut.QueueOutboxMessage(_createOutboxMessage(messageId));
 
-    // Wait for timer to fire and log the error
-    await Task.Delay(300);
+    // Wait for an error log to appear (signal-based via logger)
+    await logger.WaitForMessageAsync(
+      m => m.Contains("Error") || m.Contains("error"),
+      TimeSpan.FromSeconds(5));
 
     // Act
     await sut.DisposeAsync();
@@ -607,11 +609,13 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
-  private sealed class RecordingLogger<T> : ILogger<T> {
+  private sealed class RecordingLogger<T> : ILogger<T>, IDisposable {
     private readonly ConcurrentBag<string> _messages = [];
+    private readonly SemaphoreSlim _logSignal = new(0, int.MaxValue);
 
     public IReadOnlyCollection<string> Messages => _messages;
 
+    public void Dispose() => _logSignal.Dispose();
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
 
@@ -622,6 +626,28 @@ public class IntervalWorkCoordinatorStrategyCoverageTests {
       Exception? exception,
       Func<TState, Exception?, string> formatter) {
       _messages.Add(formatter(state, exception));
+      _logSignal.Release();
+    }
+
+    /// <summary>
+    /// Waits for a log message matching the predicate to appear.
+    /// </summary>
+    public async Task WaitForMessageAsync(Func<string, bool> predicate, TimeSpan timeout) {
+      var deadline = DateTime.UtcNow + timeout;
+      while (DateTime.UtcNow < deadline) {
+        if (_messages.Any(predicate)) {
+          return;
+        }
+        var remaining = deadline - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero) {
+          break;
+        }
+        var waitTime = remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1);
+        await _logSignal.WaitAsync(waitTime);
+      }
+      if (!_messages.Any(predicate)) {
+        throw new TimeoutException("Expected log message was not found within timeout");
+      }
     }
   }
 }
