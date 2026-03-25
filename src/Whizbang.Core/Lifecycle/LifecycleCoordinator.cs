@@ -27,6 +27,14 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   private readonly ConcurrentDictionary<Guid, LifecycleTrackingState> _tracked = new();
   private readonly ConcurrentDictionary<Guid, WhenAllState> _whenAllStates = new();
   private readonly ConcurrentDictionary<Guid, PerspectiveWhenAllState> _perspectiveStates = new();
+  private readonly LifecycleCoordinatorMetrics? _metrics;
+
+  /// <summary>
+  /// Creates a new lifecycle coordinator with optional metrics.
+  /// </summary>
+  public LifecycleCoordinator(LifecycleCoordinatorMetrics? metrics = null) {
+    _metrics = metrics;
+  }
 
   /// <inheritdoc/>
   public ILifecycleTracking BeginTracking(
@@ -36,8 +44,12 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     MessageSource source,
     Guid? streamId = null,
     Type? perspectiveType = null) {
-    return _tracked.GetOrAdd(eventId,
-      _ => new LifecycleTrackingState(eventId, envelope, entryStage, source, streamId, perspectiveType));
+    var tracking = _tracked.GetOrAdd(eventId,
+      _ => {
+        _metrics?.ActiveTrackedEvents.Add(1);
+        return new LifecycleTrackingState(eventId, envelope, entryStage, source, streamId, perspectiveType);
+      });
+    return tracking;
   }
 
   /// <inheritdoc/>
@@ -48,7 +60,9 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// <inheritdoc/>
   public void ExpectCompletionsFrom(Guid eventId, params PostLifecycleCompletionSource[] sources) {
     var whenAll = new WhenAllState(sources);
-    _whenAllStates.TryAdd(eventId, whenAll);
+    if (_whenAllStates.TryAdd(eventId, whenAll)) {
+      _metrics?.PendingWhenAllStates.Add(1);
+    }
   }
 
   /// <inheritdoc/>
@@ -65,41 +79,88 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
 
       // All paths complete — remove WhenAll state and fire PostLifecycle
       _whenAllStates.TryRemove(eventId, out _);
+      _metrics?.PendingWhenAllStates.Add(-1);
     }
 
     // Fire PostLifecycle stages
     if (_tracked.TryGetValue(eventId, out var tracking)) {
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scopedProvider, ct).ConfigureAwait(false);
       await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scopedProvider, ct).ConfigureAwait(false);
+      _metrics?.PostLifecycleFired.Add(1);
     }
   }
 
   /// <inheritdoc/>
   public void AbandonTracking(Guid eventId) {
-    _tracked.TryRemove(eventId, out _);
-    _whenAllStates.TryRemove(eventId, out _);
-    _perspectiveStates.TryRemove(eventId, out _);
+    if (_tracked.TryRemove(eventId, out _)) {
+      _metrics?.ActiveTrackedEvents.Add(-1);
+    }
+    if (_whenAllStates.TryRemove(eventId, out _)) {
+      _metrics?.PendingWhenAllStates.Add(-1);
+    }
+    if (_perspectiveStates.TryRemove(eventId, out _)) {
+      _metrics?.PendingPerspectiveStates.Add(-1);
+    }
   }
 
   /// <inheritdoc/>
   public void ExpectPerspectiveCompletions(Guid eventId, IReadOnlyList<string> perspectiveNames) {
-    _perspectiveStates.TryAdd(eventId, new PerspectiveWhenAllState(perspectiveNames));
+    if (_perspectiveStates.TryAdd(eventId, new PerspectiveWhenAllState(perspectiveNames))) {
+      _metrics?.PendingPerspectiveStates.Add(1);
+    }
   }
 
   /// <inheritdoc/>
   public bool SignalPerspectiveComplete(Guid eventId, string perspectiveName) {
+    _metrics?.PerspectiveCompletionsSignaled.Add(1);
+    // Reset inactivity timer — perspectives are still arriving, keep tracking alive
+    if (_tracked.TryGetValue(eventId, out var tracking)) {
+      tracking.TouchActivity();
+    }
     if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
       return false;
     }
-    return state.TrySignalAndCheck(perspectiveName);
+    var allComplete = state.TrySignalAndCheck(perspectiveName);
+    if (allComplete) {
+      _metrics?.AllPerspectivesCompleted.Add(1);
+      _metrics?.PendingPerspectiveStates.Add(-1);
+    }
+    return allComplete;
   }
 
   /// <inheritdoc/>
   public bool AreAllPerspectivesComplete(Guid eventId) {
     if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
-      return false; // No expectations registered = fail-safe (don't fire PostLifecycle)
+      _metrics?.ExpectationsNotRegistered.Add(1);
+      return true; // No expectations registered = no WhenAll gate needed.
+      // PostAllPerspectives/PostLifecycle are terminal stages that must always fire.
+      // The WhenAll gate controls timing (wait for all to complete), not whether stages fire.
     }
     return state.IsComplete;
+  }
+
+  /// <inheritdoc/>
+  public int CleanupStaleTracking(TimeSpan inactivityThreshold) {
+    var cutoff = DateTimeOffset.UtcNow - inactivityThreshold;
+    var cleaned = 0;
+
+    foreach (var kvp in _tracked) {
+      var state = kvp.Value;
+      if (state.IsComplete || state.LastActivityUtc >= cutoff) {
+        continue;
+      }
+
+      // Stale and incomplete — remove all associated state
+      if (_tracked.TryRemove(kvp.Key, out _)) {
+        _perspectiveStates.TryRemove(kvp.Key, out _);
+        _whenAllStates.TryRemove(kvp.Key, out _);
+        _metrics?.ActiveTrackedEvents.Add(-1);
+        _metrics?.StaleTrackingCleaned.Add(1);
+        cleaned++;
+      }
+    }
+
+    return cleaned;
   }
 
   /// <summary>

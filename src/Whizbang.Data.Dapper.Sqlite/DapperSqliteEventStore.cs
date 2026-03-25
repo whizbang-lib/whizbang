@@ -226,20 +226,47 @@ public class DapperSqliteEventStore(
     using var doc = JsonDocument.Parse(envelopeJson);
     var root = doc.RootElement;
 
+    if (!_tryExtractMessageId(root, out var messageIdProp, out var messageIdGuid)) {
+      return null;
+    }
+
+    if (_shouldSkipByEventId(fromEventId, messageIdGuid)) {
+      return null;
+    }
+
+    return _tryMatchEventType(root, eventTypes, messageIdProp);
+  }
+
+  /// <summary>
+  /// Extracts the MessageId property and its Guid value from the root JSON element.
+  /// </summary>
+  private static bool _tryExtractMessageId(JsonElement root, out JsonElement messageIdProp, out Guid messageIdGuid) {
+    messageIdGuid = default;
+    if (!root.TryGetProperty("MessageId", out messageIdProp)) {
+      return false;
+    }
+
+    messageIdGuid = messageIdProp.GetProperty("Value").GetGuid();
+    return true;
+  }
+
+  /// <summary>
+  /// Returns true if this row should be skipped based on the fromEventId filter.
+  /// </summary>
+  private static bool _shouldSkipByEventId(Guid? fromEventId, Guid messageIdGuid) =>
+    fromEventId != null && messageIdGuid.CompareTo(fromEventId.Value) <= 0;
+
+  /// <summary>
+  /// Iterates event types and returns the first successful deserialization as a polymorphic envelope.
+  /// </summary>
+  private MessageEnvelope<IEvent>? _tryMatchEventType(JsonElement root, IReadOnlyList<Type> eventTypes, JsonElement messageIdProp) {
     foreach (var eventType in eventTypes) {
       var typeInfo = JsonOptions.GetTypeInfo(eventType);
-      if (typeInfo == null || !root.TryGetProperty("MessageId", out var messageIdProp)) {
+      if (typeInfo == null) {
         continue;
       }
 
-      var messageIdGuid = messageIdProp.GetProperty("Value").GetGuid();
-
-      // Filter by fromEventId
-      if (fromEventId != null && messageIdGuid.CompareTo(fromEventId.Value) <= 0) {
-        break; // Skip this row
-      }
-
-      var envelope = _resolveEventType(root, eventType, typeInfo, messageIdProp);
+      var envelope = _tryDeserializeAsEventType(root, typeInfo, messageIdProp);
       if (envelope != null) {
         return envelope;
       }
@@ -252,35 +279,68 @@ public class DapperSqliteEventStore(
   /// Tries to deserialize the payload as the given event type and reconstruct the envelope.
   /// Returns null if the payload doesn't match the event type.
   /// </summary>
-  private MessageEnvelope<IEvent>? _resolveEventType(JsonElement root, Type eventType, System.Text.Json.Serialization.Metadata.JsonTypeInfo typeInfo, JsonElement messageIdProp) {
+  private MessageEnvelope<IEvent>? _tryDeserializeAsEventType(
+    JsonElement root,
+    System.Text.Json.Serialization.Metadata.JsonTypeInfo typeInfo,
+    JsonElement messageIdProp) {
+
+    var eventPayload = _tryDeserializePayload(root, typeInfo);
+    if (eventPayload == null) {
+      return null;
+    }
+
+    var messageId = _tryDeserializeMessageId(messageIdProp);
+    if (messageId == null) {
+      return null;
+    }
+
+    return new MessageEnvelope<IEvent> {
+      MessageId = messageId.Value,
+      Payload = eventPayload,
+      Hops = _deserializeHops(root)
+    };
+  }
+
+  /// <summary>
+  /// Deserializes the Payload property as the given event type. Returns null if not an IEvent.
+  /// </summary>
+  private static IEvent? _tryDeserializePayload(
+    JsonElement root,
+    System.Text.Json.Serialization.Metadata.JsonTypeInfo typeInfo) {
+
     if (!root.TryGetProperty("Payload", out var payloadProp)) {
       return null;
     }
 
-    var payload = JsonSerializer.Deserialize(payloadProp.GetRawText(), typeInfo);
-    if (payload is not IEvent eventPayload) {
+    return JsonSerializer.Deserialize(payloadProp.GetRawText(), typeInfo) as IEvent;
+  }
+
+  /// <summary>
+  /// Deserializes the MessageId from its JSON element. Returns null on failure.
+  /// </summary>
+  private MessageId? _tryDeserializeMessageId(JsonElement messageIdProp) {
+    var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
+    if (messageIdTypeInfo == null) {
       return null;
     }
 
-    var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
-    var messageIdValue = messageIdTypeInfo != null
-      ? (MessageId?)JsonSerializer.Deserialize(messageIdProp.GetRawText(), messageIdTypeInfo)
-      : null;
+    return JsonSerializer.Deserialize(messageIdProp.GetRawText(), messageIdTypeInfo) as MessageId?;
+  }
 
-    if (messageIdValue == null) {
-      return null;
+  /// <summary>
+  /// Deserializes the Hops array from the root element, returning an empty list if absent.
+  /// </summary>
+  private List<MessageHop> _deserializeHops(JsonElement root) {
+    if (!root.TryGetProperty("Hops", out var hopsProp)) {
+      return [];
     }
 
     var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
-    var hops = root.TryGetProperty("Hops", out var hopsProp) && hopsTypeInfo != null
-      ? (List<MessageHop>?)JsonSerializer.Deserialize(hopsProp.GetRawText(), hopsTypeInfo)
-      : null;
+    if (hopsTypeInfo == null) {
+      return [];
+    }
 
-    return new MessageEnvelope<IEvent> {
-      MessageId = messageIdValue.Value,
-      Payload = eventPayload,
-      Hops = hops ?? []
-    };
+    return JsonSerializer.Deserialize(hopsProp.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
   }
 
   private static bool _isUniqueConstraintViolation(Exception ex) {

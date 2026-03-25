@@ -12,6 +12,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Lifecycle;
@@ -868,6 +869,28 @@ public class LifecycleCoordinatorTests {
     await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
   }
 
+  /// <summary>
+  /// When no expectations are registered for an event, AreAllPerspectivesComplete should return true.
+  /// PostAllPerspectives/PostLifecycle are terminal stages that must always fire — the WhenAll gate
+  /// controls timing (wait for all to complete), not whether these stages fire.
+  /// Without this, events with no expectations get stuck forever (no PostLifecycle, no tag hooks).
+  /// </summary>
+  [Test]
+  public async Task AreAllPerspectivesComplete_NoExpectationsRegistered_ReturnsTrueAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "no-expectations"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    // Note: NO call to ExpectPerspectiveCompletions — simulates event type key mismatch
+
+    // Act
+    var result = coordinator.AreAllPerspectivesComplete(eventId);
+
+    // Assert — should return true so PostAllPerspectives/PostLifecycle fire
+    await Assert.That(result).IsTrue();
+  }
+
   [Test]
   public async Task AbandonTracking_ClearsPerspectiveStateAsync() {
     // Arrange
@@ -882,8 +905,124 @@ public class LifecycleCoordinatorTests {
     // Act
     coordinator.AbandonTracking(eventId);
 
-    // Assert — perspective state is cleared, AreAllPerspectivesComplete returns false
-    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsFalse();
+    // Assert — perspective state is cleared, AreAllPerspectivesComplete returns true
+    // (no expectations = no WhenAll gate needed, terminal stages fire immediately)
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  #endregion
+
+  #region Stale Tracking Cleanup
+
+  [Test]
+  public async Task CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "stale"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+
+    // Act — cleanup with zero threshold (everything is stale)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+
+    // Assert
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_PreservesRecentEntries_WhenWithinThresholdAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "recent"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+
+    // Act — cleanup with large threshold (nothing is stale)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromHours(1));
+
+    // Assert
+    await Assert.That(cleaned).IsEqualTo(0);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_PreservesCompleteEntries_EvenWhenOldAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "complete"));
+    var provider = _createScopedProvider();
+    var tracking = coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    // Mark complete by advancing to PostLifecycleInline
+    await tracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, provider, CancellationToken.None);
+
+    // Act — cleanup with zero threshold (would be stale if not complete)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+
+    // Assert — complete entries are preserved
+    await Assert.That(cleaned).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CleanupStaleTracking_AlsoCleansUpPerspectiveAndWhenAllStatesAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "full-cleanup"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B"]);
+
+    // Act — cleanup with zero threshold
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+
+    // Assert — tracking and perspective state both cleaned
+    await Assert.That(cleaned).IsEqualTo(1);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNull();
+    await Assert.That(coordinator.AreAllPerspectivesComplete(eventId)).IsTrue();
+  }
+
+  [Test]
+  public async Task SignalPerspectiveComplete_ResetsLastActivityTimestamp_KeepsTrackingAliveAsync() {
+    // Arrange
+    var coordinator = new LifecycleCoordinator();
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "debounce"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+    coordinator.ExpectPerspectiveCompletions(eventId, ["A", "B", "C"]);
+
+    // Act — signal a perspective (resets the inactivity timer)
+    coordinator.SignalPerspectiveComplete(eventId, "A");
+
+    // Cleanup with zero threshold — entry should survive because signal just touched it
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromMilliseconds(100));
+
+    // Assert — debounce kept it alive
+    await Assert.That(cleaned).IsEqualTo(0);
+    await Assert.That(coordinator.GetTracking(eventId)).IsNotNull();
+  }
+
+  [Test]
+  [NotInParallel("Metrics")]
+  public async Task CleanupStaleTracking_IncrementsStaleTrackingCleanedMetricAsync() {
+    // Arrange
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
+    var coordinatorMetrics = new LifecycleCoordinatorMetrics(whizbangMetrics);
+    var coordinator = new LifecycleCoordinator(coordinatorMetrics);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
+
+    var eventId = Guid.NewGuid();
+    var envelope = _createEnvelope(new TestEvent(eventId, "metric-cleanup"));
+    coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
+
+    // Act
+    coordinator.CleanupStaleTracking(TimeSpan.Zero);
+
+    // Assert
+    var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stale_tracking_cleaned");
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(1L);
   }
 
   #endregion

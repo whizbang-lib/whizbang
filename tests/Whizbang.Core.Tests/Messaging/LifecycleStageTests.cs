@@ -13,10 +13,10 @@ public class LifecycleStageTests {
   // ==========================================================================
 
   [Test]
-  public async Task LifecycleStage_HasTwentyThreeValuesAsync() {
-    // 22 lifecycle stages + 1 special AfterReceptorCompletion for tag hooks
+  public async Task LifecycleStage_HasTwentyFiveValuesAsync() {
+    // 24 lifecycle stages + 1 special AfterReceptorCompletion for tag hooks
     var values = Enum.GetValues<LifecycleStage>();
-    await Assert.That(values.Length).IsEqualTo(23);
+    await Assert.That(values.Length).IsEqualTo(25);
   }
 
   // ==========================================================================
@@ -177,6 +177,22 @@ public class LifecycleStageTests {
   [Test]
   public async Task LifecycleStage_PostPerspectiveInline_IsDefinedAsync() {
     var value = LifecycleStage.PostPerspectiveInline;
+    await Assert.That(Enum.IsDefined(value)).IsTrue();
+  }
+
+  // ==========================================================================
+  // PostAllPerspectives stages
+  // ==========================================================================
+
+  [Test]
+  public async Task LifecycleStage_PostAllPerspectivesAsync_IsDefinedAsync() {
+    var value = LifecycleStage.PostAllPerspectivesAsync;
+    await Assert.That(Enum.IsDefined(value)).IsTrue();
+  }
+
+  [Test]
+  public async Task LifecycleStage_PostAllPerspectivesInline_IsDefinedAsync() {
+    var value = LifecycleStage.PostAllPerspectivesInline;
     await Assert.That(Enum.IsDefined(value)).IsTrue();
   }
 

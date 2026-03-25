@@ -4,7 +4,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Sequencing;
 
-namespace Whizbang.Sequencing.Tests;
+namespace Whizbang.Testing.Contracts;
 
 /// <summary>
 /// Contract tests that all ISequenceProvider implementations must pass.

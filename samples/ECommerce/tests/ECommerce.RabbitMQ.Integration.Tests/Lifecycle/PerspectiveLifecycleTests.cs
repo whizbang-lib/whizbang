@@ -4,8 +4,10 @@ using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 
@@ -617,4 +619,68 @@ public class PerspectiveLifecycleTests {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
     }
   }
+
+  // ========================================
+  // PostAllPerspectivesAsync Tests (WhenAll Gate)
+  // ========================================
+
+  /// <summary>
+  /// Verifies that PostAllPerspectivesAsync fires exactly once per event after ALL perspectives complete.
+  /// BffHost has 2 perspectives for ProductCreatedEvent (ProductCatalog + InventoryLevels).
+  /// Forces PerspectiveBatchSize=1 so perspectives are claimed in separate batches.
+  /// Bug: perspectivesPerStream is built from claimed work items only (not all perspectives
+  /// for the event type), so PostAllPerspectivesAsync fires once per batch cycle instead of
+  /// once after ALL perspectives complete — resulting in multiple firings.
+  /// </summary>
+  [Test]
+  public async Task PostAllPerspectivesAsync_FiresExactlyOnce_AfterAllPerspectivesCompleteAsync() {
+    // Arrange
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+
+    // Force batch size to 1 so each perspective is claimed in a separate batch cycle.
+    // This reproduces the bug: each batch only knows about 1 perspective, so the
+    // WhenAll gate opens after just that 1 perspective instead of waiting for all.
+    var bffOptions = fixture.BffHost.Services.GetRequiredService<IOptionsMonitor<PerspectiveWorkerOptions>>();
+    bffOptions.CurrentValue.PerspectiveBatchSize = 1;
+
+    var command = new CreateProductCommand {
+      ProductId = ProductId.New(),
+      Name = "PostAllPerspectives Test",
+      Description = "Tests WhenAll gate fires exactly once",
+      Price = 49.99m,
+      InitialStock = 5
+    };
+
+    // Register PostAllPerspectivesAsync receptor to count invocations
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
+
+    var registry = fixture.BffHost.Services.GetRequiredService<IReceptorRegistry>();
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostAllPerspectivesAsync);
+
+    try {
+      // Act - Send a single command that produces ProductCreatedEvent
+      // Wait for all perspectives to complete first
+      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+        inventoryPerspectives: 2,
+        bffPerspectives: 2);
+
+      await fixture.Dispatcher.SendAsync(command);
+      await waiter.WaitAsync(timeoutMilliseconds: 30000);
+
+      // Give extra time for any additional PostAllPerspectives firings from subsequent batches
+      await Task.Delay(3000);
+
+      // Assert - PostAllPerspectivesAsync should fire exactly ONCE per event
+      // Bug: fires multiple times because perspectivesPerStream only includes
+      // perspectives from the current batch, not all perspectives for the event type
+      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
+
+    } finally {
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostAllPerspectivesAsync);
+      // Restore default batch size
+      bffOptions.CurrentValue.PerspectiveBatchSize = 100;
+    }
+  }
+
 }

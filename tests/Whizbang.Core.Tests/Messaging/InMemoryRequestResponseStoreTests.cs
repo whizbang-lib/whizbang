@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Core.Tests.Messaging;
 

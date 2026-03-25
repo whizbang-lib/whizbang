@@ -162,16 +162,18 @@ public class IntervalUnitOfWorkStrategyTests {
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var callbackInvoked = false;
 
+    var callbackSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackInvoked = true;
+      callbackSignal.TrySetResult(true);
       await Task.CompletedTask;
     };
 
     var message = new TestMessage { Value = "test" };
     await strategy.QueueMessageAsync(message);
 
-    // Wait for timer to tick (increased for systems under load)
-    await Task.Delay(600);
+    // Wait for timer to trigger callback (signal-based)
+    await callbackSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Timer should have triggered callback
     await Assert.That(callbackInvoked).IsTrue();
@@ -277,8 +279,10 @@ public class IntervalUnitOfWorkStrategyTests {
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var flushedUnitIds = new List<Guid>();
 
+    var flushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     strategy.OnFlushRequested += async (unitId, ct) => {
       flushedUnitIds.Add(unitId);
+      flushSignal.TrySetResult(true);
       await Task.CompletedTask;
     };
 
@@ -286,9 +290,8 @@ public class IntervalUnitOfWorkStrategyTests {
     var message1 = new TestMessage { Value = "test1" };
     var unitId1 = await strategy.QueueMessageAsync(message1);
 
-    // Wait for timer to flush first unit (600ms for systems under parallel test load)
-    // 50ms interval × 12 = 600ms ensures multiple timer ticks occur
-    await Task.Delay(600);
+    // Wait for timer to flush first unit (signal-based)
+    await flushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     var message2 = new TestMessage { Value = "test2" };
     var unitId2 = await strategy.QueueMessageAsync(message2);
@@ -346,11 +349,20 @@ public class IntervalUnitOfWorkStrategyTests {
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var flushedUnitIds = new List<Guid>();
     var flushedMessageCounts = new List<int>();
+    var flushCount = 0;
+    var firstFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       var messages = strategy.GetMessagesForUnit(unitId);
       flushedUnitIds.Add(unitId);
       flushedMessageCounts.Add(messages.Count);
+      var count = Interlocked.Increment(ref flushCount);
+      if (count == 1) {
+        firstFlushSignal.TrySetResult(true);
+      } else if (count >= 2) {
+        secondFlushSignal.TrySetResult(true);
+      }
       await Task.CompletedTask;
     };
 
@@ -358,14 +370,14 @@ public class IntervalUnitOfWorkStrategyTests {
     var unitId1 = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
     await strategy.QueueMessageAsync(new TestMessage { Value = "1b" });
 
-    // Wait for first flush (increased for systems under load)
-    await Task.Delay(400);
+    // Wait for first flush (signal-based)
+    await firstFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Queue second batch
     var unitId2 = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
 
-    // Wait for second flush (increased for systems under load)
-    await Task.Delay(400);
+    // Wait for second flush (signal-based)
+    await secondFlushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Both units should be flushed
     await Assert.That(flushedUnitIds.Count).IsGreaterThanOrEqualTo(2);
@@ -376,9 +388,11 @@ public class IntervalUnitOfWorkStrategyTests {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     IReadOnlyDictionary<object, LifecycleStage>? lifecycleStagesInCallback = null;
+    var flushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       lifecycleStagesInCallback = strategy.GetLifecycleStagesForUnit(unitId);
+      flushSignal.TrySetResult(true);
       await Task.CompletedTask;
     };
 
@@ -388,8 +402,8 @@ public class IntervalUnitOfWorkStrategyTests {
     await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeAsync);
     await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeAsync);
 
-    // Wait for timer tick (increased for systems under load)
-    await Task.Delay(400);
+    // Wait for timer tick (signal-based)
+    await flushSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();

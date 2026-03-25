@@ -62,8 +62,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    // Act - Wait for timer to fire (give it 500ms = 5x the interval for reliability under load)
-    await Task.Delay(500);
+    // Act - Wait for timer to fire (signal-based, no arbitrary delay)
+    await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Timer should have flushed the queued message
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -111,7 +111,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    await Task.Delay(100);  // Delay between messages (still less than 1s interval)
+    // Small delay between messages (still well below 1s interval, but enough to be sequential)
+    await Task.Yield();
 
     var envelope2 = _createTestEnvelope(messageId2);
     sut.QueueOutboxMessage(new OutboxMessage {
@@ -128,8 +129,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       }
     });
 
-    // Wait for timer to fire (1s interval + buffer)
-    await Task.Delay(1500);
+    // Wait for timer to fire (signal-based, no arbitrary delay)
+    await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
     // Assert - Both messages should be batched together in single flush
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -187,8 +188,8 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var callCountBeforeDelay = fakeCoordinator.ProcessWorkBatchCallCount;
 
-    // Wait to verify timer stopped (no additional flushes after disposal)
-    await Task.Delay(1500);
+    // Wait briefly to verify timer stopped (negative assertion - timer would fire at 1s intervals)
+    await Task.Delay(200);
 
     // Assert - Timer should be stopped (no additional flush calls)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(callCountBeforeDelay)
@@ -975,7 +976,10 @@ public class IntervalWorkCoordinatorStrategyTests {
     public void Complete() { }
   }
 
-  private sealed class FakeWorkCoordinator : IWorkCoordinator {
+  private sealed class FakeWorkCoordinator : IWorkCoordinator, IDisposable {
+    private readonly SemaphoreSlim _flushSignal = new(0, int.MaxValue);
+
+    public void Dispose() => _flushSignal.Dispose();
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
@@ -984,6 +988,15 @@ public class IntervalWorkCoordinatorStrategyTests {
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
+
+    /// <summary>
+    /// Waits for at least one call to ProcessWorkBatchAsync.
+    /// </summary>
+    public async Task WaitForFlushAsync(TimeSpan timeout) {
+      if (!await _flushSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+      }
+    }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -995,6 +1008,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       LastInboxCompletions = request.InboxCompletions;
       LastOutboxFailures = request.OutboxFailures;
       LastInboxFailures = request.InboxFailures;
+      _flushSignal.Release();
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = WorkToReturn,

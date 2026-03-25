@@ -30,6 +30,7 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
   private readonly Lock _lock = new();
   private LifecycleStage _currentStage;
   private bool _isComplete;
+  private DateTimeOffset _lastActivityUtc;
 
   public LifecycleTrackingState(
     Guid eventId,
@@ -45,6 +46,7 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
     _streamId = streamId;
     _perspectiveType = perspectiveType;
     _totalStopwatch = DebugAwareStopwatch.StartNew();
+    _lastActivityUtc = DateTimeOffset.UtcNow;
   }
 
   /// <inheritdoc/>
@@ -68,6 +70,29 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
     }
   }
 
+  /// <summary>
+  /// Last time any activity occurred on this tracking instance.
+  /// Used for debounce-style stale tracking cleanup — resets on every stage transition
+  /// and perspective signal, creating a sliding inactivity window.
+  /// </summary>
+  public DateTimeOffset LastActivityUtc {
+    get {
+      lock (_lock) {
+        return _lastActivityUtc;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Resets the inactivity timer. Called when a perspective signals completion
+  /// to keep the tracking alive while perspectives are still trickling in.
+  /// </summary>
+  internal void TouchActivity() {
+    lock (_lock) {
+      _lastActivityUtc = DateTimeOffset.UtcNow;
+    }
+  }
+
   /// <inheritdoc/>
   public async ValueTask AdvanceToAsync(
     LifecycleStage stage,
@@ -82,6 +107,7 @@ internal sealed class LifecycleTrackingState : ILifecycleTracking {
         return;
       }
       _currentStage = stage;
+      _lastActivityUtc = DateTimeOffset.UtcNow;
     }
 
     // Resolve scoped invoker

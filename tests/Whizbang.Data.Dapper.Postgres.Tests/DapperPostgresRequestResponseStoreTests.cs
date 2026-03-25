@@ -1,7 +1,6 @@
 using Whizbang.Core.Messaging;
-using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -33,7 +32,7 @@ public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContr
   }
 
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
-    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var jsonOptions = JsonOptionsHelper.CreateOptions();
     var store = new DapperPostgresRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions);
     return Task.FromResult<IRequestResponseStore>(store);
   }
