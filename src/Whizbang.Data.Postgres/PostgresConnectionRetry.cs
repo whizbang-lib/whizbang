@@ -154,27 +154,51 @@ public sealed partial class PostgresConnectionRetry {
   /// Handles retry logic for connection attempts: logs appropriately and returns true if the caller should rethrow.
   /// </summary>
   private bool _shouldRethrowAfterRetry(Exception ex, int attempt, TimeSpan currentDelay) {
-    if (attempt <= _options.InitialRetryAttempts) {
-      // During initial retry phase, log each failure as warning
-      if (_logger is not null) {
-        LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
-      }
+    if (_isWithinInitialRetryPhase(attempt)) {
+      _logRetryWarning(ex, attempt, currentDelay);
       return false;
     }
 
     if (!_options.RetryIndefinitely) {
-      // Not retrying indefinitely - throw after initial attempts
-      if (_logger is not null) {
-        LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
-      }
+      _logConnectionExhausted(ex);
       return true;
     }
 
-    // Retrying indefinitely - log less frequently (every 10 attempts)
+    _logPeriodicRetryStatus(attempt, currentDelay);
+    return false;
+  }
+
+  /// <summary>
+  /// Returns true if the attempt is within the initial retry phase.
+  /// </summary>
+  private bool _isWithinInitialRetryPhase(int attempt) =>
+    attempt <= _options.InitialRetryAttempts;
+
+  /// <summary>
+  /// Logs a warning for a transient connection failure during initial retry phase.
+  /// </summary>
+  private void _logRetryWarning(Exception ex, int attempt, TimeSpan currentDelay) {
+    if (_logger is not null) {
+      LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
+    }
+  }
+
+  /// <summary>
+  /// Logs that all initial retry attempts have been exhausted.
+  /// </summary>
+  private void _logConnectionExhausted(Exception ex) {
+    if (_logger is not null) {
+      LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
+    }
+  }
+
+  /// <summary>
+  /// Logs retry status periodically (every 10 attempts) during indefinite retry.
+  /// </summary>
+  private void _logPeriodicRetryStatus(int attempt, TimeSpan currentDelay) {
     if (_logger is not null && attempt % 10 == 0) {
       LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
     }
-    return false;
   }
 
   /// <summary>
@@ -245,31 +269,26 @@ public sealed partial class PostgresConnectionRetry {
   /// <summary>
   /// Determines if an exception is transient and should be retried.
   /// </summary>
-  private static bool _isTransientException(Exception ex) {
-    // Npgsql transient exceptions
-    if (ex is NpgsqlException npgsqlEx) {
-      // Connection-related errors are transient
-      return npgsqlEx.IsTransient ||
-             npgsqlEx.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
-             npgsqlEx.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
-             npgsqlEx.Message.Contains("refused", StringComparison.OrdinalIgnoreCase);
-    }
+  private static bool _isTransientException(Exception ex) =>
+    _isTransientExceptionDirect(ex) ||
+    (ex.InnerException is not null && _isTransientException(ex.InnerException));
 
-    // Socket/network exceptions are transient
-    if (ex is System.Net.Sockets.SocketException) {
-      return true;
-    }
+  /// <summary>
+  /// Checks if the exception itself (without inner exceptions) is a transient type.
+  /// </summary>
+  private static bool _isTransientExceptionDirect(Exception ex) => ex switch {
+    NpgsqlException npgsqlEx => _isTransientNpgsqlException(npgsqlEx),
+    System.Net.Sockets.SocketException => true,
+    System.IO.IOException => true,
+    _ => false,
+  };
 
-    // IOException (broken pipe, etc.) is transient
-    if (ex is System.IO.IOException) {
-      return true;
-    }
-
-    // Check inner exceptions
-    if (ex.InnerException != null) {
-      return _isTransientException(ex.InnerException);
-    }
-
-    return false;
-  }
+  /// <summary>
+  /// Checks if an NpgsqlException represents a transient connection-related error.
+  /// </summary>
+  private static bool _isTransientNpgsqlException(NpgsqlException npgsqlEx) =>
+    npgsqlEx.IsTransient ||
+    npgsqlEx.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+    npgsqlEx.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+    npgsqlEx.Message.Contains("refused", StringComparison.OrdinalIgnoreCase);
 }

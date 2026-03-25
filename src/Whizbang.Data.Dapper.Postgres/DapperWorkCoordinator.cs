@@ -77,11 +77,22 @@ public partial class DapperWorkCoordinator(
 
     await connection.OpenAsync(cancellationToken);
 
-    // Serialize all work batch data
-    var serializedData = _serializeWorkBatchData(request);
+    var commandDefinition = _buildCommandDefinition(request, cancellationToken);
+    var resultList = await _executeWorkBatchQueryAsync(connection, commandDefinition, request);
 
-    // Execute the process_work_batch function (new signature after decomposition)
+    return _categorizeResults(resultList);
+  }
+
+  /// <summary>
+  /// Builds the CommandDefinition for the process_work_batch SQL function call.
+  /// </summary>
+  private CommandDefinition _buildCommandDefinition(
+    ProcessWorkBatchRequest request,
+    CancellationToken cancellationToken
+  ) {
+    var serializedData = _serializeWorkBatchData(request);
     var now = DateTimeOffset.UtcNow;
+
     const string sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id::uuid,
@@ -139,16 +150,25 @@ public partial class DapperWorkCoordinator(
       p_sync_inquiries = serializedData.SyncInquiries
     };
 
-    var commandDefinition = new CommandDefinition(
+    return new CommandDefinition(
       sql,
       parameters,
       commandTimeout: _commandTimeoutSeconds,
       cancellationToken: cancellationToken
     );
+  }
 
-    IEnumerable<WorkBatchRow> results;
+  /// <summary>
+  /// Executes the work batch query with structured exception handling and logging.
+  /// </summary>
+  private async Task<List<WorkBatchRow>> _executeWorkBatchQueryAsync(
+    NpgsqlConnection connection,
+    CommandDefinition commandDefinition,
+    ProcessWorkBatchRequest request
+  ) {
     try {
-      results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
+      var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
+      return results.ToList();
     } catch (NpgsqlException ex) when (ex.InnerException is TimeoutException || ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase)) {
       if (_logger is not null) {
         LogWorkBatchTimedOut(_logger, _commandTimeoutSeconds, request.InstanceId, request.ServiceName, ex);
@@ -165,9 +185,12 @@ public partial class DapperWorkCoordinator(
       }
       throw;
     }
-    var resultList = results.ToList();
+  }
 
-    // Single-pass categorization of results by source type
+  /// <summary>
+  /// Categorizes work batch rows by source type into the appropriate work lists.
+  /// </summary>
+  private WorkBatch _categorizeResults(List<WorkBatchRow> resultList) {
     var outboxWork = new List<OutboxWork>();
     var inboxWork = new List<InboxWork>();
     var perspectiveWork = new List<PerspectiveWork>();
@@ -185,14 +208,7 @@ public partial class DapperWorkCoordinator(
           perspectiveWork.Add(_mapPerspectiveWork(r));
           break;
         case "sync_result":
-          syncInquiryResults.Add(new SyncInquiryResult {
-            InquiryId = r.work_id,
-            StreamId = r.work_stream_id ?? Guid.Empty,
-            PendingCount = r.partition_number ?? 0,
-            ProcessedCount = r.status,
-            PendingEventIds = _parsePendingEventIds(r.message_data),
-            ProcessedEventIds = _parseProcessedEventIds(r.metadata)
-          });
+          syncInquiryResults.Add(_mapSyncInquiryResult(r));
           break;
       }
     }
@@ -206,6 +222,20 @@ public partial class DapperWorkCoordinator(
       InboxWork = inboxWork,
       PerspectiveWork = perspectiveWork,
       SyncInquiryResults = syncInquiryResults.Count > 0 ? syncInquiryResults : null
+    };
+  }
+
+  /// <summary>
+  /// Maps a WorkBatchRow with source "sync_result" to a SyncInquiryResult.
+  /// </summary>
+  private SyncInquiryResult _mapSyncInquiryResult(WorkBatchRow r) {
+    return new SyncInquiryResult {
+      InquiryId = r.work_id,
+      StreamId = r.work_stream_id ?? Guid.Empty,
+      PendingCount = r.partition_number ?? 0,
+      ProcessedCount = r.status,
+      PendingEventIds = _parsePendingEventIds(r.message_data),
+      ProcessedEventIds = _parseProcessedEventIds(r.metadata)
     };
   }
 

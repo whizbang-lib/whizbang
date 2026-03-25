@@ -2,7 +2,7 @@ name: whizbang-sonar
 
 services:
   sonarqube:
-    image: sonarqube:lts-community
+    image: sonarqube:community
     container_name: whizbang-sonar
     depends_on:
       sonarqube-db:

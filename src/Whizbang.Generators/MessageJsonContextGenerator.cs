@@ -230,6 +230,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Type must be a command, event, explicitly marked as serializable, has GraphQL attribute, or is a perspective model
     if (!isCommand && !isEvent && !isSerializable && !hasGraphQLName && !isPerspectiveModel) {
+      // Check if this type IS a perspective class (implements IPerspectiveBase<TModel, TEvent>)
+      // If so, extract TModel and return its type info for JSON serialization
+      // This handles the case where TModel is a plain record with no base types/attributes
+      // that would otherwise be filtered out by the syntactic predicate
+      var perspectiveModelInfo = _extractPerspectiveModelFromPerspectiveClass(typeSymbol);
+      if (perspectiveModelInfo is not null) {
+        return perspectiveModelInfo;
+      }
+
       return null;
     }
 
@@ -2599,6 +2608,72 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// When a type implements IPerspectiveBase&lt;TModel, TEvent&gt; (or IPerspectiveFor/IPerspectiveWithActionsFor),
+  /// extracts TModel and returns its JsonMessageTypeInfo for JSON context inclusion.
+  /// This handles the case where TModel is a plain record/class with no base types or attributes,
+  /// which would otherwise be filtered out by the syntactic predicate.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync</tests>
+  private static JsonMessageTypeInfo? _extractPerspectiveModelFromPerspectiveClass(INamedTypeSymbol typeSymbol) {
+    foreach (var iface in typeSymbol.AllInterfaces) {
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (!originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) &&
+          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) &&
+          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal)) {
+        continue;
+      }
+
+      if (iface.TypeArguments.Length < 1) {
+        continue;
+      }
+
+      // Extract TModel (first type argument)
+      if (iface.TypeArguments[0] is not INamedTypeSymbol modelType) {
+        continue;
+      }
+
+      // Skip non-public models - generated code can't access them
+      if (modelType.DeclaredAccessibility != Accessibility.Public) {
+        continue;
+      }
+
+      var fullyQualifiedName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var clrTypeName = _getClrTypeName(modelType);
+      var simpleName = modelType.Name;
+
+      var properties = _getAllPropertiesIncludingInherited(modelType)
+          .Select(p => new PropertyInfo(
+              Name: p.Name,
+              Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+              IsValueType: _isValueType(p.Type),
+              IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
+              CanWrite: p.SetMethod != null
+          ))
+          .ToArray();
+
+      var writableProperties = properties.Where(p => p.CanWrite).ToArray();
+      bool hasParameterizedConstructor = modelType.Constructors.Any(c =>
+          c.DeclaredAccessibility == Accessibility.Public &&
+          c.Parameters.Length == writableProperties.Length &&
+          c.Parameters.All(p => writableProperties.Any(prop =>
+              prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+
+      return new JsonMessageTypeInfo(
+          FullyQualifiedName: fullyQualifiedName,
+          ClrTypeName: clrTypeName,
+          SimpleName: simpleName,
+          IsCommand: false,
+          IsEvent: false,
+          IsSerializable: true,
+          Properties: properties,
+          HasParameterizedConstructor: hasParameterizedConstructor
+      );
+    }
+
+    return null;
   }
 
   /// <summary>

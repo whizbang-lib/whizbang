@@ -3,9 +3,9 @@ using Whizbang.Core.Data;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
-using Whizbang.Core.Tests.Messaging;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 public class EventEnvelopeJsonbAdapterScopeTests {
 
   private static EventEnvelopeJsonbAdapter _createAdapter() {
-    var jsonOptions = Whizbang.Core.Tests.Generated.WhizbangJsonContext.CreateOptions();
+    var jsonOptions = JsonOptionsHelper.CreateOptions();
     return new EventEnvelopeJsonbAdapter(jsonOptions);
   }
 

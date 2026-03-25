@@ -615,27 +615,31 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return false;
     }
 
-    var ns = type.ContainingNamespace?.ToDisplayString();
-    if (ns?.StartsWith("System", StringComparison.Ordinal) == true &&
-        !ns.StartsWith("System.Collections", StringComparison.Ordinal)) {
+    if (_isNonCollectionSystemType(type)) {
       return false;
     }
 
-    foreach (var property in type.GetMembers().OfType<IPropertySymbol>()) {
-      if (property.IsStatic || property.IsIndexer || property.IsWriteOnly || _isPropertyIgnored(property)) {
-        continue;
-      }
+    return type.GetMembers().OfType<IPropertySymbol>()
+        .Where(_isAnalyzableProperty)
+        .Select(p => p.Type)
+        .OfType<INamedTypeSymbol>()
+        .Any(propType => _isPropertyTypePolymorphic(propType, visited));
+  }
 
-      if (property.Type is not INamedTypeSymbol propType) {
-        continue;
-      }
+  /// <summary>
+  /// Checks if a type is a System namespace type that is NOT a collections type.
+  /// </summary>
+  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
+    var ns = type.ContainingNamespace?.ToDisplayString();
+    return ns?.StartsWith("System", StringComparison.Ordinal) == true &&
+           !ns.StartsWith("System.Collections", StringComparison.Ordinal);
+  }
 
-      if (_isPropertyTypePolymorphic(propType, visited)) {
-        return true;
-      }
-    }
-
-    return false;
+  /// <summary>
+  /// Checks if a property should be analyzed (not static, not indexer, not write-only, not ignored).
+  /// </summary>
+  private static bool _isAnalyzableProperty(IPropertySymbol property) {
+    return !property.IsStatic && !property.IsIndexer && !property.IsWriteOnly && !_isPropertyIgnored(property);
   }
 
   /// <summary>
@@ -649,12 +653,26 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return true;
     }
 
-    if ((typeToCheck.TypeKind == TypeKind.Class || typeToCheck.TypeKind == TypeKind.Struct) &&
-        !_isSystemPrimitiveType(typeToCheck) &&
-        _checkForPolymorphicTypes(typeToCheck, visited)) {
+    if (_isRecursivelyPolymorphic(typeToCheck, visited)) {
       return true;
     }
 
+    return _hasPolymorphicTypeArguments(propType, visited);
+  }
+
+  /// <summary>
+  /// Checks if a class/struct type recursively contains polymorphic properties.
+  /// </summary>
+  private static bool _isRecursivelyPolymorphic(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
+    return (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct) &&
+           !_isSystemPrimitiveType(type) &&
+           _checkForPolymorphicTypes(type, visited);
+  }
+
+  /// <summary>
+  /// Checks if any generic type arguments of a type are polymorphic or contain polymorphic properties.
+  /// </summary>
+  private static bool _hasPolymorphicTypeArguments(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
       if (_isPolymorphicType(typeArg)) {
         return true;
@@ -890,15 +908,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       ImmutableArray<PerspectiveInfo> perspectives,
       string? schema) {
 
-    // Report perspective discovery for diagnostics
-    var debugDescriptor = new DiagnosticDescriptor(
-        id: "WHIZ701",
-        title: "EF Core Perspective Discovery",
-        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
-    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length));
+    _reportPerspectiveDiscoveryDiagnostic(context, perspectives.Length);
 
     // Deduplicate perspectives by ModelTypeName (multiple perspectives might use same model type)
     var uniquePerspectives = perspectives
@@ -906,7 +916,40 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         .Select(g => g.First())
         .ToImmutableArray();
 
-    // Report diagnostic about discovery
+    _reportGeneratorExecutedDiagnostic(context, uniquePerspectives.Length, perspectives.Length);
+
+    var assembly = typeof(EFCorePerspectiveConfigurationGenerator).Assembly;
+    var template = _loadAndPrepareTemplate(assembly, uniquePerspectives);
+    var effectiveSchema = schema ?? "public";
+
+    template = _applyPerspectiveConfigurations(template, assembly, uniquePerspectives, effectiveSchema);
+    template = _applyVectorExtensionConfig(template, uniquePerspectives);
+    template = _applyDiagnosticsAndPlaceholders(template, uniquePerspectives, perspectives.Length, effectiveSchema);
+
+    context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
+  }
+
+  /// <summary>
+  /// Reports the WHIZ701 perspective discovery diagnostic.
+  /// </summary>
+  private static void _reportPerspectiveDiscoveryDiagnostic(SourceProductionContext context, int perspectiveCount) {
+    var debugDescriptor = new DiagnosticDescriptor(
+        id: "WHIZ701",
+        title: "EF Core Perspective Discovery",
+        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
+        category: "Whizbang.Generator",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectiveCount));
+  }
+
+  /// <summary>
+  /// Reports the EFCORE000 generator executed diagnostic.
+  /// </summary>
+  private static void _reportGeneratorExecutedDiagnostic(
+      SourceProductionContext context,
+      int uniqueCount,
+      int totalCount) {
     var runningDescriptor = new DiagnosticDescriptor(
         id: "EFCORE000",
         title: "EF Core Configuration Generator Executed",
@@ -914,81 +957,104 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, uniqueCount, totalCount));
+  }
 
-    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, uniquePerspectives.Length, perspectives.Length));
-
-    // Load main template
-    var assembly = typeof(EFCorePerspectiveConfigurationGenerator).Assembly;
+  /// <summary>
+  /// Loads the main EF Core configuration template and applies the header and perspective count.
+  /// </summary>
+  private static string _loadAndPrepareTemplate(
+      System.Reflection.Assembly assembly,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives) {
     var template = TemplateUtilities.GetEmbeddedTemplate(
         assembly,
         "EFCoreConfigurationTemplate.cs",
         "Whizbang.Data.EFCore.Postgres.Generators.Templates"
     );
 
-    // Replace header with timestamp
     template = TemplateUtilities.ReplaceRegion(
         template,
         "HEADER",
         $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCorePerspectiveConfigurationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
     );
 
-    // Replace __PERSPECTIVE_COUNT__ placeholder
     template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString(CultureInfo.InvariantCulture));
+    return template;
+  }
 
-    // Generate perspective configurations
+  /// <summary>
+  /// Generates and applies perspective entity configurations to the template.
+  /// </summary>
+  private static string _applyPerspectiveConfigurations(
+      string template,
+      System.Reflection.Assembly assembly,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      string effectiveSchema) {
     var perspectiveConfigs = new StringBuilder();
     if (uniquePerspectives.Length > 0) {
       perspectiveConfigs.AppendLine("  // ===== Discovered Perspective Entities =====");
       perspectiveConfigs.AppendLine();
 
       foreach (var perspective in uniquePerspectives) {
-        // Extract perspective entity config snippet - use polymorphic version if model has polymorphic types
-        var snippetName = perspective.HasPolymorphicProperties
-            ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
-            : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
-        var snippet = TemplateUtilities.ExtractSnippet(
-            assembly,
-            "EFCoreSnippets.cs",
-            snippetName,
-            "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-        );
-
-        // Replace placeholders
-        // Use provided schema, or default to "public" if not specified
-        var effectiveSchema = schema ?? "public";
-
-        // Generate physical field configurations
-        var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
-
-        var config = snippet
-            .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
-            .Replace("__TABLE_NAME__", perspective.TableName)
-            .Replace("__SCHEMA__", effectiveSchema)
-            .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
-
+        var config = _generateSinglePerspectiveConfig(assembly, perspective, effectiveSchema);
         perspectiveConfigs.AppendLine(TemplateUtilities.IndentCode(config, "  "));
         perspectiveConfigs.AppendLine();
       }
     }
 
-    template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
+    return TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
+  }
 
-    // Check if any perspective has vector fields - if so, generate HasPostgresExtension("vector")
-    // This ensures the pgvector extension is automatically created in the database
+  /// <summary>
+  /// Generates the configuration snippet for a single perspective entity.
+  /// </summary>
+  private static string _generateSinglePerspectiveConfig(
+      System.Reflection.Assembly assembly,
+      PerspectiveInfo perspective,
+      string effectiveSchema) {
+    var snippetName = perspective.HasPolymorphicProperties
+        ? "PERSPECTIVE_ENTITY_CONFIG_POLYMORPHIC_SNIPPET"
+        : "PERSPECTIVE_ENTITY_CONFIG_SNIPPET";
+    var snippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        snippetName,
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+
+    var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
+
+    return snippet
+        .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
+        .Replace("__TABLE_NAME__", perspective.TableName)
+        .Replace("__SCHEMA__", effectiveSchema)
+        .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
+  }
+
+  /// <summary>
+  /// Applies vector extension configuration to the template based on whether any perspectives have vector fields.
+  /// </summary>
+  private static string _applyVectorExtensionConfig(
+      string template,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives) {
     var hasVectorFields = uniquePerspectives.Any(p => p.PhysicalFields.Any(f => f.IsVector));
     var vectorExtensionConfig = hasVectorFields
         ? "    // Auto-configured: pgvector extension required for [VectorField] columns\n    modelBuilder.HasPostgresExtension(\"vector\");\n"
         : "// No vector fields detected - pgvector extension not required\n";
-    template = TemplateUtilities.ReplaceRegion(template, "VECTOR_EXTENSION_CONFIG", vectorExtensionConfig);
+    return TemplateUtilities.ReplaceRegion(template, "VECTOR_EXTENSION_CONFIG", vectorExtensionConfig);
+  }
 
-    // Infrastructure configuration is now handled by static WhizbangModelBuilderExtensions.ConfigureWhizbangInfrastructure()
-    // No need to extract and inject infrastructure snippets here
-
-    // Generate diagnostic perspective list
-    var diagnosticList = _generateDiagnosticPerspectiveList(uniquePerspectives, perspectives.Length);
+  /// <summary>
+  /// Applies diagnostics list and remaining placeholder replacements to the template.
+  /// </summary>
+  private static string _applyDiagnosticsAndPlaceholders(
+      string template,
+      ImmutableArray<PerspectiveInfo> uniquePerspectives,
+      int totalPerspectiveCount,
+      string effectiveSchema) {
+    var diagnosticList = _generateDiagnosticPerspectiveList(uniquePerspectives, totalPerspectiveCount);
     template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList);
 
-    // Replace diagnostic placeholders
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     template = template.Replace("__TIMESTAMP__", timestamp);
 
@@ -997,9 +1063,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // CRITICAL: Replace __SCHEMA__ placeholder for infrastructure configuration call
     // Without this, ConfigureWhizbangInfrastructure receives literal "__SCHEMA__" string
-    template = template.Replace("__SCHEMA__", schema ?? "public");
+    template = template.Replace("__SCHEMA__", effectiveSchema);
 
-    context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
+    return template;
   }
 
   /// <summary>

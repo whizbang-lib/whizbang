@@ -119,12 +119,17 @@ public static class TemplateUtilities {
       return;
     }
 
-    if (template[position] == '\r') {
-      position++;
-      if (position < template.Length && template[position] == '\n') {
-        position++;
-      }
-    } else if (template[position] == '\n') {
+    var isCarriageReturn = template[position] == '\r';
+    var isLineFeed = template[position] == '\n';
+
+    if (!isCarriageReturn && !isLineFeed) {
+      return;
+    }
+
+    position++;
+
+    // Handle \r\n pair
+    if (isCarriageReturn && position < template.Length && template[position] == '\n') {
       position++;
     }
   }
@@ -137,11 +142,15 @@ public static class TemplateUtilities {
       indentedReplacement = indentedReplacement.TrimEnd() + trailing;
     }
 
-    if (suffix.Length > 0 && !indentedReplacement.EndsWith("\n", StringComparison.Ordinal) && !indentedReplacement.EndsWith("\r", StringComparison.Ordinal)) {
-      indentedReplacement += "\n";
-    }
+    var needsNewline = suffix.Length > 0 && !_endsWithNewline(indentedReplacement);
+    return needsNewline ? indentedReplacement + "\n" : indentedReplacement;
+  }
 
-    return indentedReplacement;
+  /// <summary>
+  /// Checks whether the string ends with a newline character (\n or \r).
+  /// </summary>
+  private static bool _endsWithNewline(string value) {
+    return value.EndsWith("\n", StringComparison.Ordinal) || value.EndsWith("\r", StringComparison.Ordinal);
   }
 
   /// <summary>

@@ -4,6 +4,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Contracts;
 
 namespace Whizbang.Core.Tests.Messaging;
 
