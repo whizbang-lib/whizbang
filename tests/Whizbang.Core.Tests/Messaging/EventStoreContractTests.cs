@@ -184,7 +184,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync() {
+  public virtual async Task AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
