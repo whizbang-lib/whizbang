@@ -140,6 +140,18 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       await _setMessageContextAsync(messageContextAccessor, envelope, securityContext, callerInfo, cancellationToken).ConfigureAwait(false);
     }
 
+    // Extract both trace context and scope from envelope hops.
+    // MUST happen before the early-return for receptors.Count == 0 so that tag hooks
+    // at terminal stages (PostAllPerspectivesAsync, PostLifecycleAsync, etc.) — which have
+    // no registered receptors — still receive ambient scope via AsyncLocal.
+    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
+    var parentContext = extracted.TraceContext;
+
+    // Establish ambient scope context from envelope data (security propagation via AsyncLocal)
+    if (extracted.Scope is not null) {
+      ScopeContextAccessor.CurrentContext = extracted.Scope;
+    }
+
     // Registry already has categorized receptors at compile time
     var receptors = _registry.GetReceptorsFor(messageType, stage);
 
@@ -157,15 +169,6 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // Try to get stream ID extractor for stream-based sync
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
-
-    // Extract both trace context and scope from envelope hops
-    var extracted = EnvelopeContextExtractor.ExtractFromHops(envelope.Hops);
-    var parentContext = extracted.TraceContext;
-
-    // Establish ambient scope context from envelope data (security propagation via AsyncLocal)
-    if (extracted.Scope is not null) {
-      ScopeContextAccessor.CurrentContext = extracted.Scope;
-    }
 
     foreach (var receptor in receptors) {
       await _invokeReceptorAsync(receptor, message, messageType, envelope, stage, context, callerInfo,
