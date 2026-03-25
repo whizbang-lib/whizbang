@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -22,6 +23,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 /// <docs>core-concepts/lifecycle-stages</docs>
 /// <docs>core-concepts/scope-propagation</docs>
+[NotInParallel("ScopeContext")]
 public class LifecycleStageScopePropagationTests {
 
   [Test]
@@ -109,14 +111,18 @@ public class LifecycleStageScopePropagationTests {
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_msg_context_receptor_{stage}",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-        var accessor = sp.GetService<IMessageContextAccessor>();
-        capturedMessageContext = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
       }
     ));
 
+    var singletonScopeAccessor = new ScopeContextAccessor();
+    var singletonMessageAccessor = new MessageContextAccessor();
+
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
+    // Replace scoped with singleton so ReceptorInvoker and test assertions share the same instance
+    services.Replace(ServiceDescriptor.Singleton<IScopeContextAccessor>(singletonScopeAccessor));
+    services.Replace(ServiceDescriptor.Singleton<IMessageContextAccessor>(singletonMessageAccessor));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -128,6 +134,7 @@ public class LifecycleStageScopePropagationTests {
     await invoker.InvokeAsync(envelope, stage);
 
     // Assert - MessageContext should contain UserId and TenantId from envelope scope
+    capturedMessageContext = singletonMessageAccessor.Current;
     await Assert.That(capturedMessageContext).IsNotNull();
     await Assert.That(capturedMessageContext!.TenantId).IsEqualTo(expectedTenantId);
     await Assert.That(capturedMessageContext!.UserId).IsEqualTo(expectedUserId);
@@ -212,14 +219,18 @@ public class LifecycleStageScopePropagationTests {
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_initiating_receptor_{stage}",
       InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
-        var accessor = sp.GetService<IScopeContextAccessor>();
-        capturedInitiatingContext = accessor?.InitiatingContext;
         return ValueTask.FromResult<object?>(null);
       }
     ));
 
+    var singletonScopeAccessor = new ScopeContextAccessor();
+    var singletonMessageAccessor = new MessageContextAccessor();
+
     var services = new ServiceCollection();
     services.AddWhizbangMessageSecurity();
+    // Replace scoped with singleton so ReceptorInvoker and test assertions share the same instance
+    services.Replace(ServiceDescriptor.Singleton<IScopeContextAccessor>(singletonScopeAccessor));
+    services.Replace(ServiceDescriptor.Singleton<IMessageContextAccessor>(singletonMessageAccessor));
     services.AddSingleton<IReceptorRegistry>(registry);
     var serviceProvider = services.BuildServiceProvider();
     using var scope = serviceProvider.CreateScope();
@@ -231,6 +242,7 @@ public class LifecycleStageScopePropagationTests {
     await invoker.InvokeAsync(envelope, stage);
 
     // Assert - InitiatingContext should be set with message context from envelope
+    capturedInitiatingContext = singletonScopeAccessor.InitiatingContext;
     await Assert.That(capturedInitiatingContext).IsNotNull();
     await Assert.That(capturedInitiatingContext!.UserId).IsEqualTo("initiating-user");
     await Assert.That(capturedInitiatingContext!.TenantId).IsEqualTo("initiating-tenant");
