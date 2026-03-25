@@ -155,7 +155,7 @@ Write-Seg "▐▓▓▓▓▓▓▌" 200 180 80
 Write-Seg " " 45 55 72
 Write-Seg "███████▌" 140 142 144; Write-Seg '"' 165 167 169
 Write-Seg " " 45 55 72
-Write-Seg "'" 170 172 174; Write-Seg "▓██████" 143 145 147; Write-Seg "M" 160 162 164
+Write-Seg "'" 170 172 174; Write-Seg "▓███▀▀█" 143 145 147; Write-Seg "M" 160 162 164
 Write-Seg " " 45 55 72
 Write-Seg "▓█▌" 210 212 214
 Write-Seg "   " 45 55 72
