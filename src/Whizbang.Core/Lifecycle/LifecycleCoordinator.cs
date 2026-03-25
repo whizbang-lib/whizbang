@@ -187,21 +187,6 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
       get { lock (_lock) { return _allComplete; } }
     }
 
-    /// <summary>Perspectives expected to complete (inspectable for debugging).</summary>
-    public IReadOnlySet<string> Expected {
-      get { lock (_lock) { return new HashSet<string>(_expected); } }
-    }
-
-    /// <summary>Perspectives that have signaled complete (inspectable for debugging).</summary>
-    public IReadOnlySet<string> Completed {
-      get { lock (_lock) { return new HashSet<string>(_completed); } }
-    }
-
-    /// <summary>Perspectives still pending (inspectable for debugging).</summary>
-    public IReadOnlyCollection<string> Pending {
-      get { lock (_lock) { return _expected.Except(_completed).ToList(); } }
-    }
-
     /// <summary>
     /// Signals a perspective as complete. Returns true exactly once — when all expected
     /// perspectives are complete. Subsequent calls always return false.

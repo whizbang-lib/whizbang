@@ -16,3 +16,4 @@ Key flags (consistent across all PR readiness scripts):
 - `-CoverageThreshold 80` — minimum coverage percentage
 - `-SkipSonar` / `-SkipIntegration` — skip specific steps
 - `-Draft` — create PR as draft
+- `-PersistContainer` — keep SonarQube Docker container running after script ends

@@ -202,6 +202,101 @@ public class ReceptorInvokerTagScopePropagationTests {
     await Assert.That(hookAccessorScope!.Scope.TenantId).IsEqualTo("di-tenant");
   }
 
+  /// <summary>
+  /// Verifies that scope propagates from envelope hops to tag hooks at terminal lifecycle
+  /// stages (PostAllPerspectivesAsync, PostLifecycleAsync, etc.) even when NO receptors are
+  /// registered at that stage (causing the early-return path in InvokeAsync).
+  ///
+  /// BUG: EnvelopeContextExtractor.ExtractFromHops and ScopeContextAccessor.CurrentContext assignment
+  /// were only executed in the receptors.Count > 0 path. Tag hooks at terminal stages
+  /// (which have no registered receptors) never had scope available.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(TerminalLifecycleStages))]
+  public async Task InvokeAsync_NoReceptors_WithScopeInHops_PropagatesScopeToTagHookAtTerminalStageAsync(LifecycleStage stage) {
+    // Arrange: No receptors at the stage — forces the no-receptor early-return path.
+    // This is the real scenario for PostAllPerspectivesAsync hooks (no business receptors there).
+    var tagRegistry = new TestMessageTagRegistry();
+    tagRegistry.AddRegistration(typeof(TestTaggedEvent), typeof(SignalTagAttribute), "test-tag");
+    MessageTagRegistry.Register(tagRegistry, priority: 100);
+
+    var hook = new ScopeCapturingHook();
+    var tagOptions = new TagOptions();
+    tagOptions.UseHook<SignalTagAttribute, ScopeCapturingHook>(fireAt: stage);
+
+    // KEY: No receptors registered at the stage — forces early-return path in InvokeAsync
+    var receptorRegistry = new TestReceptorRegistry();
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(TestTaggedEvent));
+    });
+    services.AddSingleton<IReceptorRegistry>(receptorRegistry);
+    services.AddSingleton(hook);
+    services.AddSingleton<IMessageTagProcessor>(sp =>
+        new MessageTagProcessor(tagOptions, sp.GetRequiredService<IServiceScopeFactory>()));
+    var serviceProvider = services.BuildServiceProvider();
+    using var scope = serviceProvider.CreateScope();
+
+    var invoker = new ReceptorInvoker(receptorRegistry, scope.ServiceProvider);
+    var envelope = _createTypedEnvelopeWithScope("notification-user", "notification-tenant");
+
+    // Act
+    await invoker.InvokeAsync(envelope, stage);
+
+    // Assert: hook was invoked and scope was propagated from hops even with no receptors
+    await Assert.That(hook.WasInvoked).IsTrue();
+    await Assert.That(hook.AsyncLocalScope).IsNotNull();
+    await Assert.That(hook.AsyncLocalScope!.Scope.UserId).IsEqualTo("notification-user");
+    await Assert.That(hook.AsyncLocalScope.Scope.TenantId).IsEqualTo("notification-tenant");
+  }
+
+  /// <summary>
+  /// Verifies that an accessor-injected hook (like JdxSignalRNotificationHook) can read
+  /// scope from the injected IScopeContextAccessor at terminal stages with no receptors.
+  ///
+  /// This is the exact code path used by JDX notification hooks — they resolve
+  /// IScopeContextAccessor via DI injection, not via ScopeContextAccessor.CurrentContext directly.
+  /// </summary>
+  [Test]
+  [MethodDataSource(nameof(TerminalLifecycleStages))]
+  public async Task InvokeAsync_NoReceptors_WithScopeInHops_AccessorInjectedHookReadsScope_AtTerminalStageAsync(LifecycleStage stage) {
+    // Arrange
+    IScopeContext? hookAccessorScope = null;
+    var tagRegistry = new TestMessageTagRegistry();
+    tagRegistry.AddRegistration(typeof(TestTaggedEvent), typeof(SignalTagAttribute), "test-tag");
+    MessageTagRegistry.Register(tagRegistry, priority: 100);
+
+    var tagOptions = new TagOptions();
+    tagOptions.UseHook<SignalTagAttribute, AccessorInjectedHook>(fireAt: stage);
+    AccessorInjectedHook.OnInvoked = ctx => hookAccessorScope = ctx;
+
+    // No receptors — forces early-return path
+    var receptorRegistry = new TestReceptorRegistry();
+
+    var services = new ServiceCollection();
+    services.AddWhizbangMessageSecurity(options => {
+      options.ExemptMessageTypes.Add(typeof(TestTaggedEvent));
+    });
+    services.AddSingleton<IReceptorRegistry>(receptorRegistry);
+    services.AddTransient<AccessorInjectedHook>();
+    services.AddSingleton<IMessageTagProcessor>(sp =>
+        new MessageTagProcessor(tagOptions, sp.GetRequiredService<IServiceScopeFactory>()));
+    var serviceProvider = services.BuildServiceProvider();
+    using var scope = serviceProvider.CreateScope();
+
+    var invoker = new ReceptorInvoker(receptorRegistry, scope.ServiceProvider);
+    var envelope = _createTypedEnvelopeWithScope("injected-user", "injected-tenant");
+
+    // Act
+    await invoker.InvokeAsync(envelope, stage);
+
+    // Assert: injected accessor in new DI scope can read scope from AsyncLocal
+    await Assert.That(hookAccessorScope).IsNotNull();
+    await Assert.That(hookAccessorScope!.Scope.UserId).IsEqualTo("injected-user");
+    await Assert.That(hookAccessorScope.Scope.TenantId).IsEqualTo("injected-tenant");
+  }
+
   #region Data Sources
 
   public static IEnumerable<LifecycleStage> AllLifecycleStages() {
@@ -225,6 +320,13 @@ public class ReceptorInvokerTagScopePropagationTests {
     yield return LifecycleStage.PrePerspectiveInline;
     yield return LifecycleStage.PostPerspectiveAsync;
     yield return LifecycleStage.PostPerspectiveInline;
+  }
+
+  public static IEnumerable<LifecycleStage> TerminalLifecycleStages() {
+    yield return LifecycleStage.PostAllPerspectivesAsync;
+    yield return LifecycleStage.PostAllPerspectivesInline;
+    yield return LifecycleStage.PostLifecycleAsync;
+    yield return LifecycleStage.PostLifecycleInline;
   }
 
   #endregion

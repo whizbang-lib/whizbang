@@ -39,6 +39,10 @@
 .PARAMETER FailFast
     Exit immediately on failure.
 
+.PARAMETER PersistContainer
+    Keep SonarQube Docker container running after script ends. By default the container
+    is stopped when the script completes.
+
 .EXAMPLE
     .\Run-Sonar.ps1
     Run analysis with verbose output
@@ -75,7 +79,9 @@ param(
 
     [switch]$CleanLogs,     # Remove log files and coverage reports before running
     [switch]$CleanMetrics,  # Remove JSONL history/metrics files before running
-    [switch]$CleanAll       # Remove all logs, metrics, and reports before running
+    [switch]$CleanAll,      # Remove all logs, metrics, and reports before running
+
+    [switch]$PersistContainer  # Keep SonarQube Docker container running after script ends
 )
 
 $ErrorActionPreference = "Stop"
@@ -398,6 +404,14 @@ if ($OutputFormat -eq "Json") {
         }
     }
     ConvertTo-JsonResult -Result $jsonResult
+}
+
+# Stop SonarQube container (unless -PersistContainer)
+if (-not $PersistContainer) {
+    if (Test-Path $composeFile) {
+        Write-Host "Stopping SonarQube container..." -ForegroundColor DarkGray
+        docker compose -f $composeFile down 2>&1 | Out-Null
+    }
 }
 
 exit $(if ($hasErrors) { 1 } else { 0 })

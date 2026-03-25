@@ -1198,5 +1198,6 @@ if ($OutputFormat -eq "Json") {
     ConvertTo-JsonResult -Result $jsonResult
 }
 
+Write-Host "Log: $effectiveLogFile" -ForegroundColor DarkGray
 Write-Host ""
 exit $(if ($result.Passed) { 0 } else { 1 })

@@ -241,7 +241,7 @@ public class DapperSqliteEventStore(
   /// Extracts the MessageId property and its Guid value from the root JSON element.
   /// </summary>
   private static bool _tryExtractMessageId(JsonElement root, out JsonElement messageIdProp, out Guid messageIdGuid) {
-    messageIdGuid = default;
+    messageIdGuid = Guid.Empty;
     if (!root.TryGetProperty("MessageId", out messageIdProp)) {
       return false;
     }
