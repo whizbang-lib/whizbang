@@ -649,47 +649,58 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// These fields need to be extracted and passed to UpsertWithPhysicalFieldsAsync.
   /// </summary>
   private static PhysicalFieldInfoCompact[] _discoverPhysicalFields(ITypeSymbol modelType) {
-    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
-    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+    if (modelType is not INamedTypeSymbol namedModelType) {
+      return [];
+    }
 
     var physicalFields = new List<PhysicalFieldInfoCompact>();
 
-    // Use shared utility to include inherited properties from base model classes
-    if (modelType is not INamedTypeSymbol namedModelType) {
-      return [.. physicalFields];
-    }
-
     foreach (var property in namedModelType.GetAllProperties()) {
-
-      string? columnName = null;
-      foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass?.ToDisplayString();
-
-        if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE || attrClassName == VECTOR_FIELD_ATTRIBUTE) {
-          var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
-
-          // Extract ColumnName from named argument if provided
-          foreach (var namedArg in attribute.NamedArguments) {
-            if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
-              columnName = cn;
-              break;
-            }
-          }
-
-          // Default column name is snake_case of property name
-          columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
-
-          physicalFields.Add(new PhysicalFieldInfoCompact(
-              PropertyName: property.Name,
-              ColumnName: columnName,
-              IsVectorField: isVectorField
-          ));
-          break;  // Only one attribute per property
-        }
+      var fieldInfo = _tryExtractPhysicalField(property);
+      if (fieldInfo is not null) {
+        physicalFields.Add(fieldInfo);
       }
     }
 
     return [.. physicalFields];
+  }
+
+  /// <summary>
+  /// Tries to extract physical field info from a property's attributes.
+  /// Returns null if the property has no [PhysicalField] or [VectorField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfoCompact? _tryExtractPhysicalField(IPropertySymbol property) {
+    const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+    const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+
+    foreach (var attribute in property.GetAttributes()) {
+      var attrClassName = attribute.AttributeClass?.ToDisplayString();
+
+      if (attrClassName != PHYSICAL_FIELD_ATTRIBUTE && attrClassName != VECTOR_FIELD_ATTRIBUTE) {
+        continue;
+      }
+
+      var isVectorField = attrClassName == VECTOR_FIELD_ATTRIBUTE;
+
+      // Extract ColumnName from named argument if provided
+      string? columnName = null;
+      foreach (var namedArg in attribute.NamedArguments) {
+        if (namedArg.Key == "ColumnName" && namedArg.Value.Value is string cn) {
+          columnName = cn;
+          break;
+        }
+      }
+
+      columnName ??= NamingConventionUtilities.ToSnakeCase(property.Name);
+
+      return new PhysicalFieldInfoCompact(
+          PropertyName: property.Name,
+          ColumnName: columnName,
+          IsVectorField: isVectorField
+      );
+    }
+
+    return null;
   }
 
 }
