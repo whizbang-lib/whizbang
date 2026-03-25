@@ -173,7 +173,11 @@ public class PerspectiveDedupIntegrationTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
-    await coordinator.WaitForCyclesAsync(2, TimeSpan.FromSeconds(5));
+
+    // Wait for retention to be activated (InFlight → Retained) before advancing time.
+    // This prevents a race where fakeTime.Advance runs before ActivateRetention(),
+    // which would set AckedAt to the advanced time, preventing expiry.
+    await observer.WaitForRetentionActivatedAsync(TimeSpan.FromSeconds(5));
 
     // Advance time past retention (5 min + buffer)
     fakeTime.Advance(TimeSpan.FromMinutes(6));
@@ -212,7 +216,9 @@ public class PerspectiveDedupIntegrationTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
-    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(5));
+
+    // Wait for retention to be activated (InFlight → Retained) before advancing time
+    await observer.WaitForRetentionActivatedAsync(TimeSpan.FromSeconds(5));
 
     // Phase 2: Advance past retention → eviction
     fakeTime.Advance(TimeSpan.FromMinutes(6));
@@ -631,18 +637,28 @@ public class PerspectiveDedupIntegrationTests {
     private int _inFlightCount;
     private int _retentionActivatedCount;
     private int _evictionCount;
+    private readonly TaskCompletionSource _retentionSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public int DedupCount => _dedupCount;
     public int InFlightCount => _inFlightCount;
     public int RetentionActivatedCount => _retentionActivatedCount;
     public int EvictionCount => _evictionCount;
 
+    /// <summary>
+    /// Waits for at least one OnRetentionActivated callback.
+    /// Use to synchronize time advancement with retention activation.
+    /// </summary>
+    public Task WaitForRetentionActivatedAsync(TimeSpan timeout) =>
+      _retentionSignal.Task.WaitAsync(timeout);
+
     public void OnEventsDeduped(IReadOnlyList<Guid> dedupedEventIds, string perspectiveName, Guid streamId) =>
       Interlocked.Increment(ref _dedupCount);
     public void OnEventsMarkedInFlight(IReadOnlyList<Guid> eventIds) =>
       Interlocked.Increment(ref _inFlightCount);
-    public void OnRetentionActivated(int count) =>
+    public void OnRetentionActivated(int count) {
       Interlocked.Increment(ref _retentionActivatedCount);
+      _retentionSignal.TrySetResult();
+    }
     public void OnEvicted(int count) =>
       Interlocked.Increment(ref _evictionCount);
     public void OnEventsRemoved(IReadOnlyList<Guid> eventIds) { }

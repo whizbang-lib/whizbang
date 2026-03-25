@@ -200,7 +200,7 @@ public class BatchWorkCoordinatorStrategyTests {
     // Arrange
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions(batchSize: 100, debounceMs: 300);
+    var options = _createOptions(batchSize: 100, debounceMs: 50);
 
     var sut = new BatchWorkCoordinatorStrategy(
       fakeCoordinator,
@@ -218,8 +218,8 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      // Wait for debounce flush via signal (debounce is 300ms)
-      var flushedArgs = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+      // Wait for debounce flush via signal (debounce is 50ms, generous timeout for thread pool starvation)
+      var flushedArgs = await flushTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
       // Assert - Both messages batched together proves debounce reset worked
       // (If timer didn't reset, first message would flush alone)
