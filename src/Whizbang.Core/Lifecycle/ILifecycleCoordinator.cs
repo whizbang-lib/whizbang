@@ -104,10 +104,12 @@ public interface ILifecycleCoordinator {
   /// </summary>
   /// <param name="eventId">The event ID to check.</param>
   /// <returns>True if all expected perspectives have signaled complete, or no expectations exist.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:AreAllPerspectivesComplete_NoExpectationsRegistered_ReturnsTrueAsync</tests>
   bool AreAllPerspectivesComplete(Guid eventId);
 
   /// <summary>
   /// Removes tracking entries that have been inactive longer than the specified threshold.
+  /// <tests>tests/Whizbang.Core.Tests/Lifecycle/LifecycleCoordinatorTests.cs:CleanupStaleTracking_RemovesInactiveEntries_WhenOlderThanThresholdAsync</tests>
   /// Uses a debounce-style sliding window — each stage transition and perspective signal
   /// resets the inactivity timer, so active events are never cleaned up.
   /// </summary>
