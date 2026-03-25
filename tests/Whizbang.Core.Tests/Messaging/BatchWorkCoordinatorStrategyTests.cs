@@ -87,8 +87,8 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage()); // Should trigger flush
 
-      // Wait for the Task.Run flush to complete
-      await Task.Delay(300);
+      // Wait for the flush to complete (signal-based)
+      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
       // Assert - Batch size threshold should trigger flush
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -148,7 +148,8 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueInboxMessage(_createInboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage()); // Total = 3, should trigger flush
 
-      await Task.Delay(300);
+      // Wait for the flush to complete (signal-based)
+      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -179,8 +180,8 @@ public class BatchWorkCoordinatorStrategyTests {
       // Act - Queue 1 message (below batch size)
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      // Wait for debounce timer to fire
-      await Task.Delay(500);
+      // Wait for debounce timer to fire (signal-based)
+      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
       // Assert - Debounce timer should have flushed the partial batch
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -220,8 +221,8 @@ public class BatchWorkCoordinatorStrategyTests {
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0)
         .Because("Continuous queueing should keep resetting the debounce timer");
 
-      // Now wait for full debounce period after last message
-      await Task.Delay(500);
+      // Wait for debounce flush (signal-based instead of arbitrary delay)
+      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
       // Assert - Both messages should be flushed together after quiet period
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -255,8 +256,8 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage()); // Batch size reached
 
-      // Wait for Task.Run flush (much less than debounce)
-      await Task.Delay(300);
+      // Wait for flush (signal-based)
+      await fakeCoordinator.WaitForFlushAsync(TimeSpan.FromSeconds(5));
 
       // Assert - Should flush immediately, not wait for debounce
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
@@ -825,7 +826,8 @@ public class BatchWorkCoordinatorStrategyTests {
     public void Complete() { }
   }
 
-  private sealed class BatchFakeWorkCoordinator : IWorkCoordinator {
+  private sealed class BatchFakeWorkCoordinator : IWorkCoordinator, IDisposable {
+    private readonly SemaphoreSlim _flushSignal = new(0, int.MaxValue);
     public int ProcessWorkBatchCallCount { get; private set; }
     public int TotalOutboxMessagesReceived { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
@@ -835,6 +837,17 @@ public class BatchWorkCoordinatorStrategyTests {
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
     public List<OutboxWork> WorkToReturn { get; set; } = [];
+
+    public void Dispose() => _flushSignal.Dispose();
+
+    /// <summary>
+    /// Waits for at least one call to ProcessWorkBatchAsync.
+    /// </summary>
+    public async Task WaitForFlushAsync(TimeSpan timeout) {
+      if (!await _flushSignal.WaitAsync(timeout)) {
+        throw new TimeoutException("ProcessWorkBatchAsync was not called within timeout");
+      }
+    }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -847,6 +860,7 @@ public class BatchWorkCoordinatorStrategyTests {
       LastInboxCompletions = request.InboxCompletions;
       LastOutboxFailures = request.OutboxFailures;
       LastInboxFailures = request.InboxFailures;
+      _flushSignal.Release();
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = WorkToReturn,
