@@ -373,7 +373,7 @@ public class MessageTagProcessorTests {
   #region ProcessTagsAsync Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHookResolver_ReturnsEarlyAsync() {
     // Arrange
     _cleanupRegistry();
@@ -395,7 +395,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoTags_DoesNothingAsync() {
     // Arrange
     _cleanupRegistry();
@@ -416,7 +416,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMatchingTag_InvokesHookAsync() {
     // Arrange
     _cleanupRegistry();
@@ -439,7 +439,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithMultipleTags_ProcessesAllAsync() {
     // Arrange
     _cleanupRegistry();
@@ -475,7 +475,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_BuildsPayloadFromMessageAsync() {
     // Arrange
     _cleanupRegistry();
@@ -499,7 +499,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_PassesScopeToContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -532,7 +532,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_InvokesHooksInPriorityOrderAsync() {
     // Arrange
     _cleanupRegistry();
@@ -712,7 +712,7 @@ public class MessageTagProcessorTests {
   #region ScopeFactory Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_CreatesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -739,7 +739,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_DisposesScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -763,7 +763,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithScopeFactory_MultipleHooksShareSameScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -794,7 +794,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithNoHooksAndScopeFactory_DoesNotCreateScope_Async() {
     // Arrange
     _cleanupRegistry();
@@ -872,7 +872,7 @@ public class MessageTagProcessorTests {
   /// Custom attributes require generated dispatchers for AOT-compatible hook invocation.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_CallsDispatcherRegistryAsync() {
     // Arrange
     _cleanupRegistry();
@@ -908,7 +908,7 @@ public class MessageTagProcessorTests {
   /// Built-in types should NOT call the dispatcher registry.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithBuiltInAttribute_UsesDirectDispatchAsync() {
     // Arrange
     _cleanupRegistry();
@@ -943,7 +943,7 @@ public class MessageTagProcessorTests {
   /// Test that processor falls back to base context when custom attribute has no dispatcher.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithUnknownAttribute_FallsBackToBaseContextAsync() {
     // Arrange
     _cleanupRegistry();
@@ -972,7 +972,7 @@ public class MessageTagProcessorTests {
   /// Test that custom dispatcher correctly handles TryDispatchAsync.
   /// </summary>
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_WithCustomAttribute_InvokesHookViaDispatcherAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1151,7 +1151,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task ProcessTagsAsync_PassesStageToHookContext_AllStagesAsync(LifecycleStage stage) {
     // Arrange
@@ -1174,7 +1174,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task ProcessTagsAsync_TelemetryTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
     // Arrange
@@ -1197,7 +1197,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   [MethodDataSource(nameof(AllLifecycleStages))]
   public async Task ProcessTagsAsync_MetricTag_PassesStage_AllStagesAsync(LifecycleStage stage) {
     // Arrange
@@ -1224,7 +1224,7 @@ public class MessageTagProcessorTests {
   #region Stage Context Tests — Scenario Tests
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_MultipleStagesInSequence_HookReceivesCorrectStageEachTimeAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1259,7 +1259,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_HookCanFilterByStage_OnlyActsOnPostPerspectiveAsync() {
     // Arrange - simulates JDNext's pattern of filtering for PostPerspective only
     _cleanupRegistry();
@@ -1284,7 +1284,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_CustomAttribute_PassesStageViaDispatcherAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1308,7 +1308,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_UniversalHook_ReceivesStageAsync() {
     // Arrange
     _cleanupRegistry();
@@ -1330,7 +1330,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_SameEventMultipleStages_ContextIdenticalExceptStageAsync() {
     // Arrange — lock-in: when the same event fires across stages, only Stage changes
     _cleanupRegistry();
@@ -1404,7 +1404,7 @@ public class MessageTagProcessorTests {
   }
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_AllStagesFired_ReceivesAllUniqueStagesAsync() {
     // Arrange — lock-in: all stages (20 lifecycle + AfterReceptorCompletion) produce
     // exactly one invocation each with unique stages
@@ -1541,7 +1541,7 @@ public class MessageTagProcessorTests {
   #endregion
 
   [Test]
-  [NotInParallel]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_FireAtFiltering_OnlyInvokesHookAtRegisteredStageAsync() {
     // Arrange — two hooks for the same attribute, registered at different stages
     // Bug: MessageTagProcessor._processTagRegistrationAsync (line 147) calls
