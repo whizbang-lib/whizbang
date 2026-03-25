@@ -1065,65 +1065,50 @@ public abstract partial class Dispatcher(
         resultTypeName, extractedTypeName);
     }
 
-    // Fast path: Skip if result is null
     if (result == null) {
       CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Result is null, skipping cascade");
       return;
     }
 
-    // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
         ? GetReceptorDefaultRouting(originalMessageType)
         : null;
-    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-      CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
-    }
 
-    // Use MessageExtractor to find all IMessage instances with routing info
     var extractedCount = 0;
     var skippedCount = 0;
     foreach (var (msg, mode) in Internal.MessageExtractor.ExtractMessagesWithRouting(result, receptorDefault)) {
-      // Skip the extracted response - it goes to RPC caller, not cascade
-      // Use !Equals(default) instead of != null to handle value types correctly
       if (!EqualityComparer<TResult>.Default.Equals(extractedResponse, default) && ReferenceEquals(msg, extractedResponse)) {
         skippedCount++;
-        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Skipping extracted response (ReferenceEquals match)");
         continue;
       }
 
       extractedCount++;
-      var msgType = msg.GetType();
-      if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-        var msgTypeName = msgType.Name;
-        CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascading message {Count}: Type={MessageType}, Mode={Mode}",
-          extractedCount, msgTypeName, mode);
-      }
-
-      // Local dispatch: Invoke in-process receptors
-      if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
-        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-          var msgTypeName = msgType.Name;
-          CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Dispatching locally for {MessageType}", msgTypeName);
-        }
-        var publisher = GetUntypedReceptorPublisher(msgType);
-        if (publisher != null) {
-          await publisher(msg, null, default);
-        }
-      }
-
-      // Outbox dispatch: Write to outbox for cross-service delivery
-      if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
-        if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
-          var msgTypeName = msgType.Name;
-          CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
-        }
-        await CascadeToOutboxAsync(msg, msgType);
-      }
+      await _cascadeSingleMessageAsync(msg, mode);
     }
 
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[RPC] CascadeExcludingResponse: Cascaded {CascadeCount} messages, skipped {SkipCount} (RPC response)",
         extractedCount, skippedCount);
+    }
+#pragma warning restore CA1848
+  }
+
+  /// <summary>
+  /// Cascades a single message via local dispatch and/or outbox based on the dispatch mode.
+  /// </summary>
+  private async Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchMode mode) {
+#pragma warning disable CA1848
+    var msgType = msg.GetType();
+
+    if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+      var publisher = GetUntypedReceptorPublisher(msgType);
+      if (publisher != null) {
+        await publisher(msg, null, default);
+      }
+    }
+
+    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+      await CascadeToOutboxAsync(msg, msgType);
     }
 #pragma warning restore CA1848
   }
@@ -3293,82 +3278,22 @@ public abstract partial class Dispatcher(
       string? destination = eventStoreOnly ? null : _resolveEventTopic(eventType);
 
       // Cascade StreamId propagation: inherit from source command when event's StreamId is empty
-      if (sourceEnvelope is not null && _streamIdExtractor is not null) {
-        var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData, eventType);
-        if (!eventStreamId.HasValue || eventStreamId.Value == Guid.Empty) {
-          var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
-          if (sourceStreamId.HasValue && sourceStreamId.Value != Guid.Empty) {
-            if (eventData is IHasStreamId hasStreamId) {
-              hasStreamId.StreamId = sourceStreamId.Value;
-            } else {
-              _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
-            }
-            Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
-          }
-        }
-      }
+      _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
 
-      // Serialize the message directly using the runtime type via JsonContextRegistry
-      // This avoids creating MessageEnvelope<IEvent> which can't be serialized
-      var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
-      var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
-      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
-        ?? throw new InvalidOperationException(
-          $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
+      // Serialize and create envelope
+      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId);
 
-      var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
-
-      // Create the JsonElement envelope directly
-      var jsonEnvelope = new MessageEnvelope<JsonElement> {
-        MessageId = messageId,
-        Payload = payloadJson,
-        Hops = []
-      };
-
-      // Extract aggregate ID and add to hop metadata
+      // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
+      _addOutboxHop(jsonEnvelope, destination, hopMetadata, sourceEnvelope);
 
-      // Add hop indicating message is being stored to outbox
-      var propagatedScope2 = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
-      var sourceScope2 = sourceEnvelope?.GetCurrentScope() is { } sc
-        ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
-        : null;
-      var hop = new MessageHop {
-        Type = HopType.Current,
-        ServiceInstance = _instanceProvider.ToInfo(),
-        Topic = destination ?? "(event-store)",
-        Timestamp = DateTimeOffset.UtcNow,
-        Metadata = hopMetadata,
-        Scope = propagatedScope2 ?? sourceScope2,
-        TraceParent = System.Diagnostics.Activity.Current?.Id
-      };
-      jsonEnvelope.AddHop(hop);
-
-      // Extract stream ID
+      // Build and queue the outbox message
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
         ?? _extractStreamIdFromMetadata(hopMetadata)
         ?? messageId.Value;
 
-      // Create OutboxMessage with all required fields
-      var newOutboxMessage = new OutboxMessage {
-        MessageId = jsonEnvelope.MessageId.Value,
-        Destination = destination,
-        Envelope = jsonEnvelope,
-        Metadata = new EnvelopeMetadata {
-          MessageId = jsonEnvelope.MessageId,
-          Hops = jsonEnvelope.Hops?.ToList() ?? []
-        },
-        EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
-        StreamId = streamId,
-        IsEvent = eventData is IEvent,
-        Scope = _extractScope(jsonEnvelope),
-        MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
-      };
-
-      // Queue event for batched processing
+      var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
       strategy.QueueOutboxMessage(newOutboxMessage);
-
-      // Flush strategy to execute the batch
       await strategy.FlushAsync(WorkBatchFlags.None, mode: FlushMode.BestEffort);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
@@ -3377,6 +3302,101 @@ public abstract partial class Dispatcher(
         scope.Dispose();
       }
     }
+  }
+
+  /// <summary>
+  /// Propagates StreamId from source envelope to event when the event has no StreamId set.
+  /// </summary>
+  private void _propagateStreamIdFromSource(IMessage eventData, Type eventType, IMessageEnvelope? sourceEnvelope) {
+    if (sourceEnvelope is null || _streamIdExtractor is null) {
+      return;
+    }
+
+    var eventStreamId = _streamIdExtractor.ExtractStreamId(eventData, eventType);
+    if (eventStreamId.HasValue && eventStreamId.Value != Guid.Empty) {
+      return;
+    }
+
+    var sourceStreamId = _streamIdExtractor.ExtractStreamId(sourceEnvelope.Payload!, sourceEnvelope.Payload!.GetType());
+    if (!sourceStreamId.HasValue || sourceStreamId.Value == Guid.Empty) {
+      return;
+    }
+
+    if (eventData is IHasStreamId hasStreamId) {
+      hasStreamId.StreamId = sourceStreamId.Value;
+    } else {
+      _streamIdExtractor.SetStreamId(eventData, sourceStreamId.Value);
+    }
+    Log.StreamIdPropagatedFromSource(CascadeLogger, sourceStreamId.Value, sourceEnvelope.Payload!.GetType().Name, eventType.Name);
+  }
+
+  /// <summary>
+  /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
+  /// </summary>
+  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId) {
+    var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
+    var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
+      ?? throw new InvalidOperationException(
+        $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
+
+    var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
+
+    return new MessageEnvelope<JsonElement> {
+      MessageId = messageId,
+      Payload = payloadJson,
+      Hops = []
+    };
+  }
+
+  /// <summary>
+  /// Adds a hop to the envelope indicating the message is being stored to the outbox.
+  /// </summary>
+  private void _addOutboxHop(
+    MessageEnvelope<JsonElement> jsonEnvelope,
+    string? destination,
+    Dictionary<string, JsonElement>? hopMetadata,
+    IMessageEnvelope? sourceEnvelope) {
+    var propagatedScope = ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+    var sourceScope = sourceEnvelope?.GetCurrentScope() is { } sc
+      ? ScopeDelta.FromSecurityContext(new SecurityContext { TenantId = sc.Scope?.TenantId, UserId = sc.Scope?.UserId })
+      : null;
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _instanceProvider.ToInfo(),
+      Topic = destination ?? "(event-store)",
+      Timestamp = DateTimeOffset.UtcNow,
+      Metadata = hopMetadata,
+      Scope = propagatedScope ?? sourceScope,
+      TraceParent = System.Diagnostics.Activity.Current?.Id
+    };
+    jsonEnvelope.AddHop(hop);
+  }
+
+  /// <summary>
+  /// Builds an OutboxMessage from the serialized envelope and metadata.
+  /// </summary>
+  private static OutboxMessage _buildOutboxMessage(
+    MessageEnvelope<JsonElement> jsonEnvelope,
+    string? destination,
+    Type eventType,
+    IMessage eventData,
+    Guid streamId) {
+    return new OutboxMessage {
+      MessageId = jsonEnvelope.MessageId.Value,
+      Destination = destination,
+      Envelope = jsonEnvelope,
+      Metadata = new EnvelopeMetadata {
+        MessageId = jsonEnvelope.MessageId,
+        Hops = jsonEnvelope.Hops?.ToList() ?? []
+      },
+      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+      StreamId = streamId,
+      IsEvent = eventData is IEvent,
+      Scope = _extractScope(jsonEnvelope),
+      MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+    };
   }
 
   /// <summary>

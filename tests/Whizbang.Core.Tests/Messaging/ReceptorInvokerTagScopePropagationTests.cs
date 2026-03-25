@@ -34,7 +34,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// - ScopeContextAccessor.CurrentContext (static AsyncLocal, flows through CreateAsyncScope)
 /// </para>
 /// </remarks>
-[NotInParallel]
+[NotInParallel("TagRegistry")]
 public class ReceptorInvokerTagScopePropagationTests {
 
   [Before(Test)]

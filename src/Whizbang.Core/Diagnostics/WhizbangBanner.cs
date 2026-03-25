@@ -28,7 +28,7 @@ public static partial class WhizbangBanner {
         "   ██W   █████    ▄▄m ▓█▄▄▌▌▄   ▄▄  ▄▄▄▄▄▄╕ ██▌▌▌▌▄_   ,▄▌▌▄▄▄⌐ ╔▄▄▄▌▌▄    ²▌▌▌▄▄▄",
         "   ▀██  ▌██ ╟██  ▐▓▓  ▓█▓\"'▀██  ██  \"\"╠▓▓▀  ███╙\"╨██╕▄██▀╙╙▀██M ▓██▀²▀██ ┌██▀\"╙▓██",
         "    ██▄▄██   ██▌_▓▓Ñ  ▓█H   ██  ██  _Φ▓▌    ██▌   ▄▓██▌▓▄   ██M ╫▓▌   ██ ▐██   ╓██",
-        "    ╙████     ▀██▓▀   ▓█M   ██  ██ ▐▓▓▓▓▓▓▌ ███████▌\" '▓██████M ▓█▌   ██  ╨███████",
+        "    ╙████     ▀██▓▀   ▓█M   ██  ██ ▐▓▓▓▓▓▓▌ ███████▌\" '▓███▀▀█M ▓█▌   ██  ╨███████",
         "                                                                          ▓█▌▄▄▓█▌",
         "",
         "                                W! - https://whizba.ng/",
@@ -169,7 +169,7 @@ public static partial class WhizbangBanner {
     Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
     Seg("███████▌", 140, 142, 144); Seg("\"", 165, 167, 169);
     Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
-    Seg("'", 170, 172, 174); Seg("▓██████", 143, 145, 147); Seg("M", 160, 162, 164);
+    Seg("'", 170, 172, 174); Seg("▓███▀▀█", 143, 145, 147); Seg("M", 160, 162, 164);
     Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
     Seg("▓█▌", 210, 212, 214);
     Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B);
@@ -236,7 +236,7 @@ public static partial class WhizbangBanner {
     Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 19, 161, 206); Seg("W", 94, 128, 148); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("█████", 66, 52, 143); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄", 173, 70, 133); Seg("m ", 161, 92, 125); Seg("▓█", 210, 42, 88); Seg("▄▄▌▌▄", 175, 90, 70); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄", 186, 131, 66); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▄▄▄▄▄", 181, 146, 71); Seg("╕", 158, 138, 95); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌▌▌▌▄", 140, 142, 144); Seg("_", 170, 170, 170); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg(",▄▌▌▄▄▄⌐", 155, 157, 159); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╔▄▄▄▌▌▄", 155, 157, 159); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("²▌▌▌▄▄▄", 150, 152, 154); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
     Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▀", 53, 142, 178); Seg("██", 24, 131, 191); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▌", 80, 89, 141); Seg("██", 45, 45, 143); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╟", 115, 84, 134); Seg("██", 121, 36, 141); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐▓▓", 156, 90, 131); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▓", 208, 43, 62); Seg("\"", 160, 101, 94); Seg("'", 157, 110, 97); Seg("▀██", 195, 100, 55); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 130, 11); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("\"\"", 172, 143, 80); Seg("╠▓▓", 187, 165, 64); Seg("▀", 213, 157, 36); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("███", 140, 142, 144); Seg("╙", 160, 162, 164); Seg("\"", 165, 167, 169); Seg("╨██", 135, 137, 139); Seg("╕", 165, 167, 169); Seg("▄██▀", 138, 140, 142); Seg("╙╙", 165, 167, 169); Seg("▀██", 130, 132, 134); Seg("M", 160, 162, 164); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓██▀", 145, 147, 149); Seg("²", 165, 167, 169); Seg("▀██", 130, 132, 134); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("┌██▀", 170, 172, 174); Seg("\"", 165, 167, 169); Seg("╙▓██", 145, 147, 149); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
     Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 27, 102, 180); Seg("▄▄", 97, 113, 140); Seg("██", 42, 54, 147); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌", 132, 56, 137); Seg("_", 132, 122, 128); Seg("▓▓", 205, 26, 137); Seg("Ñ", 181, 71, 123); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█", 206, 44, 55); Seg("H", 165, 98, 89); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 103, 12); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 143, 10); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("_", 137, 131, 117); Seg("Φ▓▌", 199, 166, 52); Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██▌", 140, 142, 144); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▄▓██▌▓▄", 143, 145, 147); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██M", 138, 140, 142); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╫▓▌", 155, 157, 159); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 130, 132, 134); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐██", 160, 162, 164); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╓██", 170, 172, 174); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
-    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╙", 99, 122, 142); Seg("████", 35, 81, 157); Seg("     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▀██▓▀", 152, 49, 137); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█", 204, 47, 51); Seg("M", 167, 98, 87); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 108, 12); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 148, 10); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐▓▓▓▓▓▓▌", 200, 180, 80); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("███████▌", 140, 142, 144); Seg("\"", 165, 167, 169); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("'", 170, 172, 174); Seg("▓██████", 143, 145, 147); Seg("M", 160, 162, 164); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▌", 210, 212, 214); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 130, 132, 134); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╨███████", 138, 140, 142); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
+    Seg("    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╙", 99, 122, 142); Seg("████", 35, 81, 157); Seg("     ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▀██▓▀", 152, 49, 137); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█", 204, 47, 51); Seg("M", 167, 98, 87); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 108, 12); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 239, 148, 10); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▐▓▓▓▓▓▓▌", 200, 180, 80); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("███████▌", 140, 142, 144); Seg("\"", 165, 167, 169); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("'", 170, 172, 174); Seg("▓███▀▀█", 143, 145, 147); Seg("M", 160, 162, 164); Seg(" ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▌", 210, 212, 214); Seg("   ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("██", 130, 132, 134); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("╨███████", 138, 140, 142); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
     Seg("                                                                          ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("▓█▌▄▄▓█▌", 150, 152, 154); Seg("  ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
     Seg("                                                                                    ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
     Seg("                                ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Seg("W! - https://whizba.ng/", 200, 210, 220); Seg("                             ", BACKGROUND_R, BACKGROUND_G, BACKGROUND_B); Eol();
@@ -247,6 +247,7 @@ public static partial class WhizbangBanner {
     // Start background twinkle thread
     if (bgPositions.Count > 0) {
       _twinkleCts?.Cancel();
+      _twinkleCts?.Dispose();
       _twinkleCts = new CancellationTokenSource();
       var ct = _twinkleCts.Token;
       var positions = bgPositions.ToArray();
@@ -342,6 +343,7 @@ public static partial class WhizbangBanner {
   /// </summary>
   public static void StopTwinkle() {
     _twinkleCts?.Cancel();
+    _twinkleCts?.Dispose();
     _twinkleCts = null;
   }
 
