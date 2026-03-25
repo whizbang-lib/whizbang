@@ -97,7 +97,9 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
   /// <inheritdoc/>
   public bool AreAllPerspectivesComplete(Guid eventId) {
     if (!_perspectiveStates.TryGetValue(eventId, out var state)) {
-      return false; // No expectations registered = fail-safe (don't fire PostLifecycle)
+      return true; // No expectations registered = no WhenAll gate needed.
+      // PostAllPerspectives/PostLifecycle are terminal stages that must always fire.
+      // The WhenAll gate controls timing (wait for all to complete), not whether stages fire.
     }
     return state.IsComplete;
   }
