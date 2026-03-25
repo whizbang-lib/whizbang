@@ -48,6 +48,13 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
 
   private readonly Lock _lock = new();
   private bool _disposed;
+
+  /// <summary>
+  /// Fires after an automatic or manual flush completes (batch-size threshold, debounce timer, or manual).
+  /// Subscribe to react to flush events without polling — useful for monitoring and testing.
+  /// </summary>
+  /// <docs>data/work-coordinator-strategies#flush-events</docs>
+  public event Action<WorkBatchFlushedArgs>? OnBatchFlushed;
   private bool _flushing;
 
   /// <summary>
@@ -225,10 +232,10 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerOrBatchAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesRemainingMessagesAsync</tests>
   public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
-    return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
+    return _flushCoreAsync(flags, mode, FlushTrigger.Manual, skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchFlags flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchFlags flags, FlushMode mode, FlushTrigger trigger, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "batch"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
@@ -336,6 +343,8 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
         LogBatchFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
       }
 
+      OnBatchFlushed?.Invoke(new WorkBatchFlushedArgs(workBatch, trigger));
+
       return workBatch;
     } finally {
       lock (_lock) {
@@ -384,7 +393,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, FlushTrigger.BatchSize, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringBatchFlush(_logger, ex);
@@ -408,7 +417,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     // Skip lifecycle — background thread, no ambient context
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, FlushTrigger.Debounce, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringDebounceFlush(_logger, ex);
@@ -453,7 +462,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
     }
 
     try {
-      await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, FlushTrigger.Manual, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);
@@ -574,3 +583,22 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   )]
   static partial void LogStrategyDisposed(ILogger logger);
 }
+
+/// <summary>
+/// Identifies what triggered a batch flush.
+/// </summary>
+/// <docs>data/work-coordinator-strategies#flush-events</docs>
+public enum FlushTrigger {
+  /// <summary>Batch size threshold was reached.</summary>
+  BatchSize,
+  /// <summary>Debounce timer fired after quiet period.</summary>
+  Debounce,
+  /// <summary>Manual flush (FlushAsync or DisposeAsync).</summary>
+  Manual
+}
+
+/// <summary>
+/// Event args for <see cref="BatchWorkCoordinatorStrategy.OnBatchFlushed"/>.
+/// </summary>
+/// <docs>data/work-coordinator-strategies#flush-events</docs>
+public sealed record WorkBatchFlushedArgs(WorkBatch Batch, FlushTrigger Trigger);
