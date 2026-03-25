@@ -41,6 +41,12 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   private object? _continuationState;
 
   /// <summary>
+  /// Fires when a consumer registers a continuation (begins awaiting this source).
+  /// Useful for monitoring pool utilization and signal-based test synchronization.
+  /// </summary>
+  public event Action? OnContinuationRegistered;
+
+  /// <summary>
   /// Gets the current version token for this source.
   /// Token increments on Reset() to invalidate old ValueTask instances.
   /// </summary>
@@ -138,6 +144,8 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
 
     _continuation = continuation ?? throw new ArgumentNullException(nameof(continuation));
     _continuationState = state;
+
+    OnContinuationRegistered?.Invoke();
 
     // If already completed, invoke immediately
     if (_status != ValueTaskSourceStatus.Pending) {
