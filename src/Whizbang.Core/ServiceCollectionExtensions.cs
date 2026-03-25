@@ -230,6 +230,7 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<TransportMetrics>();
     services.TryAddSingleton<PerspectiveMetrics>();
     services.TryAddSingleton<LifecycleMetrics>();
+    services.TryAddSingleton<LifecycleCoordinatorMetrics>();
   }
 
   /// <summary>
