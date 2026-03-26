@@ -326,7 +326,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     var results = new List<BulkPublishItemResult>(items.Count);
     var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
 
-    // Use CreateMessageBatchAsync for size-constrained batching
     var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
     var batchItemIds = new List<Guid>();
 
@@ -336,21 +335,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         var message = _createServiceBusMessage(item, destination);
 
         if (!currentBatch.TryAddMessage(message)) {
-          // Current batch is full — send it and start a new one
-          if (currentBatch.Count > 0) {
-            await sender.SendMessagesAsync(currentBatch, cancellationToken);
-            foreach (var id in batchItemIds) {
-              results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
-            }
-          }
-
-          // Start new batch
+          // Current batch is full -- send and start new
+          await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
           currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
           batchItemIds = [];
 
-          // Try adding the message that didn't fit
           if (!currentBatch.TryAddMessage(message)) {
-            // Single message exceeds batch size limit
             results.Add(new BulkPublishItemResult {
               MessageId = item.MessageId,
               Success = false,
@@ -371,24 +361,36 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
 
     // Send remaining batch
-    if (currentBatch.Count > 0) {
-      try {
-        await sender.SendMessagesAsync(currentBatch, cancellationToken);
-        foreach (var id in batchItemIds) {
-          results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
-        }
-      } catch (Exception ex) {
-        foreach (var id in batchItemIds) {
-          results.Add(new BulkPublishItemResult {
-            MessageId = id,
-            Success = false,
-            Error = $"{ex.GetType().Name}: {ex.Message}"
-          });
-        }
-      }
-    }
+    await _sendAndRecordBatchAsync(sender, currentBatch, batchItemIds, results, cancellationToken);
 
     return results;
+  }
+
+  private static async Task _sendAndRecordBatchAsync(
+    ServiceBusSender sender,
+    ServiceBusMessageBatch batch,
+    List<Guid> batchItemIds,
+    List<BulkPublishItemResult> results,
+    CancellationToken cancellationToken) {
+
+    if (batch.Count == 0) {
+      return;
+    }
+
+    try {
+      await sender.SendMessagesAsync(batch, cancellationToken);
+      foreach (var id in batchItemIds) {
+        results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
+      }
+    } catch (Exception ex) {
+      foreach (var id in batchItemIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"{ex.GetType().Name}: {ex.Message}"
+        });
+      }
+    }
   }
 
   private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {

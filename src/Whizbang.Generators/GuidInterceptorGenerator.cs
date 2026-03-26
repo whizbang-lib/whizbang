@@ -73,7 +73,6 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     context.RegisterSourceOutput(
         compilationAndCalls,
         static (ctx, data) => {
-          var compilation = data.Left.Left.Left;
           var intercepted = data.Left.Left.Right;
           var suppressed = data.Left.Right;
           var enabled = data.Right;
@@ -265,12 +264,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
         .Where(t => t.SpanStart < position &&
                    t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
 
-    foreach (var trivia in triviaList) {
-      if (_isActiveDisablePragma(trivia, root, position)) {
-        return true;
-      }
-    }
-    return false;
+    return triviaList.Any(trivia => _isActiveDisablePragma(trivia, root, position));
   }
 
   /// <summary>

@@ -85,12 +85,8 @@ public static class StreamIdExtractorRegistry {
   /// Returns true if an extractor successfully set the value.
   /// </summary>
   public static bool SetStreamId(object message, Guid streamId) {
-    foreach (var extractor in AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()) {
-      if (extractor.SetStreamId(message, streamId)) {
-        return true;
-      }
-    }
-    return false;
+    return AssemblyRegistry<IStreamIdExtractor>.GetOrderedContributions()
+        .Any(extractor => extractor.SetStreamId(message, streamId));
   }
 
   private sealed class CompositeStreamIdExtractor : IStreamIdExtractor {

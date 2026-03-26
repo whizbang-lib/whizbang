@@ -121,15 +121,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       List<PerspectiveInfo> allPerspectives,
       IDbProviderLimits limits) {
 
-    var validPerspectives = new List<PerspectiveInfo>();
-
-    foreach (var perspective in allPerspectives) {
-      if (_validateSinglePerspective(context, perspective, limits)) {
-        validPerspectives.Add(perspective);
-      }
-    }
-
-    return [.. validPerspectives];
+    return [.. allPerspectives.Where(perspective => _validateSinglePerspective(context, perspective, limits))];
   }
 
   /// <summary>

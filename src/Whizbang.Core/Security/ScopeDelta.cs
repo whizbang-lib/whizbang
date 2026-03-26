@@ -545,11 +545,7 @@ public sealed class ScopeDelta {
       }
     }
 
-    foreach (var key in previous.Keys) {
-      if (!current.ContainsKey(key)) {
-        removed.Add(key);
-      }
-    }
+    removed.AddRange(previous.Keys.Where(key => !current.ContainsKey(key)));
 
     if (added.Count == 0 && removed.Count == 0) {
       return default;
