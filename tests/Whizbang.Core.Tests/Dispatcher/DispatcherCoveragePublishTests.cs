@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [Category("Coverage")]
 public class DispatcherCoveragePublishTests {
 
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record TestEvent([property: StreamId] Guid OrderId) : IEvent;
   public record TestCommand(Guid OrderId);
   public record TestResult(Guid OrderId, bool Success);
@@ -45,7 +45,7 @@ public class DispatcherCoveragePublishTests {
     protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) => null;
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType) => null;
-    protected override DispatchMode? GetReceptorDefaultRouting(Type messageType) => null;
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => null;
   }
 
   private static ServiceProvider _buildProvider() {

@@ -1300,7 +1300,7 @@ public class SecondValidator : ISyncReceptor<ValidateOrder, ValidationResult> {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithDefaultRoutingAttribute_GeneratesRoutingLookupAsync() {
-    // Arrange - Receptor with [DefaultRouting(DispatchMode.Local)]
+    // Arrange - Receptor with [DefaultRouting(DispatchModes.Local)]
     const string source = @"
 using System.Threading;
 using System.Threading.Tasks;
@@ -1317,7 +1317,7 @@ public record CacheCreated : IEvent {
   public string Key { get; init; } = string.Empty;
 }
 
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
   public ValueTask<CacheCreated> HandleAsync(CreateCache message, CancellationToken ct = default) {
     return ValueTask.FromResult(new CacheCreated { Key = message.Key });
@@ -1335,7 +1335,7 @@ public class CacheReceptor : IReceptor<CreateCache, CacheCreated> {
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("GetReceptorDefaultRouting");
     await Assert.That(dispatcher).Contains("CreateCache");
-    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+    await Assert.That(dispatcher).Contains("DispatchModes.Local");
   }
 
   /// <summary>
@@ -1406,21 +1406,21 @@ public record BothEvent : IEvent { }
 public record DefaultCommand : ICommand { }
 public record DefaultEvent : IEvent { }
 
-[DefaultRouting(DispatchMode.Local)]
+[DefaultRouting(DispatchModes.Local)]
 public class LocalReceptor : IReceptor<CacheCommand, CacheEvent> {
   public ValueTask<CacheEvent> HandleAsync(CacheCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new CacheEvent());
   }
 }
 
-[DefaultRouting(DispatchMode.Outbox)]
+[DefaultRouting(DispatchModes.Outbox)]
 public class OutboxReceptor : IReceptor<OutboxCommand, OutboxEvent> {
   public ValueTask<OutboxEvent> HandleAsync(OutboxCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new OutboxEvent());
   }
 }
 
-[DefaultRouting(DispatchMode.Both)]
+[DefaultRouting(DispatchModes.Both)]
 public class BothReceptor : IReceptor<BothCommand, BothEvent> {
   public ValueTask<BothEvent> HandleAsync(BothCommand message, CancellationToken ct = default) {
     return ValueTask.FromResult(new BothEvent());
@@ -1444,11 +1444,11 @@ public class DefaultReceptor : IReceptor<DefaultCommand, DefaultEvent> {
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("GetReceptorDefaultRouting");
     await Assert.That(dispatcher).Contains("CacheCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Local");
+    await Assert.That(dispatcher).Contains("DispatchModes.Local");
     await Assert.That(dispatcher).Contains("OutboxCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Outbox");
+    await Assert.That(dispatcher).Contains("DispatchModes.Outbox");
     await Assert.That(dispatcher).Contains("BothCommand");
-    await Assert.That(dispatcher).Contains("DispatchMode.Both");
+    await Assert.That(dispatcher).Contains("DispatchModes.Both");
   }
 
   #endregion
@@ -1867,7 +1867,7 @@ public record FailureEvent : IEvent;
 public class ProcessReceptor : IReceptor<ProcessCommand, (Routed<SuccessEvent>, Routed<FailureEvent>)> {
   public ValueTask<(Routed<SuccessEvent>, Routed<FailureEvent>)> HandleAsync(ProcessCommand message, CancellationToken ct = default) {
     // Success path - returns success event, empty failure
-    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchMode.None)));
+    return ValueTask.FromResult((Route.Outbox(new SuccessEvent()), new Routed<FailureEvent>(default!, DispatchModes.None)));
   }
 }
 ";

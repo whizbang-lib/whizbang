@@ -325,7 +325,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static void _reportCollectionTypeDiagnostics(
       SourceProductionContext context,
       ImmutableArray<ListTypeInfo> listTypes,
-      ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes,
       ImmutableArray<ArrayTypeInfo> arrayTypes,
       ImmutableArray<DictionaryTypeInfo> dictionaryTypes,
       ImmutableArray<JsonEnumInfo> enumTypes) {
@@ -482,40 +482,56 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     context.AddSource("MessageJsonContext.g.cs", template);
 
-    // Always generate WhizbangJsonContext facade
-    {
-      var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
-      facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
-      facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
-      facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+    _generateWhizbangJsonContextFacade(context, assembly, assemblyName, namespaceName, converters);
+    _generateMessageJsonContextInitializer(context, assembly, namespaceName, messages);
+  }
 
-      // Reuse converters already discovered at line 195 for facade generation
-      // Generate converter registration code
-      var converterRegistrations = new System.Text.StringBuilder();
-      if (!converters.IsEmpty) {
-        converterRegistrations.AppendLine();
-        converterRegistrations.AppendLine("    // Register WhizbangId converters");
-        foreach (var converter in converters) {
-          converterRegistrations.AppendLine($"    options.Converters.Add(new global::{converter.FullyQualifiedTypeName}());");
-        }
+  /// <summary>
+  /// Generates WhizbangJsonContext.g.cs facade with converter registrations.
+  /// </summary>
+  private static void _generateWhizbangJsonContextFacade(
+      SourceProductionContext context,
+      System.Reflection.Assembly assembly,
+      string assemblyName,
+      string namespaceName,
+      ImmutableArray<WhizbangIdTypeInfo> converters) {
+    var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
+    facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
+    facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
+    facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+
+    // Reuse converters already discovered for facade generation
+    // Generate converter registration code
+    var converterRegistrations = new System.Text.StringBuilder();
+    if (!converters.IsEmpty) {
+      converterRegistrations.AppendLine();
+      converterRegistrations.AppendLine("    // Register WhizbangId converters");
+      foreach (var converter in converters) {
+        converterRegistrations.AppendLine($"    options.Converters.Add(new global::{converter.FullyQualifiedTypeName}());");
       }
-      facadeTemplate = facadeTemplate.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
-
-      context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
     }
+    facadeTemplate = facadeTemplate.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
 
-    // Generate MessageJsonContextInitializer with RegisterDerivedType calls for polymorphic serialization
-    {
-      var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
-      initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
-      initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
+    context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
+  }
 
-      // Generate RegisterDerivedType calls for each message type
-      var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
-      initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+  /// <summary>
+  /// Generates MessageJsonContextInitializer.g.cs with RegisterDerivedType calls for polymorphic serialization.
+  /// </summary>
+  private static void _generateMessageJsonContextInitializer(
+      SourceProductionContext context,
+      System.Reflection.Assembly assembly,
+      string namespaceName,
+      ImmutableArray<JsonMessageTypeInfo> messages) {
+    var initializerTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "MessageJsonContextInitializerTemplate.cs");
+    initializerTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, initializerTemplate);
+    initializerTemplate = initializerTemplate.Replace("__NAMESPACE__", namespaceName);
 
-      context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
-    }
+    // Generate RegisterDerivedType calls for each message type
+    var derivedTypeRegistrations = _generateDerivedTypeRegistrations(messages);
+    initializerTemplate = TemplateUtilities.ReplaceRegion(initializerTemplate, "DERIVED_TYPE_REGISTRATIONS", derivedTypeRegistrations);
+
+    context.AddSource("MessageJsonContextInitializer.g.cs", initializerTemplate);
   }
 
   /// <summary>
@@ -764,7 +780,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     );
   }
 
-  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load all snippets up front
@@ -1008,7 +1024,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       StringBuilder sb,
       GetTypeInfoSnippets snippets,
       ImmutableArray<ListTypeInfo> listTypes,
-      ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes,
       ImmutableArray<ArrayTypeInfo> arrayTypes,
       ImmutableArray<DictionaryTypeInfo> dictionaryTypes) {
     if (!listTypes.IsEmpty) {
@@ -2231,8 +2247,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MultipleIReadOnlyListProperties_GeneratesAllFactoriesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_BugReport_IReadOnlyListCatalogItem_GeneratesFactoryAsync</tests>
-  private static ImmutableArray<IReadOnlyListTypeInfo> _discoverIReadOnlyListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
-    var iReadOnlyListTypes = new Dictionary<string, IReadOnlyListTypeInfo>();
+  private static ImmutableArray<ReadOnlyListTypeInfo> _discoverIReadOnlyListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var iReadOnlyListTypes = new Dictionary<string, ReadOnlyListTypeInfo>();
 
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
@@ -2246,7 +2262,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts IReadOnlyList type info from a fully qualified type name if it's an IReadOnlyList type.
   /// </summary>
-  private static void _discoverIReadOnlyListType(string fullyQualifiedTypeName, Dictionary<string, IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static void _discoverIReadOnlyListType(string fullyQualifiedTypeName, Dictionary<string, ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     // Strip nullable suffix for analysis
     var typeName = fullyQualifiedTypeName;
     if (typeName.EndsWith("?", StringComparison.Ordinal)) {
@@ -2272,7 +2288,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var parts = elementTypeName.Split('.');
         var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
-        iReadOnlyListTypes[iReadOnlyListTypeName] = new IReadOnlyListTypeInfo(
+        iReadOnlyListTypes[iReadOnlyListTypeName] = new ReadOnlyListTypeInfo(
             IReadOnlyListTypeName: iReadOnlyListTypeName,
             ElementTypeName: elementTypeName,
             ElementSimpleName: elementSimpleName
@@ -2294,7 +2310,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates lazy fields for IReadOnlyList&lt;T&gt; types.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
-  private static string _generateIReadOnlyListLazyFields(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static string _generateIReadOnlyListLazyFields(Assembly assembly, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     if (iReadOnlyListTypes.IsEmpty) {
       return string.Empty;
     }
@@ -2326,7 +2342,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithIReadOnlyListProperty_GeneratesIReadOnlyListFactoryAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IReadOnlyListWithNestedGenericElement_GeneratesFactoryAsync</tests>
-  private static string _generateIReadOnlyListFactories(Assembly assembly, ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes) {
+  private static string _generateIReadOnlyListFactories(Assembly assembly, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes) {
     if (iReadOnlyListTypes.IsEmpty) {
       return string.Empty;
     }

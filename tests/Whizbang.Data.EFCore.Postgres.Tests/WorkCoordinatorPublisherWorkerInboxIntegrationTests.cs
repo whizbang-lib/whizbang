@@ -249,7 +249,7 @@ public class WorkCoordinatorPublisherWorkerInboxIntegrationTests : EFCoreTestBas
       NewInboxMessages = [],
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
-      Flags = WorkBatchFlags.DebugMode,
+      Flags = WorkBatchOptions.DebugMode,
       LeaseSeconds = 300
     });
 

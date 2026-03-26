@@ -124,7 +124,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
     _ = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
@@ -165,7 +165,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
 
@@ -200,7 +200,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       });
     }
 
@@ -230,7 +230,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
     var publishStrategy = new TestPublishStrategy { IsReadyResult = false };
@@ -273,7 +273,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
-        Flags = WorkBatchFlags.None,
+        Flags = WorkBatchOptions.None,
       }
     ];
     var publishStrategy = new TestPublishStrategy {

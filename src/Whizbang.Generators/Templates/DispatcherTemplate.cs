@@ -155,7 +155,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching.
   /// </summary>
   [DebuggerStepThrough]
-  protected override global::Whizbang.Core.Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType) {
+  protected override global::Whizbang.Core.Dispatch.DispatchModes? GetReceptorDefaultRouting(Type messageType) {
     // Generated routing metadata - zero reflection!
     #region RECEPTOR_DEFAULT_ROUTING
     // This region will be replaced with generated routing lookup code

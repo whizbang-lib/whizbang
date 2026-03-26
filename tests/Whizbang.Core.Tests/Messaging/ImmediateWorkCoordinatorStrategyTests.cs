@@ -72,7 +72,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     });
 
     // Act
-    _ = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -129,7 +129,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxMessage(outboxMessage);
-    _ = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
@@ -181,7 +181,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxMessage(inboxMessage);
-    _ = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Message should be passed to coordinator
     await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
@@ -256,7 +256,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
@@ -281,7 +281,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
@@ -306,7 +306,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Stored, "Delivery failed");
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
@@ -332,7 +332,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
     // Act
     sut.QueueInboxFailure(messageId, MessageProcessingStatus.Stored, "Handler threw exception");
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
@@ -363,9 +363,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
 
     // Act - First flush
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     // Second flush should have empty queues
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Second flush should have empty arrays
     await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(0);
@@ -390,10 +390,10 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
   }
 
   [Test]
@@ -410,10 +410,10 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode should not be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.None);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.None);
   }
 
   // ========================================
@@ -592,7 +592,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Multiple log entries: one for queue, one for flush
     await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(2);
@@ -625,7 +625,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Flush to merge audit messages (line 226-227)
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Should have original + audit message in the batch
     await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(1);
@@ -673,7 +673,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
@@ -707,7 +707,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act & Assert - should not throw
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
   }
 
@@ -738,7 +738,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act & Assert - should handle ChannelClosedException gracefully
-    var result = await sut.FlushAsync(WorkBatchFlags.None);
+    var result = await sut.FlushAsync(WorkBatchOptions.None);
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
   }
 
@@ -847,7 +847,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
     public MessageFailure[] LastOutboxFailures { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(

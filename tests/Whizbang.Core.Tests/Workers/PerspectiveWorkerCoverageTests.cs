@@ -1068,7 +1068,7 @@ public class PerspectiveWorkerCoverageTests {
 
   [Test]
   public async Task Worker_WithDebugMode_SetsDebugFlagOnRequestAsync() {
-    // Arrange - Exercise the DebugMode path that sets WorkBatchFlags.DebugMode
+    // Arrange - Exercise the DebugMode path that sets WorkBatchOptions.DebugMode
     var coordinator = new FakeWorkCoordinator { CaptureRequests = true };
     var instanceProvider = new FakeServiceInstanceProvider();
     var databaseReadiness = new FakeDatabaseReadinessCheck { IsReady = true };
@@ -1104,7 +1104,7 @@ public class PerspectiveWorkerCoverageTests {
 
     // Assert - Request should have DebugMode flag
     await Assert.That(coordinator.CapturedRequests.Count).IsGreaterThan(0);
-    await Assert.That(coordinator.CapturedRequests[0].Flags).IsEqualTo(WorkBatchFlags.DebugMode);
+    await Assert.That(coordinator.CapturedRequests[0].Flags).IsEqualTo(WorkBatchOptions.DebugMode);
   }
 
   #endregion

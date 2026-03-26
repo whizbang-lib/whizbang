@@ -47,7 +47,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
   /// <summary>
   /// Test event with explicit Local routing for control case.
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record LocalOnlyTestEvent([property: StreamId] Guid Id) : IEvent;
 
   #endregion
@@ -127,7 +127,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Flush the strategy to ensure messages are written to database
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should be in outbox table
     await using var dbContext = CreateDbContext();
@@ -165,7 +165,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Flush the strategy
     var strategy = serviceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
-    await strategy.FlushAsync(WorkBatchFlags.None);
+    await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Event should be in outbox table
     await using var dbContext = CreateDbContext();
@@ -245,7 +245,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
 
     // Act - Queue directly and flush
     strategy.QueueOutboxMessage(testMessage);
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Should have returned work
     await Assert.That(workBatch.OutboxWork).Count().IsGreaterThan(0)
@@ -1017,7 +1017,7 @@ public class CascadeToOutboxIntegrationTests : EFCoreTestBase {
       NewInboxMessages = [],
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
-      Flags = WorkBatchFlags.DebugMode
+      Flags = WorkBatchOptions.DebugMode
     };
 
     var workBatch = await coordinator.ProcessWorkBatchAsync(request);

@@ -367,7 +367,7 @@ public partial class TransportConsumerWorker : BackgroundService {
 
       // 5. Report completions/failures
       var completionSw = Stopwatch.StartNew();
-      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, cancellationToken);
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, cancellationToken);
       completionSw.Stop();
       _metrics?.InboxCompletionDuration.Record(completionSw.Elapsed.TotalMilliseconds, messageTypeTag);
 
@@ -422,7 +422,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     strategy.QueueInboxMessage(newInboxMessage);
 
     var dedupSw = Stopwatch.StartNew();
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: cancellationToken);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: cancellationToken);
     dedupSw.Stop();
     _metrics?.InboxDedupDuration.Record(dedupSw.Elapsed.TotalMilliseconds, messageTypeTag);
 

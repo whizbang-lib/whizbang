@@ -10,30 +10,30 @@ namespace Whizbang.Core.Tests.ValueObjects;
 [Category("ValueObjects")]
 public class TrackedGuidTests {
   // ========================================
-  // GuidMetadata Flags Tests
+  // GuidMetadatas Flags Tests
   // ========================================
 
   [Test]
-  [Arguments(GuidMetadata.Version4, 0)]
-  [Arguments(GuidMetadata.Version7, 1)]
-  [Arguments(GuidMetadata.SourceMedo, 2)]
-  [Arguments(GuidMetadata.SourceMicrosoft, 3)]
-  [Arguments(GuidMetadata.SourceParsed, 4)]
-  [Arguments(GuidMetadata.SourceExternal, 5)]
-  [Arguments(GuidMetadata.SourceUnknown, 6)]
-  public async Task GuidMetadata_Flags_HaveCorrectBitPositionsAsync(GuidMetadata flag, int bitPosition) {
+  [Arguments(GuidMetadatas.Version4, 0)]
+  [Arguments(GuidMetadatas.Version7, 1)]
+  [Arguments(GuidMetadatas.SourceMedo, 2)]
+  [Arguments(GuidMetadatas.SourceMicrosoft, 3)]
+  [Arguments(GuidMetadatas.SourceParsed, 4)]
+  [Arguments(GuidMetadatas.SourceExternal, 5)]
+  [Arguments(GuidMetadatas.SourceUnknown, 6)]
+  public async Task GuidMetadata_Flags_HaveCorrectBitPositionsAsync(GuidMetadatas flag, int bitPosition) {
     await Assert.That((ushort)flag).IsEqualTo((ushort)(1 << bitPosition));
   }
 
   [Test]
   public async Task GuidMetadata_CombineFlags_WorksCorrectlyAsync() {
     // Arrange & Act
-    var combined = GuidMetadata.Version7 | GuidMetadata.SourceMedo;
+    var combined = GuidMetadatas.Version7 | GuidMetadatas.SourceMedo;
 
     // Assert - both bits should be set
-    await Assert.That((combined & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((combined & GuidMetadata.SourceMedo) != 0).IsTrue();
-    await Assert.That((combined & GuidMetadata.Version4) != 0).IsFalse();
+    await Assert.That((combined & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((combined & GuidMetadatas.SourceMedo) != 0).IsTrue();
+    await Assert.That((combined & GuidMetadatas.Version4) != 0).IsFalse();
   }
 
   // ========================================
@@ -87,8 +87,8 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.NewMedo();
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceMedo) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.Version7) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMedo) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
   }
 
   [Test]
@@ -149,9 +149,9 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.NewMicrosoftV7();
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceMicrosoft) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceMedo) != 0).IsFalse();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMicrosoft) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMedo) != 0).IsFalse();
   }
 
   // ========================================
@@ -191,9 +191,9 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.NewRandom();
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.Version4) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceMicrosoft) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.Version7) != 0).IsFalse();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version4) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMicrosoft) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsFalse();
   }
 
   // ========================================
@@ -210,7 +210,7 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.Parse(guidString);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceParsed) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceParsed) != 0).IsTrue();
     await Assert.That(tracked.Value).IsEqualTo(guid);
   }
 
@@ -224,8 +224,8 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.Parse(guidString);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.Version4) != 0).IsFalse();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version4) != 0).IsFalse();
   }
 
   [Test]
@@ -238,8 +238,8 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.Parse(guidString);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.Version4) != 0).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.Version7) != 0).IsFalse();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version4) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.Version7) != 0).IsFalse();
   }
 
   [Test]
@@ -252,7 +252,7 @@ public class TrackedGuidTests {
 
     // Assert
     await Assert.That(success).IsTrue();
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceParsed) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceParsed) != 0).IsTrue();
   }
 
   [Test]
@@ -281,7 +281,7 @@ public class TrackedGuidTests {
     var tracked = TrackedGuid.FromExternal(guid);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceExternal) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceExternal) != 0).IsTrue();
     await Assert.That(tracked.Value).IsEqualTo(guid);
   }
 
@@ -296,8 +296,8 @@ public class TrackedGuidTests {
     var trackedV4 = TrackedGuid.FromExternal(v4Guid);
 
     // Assert
-    await Assert.That((trackedV7.Metadata & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((trackedV4.Metadata & GuidMetadata.Version4) != 0).IsTrue();
+    await Assert.That((trackedV7.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((trackedV4.Metadata & GuidMetadatas.Version4) != 0).IsTrue();
   }
 
   // ========================================
@@ -326,7 +326,7 @@ public class TrackedGuidTests {
     TrackedGuid tracked = rawGuid;
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceUnknown) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceUnknown) != 0).IsTrue();
     await Assert.That(tracked.Value).IsEqualTo(rawGuid);
   }
 
@@ -341,8 +341,8 @@ public class TrackedGuidTests {
     TrackedGuid trackedV4 = v4Guid;
 
     // Assert - even though source is unknown, version should be detected
-    await Assert.That((trackedV7.Metadata & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((trackedV4.Metadata & GuidMetadata.Version4) != 0).IsTrue();
+    await Assert.That((trackedV7.Metadata & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((trackedV4.Metadata & GuidMetadatas.Version4) != 0).IsTrue();
   }
 
   // ========================================
@@ -476,7 +476,7 @@ public class TrackedGuidTests {
 
     // Assert
     await Assert.That(defaultTracked.Value).IsEqualTo(Guid.Empty);
-    await Assert.That(defaultTracked.Metadata).IsEqualTo(GuidMetadata.None);
+    await Assert.That(defaultTracked.Metadata).IsEqualTo(GuidMetadatas.None);
   }
 
   [Test]
@@ -496,7 +496,7 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_PreservesGuidValueAsync() {
     // Arrange
     var originalGuid = Guid.NewGuid();
-    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+    var metadata = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(originalGuid, metadata);
@@ -509,7 +509,7 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_PreservesExactMetadataAsync() {
     // Arrange
     var guid = Guid.CreateVersion7();
-    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft;
+    var metadata = GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
@@ -519,13 +519,13 @@ public class TrackedGuidTests {
   }
 
   [Test]
-  [Arguments(GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft)]
-  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft)]
-  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMedo)]
-  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceMarten)]
-  [Arguments(GuidMetadata.Version7 | GuidMetadata.SourceUuidNext)]
+  [Arguments(GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft)]
+  [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft)]
+  [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMedo)]
+  [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceMarten)]
+  [Arguments(GuidMetadatas.Version7 | GuidMetadatas.SourceUuidNext)]
   public async Task TrackedGuid_FromIntercepted_WithVariousMetadata_PreservesMetadataAsync(
-      GuidMetadata metadata) {
+      GuidMetadatas metadata) {
     // Arrange
     var guid = Guid.CreateVersion7();
 
@@ -540,7 +540,7 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_IsTracking_ReturnsTrueAsync() {
     // Arrange - FromIntercepted uses known sources, so should be tracking
     var guid = Guid.NewGuid();
-    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+    var metadata = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
@@ -553,7 +553,7 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_WithV7_IsTimeOrderedAsync() {
     // Arrange
     var guid = Guid.CreateVersion7();
-    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMicrosoft;
+    var metadata = GuidMetadatas.Version7 | GuidMetadatas.SourceMicrosoft;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
@@ -566,7 +566,7 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_WithV4_IsNotTimeOrderedAsync() {
     // Arrange
     var guid = Guid.NewGuid();
-    var metadata = GuidMetadata.Version4 | GuidMetadata.SourceMicrosoft;
+    var metadata = GuidMetadatas.Version4 | GuidMetadatas.SourceMicrosoft;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
@@ -580,39 +580,39 @@ public class TrackedGuidTests {
   // ========================================
 
   [Test]
-  [Arguments(GuidMetadata.SourceMarten, 8)]
-  [Arguments(GuidMetadata.SourceUuidNext, 9)]
-  [Arguments(GuidMetadata.SourceDaanV2, 10)]
-  [Arguments(GuidMetadata.SourceUuids, 11)]
-  [Arguments(GuidMetadata.SourceGuidOne, 12)]
-  [Arguments(GuidMetadata.SourceTaiizor, 13)]
+  [Arguments(GuidMetadatas.SourceMarten, 8)]
+  [Arguments(GuidMetadatas.SourceUuidNext, 9)]
+  [Arguments(GuidMetadatas.SourceDaanV2, 10)]
+  [Arguments(GuidMetadatas.SourceUuids, 11)]
+  [Arguments(GuidMetadatas.SourceGuidOne, 12)]
+  [Arguments(GuidMetadatas.SourceTaiizor, 13)]
   public async Task GuidMetadata_ThirdPartySources_HaveCorrectBitPositionsAsync(
-      GuidMetadata flag, int bitPosition) {
+      GuidMetadatas flag, int bitPosition) {
     await Assert.That((ushort)flag).IsEqualTo((ushort)(1 << bitPosition));
   }
 
   [Test]
   public async Task GuidMetadata_ThirdPartySource_CanCombineWithVersionAsync() {
     // Arrange & Act
-    var martenV7 = GuidMetadata.Version7 | GuidMetadata.SourceMarten;
+    var martenV7 = GuidMetadatas.Version7 | GuidMetadatas.SourceMarten;
 
     // Assert
-    await Assert.That((martenV7 & GuidMetadata.Version7) != 0).IsTrue();
-    await Assert.That((martenV7 & GuidMetadata.SourceMarten) != 0).IsTrue();
-    await Assert.That((martenV7 & GuidMetadata.SourceMedo) != 0).IsFalse();
+    await Assert.That((martenV7 & GuidMetadatas.Version7) != 0).IsTrue();
+    await Assert.That((martenV7 & GuidMetadatas.SourceMarten) != 0).IsTrue();
+    await Assert.That((martenV7 & GuidMetadatas.SourceMedo) != 0).IsFalse();
   }
 
   [Test]
   public async Task TrackedGuid_FromIntercepted_WithMarten_HasCorrectMetadataAsync() {
     // Arrange - Simulating interception of CombGuidIdGeneration.NewGuid()
     var guid = Guid.CreateVersion7(); // CombGuid produces v7-like GUIDs
-    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceMarten;
+    var metadata = GuidMetadatas.Version7 | GuidMetadatas.SourceMarten;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceMarten) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceMarten) != 0).IsTrue();
     await Assert.That(tracked.IsTimeOrdered).IsTrue();
   }
 
@@ -620,13 +620,13 @@ public class TrackedGuidTests {
   public async Task TrackedGuid_FromIntercepted_WithUuidNext_HasCorrectMetadataAsync() {
     // Arrange - Simulating interception of UUIDNext
     var guid = Guid.CreateVersion7();
-    var metadata = GuidMetadata.Version7 | GuidMetadata.SourceUuidNext;
+    var metadata = GuidMetadatas.Version7 | GuidMetadatas.SourceUuidNext;
 
     // Act
     var tracked = TrackedGuid.FromIntercepted(guid, metadata);
 
     // Assert
-    await Assert.That((tracked.Metadata & GuidMetadata.SourceUuidNext) != 0).IsTrue();
+    await Assert.That((tracked.Metadata & GuidMetadatas.SourceUuidNext) != 0).IsTrue();
     await Assert.That(tracked.IsTimeOrdered).IsTrue();
   }
 }

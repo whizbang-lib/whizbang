@@ -38,7 +38,7 @@ public sealed record AccessGranted : ISystemEvent {
   /// <summary>
   /// Access filter applied.
   /// </summary>
-  public required ScopeFilter AccessFilter { get; init; }
+  public required ScopeFilters AccessFilter { get; init; }
 
   /// <summary>
   /// Scope context at time of access.

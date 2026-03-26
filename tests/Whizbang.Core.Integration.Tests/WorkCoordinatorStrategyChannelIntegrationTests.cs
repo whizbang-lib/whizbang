@@ -41,7 +41,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     // Unwrap NonDisposingStrategyAdapter to queue on the actual strategy
     var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
     intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await intervalStrategy.FlushAsync(WorkBatchFlags.None);
+    await intervalStrategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Read from the channel reader
     var writer = sp.GetRequiredService<IWorkChannelWriter>();
@@ -75,7 +75,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     // Act
     var batchStrategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
     batchStrategy.QueueOutboxMessage(_createTestOutboxMessage());
-    await batchStrategy.FlushAsync(WorkBatchFlags.None);
+    await batchStrategy.FlushAsync(WorkBatchOptions.None);
 
     // Assert
     var writer = sp.GetRequiredService<IWorkChannelWriter>();

@@ -370,7 +370,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
+      Flags = WorkBatchOptions.None,
     };
   }
 

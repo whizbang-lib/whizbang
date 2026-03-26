@@ -4,7 +4,7 @@ using Whizbang.Core.Generated;
 namespace Whizbang.Core.Tests.Generated;
 
 /// <summary>
-/// Tests for DiagnosticCategory enum - categorization of diagnostic information.
+/// Tests for DiagnosticCategories enum - categorization of diagnostic information.
 /// </summary>
 [Category("Diagnostics")]
 public class DiagnosticCategoryTests {
@@ -12,7 +12,7 @@ public class DiagnosticCategoryTests {
   [Test]
   public async Task DiagnosticCategory_None_HasValueZeroAsync() {
     // Arrange & Act
-    var none = DiagnosticCategory.None;
+    var none = DiagnosticCategories.None;
 
     // Assert
     await Assert.That((int)none).IsEqualTo(0);
@@ -21,10 +21,10 @@ public class DiagnosticCategoryTests {
   [Test]
   public async Task DiagnosticCategory_All_CombinesAllCategoriesAsync() {
     // Arrange
-    var expected = DiagnosticCategory.ReceptorDiscovery | DiagnosticCategory.Dispatcher | DiagnosticCategory.EventHandling;
+    var expected = DiagnosticCategories.ReceptorDiscovery | DiagnosticCategories.Dispatcher | DiagnosticCategories.EventHandling;
 
     // Act
-    var all = DiagnosticCategory.All;
+    var all = DiagnosticCategories.All;
 
     // Assert
     await Assert.That(all).IsEqualTo(expected);
@@ -34,12 +34,12 @@ public class DiagnosticCategoryTests {
   [Test]
   public async Task DiagnosticCategory_SupportsFlags_BitwiseOperationsAsync() {
     // Arrange
-    var combined = DiagnosticCategory.ReceptorDiscovery | DiagnosticCategory.Dispatcher;
+    var combined = DiagnosticCategories.ReceptorDiscovery | DiagnosticCategories.Dispatcher;
 
     // Act
-    var hasReceptorDiscovery = (combined & DiagnosticCategory.ReceptorDiscovery) == DiagnosticCategory.ReceptorDiscovery;
-    var hasDispatcher = (combined & DiagnosticCategory.Dispatcher) == DiagnosticCategory.Dispatcher;
-    var hasEventHandling = (combined & DiagnosticCategory.EventHandling) == DiagnosticCategory.EventHandling;
+    var hasReceptorDiscovery = (combined & DiagnosticCategories.ReceptorDiscovery) == DiagnosticCategories.ReceptorDiscovery;
+    var hasDispatcher = (combined & DiagnosticCategories.Dispatcher) == DiagnosticCategories.Dispatcher;
+    var hasEventHandling = (combined & DiagnosticCategories.EventHandling) == DiagnosticCategories.EventHandling;
 
     // Assert
     await Assert.That(hasReceptorDiscovery).IsTrue();
@@ -50,9 +50,9 @@ public class DiagnosticCategoryTests {
   [Test]
   public async Task DiagnosticCategory_IndividualFlags_HaveUniqueValuesAsync() {
     // Arrange & Act
-    var receptorDiscovery = DiagnosticCategory.ReceptorDiscovery;
-    var dispatcher = DiagnosticCategory.Dispatcher;
-    var eventHandling = DiagnosticCategory.EventHandling;
+    var receptorDiscovery = DiagnosticCategories.ReceptorDiscovery;
+    var dispatcher = DiagnosticCategories.Dispatcher;
+    var eventHandling = DiagnosticCategories.EventHandling;
 
     // Assert
     await Assert.That((int)receptorDiscovery).IsEqualTo(1);

@@ -81,7 +81,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -125,7 +125,7 @@ public class WorkBatchCoordinatorTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -172,7 +172,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
     var perspectiveWork = new PerspectiveWork {
       StreamId = Guid.CreateVersion7(),
@@ -180,7 +180,7 @@ public class WorkBatchCoordinatorTests {
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
       PartitionNumber = null,
-      Flags = WorkBatchFlags.None
+      Flags = WorkBatchOptions.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {

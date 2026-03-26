@@ -117,7 +117,7 @@ internal sealed class WorkCoordinatorQueues {
   internal ProcessWorkBatchRequest BuildRequest(
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    WorkBatchFlags flags
+    WorkBatchOptions flags
   ) {
     return new ProcessWorkBatchRequest {
       InstanceId = instanceProvider.InstanceId,
@@ -138,7 +138,7 @@ internal sealed class WorkCoordinatorQueues {
       NewInboxMessages = [.. InboxMessages],
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
-      Flags = flags | (options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
+      Flags = flags | (options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
       PartitionCount = options.PartitionCount,
       LeaseSeconds = options.LeaseSeconds,
       StaleThresholdSeconds = options.StaleThresholdSeconds

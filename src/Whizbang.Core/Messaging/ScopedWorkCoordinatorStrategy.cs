@@ -120,7 +120,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     }
   }
 
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
@@ -186,7 +186,7 @@ public partial class ScopedWorkCoordinatorStrategy(
       LogProcessWorkBatchResult(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count, workBatch.PerspectiveWork.Count);
       if (workBatch.OutboxWork.Count > 0) {
         foreach (var work in workBatch.OutboxWork.Take(3)) {
-          var isNewlyStored = (work.Flags & WorkBatchFlags.NewlyStored) != 0;
+          var isNewlyStored = (work.Flags & WorkBatchOptions.NewlyStored) != 0;
           LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
         }
       } else if (outboxMessages.Length > 0) {
@@ -199,7 +199,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
   public async ValueTask DisposeAsync() {
     if (_disposed) {
@@ -246,7 +246,7 @@ public partial class ScopedWorkCoordinatorStrategy(
           inboxCompletions,
           outboxFailures,
           inboxFailures,
-          WorkBatchFlags.None,
+          WorkBatchOptions.None,
           _dependencies.LifecycleMessageDeserializer,
           _logger,
           _dependencies.TracingOptions,

@@ -311,7 +311,7 @@ public class SystemDispatcherBuilderTests {
         Task.FromResult(_emptyReceipt);
 
     // CascadeMessageAsync
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
     // Batch operations

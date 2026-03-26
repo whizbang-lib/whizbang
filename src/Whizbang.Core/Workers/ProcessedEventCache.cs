@@ -95,10 +95,8 @@ internal sealed class ProcessedEventCache {
     var activatedCount = 0;
 
     foreach (var kvp in _entries) {
-      if (kvp.Value.AckedAt is null) {
-        if (_entries.TryUpdate(kvp.Key, new EventCacheEntry(now), kvp.Value)) {
-          activatedCount++;
-        }
+      if (kvp.Value.AckedAt is null && _entries.TryUpdate(kvp.Key, new EventCacheEntry(now), kvp.Value)) {
+        activatedCount++;
       }
     }
 

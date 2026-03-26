@@ -45,7 +45,7 @@ public class DispatcherCascadeSecurityPropagationTests {
   /// Event returned from command handler - will be cascaded.
   /// Uses [DefaultRouting(Outbox)] to go through outbox storage path.
   /// </summary>
-  [DefaultRouting(DispatchMode.Outbox)]
+  [DefaultRouting(DispatchModes.Outbox)]
   public record CascadeTestEvent([property: StreamId] Guid StreamId, string ProcessedData) : IEvent;
 
   /// <summary>
@@ -288,7 +288,7 @@ public class DispatcherCascadeSecurityPropagationTests {
       // Not needed for these tests
     }
 
-    public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+    public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
       // Return empty work batch - we just want to capture the messages
       return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
     }

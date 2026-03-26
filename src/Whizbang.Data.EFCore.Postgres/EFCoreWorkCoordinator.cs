@@ -442,13 +442,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
-  private static WorkBatchFlags _buildFlags(WorkBatchRow r) {
-    var flags = WorkBatchFlags.None;
+  private static WorkBatchOptions _buildFlags(WorkBatchRow r) {
+    var flags = WorkBatchOptions.None;
     if (r.IsNewlyStored == true) {
-      flags |= WorkBatchFlags.NewlyStored;
+      flags |= WorkBatchOptions.NewlyStored;
     }
     if (r.IsOrphaned == true) {
-      flags |= WorkBatchFlags.Orphaned;
+      flags |= WorkBatchOptions.Orphaned;
     }
     return flags;
   }
@@ -938,7 +938,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Handles PostgreSQL RAISE DEBUG messages by logging them at Debug level.
-  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// Notices are only generated when WorkBatchOptions.DebugMode is set in the SQL function.
   /// </summary>
   private void _onNotice(object? sender, NpgsqlNoticeEventArgs args) {
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {

@@ -124,9 +124,9 @@ public class SendNotificationReceptorTests {
       PublishedEvents.Add(eventData!);
       return Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Delivered(MessageId.New(), "test"));
     }
-    public Task CascadeMessageAsync(IMessage message, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
-    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchMode mode, CancellationToken cancellationToken = default) =>
+    public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
 
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {

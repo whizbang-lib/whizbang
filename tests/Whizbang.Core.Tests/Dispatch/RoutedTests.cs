@@ -18,7 +18,7 @@ public class RoutedTests {
   public async Task Constructor_WithValueAndMode_SetsPropertiesAsync() {
     // Arrange
     var value = new TestEvent("Test");
-    var mode = DispatchMode.Local;
+    var mode = DispatchModes.Local;
 
     // Act
     var routed = new Routed<TestEvent>(value, mode);
@@ -31,11 +31,11 @@ public class RoutedTests {
   [Test]
   public async Task Constructor_WithNullValue_AllowsNullAsync() {
     // Arrange & Act
-    var routed = new Routed<TestEvent?>(null, DispatchMode.Outbox);
+    var routed = new Routed<TestEvent?>(null, DispatchModes.Outbox);
 
     // Assert
     await Assert.That(routed.Value).IsNull();
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -43,15 +43,15 @@ public class RoutedTests {
     // Test all modes
     var value = new TestEvent("Test");
 
-    var routedNone = new Routed<TestEvent>(value, DispatchMode.None);
-    var routedLocal = new Routed<TestEvent>(value, DispatchMode.Local);
-    var routedOutbox = new Routed<TestEvent>(value, DispatchMode.Outbox);
-    var routedBoth = new Routed<TestEvent>(value, DispatchMode.Both);
+    var routedNone = new Routed<TestEvent>(value, DispatchModes.None);
+    var routedLocal = new Routed<TestEvent>(value, DispatchModes.Local);
+    var routedOutbox = new Routed<TestEvent>(value, DispatchModes.Outbox);
+    var routedBoth = new Routed<TestEvent>(value, DispatchModes.Both);
 
-    await Assert.That(routedNone.Mode).IsEqualTo(DispatchMode.None);
-    await Assert.That(routedLocal.Mode).IsEqualTo(DispatchMode.Local);
-    await Assert.That(routedOutbox.Mode).IsEqualTo(DispatchMode.Outbox);
-    await Assert.That(routedBoth.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(routedNone.Mode).IsEqualTo(DispatchModes.None);
+    await Assert.That(routedLocal.Mode).IsEqualTo(DispatchModes.Local);
+    await Assert.That(routedOutbox.Mode).IsEqualTo(DispatchModes.Outbox);
+    await Assert.That(routedBoth.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   #endregion
@@ -62,7 +62,7 @@ public class RoutedTests {
   public async Task IRouted_Value_ReturnsValueAsObjectAsync() {
     // Arrange
     var value = new TestEvent("Test");
-    var routed = new Routed<TestEvent>(value, DispatchMode.Local);
+    var routed = new Routed<TestEvent>(value, DispatchModes.Local);
 
     // Act
     IRouted iRouted = routed;
@@ -75,19 +75,19 @@ public class RoutedTests {
   [Test]
   public async Task IRouted_Mode_ReturnsSameModeAsync() {
     // Arrange
-    var routed = new Routed<TestEvent>(new TestEvent("Test"), DispatchMode.Both);
+    var routed = new Routed<TestEvent>(new TestEvent("Test"), DispatchModes.Both);
 
     // Act
     IRouted iRouted = routed;
 
     // Assert
-    await Assert.That(iRouted.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(iRouted.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
   public async Task IRouted_CanPatternMatch_OnRoutedTypeAsync() {
     // Arrange
-    object obj = new Routed<TestEvent>(new TestEvent("Test"), DispatchMode.Local);
+    object obj = new Routed<TestEvent>(new TestEvent("Test"), DispatchModes.Local);
 
     // Act
     var isRouted = obj is IRouted;
@@ -100,7 +100,7 @@ public class RoutedTests {
   public async Task IRouted_PatternMatch_ExtractsValueAndModeAsync() {
     // Arrange
     var originalValue = new TestEvent("Test");
-    object obj = new Routed<TestEvent>(originalValue, DispatchMode.Outbox);
+    object obj = new Routed<TestEvent>(originalValue, DispatchModes.Outbox);
 
     // Act
     var routed = obj as IRouted;
@@ -108,7 +108,7 @@ public class RoutedTests {
     // Assert
     await Assert.That(routed).IsNotNull();
     await Assert.That(routed!.Value).IsEqualTo(originalValue);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   #endregion
@@ -118,33 +118,33 @@ public class RoutedTests {
   [Test]
   public async Task Routed_WithValueType_WorksCorrectlyAsync() {
     // Arrange
-    var routed = new Routed<int>(42, DispatchMode.Local);
+    var routed = new Routed<int>(42, DispatchModes.Local);
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(42);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
   public async Task Routed_WithArray_WorksCorrectlyAsync() {
     // Arrange
     var array = new[] { new TestEvent("A"), new TestEvent("B") };
-    var routed = new Routed<TestEvent[]>(array, DispatchMode.Both);
+    var routed = new Routed<TestEvent[]>(array, DispatchModes.Both);
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(array);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
   public async Task Routed_WithTuple_WorksCorrectlyAsync() {
     // Arrange
     var tuple = (new TestEvent("A"), new TestEvent("B"));
-    var routed = new Routed<(TestEvent, TestEvent)>(tuple, DispatchMode.Outbox);
+    var routed = new Routed<(TestEvent, TestEvent)>(tuple, DispatchModes.Outbox);
 
     // Assert
     await Assert.That(routed.Value).IsEqualTo(tuple);
-    await Assert.That(routed.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(routed.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   #endregion
@@ -154,7 +154,7 @@ public class RoutedTests {
   [Test]
   public async Task Routed_IsValueType_NoHeapAllocationAsync() {
     // Arrange
-    var routed = new Routed<TestEvent>(new TestEvent("Test"), DispatchMode.Local);
+    var routed = new Routed<TestEvent>(new TestEvent("Test"), DispatchModes.Local);
 
     // Assert - Routed<T> should be a value type (struct)
     await Assert.That(routed.GetType().IsValueType).IsTrue();
@@ -167,7 +167,7 @@ public class RoutedTests {
 
     // Assert
     await Assert.That(defaultRouted.Value).IsNull();
-    await Assert.That(defaultRouted.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(defaultRouted.Mode).IsEqualTo(DispatchModes.None);
   }
 
   #endregion
@@ -178,7 +178,7 @@ public class RoutedTests {
   public async Task AsValueTask_ReturnsCompletedValueTask_WithSameRoutedValueAsync() {
     // Arrange
     var value = new TestEvent("Test");
-    var routed = new Routed<TestEvent>(value, DispatchMode.Local);
+    var routed = new Routed<TestEvent>(value, DispatchModes.Local);
 
     // Act
     var valueTask = routed.AsValueTask();
@@ -187,7 +187,7 @@ public class RoutedTests {
     await Assert.That(valueTask.IsCompleted).IsTrue();
     var result = await valueTask;
     await Assert.That(result.Value).IsEqualTo(value);
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -199,7 +199,7 @@ public class RoutedTests {
     await Assert.That(valueTask.IsCompleted).IsTrue();
     var result = await valueTask;
     await Assert.That(result.Value.Name).IsEqualTo("Fluent");
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Local);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.Local);
   }
 
   [Test]
@@ -209,7 +209,7 @@ public class RoutedTests {
 
     // Assert
     var result = await valueTask;
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Outbox);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.Outbox);
   }
 
   [Test]
@@ -219,7 +219,7 @@ public class RoutedTests {
 
     // Assert
     var result = await valueTask;
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.EventStoreOnly);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.EventStoreOnly);
   }
 
   [Test]
@@ -229,7 +229,7 @@ public class RoutedTests {
 
     // Assert
     var result = await valueTask;
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.LocalNoPersist);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.LocalNoPersist);
   }
 
   [Test]
@@ -239,7 +239,7 @@ public class RoutedTests {
 
     // Assert
     var result = await valueTask;
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.Both);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.Both);
   }
 
   [Test]
@@ -253,7 +253,7 @@ public class RoutedTests {
     // Assert
     await Assert.That(valueTask.IsCompleted).IsTrue();
     var result = await valueTask;
-    await Assert.That(result.Mode).IsEqualTo(DispatchMode.None);
+    await Assert.That(result.Mode).IsEqualTo(DispatchModes.None);
     await Assert.That(result.Value).IsNull();
   }
 

@@ -3,14 +3,14 @@ using Whizbang.Transports.HotChocolate;
 namespace Whizbang.Transports.HotChocolate.Tests.Unit;
 
 /// <summary>
-/// Tests for <see cref="GraphQLLensScope"/> flags enum.
+/// Tests for <see cref="GraphQLLensScopes"/> flags enum.
 /// Verifies composable scope flags and preset combinations.
 /// </summary>
 public class GraphQLLensScopeTests {
   [Test]
   public async Task Default_ShouldBeZeroAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.None;
+    var scope = GraphQLLensScopes.None;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(0);
@@ -19,7 +19,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Data_ShouldBeBitFlagAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.Data;
+    var scope = GraphQLLensScopes.Data;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(1);
@@ -28,7 +28,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Metadata_ShouldBeBitFlagAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.Metadata;
+    var scope = GraphQLLensScopes.Metadata;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(2);
@@ -37,7 +37,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Scope_ShouldBeBitFlagAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.Scope;
+    var scope = GraphQLLensScopes.Scope;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(4);
@@ -46,7 +46,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task SystemFields_ShouldBeBitFlagAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.SystemFields;
+    var scope = GraphQLLensScopes.SystemFields;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(8);
@@ -55,8 +55,8 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task DataOnly_ShouldEqualDataAsync() {
     // Arrange & Act
-    var dataOnly = GraphQLLensScope.DataOnly;
-    var data = GraphQLLensScope.Data;
+    var dataOnly = GraphQLLensScopes.DataOnly;
+    var data = GraphQLLensScopes.Data;
 
     // Assert
     await Assert.That(dataOnly).IsEqualTo(data);
@@ -65,8 +65,8 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task NoData_ShouldBeMetadataPlusScopePlusSystemFieldsAsync() {
     // Arrange
-    var expected = GraphQLLensScope.Metadata | GraphQLLensScope.Scope | GraphQLLensScope.SystemFields;
-    var noData = GraphQLLensScope.NoData;
+    var expected = GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
+    var noData = GraphQLLensScopes.NoData;
 
     // Act & Assert
     await Assert.That(noData).IsEqualTo(expected);
@@ -75,8 +75,8 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task All_ShouldIncludeAllComponentsAsync() {
     // Arrange
-    var expected = GraphQLLensScope.Data | GraphQLLensScope.Metadata | GraphQLLensScope.Scope | GraphQLLensScope.SystemFields;
-    var all = GraphQLLensScope.All;
+    var expected = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields;
+    var all = GraphQLLensScopes.All;
 
     // Act & Assert
     await Assert.That(all).IsEqualTo(expected);
@@ -85,11 +85,11 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Flags_ShouldBeComposableAsync() {
     // Arrange & Act
-    var combined = GraphQLLensScope.Data | GraphQLLensScope.Metadata;
-    var hasData = combined.HasFlag(GraphQLLensScope.Data);
-    var hasMetadata = combined.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = combined.HasFlag(GraphQLLensScope.Scope);
-    var hasSystemFields = combined.HasFlag(GraphQLLensScope.SystemFields);
+    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
+    var hasData = combined.HasFlag(GraphQLLensScopes.Data);
+    var hasMetadata = combined.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = combined.HasFlag(GraphQLLensScopes.Scope);
+    var hasSystemFields = combined.HasFlag(GraphQLLensScopes.SystemFields);
 
     // Assert
     await Assert.That(hasData).IsTrue();
@@ -101,12 +101,12 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task CustomCombination_DataPlusSystemFields_ShouldWorkAsync() {
     // Arrange & Act
-    var combined = GraphQLLensScope.Data | GraphQLLensScope.SystemFields;
+    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields;
     var intValue = (int)combined;
-    var hasData = combined.HasFlag(GraphQLLensScope.Data);
-    var hasSystemFields = combined.HasFlag(GraphQLLensScope.SystemFields);
-    var hasMetadata = combined.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = combined.HasFlag(GraphQLLensScope.Scope);
+    var hasData = combined.HasFlag(GraphQLLensScopes.Data);
+    var hasSystemFields = combined.HasFlag(GraphQLLensScopes.SystemFields);
+    var hasMetadata = combined.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = combined.HasFlag(GraphQLLensScopes.Scope);
 
     // Assert - should have Data (1) and SystemFields (8) = 9
     await Assert.That(intValue).IsEqualTo(9);
@@ -119,11 +119,11 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task NoData_ShouldNotIncludeDataAsync() {
     // Arrange & Act
-    var noData = GraphQLLensScope.NoData;
-    var hasData = noData.HasFlag(GraphQLLensScope.Data);
-    var hasMetadata = noData.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = noData.HasFlag(GraphQLLensScope.Scope);
-    var hasSystemFields = noData.HasFlag(GraphQLLensScope.SystemFields);
+    var noData = GraphQLLensScopes.NoData;
+    var hasData = noData.HasFlag(GraphQLLensScopes.Data);
+    var hasMetadata = noData.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = noData.HasFlag(GraphQLLensScopes.Scope);
+    var hasSystemFields = noData.HasFlag(GraphQLLensScopes.SystemFields);
 
     // Assert
     await Assert.That(hasData).IsFalse();
@@ -135,8 +135,8 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task All_ShouldIncludeDataAsync() {
     // Arrange & Act
-    var all = GraphQLLensScope.All;
-    var hasData = all.HasFlag(GraphQLLensScope.Data);
+    var all = GraphQLLensScopes.All;
+    var hasData = all.HasFlag(GraphQLLensScopes.Data);
 
     // Assert
     await Assert.That(hasData).IsTrue();
@@ -145,11 +145,11 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Default_ShouldNotHaveAnyFlagsAsync() {
     // Arrange & Act
-    var defaultScope = GraphQLLensScope.None;
-    var hasData = defaultScope.HasFlag(GraphQLLensScope.Data);
-    var hasMetadata = defaultScope.HasFlag(GraphQLLensScope.Metadata);
-    var hasScope = defaultScope.HasFlag(GraphQLLensScope.Scope);
-    var hasSystemFields = defaultScope.HasFlag(GraphQLLensScope.SystemFields);
+    var defaultScope = GraphQLLensScopes.None;
+    var hasData = defaultScope.HasFlag(GraphQLLensScopes.Data);
+    var hasMetadata = defaultScope.HasFlag(GraphQLLensScopes.Metadata);
+    var hasScope = defaultScope.HasFlag(GraphQLLensScopes.Scope);
+    var hasSystemFields = defaultScope.HasFlag(GraphQLLensScopes.SystemFields);
 
     // Assert - Default (0) should not have any individual flags
     await Assert.That(hasData).IsFalse();
@@ -161,12 +161,12 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task BitwiseOr_AllCombinations_ShouldProduceCorrectValuesAsync() {
     // Test all possible pairs
-    var dataMetadata = (int)(GraphQLLensScope.Data | GraphQLLensScope.Metadata);
-    var dataScope = (int)(GraphQLLensScope.Data | GraphQLLensScope.Scope);
-    var dataSystemFields = (int)(GraphQLLensScope.Data | GraphQLLensScope.SystemFields);
-    var metadataScope = (int)(GraphQLLensScope.Metadata | GraphQLLensScope.Scope);
-    var metadataSystemFields = (int)(GraphQLLensScope.Metadata | GraphQLLensScope.SystemFields);
-    var scopeSystemFields = (int)(GraphQLLensScope.Scope | GraphQLLensScope.SystemFields);
+    var dataMetadata = (int)(GraphQLLensScopes.Data | GraphQLLensScopes.Metadata);
+    var dataScope = (int)(GraphQLLensScopes.Data | GraphQLLensScopes.Scope);
+    var dataSystemFields = (int)(GraphQLLensScopes.Data | GraphQLLensScopes.SystemFields);
+    var metadataScope = (int)(GraphQLLensScopes.Metadata | GraphQLLensScopes.Scope);
+    var metadataSystemFields = (int)(GraphQLLensScopes.Metadata | GraphQLLensScopes.SystemFields);
+    var scopeSystemFields = (int)(GraphQLLensScopes.Scope | GraphQLLensScopes.SystemFields);
 
     await Assert.That(dataMetadata).IsEqualTo(3);
     await Assert.That(dataScope).IsEqualTo(5);
@@ -179,12 +179,12 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task BitwiseAnd_ShouldExtractFlagsAsync() {
     // Arrange
-    var combined = GraphQLLensScope.Data | GraphQLLensScope.Metadata;
+    var combined = GraphQLLensScopes.Data | GraphQLLensScopes.Metadata;
 
     // Act & Assert
-    var extractedData = (combined & GraphQLLensScope.Data) == GraphQLLensScope.Data;
-    var extractedMetadata = (combined & GraphQLLensScope.Metadata) == GraphQLLensScope.Metadata;
-    var extractedScope = (combined & GraphQLLensScope.Scope) == GraphQLLensScope.None;
+    var extractedData = (combined & GraphQLLensScopes.Data) == GraphQLLensScopes.Data;
+    var extractedMetadata = (combined & GraphQLLensScopes.Metadata) == GraphQLLensScopes.Metadata;
+    var extractedScope = (combined & GraphQLLensScopes.Scope) == GraphQLLensScopes.None;
 
     await Assert.That(extractedData).IsTrue();
     await Assert.That(extractedMetadata).IsTrue();
@@ -194,7 +194,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task FlagsAttribute_ShouldBeAppliedAsync() {
     // Arrange
-    var type = typeof(GraphQLLensScope);
+    var type = typeof(GraphQLLensScopes);
 
     // Act
     var attributes = type.GetCustomAttributes(typeof(FlagsAttribute), false);
@@ -208,11 +208,11 @@ public class GraphQLLensScopeTests {
   public async Task AllValues_ShouldBePowersOfTwoOrZeroAsync() {
     // Arrange - primitive flags should be 0 or powers of 2
     var primitiveFlags = new[] {
-      GraphQLLensScope.None,
-      GraphQLLensScope.Data,
-      GraphQLLensScope.Metadata,
-      GraphQLLensScope.Scope,
-      GraphQLLensScope.SystemFields
+      GraphQLLensScopes.None,
+      GraphQLLensScopes.Data,
+      GraphQLLensScopes.Metadata,
+      GraphQLLensScopes.Scope,
+      GraphQLLensScopes.SystemFields
     };
 
     // Assert

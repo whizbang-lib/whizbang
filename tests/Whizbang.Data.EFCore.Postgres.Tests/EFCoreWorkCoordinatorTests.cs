@@ -133,7 +133,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      flags: WorkBatchOptions.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0)
@@ -528,7 +528,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      flags: WorkBatchOptions.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
@@ -1500,7 +1500,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
+      flags: WorkBatchOptions.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert - Verify all results were processed correctly in single transaction
     var status1 = await GetOutboxStatusFlagsAsync(message1Id);

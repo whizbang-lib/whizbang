@@ -280,7 +280,7 @@ public class ReceptorInvokerScopePropagationTests {
   private sealed class TestEventCascader(System.Action? onCascade = null) : IEventCascader {
     private readonly System.Action? _onCascade = onCascade;
 
-    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchMode? receptorDefault = null, CancellationToken cancellationToken = default) {
+    public Task CascadeFromResultAsync(object result, IMessageEnvelope? sourceEnvelope, DispatchModes? receptorDefault = null, CancellationToken cancellationToken = default) {
       _onCascade?.Invoke();
       return Task.CompletedTask;
     }

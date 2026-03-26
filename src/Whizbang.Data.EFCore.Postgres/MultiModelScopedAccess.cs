@@ -39,7 +39,7 @@ internal static class MultiModelScopeHelper {
       IScopeContextAccessor scopeContextAccessor,
       ScopeFilterOverride? overrideValues) {
     var filters = QueryScopeMapper.ToScopeFilter(scope);
-    if (filters == ScopeFilter.None) {
+    if (filters == ScopeFilters.None) {
       return null;
     }
 

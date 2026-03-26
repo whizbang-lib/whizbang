@@ -188,7 +188,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     });
 
     // Act - Manual flush before disposal
-    _ = await sut.FlushAsync(WorkBatchFlags.None);
+    _ = await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Manual flush should work immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -371,7 +371,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act — BestEffort should flush immediately (the fix)
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert — message was flushed during the BestEffort call, not deferred
     await Assert.That(disposableCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -404,13 +404,13 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // Simulate a typical request: multiple publishes via BestEffort
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+    await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
     // Assert — each BestEffort call flushed immediately
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(3)
@@ -530,12 +530,12 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     // First flush: queue an event message (generates audit message)
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     var firstFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
 
     // Second flush: queue another event message
     _queueTestOutboxMessage(sut);
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
     var secondFlushOutboxCount = fakeCoordinator.LastNewOutboxMessages.Length;
 
     // Assert — same count both times (no accumulation of stale audit messages)
@@ -733,7 +733,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -771,10 +771,10 @@ public class ScopedWorkCoordinatorStrategyTests {
     sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
 
     // Act
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - DebugMode flag should be set
-    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
 
     // Cleanup
     await sut.DisposeAsync();
@@ -809,7 +809,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Flush to merge audit messages (lines 227-228)
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Should have original + audit message in the batch
     await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(1);
@@ -893,7 +893,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     _queueTestOutboxMessage(sut);
 
     // Act - Flush (FakeWorkCoordinator returns empty OutboxWork, triggers line 270)
-    await sut.FlushAsync(WorkBatchFlags.None);
+    await sut.FlushAsync(WorkBatchOptions.None);
 
     // Assert - Logger received multiple log calls
     await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(2);
@@ -1067,7 +1067,7 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
