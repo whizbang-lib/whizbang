@@ -24,6 +24,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>messaging/transports/transport-consumer</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
@@ -34,6 +35,7 @@ public partial class ServiceBusConsumerWorker(
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
+#pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));

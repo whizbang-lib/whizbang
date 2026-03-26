@@ -74,6 +74,7 @@ public partial class TransportConsumerWorker : BackgroundService {
   /// where handlers are scoped and resolved from the message processing scope.
   /// </para>
   /// </remarks>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public TransportConsumerWorker(
     ITransport transport,
     TransportConsumerOptions options,
@@ -85,6 +86,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger
   ) {
+#pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(resilienceOptions);
