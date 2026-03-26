@@ -933,6 +933,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // All discovered types (messages + nested types)
+    _appendDiscoveredTypeChecks(sb, snippets, allTypes);
+
+    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
+    _appendEnvelopeTypeChecks(sb, snippets, allTypes);
+
+    // Collection and dictionary types discovered in messages
+    _appendCollectionTypeChecks(sb, snippets, listTypes, iReadOnlyListTypes, arrayTypes, dictionaryTypes);
+
+    // Enum types discovered in message and nested type properties (both non-nullable and nullable)
+    _appendEnumTypeChecks(sb, snippets, enumTypes);
+
+    // Polymorphic and interface types
+    _appendPolymorphicTypeChecks(sb, assembly, allTypes, polymorphicTypes);
+
+    sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
+    sb.AppendLine("  return null;");
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Appends type checks for all discovered types (messages + nested types).
+  /// </summary>
+  private static void _appendDiscoveredTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
     sb.AppendLine("  // Discovered types (messages + nested types)");
     foreach (var type in allTypes) {
       var check = snippets.Message
@@ -941,8 +969,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine(check);
       sb.AppendLine();
     }
+  }
 
-    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
+  /// <summary>
+  /// Appends MessageEnvelope type checks for actual message types (commands/events).
+  /// </summary>
+  private static void _appendEnvelopeTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var check = snippets.Envelope
@@ -951,8 +986,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine(check);
       sb.AppendLine();
     }
+  }
 
-    // List<T> types discovered in messages
+  /// <summary>
+  /// Appends type checks for List, IReadOnlyList, Array, and Dictionary types.
+  /// </summary>
+  private static void _appendCollectionTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<ListTypeInfo> listTypes,
+      ImmutableArray<IReadOnlyListTypeInfo> iReadOnlyListTypes,
+      ImmutableArray<ArrayTypeInfo> arrayTypes,
+      ImmutableArray<DictionaryTypeInfo> dictionaryTypes) {
     if (!listTypes.IsEmpty) {
       sb.AppendLine("  // List<T> types discovered in messages");
       foreach (var listType in listTypes) {
@@ -964,7 +1009,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    // IReadOnlyList<T> types discovered in messages
     if (!iReadOnlyListTypes.IsEmpty) {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
@@ -976,7 +1020,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    // Array types (T[]) discovered in messages
     if (!arrayTypes.IsEmpty) {
       sb.AppendLine("  // Array types (T[]) discovered in messages");
       foreach (var arrayType in arrayTypes) {
@@ -988,7 +1031,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    // Dictionary<TKey, TValue> types discovered in messages
     if (!dictionaryTypes.IsEmpty) {
       sb.AppendLine("  // Dictionary<TKey, TValue> types discovered in messages");
       foreach (var dictType in dictionaryTypes) {
@@ -1000,28 +1042,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine();
       }
     }
+  }
 
-    // Enum types discovered in message and nested type properties (both non-nullable and nullable)
-    if (!enumTypes.IsEmpty) {
-      sb.AppendLine("  // Enum types discovered in messages and nested types");
-      foreach (var enumType in enumTypes) {
-        // Non-nullable enum
-        var check = snippets.Enum
-            .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
-            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
-        sb.AppendLine(check);
-        sb.AppendLine();
-
-        // Nullable enum (always generate both - no need to discover which are used as nullable)
-        var nullableCheck = snippets.NullableEnum
-            .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
-            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
-        sb.AppendLine(nullableCheck);
-        sb.AppendLine();
-      }
+  /// <summary>
+  /// Appends type checks for enum types (both non-nullable and nullable).
+  /// </summary>
+  private static void _appendEnumTypeChecks(
+      StringBuilder sb,
+      GetTypeInfoSnippets snippets,
+      ImmutableArray<JsonEnumInfo> enumTypes) {
+    if (enumTypes.IsEmpty) {
+      return;
     }
 
-    // Polymorphic base types for automatic JSON serialization
+    sb.AppendLine("  // Enum types discovered in messages and nested types");
+    foreach (var enumType in enumTypes) {
+      // Non-nullable enum
+      var check = snippets.Enum
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(check);
+      sb.AppendLine();
+
+      // Nullable enum (always generate both - no need to discover which are used as nullable)
+      var nullableCheck = snippets.NullableEnum
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, enumType.FullyQualifiedName)
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, enumType.UniqueIdentifier);
+      sb.AppendLine(nullableCheck);
+      sb.AppendLine();
+    }
+  }
+
+  /// <summary>
+  /// Appends type checks for polymorphic base types and interface types (IEvent, ICommand, IMessage).
+  /// </summary>
+  private static void _appendPolymorphicTypeChecks(
+      StringBuilder sb,
+      Assembly assembly,
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
     if (!polymorphicTypes.IsEmpty) {
       var polymorphicCheckSnippet = TemplateUtilities.ExtractSnippet(
           assembly,
@@ -1038,74 +1097,73 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       }
     }
 
-    // Interface types for polymorphic serialization (IEvent, ICommand, IMessage)
-    // These delegate to JsonContextRegistry which aggregates derived types from all assemblies
     var hasEvents = allTypes.Any(t => t.IsEvent);
     var hasCommands = allTypes.Any(t => t.IsCommand);
 
     if (hasEvents || hasCommands) {
-      var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_INTERFACE");
-      var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
-      var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
-          assembly,
-          TEMPLATE_SNIPPET_FILE,
-          "GET_TYPE_INFO_LIST_INTERFACE");
+      _appendInterfaceTypeChecks(sb, assembly, hasEvents, hasCommands);
+    }
+  }
 
-      sb.AppendLine("  // Interface types for polymorphic serialization");
-      sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
+  /// <summary>
+  /// Appends interface type checks for IMessage, IEvent, and ICommand polymorphic serialization.
+  /// </summary>
+  private static void _appendInterfaceTypeChecks(
+      StringBuilder sb,
+      Assembly assembly,
+      bool hasEvents,
+      bool hasCommands) {
+    var interfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_INTERFACE");
+    var messageEnvelopeInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_MESSAGE_ENVELOPE_INTERFACE");
+    var listInterfaceCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "GET_TYPE_INFO_LIST_INTERFACE");
 
-      // IMessage (always if we have any messages)
-      sb.AppendLine(interfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine(listInterfaceCheckSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
-      sb.AppendLine();
+    sb.AppendLine("  // Interface types for polymorphic serialization");
+    sb.AppendLine("  // These delegate to JsonContextRegistry which aggregates derived types from all assemblies");
 
-      // IEvent (only if we have events)
-      if (hasEvents) {
-        sb.AppendLine(interfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine(listInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
-        sb.AppendLine();
-      }
+    // IMessage (always if we have any messages)
+    _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+        "global::Whizbang.Core.IMessage", "IMessage");
 
-      // ICommand (only if we have commands)
-      if (hasCommands) {
-        sb.AppendLine(interfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine(listInterfaceCheckSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
-        sb.AppendLine();
-      }
+    if (hasEvents) {
+      _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+          "global::Whizbang.Core.IEvent", "IEvent");
     }
 
-    sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
-    sb.AppendLine("  return null;");
-    sb.AppendLine("}");
+    if (hasCommands) {
+      _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
+          "global::Whizbang.Core.ICommand", "ICommand");
+    }
+  }
 
-    return sb.ToString();
+  /// <summary>
+  /// Appends the three interface check snippets for a single interface type.
+  /// </summary>
+  private static void _appendSingleInterfaceCheck(
+      StringBuilder sb,
+      string interfaceCheckSnippet,
+      string messageEnvelopeInterfaceCheckSnippet,
+      string listInterfaceCheckSnippet,
+      string interfaceType,
+      string interfaceName) {
+    sb.AppendLine(interfaceCheckSnippet
+        .Replace("__INTERFACE_TYPE__", interfaceType)
+        .Replace("__INTERFACE_NAME__", interfaceName));
+    sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
+        .Replace("__INTERFACE_TYPE__", interfaceType)
+        .Replace("__INTERFACE_NAME__", interfaceName));
+    sb.AppendLine(listInterfaceCheckSnippet
+        .Replace("__INTERFACE_TYPE__", interfaceType)
+        .Replace("__INTERFACE_NAME__", interfaceName));
+    sb.AppendLine();
   }
 
   private static string _generateHelperMethods(Assembly assembly) {
@@ -2602,27 +2660,47 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     foreach (var candidateType in typesToCheck) {
-      // Check if this type implements IPerspectiveFor<typeSymbol, ...>
-      foreach (var iface in candidateType.AllInterfaces) {
-        // Check if it's a perspective interface — use default format to match shared helper
-        var originalDef = iface.OriginalDefinition.ToDisplayString();
-        if (!originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) &&
-            !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) &&
-            !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal)) {
-          continue;
-        }
+      if (_implementsPerspectiveForModel(candidateType, typeSymbol)) {
+        return true;
+      }
+    }
 
-        // Check if the first type argument is our type
-        if (iface.TypeArguments.Length > 0) {
-          var modelType = iface.TypeArguments[0];
-          if (SymbolEqualityComparer.Default.Equals(modelType, typeSymbol)) {
-            return true;
-          }
+    return false;
+  }
+
+  /// <summary>
+  /// Checks if a candidate type implements IPerspectiveFor/IPerspectiveBase/IPerspectiveWithActionsFor
+  /// with the given type as TModel (first type argument).
+  /// </summary>
+  private static bool _implementsPerspectiveForModel(
+      INamedTypeSymbol candidateType,
+      INamedTypeSymbol modelTypeSymbol) {
+    foreach (var iface in candidateType.AllInterfaces) {
+      // Check if it's a perspective interface -- use default format to match shared helper
+      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      if (!_isPerspectiveInterfaceDefinition(originalDef)) {
+        continue;
+      }
+
+      // Check if the first type argument is our type
+      if (iface.TypeArguments.Length > 0) {
+        var modelType = iface.TypeArguments[0];
+        if (SymbolEqualityComparer.Default.Equals(modelType, modelTypeSymbol)) {
+          return true;
         }
       }
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Checks if an interface original definition string matches a perspective interface pattern.
+  /// </summary>
+  private static bool _isPerspectiveInterfaceDefinition(string originalDef) {
+    return originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) ||
+           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal);
   }
 
   /// <summary>
@@ -2635,9 +2713,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static JsonMessageTypeInfo? _extractPerspectiveModelFromPerspectiveClass(INamedTypeSymbol typeSymbol) {
     foreach (var iface in typeSymbol.AllInterfaces) {
       var originalDef = iface.OriginalDefinition.ToDisplayString();
-      if (!originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", System.StringComparison.Ordinal) &&
-          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", System.StringComparison.Ordinal) &&
-          !originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", System.StringComparison.Ordinal)) {
+      if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
 

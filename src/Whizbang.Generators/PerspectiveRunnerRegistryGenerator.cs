@@ -88,20 +88,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         ? singleStreamInterfaces[0].TypeArguments[0]
         : globalInterfaces[0].TypeArguments[0];
 
-    // Find property with [StreamId] attribute on the model
-    var hasStreamIdAttribute = false;
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        hasStreamIdAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
-
-        if (hasStreamIdAttribute) {
-          break;
-        }
-      }
-    }
-
-    if (!hasStreamIdAttribute) {
+    if (!_modelHasStreamIdAttribute(modelType)) {
       // Cannot generate runner without StreamId - skip silently
       return null;
     }
@@ -113,9 +100,45 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // Extract event types in TWO formats:
     // 1. Runtime format ("FullName, AssemblyName") for PerspectiveRegistrationInfo.EventTypes string matching
     // 2. Code-gen format ("global::FullName") for typeof() in generated code
-    // The runtime format matches TypeNameFormatter.Format() — critical for _isEventWithoutPerspectives.
+    // The runtime format matches TypeNameFormatter.Format() -- critical for _isEventWithoutPerspectives.
+    var (eventTypes, eventTypesCodeGen) = _extractEventTypes(singleStreamInterfaces, globalInterfaces);
+
+    return new PerspectiveRegistryInfo(
+        ClassName: className,
+        SimpleName: simpleName,
+        ClrTypeName: clrTypeName,
+        RunnerName: $"{simpleName.Replace(".", "")}Runner",
+        ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        EventTypes: [.. eventTypes.Distinct()],
+        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
+    );
+  }
+
+  /// <summary>
+  /// Checks if the model type has a property with the [StreamId] attribute.
+  /// </summary>
+  private static bool _modelHasStreamIdAttribute(ITypeSymbol modelType) {
+    foreach (var member in modelType.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasAttr = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute");
+        if (hasAttr) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Extracts event types from perspective interfaces in both runtime and code-gen formats.
+  /// </summary>
+  private static (List<string> EventTypes, List<string> EventTypesCodeGen) _extractEventTypes(
+      List<INamedTypeSymbol> singleStreamInterfaces,
+      List<INamedTypeSymbol> globalInterfaces) {
     var eventTypes = new List<string>();
     var eventTypesCodeGen = new List<string>();
+
     if (singleStreamInterfaces.Count > 0) {
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> - events start at index 1
       foreach (var iface in singleStreamInterfaces) {
@@ -135,15 +158,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       }
     }
 
-    return new PerspectiveRegistryInfo(
-        ClassName: className,
-        SimpleName: simpleName,
-        ClrTypeName: clrTypeName,
-        RunnerName: $"{simpleName.Replace(".", "")}Runner",
-        ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        EventTypes: [.. eventTypes.Distinct()],
-        EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
-    );
+    return (eventTypes, eventTypesCodeGen);
   }
 
   /// <summary>

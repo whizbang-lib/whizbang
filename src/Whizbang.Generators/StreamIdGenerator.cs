@@ -109,49 +109,75 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Look for [StreamId] on constructor parameters (for records)
-    var constructors = typeSymbol.Constructors;
-    foreach (var ctor in constructors) {
+    return _extractStreamIdFromConstructorParameters(typeSymbol);
+  }
+
+  /// <summary>
+  /// Searches constructor parameters for the [StreamId] attribute and extracts StreamIdInfo.
+  /// Used for record types where [StreamId] is applied to constructor parameters.
+  /// </summary>
+  private static StreamIdInfo? _extractStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
+    foreach (var ctor in typeSymbol.Constructors) {
       foreach (var parameter in ctor.Parameters) {
-        var hasStreamIdAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-
-        if (hasStreamIdAttr) {
-          // Find corresponding property (records create properties from constructor parameters)
-          var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-              .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-          if (property is not null) {
-            // Check for [GenerateStreamId] on the parameter or on the class
-            var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
-                a.AttributeClass is not null &&
-                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
-
-            var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
-            var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
-
-            var onlyIfEmpty = false;
-            if (hasGenerateOnParam) {
-              onlyIfEmpty = _extractOnlyIfEmptyFromAttributes(parameter.GetAttributes());
-            } else if (hasGenerateOnClass) {
-              onlyIfEmpty = classOnlyIfEmpty;
-            }
-
-            return new StreamIdInfo(
-                EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-                PropertyName: property.Name,
-                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType,
-                HasGenerate: hasGenerate,
-                OnlyIfEmpty: onlyIfEmpty,
-                IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
-            );
-          }
+        if (!_hasStreamIdAttributeOnParameter(parameter)) {
+          continue;
         }
+
+        // Find corresponding property (records create properties from constructor parameters)
+        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
+            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
+
+        if (property is null) {
+          continue;
+        }
+
+        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
+
+        return new StreamIdInfo(
+            EventType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+            PropertyName: property.Name,
+            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+            IsPropertyValueType: property.Type.IsValueType,
+            HasGenerate: hasGenerate,
+            OnlyIfEmpty: onlyIfEmpty,
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+        );
       }
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Checks if a constructor parameter has the [StreamId] attribute.
+  /// </summary>
+  private static bool _hasStreamIdAttributeOnParameter(IParameterSymbol parameter) {
+    return parameter.GetAttributes().Any(a =>
+        a.AttributeClass is not null &&
+        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
+  }
+
+  /// <summary>
+  /// Resolves [GenerateStreamId] for a constructor parameter, checking both the parameter and class.
+  /// </summary>
+  private static (bool HasGenerate, bool OnlyIfEmpty) _resolveGenerateStreamIdForParameter(
+      IParameterSymbol parameter,
+      INamedTypeSymbol typeSymbol) {
+    var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
+        a.AttributeClass is not null &&
+        TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
+
+    var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
+    var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
+
+    var onlyIfEmpty = false;
+    if (hasGenerateOnParam) {
+      onlyIfEmpty = _extractOnlyIfEmptyFromAttributes(parameter.GetAttributes());
+    } else if (hasGenerateOnClass) {
+      onlyIfEmpty = classOnlyIfEmpty;
+    }
+
+    return (hasGenerate, onlyIfEmpty);
   }
 
   private static EventWithoutStreamIdInfo? _findEventWithoutStreamId(
@@ -231,45 +257,39 @@ public class StreamIdGenerator : IIncrementalGenerator {
     }
 
     // Look for [StreamId] on constructor parameters (for records)
-    var constructors = typeSymbol.Constructors;
-    foreach (var ctor in constructors) {
+    return _extractCommandStreamIdFromConstructorParameters(typeSymbol);
+  }
+
+  /// <summary>
+  /// Searches constructor parameters for the [StreamId] attribute and extracts CommandStreamIdInfo.
+  /// Used for record command types where [StreamId] is applied to constructor parameters.
+  /// </summary>
+  private static CommandStreamIdInfo? _extractCommandStreamIdFromConstructorParameters(INamedTypeSymbol typeSymbol) {
+    foreach (var ctor in typeSymbol.Constructors) {
       foreach (var parameter in ctor.Parameters) {
-        var hasStreamIdAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass is not null &&
-            TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE);
-
-        if (hasStreamIdAttr) {
-          // Find corresponding property (records create properties from constructor parameters)
-          var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
-              .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
-
-          if (property is not null) {
-            // Check for [GenerateStreamId] on the parameter or on the class
-            var hasGenerateOnParam = parameter.GetAttributes().Any(a =>
-                a.AttributeClass is not null &&
-                TypeNameHelper.GetFullyQualifiedName(a.AttributeClass) == StandardInterfaceNames.GENERATE_STREAM_ID_ATTRIBUTE);
-
-            var (hasGenerateOnClass, classOnlyIfEmpty) = _extractGenerateStreamIdFromClass(typeSymbol);
-            var hasGenerate = hasGenerateOnParam || hasGenerateOnClass;
-
-            var onlyIfEmpty = false;
-            if (hasGenerateOnParam) {
-              onlyIfEmpty = _extractOnlyIfEmptyFromAttributes(parameter.GetAttributes());
-            } else if (hasGenerateOnClass) {
-              onlyIfEmpty = classOnlyIfEmpty;
-            }
-
-            return new CommandStreamIdInfo(
-                CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
-                PropertyName: property.Name,
-                PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
-                IsPropertyValueType: property.Type.IsValueType,
-                HasGenerate: hasGenerate,
-                OnlyIfEmpty: onlyIfEmpty,
-                IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
-            );
-          }
+        if (!_hasStreamIdAttributeOnParameter(parameter)) {
+          continue;
         }
+
+        // Find corresponding property (records create properties from constructor parameters)
+        var property = typeSymbol.GetMembers().OfType<IPropertySymbol>()
+            .FirstOrDefault(p => p.Name.Equals(parameter.Name, System.StringComparison.OrdinalIgnoreCase));
+
+        if (property is null) {
+          continue;
+        }
+
+        var (hasGenerate, onlyIfEmpty) = _resolveGenerateStreamIdForParameter(parameter, typeSymbol);
+
+        return new CommandStreamIdInfo(
+            CommandType: TypeNameHelper.GetFullyQualifiedName(typeSymbol),
+            PropertyName: property.Name,
+            PropertyType: TypeNameHelper.GetFullyQualifiedName(property.Type),
+            IsPropertyValueType: property.Type.IsValueType,
+            HasGenerate: hasGenerate,
+            OnlyIfEmpty: onlyIfEmpty,
+            IsPropertyInitOnly: _isInitOnlyOrReadOnly(property)
+        );
       }
     }
 
