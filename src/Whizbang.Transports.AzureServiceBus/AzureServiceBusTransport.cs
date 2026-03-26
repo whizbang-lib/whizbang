@@ -296,10 +296,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subject
         );
       }
+#pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
-      // Intentional log-and-rethrow: transport errors cross async/DI boundaries where
-      // the original exception context may be lost. Logging here ensures diagnostics.
-#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Failed to publish message {MessageId} to {Destination}",
@@ -511,10 +509,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       return subscription;
+#pragma warning disable S2139 // Intentional log-and-rethrow: subscription failures cross async/worker boundaries where the original exception context may be lost.
     } catch (Exception ex) {
-      // Intentional log-and-rethrow: subscription failures cross async/worker boundaries
-      // where the original exception context may be lost. Logging here ensures diagnostics.
-#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Failed to create subscription to {TopicName}/{SubscriptionName}",
@@ -898,11 +894,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subscription
         );
       }
+#pragma warning disable S2139 // Intentional log-and-rethrow: infrastructure provisioning errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      // Intentional log-and-rethrow: infrastructure provisioning errors cross async/DI boundaries
-      // where the original exception context may be lost. Logging here ensures diagnostics.
-#pragma warning disable S2139
       _logger.LogError(
         ex,
         "Error applying CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
@@ -1015,7 +1009,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
       // Race condition - subscription created by another instance, safe to ignore
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
+        _logger.LogDebug(ex, "Subscription {TopicName}/{SubscriptionName} already exists (409 conflict)", topicName, subscriptionName);
       }
     }
   }
@@ -1131,7 +1125,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
       // Race condition — another instance created it, safe to ignore
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Topic '{TopicName}' already exists (race condition)", topicName);
+        _logger.LogDebug(ex, "Topic '{TopicName}' already exists (race condition)", topicName);
       }
     }
   }
