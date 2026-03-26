@@ -92,6 +92,17 @@ public abstract partial class Dispatcher(
   CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
 #pragma warning restore CS9113
+  private const string TAG_MESSAGE_TYPE = "whizbang.message.type";
+  private const string TAG_MESSAGE_ID = "whizbang.message.id";
+  private const string TAG_CORRELATION_ID = "whizbang.correlation.id";
+  private const string TAG_DEBUG_PARENT_ID = "whizbang.debug.parent.id";
+  private const string TAG_DEBUG_PARENT_SOURCE = "whizbang.debug.parent.source";
+  private const string METRIC_MESSAGE_TYPE = "message_type";
+  private const string METRIC_PATTERN = "pattern";
+  private const string METRIC_ERROR_TYPE = "error_type";
+  private const string PATTERN_LOCAL_INVOKE = "local_invoke";
+  private const string ROUTED_NONE_ERROR = "Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.";
+
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -442,9 +453,9 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         // This enables cross-scope sync where one handler emits events and another waits
@@ -469,8 +480,8 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("pattern", "send"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -486,8 +497,8 @@ public abstract partial class Dispatcher(
       );
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName ?? "Unknown"),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName ?? "Unknown"),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -573,9 +584,9 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
@@ -593,8 +604,8 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("pattern", "send"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -609,8 +620,8 @@ public abstract partial class Dispatcher(
       );
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName ?? "Unknown"),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName ?? "Unknown"),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -667,11 +678,11 @@ public abstract partial class Dispatcher(
         var parentActivity = Activity.Current;
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
         if (dispatchActivity != null) {
-          dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
-          dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-          dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
-          dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
-          dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+          dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+          dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
         }
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
@@ -695,8 +706,8 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("pattern", "send"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -712,8 +723,8 @@ public abstract partial class Dispatcher(
       );
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -763,9 +774,9 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
         // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
         await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
@@ -784,8 +795,8 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("pattern", "send"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "send"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -800,8 +811,8 @@ public abstract partial class Dispatcher(
       );
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageTypeName),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageTypeName),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -894,7 +905,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed - users can call LocalInvokeAsync(Route.Local(event))
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -951,8 +962,8 @@ public abstract partial class Dispatcher(
       var result = await _localInvokeWithTracingAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("pattern", "local_invoke"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
       return result;
     } catch (InvalidCastException) {
@@ -976,8 +987,8 @@ public abstract partial class Dispatcher(
       throw;
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -1004,7 +1015,7 @@ public abstract partial class Dispatcher(
   ) {
     // Start dispatch activity to serve as parent for handler traces
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -1139,9 +1150,9 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -1201,9 +1212,9 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
@@ -1262,7 +1273,7 @@ public abstract partial class Dispatcher(
     object actualMessage = message;
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       actualMessage = routed.Value;
     }
@@ -1312,11 +1323,11 @@ public abstract partial class Dispatcher(
         var parentActivity = Activity.Current;
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
         if (dispatchActivity != null) {
-          dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
-          dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-          dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
-          dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
-          dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+          dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+          dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
+          dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
         }
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
@@ -1336,8 +1347,8 @@ public abstract partial class Dispatcher(
         await _invokeImmediateAsyncReceptorsAsync(envelope, messageType);
 
         _dispatcherMetrics?.MessagesDispatched.Add(1,
-          new KeyValuePair<string, object?>("message_type", messageType.Name),
-          new KeyValuePair<string, object?>("pattern", "local_invoke"));
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+          new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
         // Unwrap Routed<T> from result if receptor returned a wrapped value
         // This enables receptors to return Route.Local(event) for cascade control
@@ -1353,8 +1364,8 @@ public abstract partial class Dispatcher(
       }
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -1444,7 +1455,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -1525,9 +1536,9 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
         // Invoke using delegate - zero reflection, strongly typed
         await invoker(message);
@@ -1543,12 +1554,12 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("pattern", "local_invoke"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -1571,7 +1582,7 @@ public abstract partial class Dispatcher(
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-    dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
+    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
 
     // Invoke synchronously
     invoker(message);
@@ -1612,7 +1623,7 @@ public abstract partial class Dispatcher(
     object actualMessage = message;
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       actualMessage = routed.Value;
     }
@@ -1689,9 +1700,9 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
         // Invoke using delegate with unwrapped message - zero reflection, strongly typed
         await invoker(actualMessage);
@@ -1707,12 +1718,12 @@ public abstract partial class Dispatcher(
       }
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("pattern", "local_invoke"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", messageType.Name),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, messageType.Name),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -1770,7 +1781,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -1816,7 +1827,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -1918,9 +1929,9 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
@@ -1974,9 +1985,9 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       await invoker(message);
@@ -2064,7 +2075,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -2105,7 +2116,7 @@ public abstract partial class Dispatcher(
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
       if (routed.Mode == DispatchMode.None || routed.Value == null) {
-        throw new ArgumentException("Cannot invoke a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
+        throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
     }
@@ -2153,9 +2164,9 @@ public abstract partial class Dispatcher(
       }
 
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
       var result = await invoker(message);
 
@@ -2214,9 +2225,9 @@ public abstract partial class Dispatcher(
       }
 
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag("whizbang.message.type", messageType.FullName);
-      dispatchActivity?.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-      dispatchActivity?.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+      dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
       options.CancellationToken.ThrowIfCancellationRequested();
       var result = await invoker(message);
@@ -2903,8 +2914,8 @@ public abstract partial class Dispatcher(
       await PublishToOutboxAsync(eventData, eventType, messageId);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", eventTypeName),
-        new KeyValuePair<string, object?>("pattern", "publish"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "publish"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
@@ -2919,8 +2930,8 @@ public abstract partial class Dispatcher(
         streamId: streamId);
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", eventTypeName),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -2966,8 +2977,8 @@ public abstract partial class Dispatcher(
       await PublishToOutboxAsync(eventData, eventType, messageId);
 
       _dispatcherMetrics?.MessagesDispatched.Add(1,
-        new KeyValuePair<string, object?>("message_type", eventTypeName),
-        new KeyValuePair<string, object?>("pattern", "publish"));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(METRIC_PATTERN, "publish"));
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType);
@@ -2982,8 +2993,8 @@ public abstract partial class Dispatcher(
         streamId: streamId);
     } catch (Exception ex) {
       _dispatcherMetrics?.Errors.Add(1,
-        new KeyValuePair<string, object?>("message_type", eventTypeName),
-        new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
+        new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, eventTypeName),
+        new KeyValuePair<string, object?>(METRIC_ERROR_TYPE, ex.GetType().Name));
       throw;
     } finally {
       sw.Stop();
@@ -3679,12 +3690,12 @@ public abstract partial class Dispatcher(
       var parentActivity = Activity.Current;
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
       if (dispatchActivity != null) {
-        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
-        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
-        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
       }
 
       // Serialize envelope to OutboxMessage
@@ -3764,12 +3775,12 @@ public abstract partial class Dispatcher(
       var parentActivity = Activity.Current;
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
       if (dispatchActivity != null) {
-        dispatchActivity.SetTag("whizbang.message.type", messageType.FullName);
-        dispatchActivity.SetTag("whizbang.message.id", envelope.MessageId.ToString());
-        dispatchActivity.SetTag("whizbang.correlation.id", envelope.GetCorrelationId()?.ToString());
+        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
+        dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
-        dispatchActivity.SetTag("whizbang.debug.parent.id", parentActivity?.Id ?? "none");
-        dispatchActivity.SetTag("whizbang.debug.parent.source", parentActivity?.Source?.Name ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
+        dispatchActivity.SetTag(TAG_DEBUG_PARENT_SOURCE, parentActivity?.Source?.Name ?? "none");
       }
 
       // Serialize envelope to OutboxMessage
