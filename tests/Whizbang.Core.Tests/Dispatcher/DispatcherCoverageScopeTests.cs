@@ -73,7 +73,7 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Local);
-    var (LocalCount, OutboxCount) = _snapshotCounts();
+    var (LocalCount, _) = _snapshotCounts();
     await Assert.That(LocalCount).IsGreaterThanOrEqualTo(1);
   }
 
@@ -83,7 +83,7 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.Outbox);
-    var (LocalCount, OutboxCount) = _snapshotCounts();
+    var (_, OutboxCount) = _snapshotCounts();
     await Assert.That(OutboxCount).IsEqualTo(1);
   }
 
@@ -120,7 +120,7 @@ public class DispatcherCoverageScopeTests {
     _reset();
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     await dispatcher.CascadeMessageAsync(new ScopeTestEvent(Guid.NewGuid()), sourceEnvelope: null, DispatchMode.EventStoreOnly);
-    var (LocalCount, OutboxCount) = _snapshotCounts();
+    var (_, OutboxCount) = _snapshotCounts();
     await Assert.That(OutboxCount).IsEqualTo(1);
   }
 

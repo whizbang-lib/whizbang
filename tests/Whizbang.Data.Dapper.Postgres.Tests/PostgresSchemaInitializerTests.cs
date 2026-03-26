@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Postgres;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
@@ -1276,5 +1277,33 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     var hasRewindColumn = await setupConn.ExecuteScalarAsync<bool>(
       "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'wh_perspective_cursors' AND column_name = 'rewind_trigger_event_id')");
     await Assert.That(hasRewindColumn).IsTrue();
+  }
+
+  /// <summary>
+  /// Test 44: Migration 033 must not fail when run in isolation (e.g., version mismatch
+  /// where migrations exist but infrastructure schema hasn't created wh_perspective_cursors yet).
+  /// Neither the old nor the new table exists — the migration should be a safe no-op for
+  /// the rename, and the ADD COLUMN should not error on a missing table.
+  /// </summary>
+  [Test]
+  public async Task InitializeSchemaAsync_Migration033_AddColumnSurvivesWhenCursorsTableMissingAsync() {
+    // Arrange — execute ONLY migration 033 SQL against a bare database (no infrastructure schema)
+    // This simulates a version mismatch where the migration runs before the table is created.
+    await using var connection = new NpgsqlConnection(_testConnectionString);
+    await connection.OpenAsync();
+
+    // Load migration 033 SQL directly (with schema replaced)
+    var migrationProvider = new PostgresMigrationProvider();
+    var migrations = migrationProvider.GetMigrations();
+    var migration033 = migrations.FirstOrDefault(m => m.Name.Contains("033"));
+    await Assert.That(migration033).IsNotNull();
+
+    // Act & Assert — must not throw even though neither table exists
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = migration033!.Sql;
+    cmd.CommandTimeout = 30;
+
+    var action = () => cmd.ExecuteNonQueryAsync();
+    await Assert.That(action).ThrowsNothing();
   }
 }

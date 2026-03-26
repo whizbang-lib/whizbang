@@ -231,7 +231,7 @@ public class RouteTests {
   [Test]
   public async Task LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync() {
     // Arrange
-    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+    IEnumerable<TestEvent> events = [new("A"), new("B"), new("C")];
 
     // Act
     var routedCollection = Route.LocalNoPersist(events).ToList();
@@ -315,7 +315,7 @@ public class RouteTests {
   [Test]
   public async Task EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync() {
     // Arrange
-    IEnumerable<TestEvent> events = new List<TestEvent> { new("A"), new("B"), new("C") };
+    IEnumerable<TestEvent> events = [new("A"), new("B"), new("C")];
 
     // Act
     var routedCollection = Route.EventStoreOnly(events).ToList();

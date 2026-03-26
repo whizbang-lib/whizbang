@@ -107,11 +107,11 @@ public class WhizbangFlushMiddlewareTests {
   public async Task FlushMiddleware_FlushCalledAfterEndpoint_NotBeforeAsync() {
     // Arrange — verifies ordering: endpoint runs first, then flush
     var callOrder = new List<string>();
-    var flusher = new FakeWorkFlusher();
-
-    flusher.OnFlush = _ => {
-      callOrder.Add("flush");
-      return Task.CompletedTask;
+    var flusher = new FakeWorkFlusher {
+      OnFlush = _ => {
+        callOrder.Add("flush");
+        return Task.CompletedTask;
+      }
     };
 
     using var host = await new HostBuilder()

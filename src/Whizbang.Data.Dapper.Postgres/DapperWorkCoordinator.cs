@@ -168,7 +168,7 @@ public partial class DapperWorkCoordinator(
   ) {
     try {
       var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
-      return results.ToList();
+      return [.. results];
     } catch (NpgsqlException ex) when (ex.InnerException is TimeoutException || ex.Message.Contains("cancel", StringComparison.OrdinalIgnoreCase)) {
       if (_logger is not null) {
         LogWorkBatchTimedOut(_logger, _commandTimeoutSeconds, request.InstanceId, request.ServiceName, ex);

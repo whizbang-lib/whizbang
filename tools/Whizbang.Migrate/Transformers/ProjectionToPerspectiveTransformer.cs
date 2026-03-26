@@ -403,12 +403,12 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
           .WithModifiers(SyntaxFactory.TokenList(
               SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
           .WithParameterList(SyntaxFactory.ParameterList(
-              SyntaxFactory.SeparatedList(new[] {
+              SyntaxFactory.SeparatedList([
                   SyntaxFactory.Parameter(SyntaxFactory.Identifier("current"))
                       .WithType(SyntaxFactory.ParseTypeName(modelType)),
                   SyntaxFactory.Parameter(SyntaxFactory.Identifier("@event"))
                       .WithType(SyntaxFactory.ParseTypeName(eventType))
-              })));
+              ])));
 
       if (needsReview) {
         // Add comment for complex logic that needs review

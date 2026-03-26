@@ -15,6 +15,8 @@ namespace Whizbang.Transports.FastEndpoints.Generators;
 [Generator]
 public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
   private const string COMMAND_ENDPOINT_ATTRIBUTE_PREFIX = "Whizbang.Transports.Mutations.CommandEndpointAttribute";
+  private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   /// <inheritdoc />
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -201,23 +203,23 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     sb.AppendLine("      IEndpoint {");
     sb.AppendLine("  private readonly IDispatcher _dispatcher;");
     sb.AppendLine();
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine($"  /// Creates a new instance of {mutation.EndpointClassName}.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  public {mutation.EndpointClassName}(IDispatcher dispatcher) {{");
     sb.AppendLine("    _dispatcher = dispatcher;");
     sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Configures the endpoint route and HTTP method.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  public void Configure(IEndpointRouteBuilder routeBuilder) {");
     sb.AppendLine($"    routeBuilder.MapPost(\"{mutation.RestRoute}\", HandleAsync);");
     sb.AppendLine("  }");
     sb.AppendLine();
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Dispatches the command to the handler via IDispatcher.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  protected override async ValueTask<{mutation.ResultTypeName}> DispatchCommandAsync(");
     sb.AppendLine($"      {mutation.CommandTypeName} command,");
     sb.AppendLine("      CancellationToken ct) {");
@@ -226,18 +228,18 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     if (usesCustomRequest) {
-      sb.AppendLine("  /// <summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
       sb.AppendLine("  /// Handles the incoming HTTP request with custom request type.");
-      sb.AppendLine("  /// </summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {requestType} request,");
       sb.AppendLine("      CancellationToken ct) {");
       sb.AppendLine("    return await ExecuteWithRequestAsync(request, ct);");
       sb.AppendLine("  }");
     } else {
-      sb.AppendLine("  /// <summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
       sb.AppendLine("  /// Handles the incoming HTTP request where command is the request.");
-      sb.AppendLine("  /// </summary>");
+      sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
       sb.AppendLine($"  public async Task<{mutation.ResultTypeName}> HandleAsync(");
       sb.AppendLine($"      {mutation.CommandTypeName} command,");
       sb.AppendLine("      CancellationToken ct) {");

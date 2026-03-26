@@ -42,7 +42,7 @@ public abstract class LensEndpointBase<TModel> where TModel : class {
   /// <param name="defaultPageSize">Default page size if not specified in request</param>
   /// <param name="maxPageSize">Maximum allowed page size</param>
   /// <returns>Tuple of (skip, take) values</returns>
-  protected (int skip, int take) CalculatePaging(LensRequest request, int defaultPageSize, int maxPageSize) {
+  protected static (int skip, int take) CalculatePaging(LensRequest request, int defaultPageSize, int maxPageSize) {
     // Ensure page is at least 1
     var page = Math.Max(1, request.Page);
 
@@ -60,7 +60,7 @@ public abstract class LensEndpointBase<TModel> where TModel : class {
   /// </summary>
   /// <param name="sort">Sort string (e.g., "-createdAt,name,+status")</param>
   /// <returns>List of parsed sort expressions</returns>
-  protected IReadOnlyList<SortExpression> ParseSortExpression(string? sort) {
+  protected static IReadOnlyList<SortExpression> ParseSortExpression(string? sort) {
     if (string.IsNullOrWhiteSpace(sort)) {
       return [];
     }

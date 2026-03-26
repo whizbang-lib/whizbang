@@ -406,10 +406,10 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
 
     public List<LogEntry> GetLogsContaining(string text) =>
-      _logs.Where(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase)).ToList();
+      [.. _logs.Where(l => l.Message.Contains(text, StringComparison.OrdinalIgnoreCase))];
 
     public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
-      _logs.Where(l => l.LogLevel == level).ToList();
+      [.. _logs.Where(l => l.LogLevel == level)];
 
     public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }

@@ -325,13 +325,13 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
 
     foreach (var service in services) {
-      // Interface registration: services.AddScoped<IUserInterface, ConcreteClass>();
+      // Register implementation against the user-defined interface
       var interfaceCode = interfaceSnippet
           .Replace(PLACEHOLDER_USER_INTERFACE, service.UserInterfaceName)
           .Replace(PLACEHOLDER_CONCRETE_CLASS, service.ConcreteTypeName);
       sb.AppendLine(TemplateUtilities.IndentCode(interfaceCode, "    "));
 
-      // Self registration (conditional): if (options.IncludeSelfRegistration) services.AddScoped<ConcreteClass>();
+      // Conditionally register the concrete type itself (when IncludeSelfRegistration is enabled)
       var selfCode = selfSnippet
           .Replace(PLACEHOLDER_CONCRETE_CLASS, service.ConcreteTypeName);
       sb.AppendLine(TemplateUtilities.IndentCode(selfCode, "    "));

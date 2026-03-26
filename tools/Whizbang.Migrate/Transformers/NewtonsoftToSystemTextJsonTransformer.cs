@@ -14,7 +14,7 @@ namespace Whizbang.Migrate.Transformers;
 /// </remarks>
 /// <param name="enabled">Whether to perform transformations (false = only remove dead imports).</param>
 /// <param name="removeDeadImports">Whether to remove unused Newtonsoft imports.</param>
-/// <param name="addTodoForUnsupported">Whether to add TODO comments for unsupported patterns.</param>
+/// <param name="addTodoForUnsupported">Whether to add action-needed comments for unsupported patterns.</param>
 public sealed class NewtonsoftToSystemTextJsonTransformer(
     bool enabled = true,
     bool removeDeadImports = true,

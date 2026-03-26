@@ -16,6 +16,7 @@ internal static class PerspectiveDiscoveryHelper {
   private const string PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string PERSPECTIVE_WITH_ACTIONS_FOR = "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string GLOBAL_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
+  private const string GENERIC_MODEL_EVENT_PREFIX = "<TModel, TEvent";
 
   /// <summary>
   /// Finds all single-stream perspective interfaces on a class.
@@ -23,29 +24,27 @@ internal static class PerspectiveDiscoveryHelper {
   /// Returns interfaces with TModel as first type arg and TEvent1..N as remaining args.
   /// </summary>
   public static List<INamedTypeSymbol> FindSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
       .Where(i => {
         var originalDef = i.OriginalDefinition.ToDisplayString();
         // Match with "<TModel, TEvent" prefix to skip marker-only bases like IPerspectiveBase<TModel>
-        return (originalDef.StartsWith(PERSPECTIVE_BASE + "<TModel, TEvent", StringComparison.Ordinal) ||
-                originalDef.StartsWith(PERSPECTIVE_FOR + "<TModel, TEvent", StringComparison.Ordinal) ||
-                originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel, TEvent", StringComparison.Ordinal))
+        return (originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+                originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+                originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal))
                && i.TypeArguments.Length >= 2;
-      })
-      .ToList();
+      })];
   }
 
   /// <summary>
   /// Finds all global (multi-stream) perspective interfaces on a class.
   /// </summary>
   public static List<INamedTypeSymbol> FindGlobalInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
       .Where(i => {
         var originalDef = i.OriginalDefinition.ToDisplayString();
         return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<", StringComparison.Ordinal)
                && i.TypeArguments.Length >= 3;
-      })
-      .ToList();
+      })];
   }
 
   /// <summary>
@@ -63,9 +62,9 @@ internal static class PerspectiveDiscoveryHelper {
   public static bool IsPerspectiveClass(INamedTypeSymbol classSymbol) {
     return classSymbol.AllInterfaces.Any(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
-      return (originalDef.StartsWith(PERSPECTIVE_BASE + "<TModel, TEvent", StringComparison.Ordinal) ||
-              originalDef.StartsWith(PERSPECTIVE_FOR + "<TModel, TEvent", StringComparison.Ordinal) ||
-              originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel, TEvent", StringComparison.Ordinal) ||
+      return (originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+              originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
+              originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
               originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal))
              && i.TypeArguments.Length >= 2;
     });

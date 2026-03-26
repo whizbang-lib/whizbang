@@ -84,6 +84,40 @@ public class ITransportTests {
     );
   }
 
+  [Test]
+  public async Task ITransport_PublishBatchAsync_WithoutBulkPublishCapability_ThrowsNotSupportedExceptionAsync() {
+    // Arrange - InProcessTransport does NOT have BulkPublish capability
+    // Must use ITransport interface type to invoke the default interface method
+#pragma warning disable CA1859
+    ITransport transport = _createTestTransport();
+#pragma warning restore CA1859
+    var items = new List<BulkPublishItem> {
+      new() {
+        Envelope = _createTestEnvelope(),
+        EnvelopeType = "TestType, TestAssembly",
+        MessageId = Guid.NewGuid()
+      }
+    };
+    var destination = new TransportDestination("test-topic");
+
+    // Act & Assert - Default interface method should throw NotSupportedException
+    await Assert.ThrowsAsync<NotSupportedException>(async () =>
+      await transport.PublishBatchAsync(items, destination, CancellationToken.None)
+    );
+  }
+
+  [Test]
+  public async Task ITransport_PublishBatchAsync_InProcessTransport_DoesNotHaveBulkPublishCapabilityAsync() {
+    // Arrange
+    var transport = _createTestTransport();
+
+    // Act
+    var capabilities = transport.Capabilities;
+
+    // Assert - InProcessTransport should NOT declare BulkPublish
+    await Assert.That(capabilities.HasFlag(TransportCapabilities.BulkPublish)).IsFalse();
+  }
+
   // Helper methods
   private static InProcessTransport _createTestTransport() {
     // This will use InProcessTransport once implemented

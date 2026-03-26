@@ -29,10 +29,10 @@ public sealed class BatchedCompletionStrategy(
   double backoffMultiplier = 2.0,
   TimeSpan? maxTimeout = null
   ) : IPerspectiveCompletionStrategy {
-  private readonly CompletionTracker<PerspectiveCursorCompletion> _completions = new CompletionTracker<PerspectiveCursorCompletion>(
+  private readonly CompletionTracker<PerspectiveCursorCompletion> _completions = new(
       retryTimeout, backoffMultiplier, maxTimeout
     );
-  private readonly CompletionTracker<PerspectiveCursorFailure> _failures = new CompletionTracker<PerspectiveCursorFailure>(
+  private readonly CompletionTracker<PerspectiveCursorFailure> _failures = new(
       retryTimeout, backoffMultiplier, maxTimeout
     );
 
