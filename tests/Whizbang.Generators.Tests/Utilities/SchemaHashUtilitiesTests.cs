@@ -281,8 +281,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
     var indexes = new List<IndexSchema> {
-      new("idx_order_created_at", new List<string> { "created_at" }, "btree", false),
-      new("idx_order_data_gin", new List<string> { "data" }, "gin", false)
+      new("idx_order_created_at", ["created_at"], "btree", false),
+      new("idx_order_data_gin", ["data"], "gin", false)
     };
     var schema = new PerspectiveTableSchema(columns, indexes);
 
@@ -312,8 +312,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var json1 = SchemaHashUtilities.ToCanonicalJson(schema1);
@@ -339,7 +339,7 @@ public class SchemaHashUtilitiesTests {
       new("created_at", "timestamptz", false, false, false, null)
     };
     var indexes = new List<IndexSchema> {
-      new("idx_created_at", new List<string> { "created_at" }, "btree", false)
+      new("idx_created_at", ["created_at"], "btree", false)
     };
     var schema1 = new PerspectiveTableSchema(columns, indexes);
     var schema2 = new PerspectiveTableSchema(columns, indexes);
@@ -367,8 +367,8 @@ public class SchemaHashUtilitiesTests {
       new("id", "uuid", false, true, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeSchemaHash(schema1);
@@ -392,8 +392,8 @@ public class SchemaHashUtilitiesTests {
       new("data", "jsonb", false, false, false, null)
     };
 
-    var schema1 = new PerspectiveTableSchema(columns1, new List<IndexSchema>());
-    var schema2 = new PerspectiveTableSchema(columns2, new List<IndexSchema>());
+    var schema1 = new PerspectiveTableSchema(columns1, []);
+    var schema2 = new PerspectiveTableSchema(columns2, []);
 
     // Act
     var hash1 = SchemaHashUtilities.ComputeSchemaHash(schema1);

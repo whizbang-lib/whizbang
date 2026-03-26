@@ -2012,10 +2012,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // Build indexes
       var schemaIndexes = new List<IndexSchema> {
-        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_created_at", new List<string> { "created_at" }, "btree", false),
-        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_data_gin", new List<string> { "data" }, "gin", false),
-        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_metadata_gin", new List<string> { "metadata" }, "gin", false),
-        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_scope_gin", new List<string> { "scope" }, "gin", false)
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_created_at", ["created_at"], "btree", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_data_gin", ["data"], "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_metadata_gin", ["metadata"], "gin", false),
+        new($"idx_{perspective.TableName.Replace("wh_per_", "")}_scope_gin", ["scope"], "gin", false)
       };
 
       // Add indexes for physical fields
@@ -2030,7 +2030,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var indexType = field.IsVector ? "ivfflat" : "btree";
           schemaIndexes.Add(new IndexSchema(
               $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
-              new List<string> { field.ColumnName },
+              [field.ColumnName],
               indexType,
               false
           ));

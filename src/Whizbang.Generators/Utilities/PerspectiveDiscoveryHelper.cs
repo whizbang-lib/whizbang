@@ -23,7 +23,7 @@ internal static class PerspectiveDiscoveryHelper {
   /// Returns interfaces with TModel as first type arg and TEvent1..N as remaining args.
   /// </summary>
   public static List<INamedTypeSymbol> FindSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
       .Where(i => {
         var originalDef = i.OriginalDefinition.ToDisplayString();
         // Match with "<TModel, TEvent" prefix to skip marker-only bases like IPerspectiveBase<TModel>
@@ -31,21 +31,19 @@ internal static class PerspectiveDiscoveryHelper {
                 originalDef.StartsWith(PERSPECTIVE_FOR + "<TModel, TEvent", StringComparison.Ordinal) ||
                 originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + "<TModel, TEvent", StringComparison.Ordinal))
                && i.TypeArguments.Length >= 2;
-      })
-      .ToList();
+      })];
   }
 
   /// <summary>
   /// Finds all global (multi-stream) perspective interfaces on a class.
   /// </summary>
   public static List<INamedTypeSymbol> FindGlobalInterfaces(INamedTypeSymbol classSymbol) {
-    return classSymbol.AllInterfaces
+    return [.. classSymbol.AllInterfaces
       .Where(i => {
         var originalDef = i.OriginalDefinition.ToDisplayString();
         return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<", StringComparison.Ordinal)
                && i.TypeArguments.Length >= 3;
-      })
-      .ToList();
+      })];
   }
 
   /// <summary>

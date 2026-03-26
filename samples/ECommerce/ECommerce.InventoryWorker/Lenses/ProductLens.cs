@@ -41,7 +41,7 @@ public class ProductLens(ILensQuery<ProductDto> query) : IProductLens {
   public async Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {
     var ids = productIds.ToList();
     if (ids.Count == 0) {
-      return Array.Empty<ProductDto>();
+      return [];
     }
 
     var results = await query.DefaultScope.Query

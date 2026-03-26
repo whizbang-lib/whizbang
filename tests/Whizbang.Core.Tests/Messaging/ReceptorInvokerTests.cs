@@ -1051,7 +1051,7 @@ public class ReceptorInvokerTests {
 
     // Assert - Options are correct
     await Assert.That(syncAwaiter.WaitCalls).Count().IsEqualTo(1);
-    var (PerspectiveType, Options) = syncAwaiter.WaitCalls[0];
+    var (_, Options) = syncAwaiter.WaitCalls[0];
     await Assert.That(Options.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(7500));
     await Assert.That(Options.Filter).IsTypeOf<EventTypeFilter>();
   }

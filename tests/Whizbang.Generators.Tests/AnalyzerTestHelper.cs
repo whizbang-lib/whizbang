@@ -56,7 +56,7 @@ public static class AnalyzerTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );

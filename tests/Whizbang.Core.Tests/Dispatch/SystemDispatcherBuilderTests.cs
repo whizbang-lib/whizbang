@@ -38,7 +38,7 @@ public class SystemDispatcherBuilderTests {
   [Test]
   public async Task AsSystem_ForAllTenants_SetsTenantIdToAllTenantsConstantAsync() {
     // Arrange
-    var scopeContextAccessor = new ScopeContextAccessor {
+    _ = new ScopeContextAccessor {
       Current = null // No ambient context
     };
 

@@ -430,7 +430,7 @@ public static class VectorAnalyzerTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -466,11 +466,11 @@ public static class VectorAnalyzerTestHelper {
 
     var compilation = CSharpCompilation.Create(
         assemblyName: "Pgvector.EntityFrameworkCore",
-        syntaxTrees: new[] { syntaxTree },
-        references: new[] {
+        syntaxTrees: [syntaxTree],
+        references: [
           MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
           MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll"))
-        },
+        ],
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
 

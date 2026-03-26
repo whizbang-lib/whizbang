@@ -100,7 +100,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -165,7 +165,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     return CSharpCompilation.Create(
         assemblyName: assemblyName,
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -218,7 +218,7 @@ public static class GeneratorTestHelper {
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
-        syntaxTrees: new[] { syntaxTree },
+        syntaxTrees: [syntaxTree],
         references: references,
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -231,7 +231,7 @@ public static class GeneratorTestHelper {
 
     // Create generator driver with options provider
     var driver = CSharpGeneratorDriver.Create(
-        generators: new ISourceGenerator[] { generator.AsSourceGenerator() },
+        generators: [generator.AsSourceGenerator()],
         optionsProvider: optionsProvider
     );
 

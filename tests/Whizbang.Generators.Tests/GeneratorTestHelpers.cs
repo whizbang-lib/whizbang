@@ -119,7 +119,7 @@ public static class GeneratorTestHelpers {
 
     return CSharpCompilation.Create(
       assemblyName: "TestAssembly",
-      syntaxTrees: new[] { syntaxTree },
+      syntaxTrees: [syntaxTree],
       references: references,
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
@@ -145,7 +145,7 @@ public static class GeneratorTestHelpers {
 
     return CSharpCompilation.Create(
       assemblyName: "TestAssembly",
-      syntaxTrees: new[] { syntaxTree },
+      syntaxTrees: [syntaxTree],
       references: references,
       options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
