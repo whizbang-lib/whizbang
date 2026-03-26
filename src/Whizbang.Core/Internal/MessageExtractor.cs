@@ -233,8 +233,8 @@ public static class MessageExtractor {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// TODO: Replace GetCustomAttribute call with generated lookup table for AOT compatibility.
-  /// The source generator should generate a static RoutingMetadata class that provides
+  /// This method uses GetCustomAttribute which is not AOT compatible. A future enhancement
+  /// will replace this with a source-generated static RoutingMetadata lookup table that provides
   /// message type defaults without reflection.
   /// </para>
   /// <para>
@@ -248,7 +248,7 @@ public static class MessageExtractor {
     DispatchMode? individualWrapperMode,
     DispatchMode? collectionWrapperMode) {
     // Priority 1: Message type attribute (HIGHEST - policy enforcement)
-    // TODO: Replace with generated lookup for AOT compatibility
+    // Uses reflection (not AOT compatible) - will be replaced by generated lookup
     var messageAttr = message.GetType().GetCustomAttribute<DefaultRoutingAttribute>();
     if (messageAttr != null) {
       return messageAttr.Mode;

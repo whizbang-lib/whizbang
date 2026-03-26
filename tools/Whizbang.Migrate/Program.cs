@@ -80,7 +80,8 @@ public static class Program {
     planCommand.AddOption(outputOption);
     planCommand.SetHandler(async (project, output) => {
       Console.WriteLine($"Planning migration for: {project ?? "current directory"}");
-      // TODO: Implement planning
+      Console.WriteLine("Plan command is not yet implemented. Use 'wizard' command for interactive migration.");
+      await Task.CompletedTask;
     }, projectOption, outputOption);
 
     // apply command
@@ -244,10 +245,10 @@ public static class Program {
     rollbackCommand.SetHandler(async (checkpoint, list) => {
       if (list) {
         Console.WriteLine("Available checkpoints:");
-        // TODO: List checkpoints
+        Console.WriteLine("Checkpoint listing is not yet implemented.");
       } else if (checkpoint != null) {
         Console.WriteLine($"Rolling back to checkpoint: {checkpoint}");
-        // TODO: Implement rollback
+        Console.WriteLine("Rollback is not yet implemented.");
       }
     }, checkpointArgument, listOption);
 

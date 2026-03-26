@@ -94,13 +94,13 @@ public static class StreamIdExtractorRegistry {
   }
 
   private sealed class CompositeStreamIdExtractor : IStreamIdExtractor {
-    public Guid? ExtractStreamId(object message, Type messageType) =>
+    Guid? IStreamIdExtractor.ExtractStreamId(object message, Type messageType) =>
         StreamIdExtractorRegistry.ExtractStreamId(message, messageType);
 
-    public (bool ShouldGenerate, bool OnlyIfEmpty) GetGenerationPolicy(object message) =>
+    (bool ShouldGenerate, bool OnlyIfEmpty) IStreamIdExtractor.GetGenerationPolicy(object message) =>
         StreamIdExtractorRegistry.GetGenerationPolicy(message);
 
-    public bool SetStreamId(object message, Guid streamId) =>
+    bool IStreamIdExtractor.SetStreamId(object message, Guid streamId) =>
         StreamIdExtractorRegistry.SetStreamId(message, streamId);
   }
 }
