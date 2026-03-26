@@ -20,6 +20,10 @@ namespace Whizbang.Generators;
 [Generator]
 public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
   private const string MESSAGE_TAG_ATTRIBUTE = "Whizbang.Core.Attributes.MessageTagAttribute";
+  private const string XML_DOC_SUMMARY_OPEN = "/// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE = "/// </summary>";
+  private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   // Built-in attribute types that are handled directly by MessageTagProcessor
   // Custom attributes (those not in this set) require generated dispatchers
@@ -154,23 +158,23 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry of message types with tag attributes.");
     sb.AppendLine("/// Implements <see cref=\"IMessageTagRegistry\"/> for AOT-compatible tag discovery.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine("/// <remarks>");
     sb.AppendLine("/// This registry is automatically registered via [ModuleInitializer] before Main() runs.");
     sb.AppendLine("/// No manual registration is required.");
     sb.AppendLine("/// </remarks>");
     sb.AppendLine($"internal sealed class {className} : IMessageTagRegistry {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Singleton instance of the generated registry.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  internal static readonly {className} Instance = new();");
     sb.AppendLine();
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// All registered message tag entries.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  private static readonly MessageTagRegistration[] _tags = new MessageTagRegistration[] {");
 
     foreach (var tag in validTags) {
@@ -189,14 +193,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine("}");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-registers the generated message tag registry with the assembly registry.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine($"internal static class {initializerClassName} {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Module initializer that registers the tag registry.");
     sb.AppendLine("  /// Called automatically before any code in the assembly runs.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  internal static void Initialize() {");
     sb.AppendLine("    // Register with priority 100 (contracts assemblies are tried first)");
@@ -252,10 +256,10 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated dispatcher for custom MessageTagAttribute types.");
     sb.AppendLine("/// Implements <see cref=\"IMessageTagHookDispatcher\"/> for AOT-compatible hook invocation.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine("/// <remarks>");
     sb.AppendLine("/// This dispatcher handles the following custom attribute types:");
     foreach (var attrType in customAttributeTypes) {
@@ -263,9 +267,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine("/// </remarks>");
     sb.AppendLine($"internal sealed class {className} : IMessageTagHookDispatcher {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Singleton instance of the generated dispatcher.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine($"  internal static readonly {className} Instance = new();");
     sb.AppendLine();
 
@@ -328,14 +332,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Generate module initializer
-    sb.AppendLine("/// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-registers the generated message tag hook dispatcher with the registry.");
-    sb.AppendLine("/// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE);
     sb.AppendLine($"internal static class {initializerClassName} {{");
-    sb.AppendLine("  /// <summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     sb.AppendLine("  /// Module initializer that registers the hook dispatcher.");
     sb.AppendLine("  /// Called automatically before any code in the assembly runs.");
-    sb.AppendLine("  /// </summary>");
+    sb.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     sb.AppendLine("  [ModuleInitializer]");
     sb.AppendLine("  internal static void Initialize() {");
     sb.AppendLine("    // Register with priority 100 (contracts assemblies are tried first)");

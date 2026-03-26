@@ -28,13 +28,15 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.SuppressGuidInterceptionAttribute";
   private const string SUPPRESS_ATTRIBUTE_NAME = "SuppressGuidInterceptionAttribute";
   private const string SUPPRESS_SHORT_NAME = "SuppressGuidInterception";
+  private const string METHOD_NEW_GUID = "NewGuid";
+  private const string GUID_VERSION_7 = "Version7";
 
   // Third-party library patterns
   private static readonly (string TypePattern, string MethodName, string Version, string Source)[] _thirdPartyMethods = [
-    ("Marten.Schema.Identity.CombGuidIdGeneration", "NewGuid", "Version7", "SourceMarten"),
-    ("UUIDNext.Uuid", "NewDatabaseFriendly", "Version7", "SourceUuidNext"),
-    ("UUIDNext.Uuid", "NewSequential", "Version7", "SourceUuidNext"),
-    ("Medo.Uuid7", "NewUuid7", "Version7", "SourceMedo"),
+    ("Marten.Schema.Identity.CombGuidIdGeneration", METHOD_NEW_GUID, GUID_VERSION_7, "SourceMarten"),
+    ("UUIDNext.Uuid", "NewDatabaseFriendly", GUID_VERSION_7, "SourceUuidNext"),
+    ("UUIDNext.Uuid", "NewSequential", GUID_VERSION_7, "SourceUuidNext"),
+    ("Medo.Uuid7", "NewUuid7", GUID_VERSION_7, "SourceMedo"),
   ];
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -119,11 +121,11 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
     // Check for System.Guid methods
     if (containingType == GUID_TYPE) {
-      if (methodName == "NewGuid") {
+      if (methodName == METHOD_NEW_GUID) {
         guidVersion = "Version4";
         guidSource = "SourceMicrosoft";
       } else if (methodName == "CreateVersion7") {
-        guidVersion = "Version7";
+        guidVersion = GUID_VERSION_7;
         guidSource = "SourceMicrosoft";
       }
     }
@@ -406,9 +408,9 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
 
       // Generate the actual call based on the original method
       var originalCall = info.OriginalMethod switch {
-        "NewGuid" when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.NewGuid()",
+        METHOD_NEW_GUID when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.NewGuid()",
         "CreateVersion7" when info.FullyQualifiedTypeName == "global::System.Guid" => "global::System.Guid.CreateVersion7()",
-        "NewGuid" => $"{info.FullyQualifiedTypeName}.NewGuid()",
+        METHOD_NEW_GUID => $"{info.FullyQualifiedTypeName}.NewGuid()",
         "NewSequential" => $"{info.FullyQualifiedTypeName}.NewSequential()",
         "NewDatabaseFriendly" => $"{info.FullyQualifiedTypeName}.NewDatabaseFriendly(global::UUIDNext.Database.PostgreSql)",
         "NewUuid7" => $"{info.FullyQualifiedTypeName}.NewUuid7().ToGuid()",

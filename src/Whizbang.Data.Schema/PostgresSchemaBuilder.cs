@@ -24,6 +24,8 @@ namespace Whizbang.Data.Postgres.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
 public class PostgresSchemaBuilder : ISchemaBuilder {
+  private const string DEFAULT_SCHEMA = "public";
+
   /// <inheritdoc />
   public string DatabaseEngine => "Postgres";
 
@@ -55,7 +57,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var tableName = $"{prefix}{table.Name}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? tableName : $"{_quoteIdentifier(schema)}.{tableName}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? tableName : $"{_quoteIdentifier(schema)}.{tableName}";
 
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {qualifiedTableName} (");
 
@@ -141,7 +143,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var fullTableName = $"{prefix}{tableName}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? fullTableName : $"{_quoteIdentifier(schema)}.{fullTableName}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? fullTableName : $"{_quoteIdentifier(schema)}.{fullTableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
     var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
@@ -160,7 +162,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var sequenceName = $"{prefix}{sequence.Name}";
     // "public" is the default Postgres schema - no qualification needed
     // Quote schema names to handle PostgreSQL reserved keywords (e.g., "user")
-    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == "public" ? sequenceName : $"{_quoteIdentifier(schema)}.{sequenceName}";
+    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA ? sequenceName : $"{_quoteIdentifier(schema)}.{sequenceName}";
     return $"CREATE SEQUENCE IF NOT EXISTS {qualifiedSequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 
@@ -188,7 +190,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
 
     // Create schema if not using default "public" schema
     // Quote schema name to handle PostgreSQL reserved keywords (e.g., "user")
-    if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != "public") {
+    if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != DEFAULT_SCHEMA) {
       sb.AppendLine("-- Create schema for service isolation");
       sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {_quoteIdentifier(config.SchemaName)};");
       sb.AppendLine();

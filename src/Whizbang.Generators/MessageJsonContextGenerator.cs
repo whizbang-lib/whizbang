@@ -66,6 +66,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
+  private const string PLACEHOLDER_ELEMENT_TYPE = "__ELEMENT_TYPE__";
+  private const string PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER = "__ELEMENT_UNIQUE_IDENTIFIER__";
+  private const string PLACEHOLDER_INTERFACE_TYPE = "__INTERFACE_TYPE__";
+  private const string PLACEHOLDER_INTERFACE_NAME = "__INTERFACE_NAME__";
+  private const string GLOBAL_SYSTEM_PREFIX = "global::System.";
+  private const string GLOBAL_WHIZBANG_CORE_IMESSAGE = "global::Whizbang.Core.IMessage";
+  private const string GLOBAL_WHIZBANG_CORE_IEVENT = "global::Whizbang.Core.IEvent";
+  private const string GLOBAL_WHIZBANG_CORE_ICOMMAND = "global::Whizbang.Core.ICommand";
+  private const string INTERFACE_NAME_IMESSAGE = "IMessage";
+  private const string INTERFACE_NAME_IEVENT = "IEvent";
+  private const string INTERFACE_NAME_ICOMMAND = "ICommand";
+  private const string PRAGMA_DISABLE_CS0169 = "#pragma warning disable CS0169  // Field is never used";
+  private const string PRAGMA_RESTORE_CS0169 = "#pragma warning restore CS0169";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
@@ -516,7 +529,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var message in messages) {
       // Use fully qualified name without global:: prefix for discriminator to ensure uniqueness
-      var discriminator = message.FullyQualifiedName.Replace("global::", "");
+      var discriminator = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
 
       if (message.IsEvent) {
         sb.AppendLine($"    JsonContextRegistry.RegisterDerivedType<global::Whizbang.Core.IEvent, {message.FullyQualifiedName}>(\"{discriminator}\");");
@@ -539,7 +552,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     // Load snippets
@@ -604,45 +617,45 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // IMessage (always if we have any messages)
       sb.AppendLine(interfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
       sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
       sb.AppendLine(listInterfaceFieldSnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-          .Replace("__INTERFACE_NAME__", "IMessage"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
 
       // IEvent (only if we have events)
       if (hasEvents) {
         sb.AppendLine(interfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
         sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
         sb.AppendLine(listInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-            .Replace("__INTERFACE_NAME__", "IEvent"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       }
 
       // ICommand (only if we have commands)
       if (hasCommands) {
         sb.AppendLine(interfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
         sb.AppendLine(messageEnvelopeInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
         sb.AppendLine(listInterfaceFieldSnippet
-            .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-            .Replace("__INTERFACE_NAME__", "ICommand"));
+            .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+            .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       }
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -681,39 +694,39 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // IMessage (always if we have any messages)
     sb.AppendLine(interfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
     sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
     sb.AppendLine(listInterfacePropertySnippet
-        .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IMessage")
-        .Replace("__INTERFACE_NAME__", "IMessage"));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IMESSAGE)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IMESSAGE));
 
     // IEvent (only if we have events)
     if (hasEvents) {
       sb.AppendLine(interfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
       sb.AppendLine(listInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.IEvent")
-          .Replace("__INTERFACE_NAME__", "IEvent"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_IEVENT)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_IEVENT));
     }
 
     // ICommand (only if we have commands)
     if (hasCommands) {
       sb.AppendLine(interfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       sb.AppendLine(messageEnvelopeInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
       sb.AppendLine(listInterfacePropertySnippet
-          .Replace("__INTERFACE_TYPE__", "global::Whizbang.Core.ICommand")
-          .Replace("__INTERFACE_NAME__", "ICommand"));
+          .Replace(PLACEHOLDER_INTERFACE_TYPE, GLOBAL_WHIZBANG_CORE_ICOMMAND)
+          .Replace(PLACEHOLDER_INTERFACE_NAME, INTERFACE_NAME_ICOMMAND));
     }
 
     return sb.ToString();
@@ -1002,8 +1015,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  // List<T> types discovered in messages");
       foreach (var listType in listTypes) {
         var check = snippets.List
-            .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1013,8 +1026,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  // IReadOnlyList<T> types discovered in messages");
       foreach (var iReadOnlyListType in iReadOnlyListTypes) {
         var check = snippets.IReadOnlyList
-            .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1024,8 +1037,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  // Array types (T[]) discovered in messages");
       foreach (var arrayType in arrayTypes) {
         var check = snippets.Array
-            .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+            .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+            .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1037,7 +1050,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var check = snippets.Dictionary
             .Replace("__KEY_TYPE__", dictType.KeyTypeName)
             .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-            .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+            .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -1131,16 +1144,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // IMessage (always if we have any messages)
     _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
-        "global::Whizbang.Core.IMessage", "IMessage");
+        GLOBAL_WHIZBANG_CORE_IMESSAGE, INTERFACE_NAME_IMESSAGE);
 
     if (hasEvents) {
       _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
-          "global::Whizbang.Core.IEvent", "IEvent");
+          GLOBAL_WHIZBANG_CORE_IEVENT, INTERFACE_NAME_IEVENT);
     }
 
     if (hasCommands) {
       _appendSingleInterfaceCheck(sb, interfaceCheckSnippet, messageEnvelopeInterfaceCheckSnippet, listInterfaceCheckSnippet,
-          "global::Whizbang.Core.ICommand", "ICommand");
+          GLOBAL_WHIZBANG_CORE_ICOMMAND, INTERFACE_NAME_ICOMMAND);
     }
   }
 
@@ -1155,14 +1168,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       string interfaceType,
       string interfaceName) {
     sb.AppendLine(interfaceCheckSnippet
-        .Replace("__INTERFACE_TYPE__", interfaceType)
-        .Replace("__INTERFACE_NAME__", interfaceName));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
     sb.AppendLine(messageEnvelopeInterfaceCheckSnippet
-        .Replace("__INTERFACE_TYPE__", interfaceType)
-        .Replace("__INTERFACE_NAME__", interfaceName));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
     sb.AppendLine(listInterfaceCheckSnippet
-        .Replace("__INTERFACE_TYPE__", interfaceType)
-        .Replace("__INTERFACE_NAME__", interfaceName));
+        .Replace(PLACEHOLDER_INTERFACE_TYPE, interfaceType)
+        .Replace(PLACEHOLDER_INTERFACE_NAME, interfaceName));
     sb.AppendLine();
   }
 
@@ -1580,7 +1593,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Skip System.* types (collections, framework types) - STJ handles these natively
         // This handles cases like List<List<T>> where element type is List<T>
-        if (typeNameToProcess.StartsWith("global::System.", StringComparison.Ordinal)) {
+        if (typeNameToProcess.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
           continue;
         }
 
@@ -1940,7 +1953,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Skip all System.* types - they're either handled natively by STJ or shouldn't be discovered
-    if (typeName.StartsWith("global::System.", StringComparison.Ordinal)) {
+    if (typeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
       return null;
     }
 
@@ -2189,21 +2202,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_LIST");
 
     foreach (var listType in listTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2222,8 +2235,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var listType in listTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, listType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, listType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2277,7 +2290,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Extract simple name from element type
         var parts = elementTypeName.Split('.');
-        var elementSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+        var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
         iReadOnlyListTypes[iReadOnlyListTypeName] = new IReadOnlyListTypeInfo(
             IReadOnlyListTypeName: iReadOnlyListTypeName,
@@ -2309,21 +2322,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_IREADONLYLIST");
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2343,8 +2356,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var iReadOnlyListType in iReadOnlyListTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", iReadOnlyListType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", iReadOnlyListType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, iReadOnlyListType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, iReadOnlyListType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2363,21 +2376,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_ARRAY");
 
     foreach (var arrayType in arrayTypes) {
       var field = snippet
-          .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2395,8 +2408,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var arrayType in arrayTypes) {
       var factory = snippet
-          .Replace("__ELEMENT_TYPE__", arrayType.ElementTypeName)
-          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", arrayType.ElementUniqueIdentifier);
+          .Replace(PLACEHOLDER_ELEMENT_TYPE, arrayType.ElementTypeName)
+          .Replace(PLACEHOLDER_ELEMENT_UNIQUE_IDENTIFIER, arrayType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2461,7 +2474,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
           // Extract simple name from value type
           var parts = valueType.Split('.');
-          var valueSimpleName = parts[^1].Replace("global::", "").TrimEnd('?');
+          var valueSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "").TrimEnd('?');
 
           dictionaryTypes[dictionaryTypeName] = new DictionaryTypeInfo(
               DictionaryTypeName: dictionaryTypeName,
@@ -2495,7 +2508,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_DICTIONARY");
@@ -2504,13 +2517,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var field = snippet
           .Replace("__KEY_TYPE__", dictType.KeyTypeName)
           .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
       sb.AppendLine(field);
     }
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -2533,7 +2546,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var factory = snippet
           .Replace("__KEY_TYPE__", dictType.KeyTypeName)
           .Replace("__VALUE_TYPE__", dictType.ValueTypeName)
-          .Replace("__UNIQUE_IDENTIFIER__", dictType.UniqueIdentifier);
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, dictType.UniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
@@ -2553,7 +2566,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var enumSnippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_ENUM");
@@ -2575,7 +2588,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
@@ -3033,7 +3046,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Skip System.* types (object, ValueType, etc.)
       // Also skip C# keyword aliases like "object", "string" which FullyQualifiedFormat may return
-      if (baseTypeName.StartsWith("global::System.", StringComparison.Ordinal) ||
+      if (baseTypeName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal) ||
           baseTypeName == "object" ||
           baseTypeName == "string") {
         break; // Stop walking up the chain once we hit System types
@@ -3055,7 +3068,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
       // Skip System.* interfaces
-      if (interfaceName.StartsWith("global::System.", StringComparison.Ordinal)) {
+      if (interfaceName.StartsWith(GLOBAL_SYSTEM_PREFIX, StringComparison.Ordinal)) {
         continue;
       }
 
@@ -3176,7 +3189,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// E.g., "global::MyApp.Events.BaseEvent" → "BaseEvent"
   /// </summary>
   private static string _extractSimpleName(string fullyQualifiedName) {
-    var name = fullyQualifiedName.Replace("global::", "");
+    var name = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
     var lastDot = name.LastIndexOf('.');
     return lastDot >= 0 ? name[(lastDot + 1)..] : name;
   }
@@ -3187,7 +3200,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   private static INamedTypeSymbol? _tryGetTypeSymbolByName(string fullyQualifiedName, Compilation compilation) {
     // Remove global:: prefix for GetTypeByMetadataName
-    var metadataName = fullyQualifiedName.Replace("global::", "");
+    var metadataName = fullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
     return compilation.GetTypeByMetadataName(metadataName);
   }
 
@@ -3202,7 +3215,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
-    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine(PRAGMA_DISABLE_CS0169);
     sb.AppendLine();
 
     var lazyFieldSnippet = TemplateUtilities.ExtractSnippet(
@@ -3220,7 +3233,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Restore CS0169 warning
     sb.AppendLine();
-    sb.AppendLine("#pragma warning restore CS0169");
+    sb.AppendLine(PRAGMA_RESTORE_CS0169);
 
     return sb.ToString();
   }
