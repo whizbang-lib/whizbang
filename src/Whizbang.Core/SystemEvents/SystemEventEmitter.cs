@@ -31,6 +31,7 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore) : ISystemEventEmitter {
+  private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
@@ -63,7 +64,7 @@ public sealed class SystemEventEmitter(
     // Build scope dictionary from scope context
     var scope = new Dictionary<string, string?>();
     if (scopeContext?.Scope?.TenantId != null) {
-      scope["TenantId"] = scopeContext.Scope.TenantId;
+      scope[SCOPE_TENANT_ID] = scopeContext.Scope.TenantId;
     }
     if (scopeContext?.Scope?.UserId != null) {
       scope["UserId"] = scopeContext.Scope.UserId;
@@ -121,8 +122,8 @@ public sealed class SystemEventEmitter(
 
     // Build scope dictionary from context metadata
     var scope = new Dictionary<string, string?>();
-    if (context?.Metadata.TryGetValue("TenantId", out var tenantId) == true) {
-      scope["TenantId"] = tenantId?.ToString();
+    if (context?.Metadata.TryGetValue(SCOPE_TENANT_ID, out var tenantId) == true) {
+      scope[SCOPE_TENANT_ID] = tenantId?.ToString();
     }
     if (context?.UserId != null) {
       scope["UserId"] = context.UserId;
@@ -143,7 +144,7 @@ public sealed class SystemEventEmitter(
       ReceptorName = receptorName,
       ResponseType = typeof(TResponse).Name,
       // Store individual properties for backward compatibility
-      TenantId = scope.TryGetValue("TenantId", out var t) ? t : null,
+      TenantId = scope.TryGetValue(SCOPE_TENANT_ID, out var t) ? t : null,
       UserId = context?.UserId,
       CorrelationId = context?.CorrelationId.ToString(),
       // Store full scope for generic access

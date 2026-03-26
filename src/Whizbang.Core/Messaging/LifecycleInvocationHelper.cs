@@ -25,6 +25,8 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 public static class LifecycleInvocationHelper {
+  private const string METRIC_STAGE = "stage";
+  private const string METRIC_MESSAGE_TYPE = "message_type";
 
   /// <summary>
   /// Invokes lifecycle receptors for outbox and inbox messages at async and inline stages.
@@ -65,7 +67,7 @@ public static class LifecycleInvocationHelper {
       return;
     }
 
-    metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>("stage", inlineStage.ToString()));
+    metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()));
     var stageSw = Stopwatch.StartNew();
 
     await _processOutboxMessagesAsync(outboxSnapshot, inlineStage, scopeFactory, lifecycleMessageDeserializer, enableLifecycleTracing, metrics, ct);
@@ -73,8 +75,8 @@ public static class LifecycleInvocationHelper {
 
     stageSw.Stop();
     metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
-      new KeyValuePair<string, object?>("stage", inlineStage.ToString()),
-      new KeyValuePair<string, object?>("message_type", "mixed"));
+      new KeyValuePair<string, object?>(METRIC_STAGE, inlineStage.ToString()),
+      new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
   }
 
   /// <summary>
@@ -128,7 +130,7 @@ public static class LifecycleInvocationHelper {
         return;
       }
 
-      metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>("stage", asyncStage.ToString()));
+      metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()));
       var stageSw = Stopwatch.StartNew();
 
       try {
@@ -137,14 +139,14 @@ public static class LifecycleInvocationHelper {
       } catch (Exception ex) {
         _logLifecycleError(logger, asyncStage, ex);
         metrics?.ReceptorErrors.Add(1,
-          new KeyValuePair<string, object?>("stage", asyncStage.ToString()),
-          new KeyValuePair<string, object?>("message_type", "mixed"),
+          new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"),
           new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
       } finally {
         stageSw.Stop();
         metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
-          new KeyValuePair<string, object?>("stage", asyncStage.ToString()),
-          new KeyValuePair<string, object?>("message_type", "mixed"));
+          new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
       }
     }, ct);
   }
@@ -184,8 +186,8 @@ public static class LifecycleInvocationHelper {
         var typedEnvelope = outboxMsg.Envelope.ReconstructWithPayload(message);
 
         metrics?.ReceptorInvocations.Add(1,
-          new KeyValuePair<string, object?>("stage", stage.ToString()),
-          new KeyValuePair<string, object?>("message_type", outboxMsg.MessageType));
+          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
         var receptorSw = Stopwatch.StartNew();
         try {
           await using var scope = scopeFactory.CreateAsyncScope();
@@ -195,15 +197,15 @@ public static class LifecycleInvocationHelper {
           }
         } catch (Exception ex) {
           metrics?.ReceptorErrors.Add(1,
-            new KeyValuePair<string, object?>("stage", stage.ToString()),
-            new KeyValuePair<string, object?>("message_type", outboxMsg.MessageType),
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType),
             new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
           throw;
         } finally {
           receptorSw.Stop();
           metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
-            new KeyValuePair<string, object?>("stage", stage.ToString()),
-            new KeyValuePair<string, object?>("message_type", outboxMsg.MessageType));
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, outboxMsg.MessageType));
         }
       }
     }
@@ -231,8 +233,8 @@ public static class LifecycleInvocationHelper {
         var typedEnvelope = inboxMsg.Envelope.ReconstructWithPayload(message);
 
         metrics?.ReceptorInvocations.Add(1,
-          new KeyValuePair<string, object?>("stage", stage.ToString()),
-          new KeyValuePair<string, object?>("message_type", inboxMsg.MessageType));
+          new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+          new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
         var receptorSw = Stopwatch.StartNew();
         try {
           await using var scope = scopeFactory.CreateAsyncScope();
@@ -242,15 +244,15 @@ public static class LifecycleInvocationHelper {
           }
         } catch (Exception ex) {
           metrics?.ReceptorErrors.Add(1,
-            new KeyValuePair<string, object?>("stage", stage.ToString()),
-            new KeyValuePair<string, object?>("message_type", inboxMsg.MessageType),
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType),
             new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
           throw;
         } finally {
           receptorSw.Stop();
           metrics?.ReceptorDuration.Record(receptorSw.Elapsed.TotalMilliseconds,
-            new KeyValuePair<string, object?>("stage", stage.ToString()),
-            new KeyValuePair<string, object?>("message_type", inboxMsg.MessageType));
+            new KeyValuePair<string, object?>(METRIC_STAGE, stage.ToString()),
+            new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, inboxMsg.MessageType));
         }
       }
     }
