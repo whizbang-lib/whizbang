@@ -81,9 +81,12 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     );
   }
 
+  // S3776: Complexity is from sequential validation checks with early returns — already well-structured
+#pragma warning disable S3776
   private static (GuidInterceptionInfo? Intercepted, SuppressedGuidInterceptionInfo? Suppressed) _extractGuidCallInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
+#pragma warning restore S3776
 
     var invocation = (InvocationExpressionSyntax)context.Node;
     var memberAccess = (MemberAccessExpressionSyntax)invocation.Expression;
@@ -327,6 +330,8 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     return restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0;
   }
 
+  // S3776: Code generation method — complexity from sequential template building with conditional paths
+#pragma warning disable S3776
 #pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
   private static void _generateInterceptors(
       SourceProductionContext context,
@@ -334,6 +339,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       ImmutableArray<SuppressedGuidInterceptionInfo> suppressed,
       bool enabled) {
 #pragma warning restore S1144
+#pragma warning restore S3776
 
     // Report diagnostics for intercepted calls (always, even when disabled)
     foreach (var info in intercepted) {

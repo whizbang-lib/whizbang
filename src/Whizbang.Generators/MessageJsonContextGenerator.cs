@@ -780,7 +780,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     );
   }
 
+  // S3776: Type-info generation for all serializable types — complexity from many type categories (messages, lists, arrays, dicts, enums, polymorphic)
+#pragma warning disable S3776
   private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes, ImmutableArray<ReadOnlyListTypeInfo> iReadOnlyListTypes, ImmutableArray<ArrayTypeInfo> arrayTypes, ImmutableArray<DictionaryTypeInfo> dictionaryTypes, ImmutableArray<JsonEnumInfo> enumTypes, ImmutableArray<PolymorphicTypeInfo> polymorphicTypes) {
+#pragma warning restore S3776
     var sb = new System.Text.StringBuilder();
 
     // Load all snippets up front
