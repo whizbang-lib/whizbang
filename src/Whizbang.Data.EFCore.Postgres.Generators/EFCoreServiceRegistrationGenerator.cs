@@ -1785,77 +1785,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       .ToList();
 
     foreach (var perspective in uniqueTables) {
-      // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
-      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
-      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
-      sb.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
-      sb.AppendLine("  data JSONB NOT NULL,");
-      sb.AppendLine("  metadata JSONB NOT NULL,");
-      sb.AppendLine("  scope JSONB NOT NULL,");
-      sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
-      sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
-
-      // Check if there are physical fields to add
-      if (perspective.PhysicalFields.IsEmpty) {
-        sb.AppendLine("  version INTEGER NOT NULL");
-      } else {
-        sb.AppendLine("  version INTEGER NOT NULL,");
-        // Add physical fields
-        for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
-          var field = perspective.PhysicalFields[i];
-          var columnType = _getPostgresColumnType(field);
-          var isLast = i == perspective.PhysicalFields.Length - 1;
-          sb.AppendLine($"  {field.ColumnName} {columnType}{(isLast ? "" : ",")}");
-        }
-      }
-      sb.AppendLine(");");
-      sb.AppendLine();
-
-      // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{perspective.TableName.Replace("wh_per_", "")}_created_at");
-      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
-      sb.AppendLine();
-
-      // Add GIN indexes on JSONB columns for full LINQ query support
-      // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
-      var shortName = perspective.TableName.Replace("wh_per_", "");
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
-      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (data);");
-      sb.AppendLine();
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
-      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
-      sb.AppendLine();
-      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
-      sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
-      sb.AppendLine();
-
-      // Add indexes for physical fields marked with Indexed = true
-      foreach (var field in perspective.PhysicalFields) {
-        if (field.IsIndexed) {
-          if (field.IsVector && field.VectorDimensions.HasValue) {
-            // pgvector index dimension limits:
-            // - ivfflat: max 2000 dimensions
-            // - hnsw: max 2000 dimensions (pgvector < 0.7.0) or 16000 (pgvector >= 0.7.0)
-            // To be safe with all pgvector versions, skip index for > 2000 dimensions
-            // The column still works for queries, just without index acceleration
-            if (field.VectorDimensions.Value <= 2000) {
-              sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
-              sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
-              sb.AppendLine();
-            } else {
-              sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({field.VectorDimensions.Value} dimensions > 2000 limit)");
-              sb.AppendLine("-- Vector queries will still work but without index acceleration");
-              sb.AppendLine("-- To enable indexing, upgrade to pgvector >= 0.7.0 and manually create an hnsw index");
-              sb.AppendLine();
-            }
-          } else {
-            // Regular B-tree index
-            sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}");
-            sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
-            sb.AppendLine();
-          }
-        }
-      }
+      _appendCreateTableSql(sb, perspective, schema, quotedSchema);
+      _appendStandardIndexes(sb, perspective, quotedSchema);
+      _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
     }
 
     // Escape for C# verbatim string
@@ -1876,6 +1808,119 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, uniqueTables.Count, sql.Length));
 
     return $"@\"{sql}\"";
+  }
+
+  /// <summary>
+  /// Appends CREATE TABLE SQL for a single perspective table.
+  /// </summary>
+  private static void _appendCreateTableSql(
+      StringBuilder sb,
+      PerspectiveModelInfo perspective,
+      string schema,
+      string quotedSchema) {
+    // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
+    sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
+    sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
+    sb.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
+    sb.AppendLine("  data JSONB NOT NULL,");
+    sb.AppendLine("  metadata JSONB NOT NULL,");
+    sb.AppendLine("  scope JSONB NOT NULL,");
+    sb.AppendLine("  created_at TIMESTAMPTZ NOT NULL,");
+    sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL,");
+
+    // Check if there are physical fields to add
+    if (perspective.PhysicalFields.IsEmpty) {
+      sb.AppendLine("  version INTEGER NOT NULL");
+    } else {
+      sb.AppendLine("  version INTEGER NOT NULL,");
+      // Add physical fields
+      for (int i = 0; i < perspective.PhysicalFields.Length; i++) {
+        var field = perspective.PhysicalFields[i];
+        var columnType = _getPostgresColumnType(field);
+        var isLast = i == perspective.PhysicalFields.Length - 1;
+        sb.AppendLine($"  {field.ColumnName} {columnType}{(isLast ? "" : ",")}");
+      }
+    }
+    sb.AppendLine(");");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Appends standard indexes (created_at B-tree, JSONB GIN) for a perspective table.
+  /// </summary>
+  private static void _appendStandardIndexes(
+      StringBuilder sb,
+      PerspectiveModelInfo perspective,
+      string quotedSchema) {
+    var shortName = perspective.TableName.Replace("wh_per_", "");
+
+    // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_created_at");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} (created_at);");
+    sb.AppendLine();
+
+    // Add GIN indexes on JSONB columns for full LINQ query support
+    // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (data);");
+    sb.AppendLine();
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (metadata);");
+    sb.AppendLine();
+    sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
+    sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} USING gin (scope);");
+    sb.AppendLine();
+  }
+
+  /// <summary>
+  /// Appends indexes for physical fields marked with Indexed = true, including vector indexes.
+  /// </summary>
+  private static void _appendPhysicalFieldIndexes(
+      StringBuilder sb,
+      PerspectiveModelInfo perspective,
+      string quotedSchema) {
+    var shortName = perspective.TableName.Replace("wh_per_", "");
+
+    foreach (var field in perspective.PhysicalFields) {
+      if (!field.IsIndexed) {
+        continue;
+      }
+
+      if (field.IsVector && field.VectorDimensions.HasValue) {
+        _appendVectorIndex(sb, field, shortName, perspective.TableName, quotedSchema);
+      } else {
+        // Regular B-tree index
+        sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}");
+        sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ({field.ColumnName});");
+        sb.AppendLine();
+      }
+    }
+  }
+
+  /// <summary>
+  /// Appends a vector (ivfflat) index for a physical field, or a comment if dimensions exceed the limit.
+  /// </summary>
+  private static void _appendVectorIndex(
+      StringBuilder sb,
+      PhysicalFieldInfo field,
+      string shortName,
+      string tableName,
+      string quotedSchema) {
+    // pgvector index dimension limits:
+    // - ivfflat: max 2000 dimensions
+    // - hnsw: max 2000 dimensions (pgvector < 0.7.0) or 16000 (pgvector >= 0.7.0)
+    // To be safe with all pgvector versions, skip index for > 2000 dimensions
+    // The column still works for queries, just without index acceleration
+    if (field.VectorDimensions.Value <= 2000) {
+      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
+      sb.AppendLine($"  ON {quotedSchema}.{tableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
+      sb.AppendLine();
+    } else {
+      sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({field.VectorDimensions.Value} dimensions > 2000 limit)");
+      sb.AppendLine("-- Vector queries will still work but without index acceleration");
+      sb.AppendLine("-- To enable indexing, upgrade to pgvector >= 0.7.0 and manually create an hnsw index");
+      sb.AppendLine();
+    }
   }
 
   /// <summary>

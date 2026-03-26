@@ -264,39 +264,70 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
                    t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
 
     foreach (var trivia in triviaList) {
-      if (trivia.GetStructure() is PragmaWarningDirectiveTriviaSyntax pragma) {
-        var isDisable = pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword);
-        var codes = pragma.ErrorCodes
-            .OfType<IdentifierNameSyntax>()
-            .Select(id => id.Identifier.Text)
-            .ToList();
-
-        if (isDisable && (codes.Contains("WHIZ055") || codes.Contains("WHIZ056"))) {
-          // Found a disable before the invocation - check if there's a restore after
-          var restoreTrivia = root.DescendantTrivia()
-              .Where(t => t.SpanStart > trivia.SpanStart &&
-                         t.SpanStart < position &&
-                         t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
-
-          var wasRestored = restoreTrivia.Any(rt => {
-            if (rt.GetStructure() is PragmaWarningDirectiveTriviaSyntax restorePragma) {
-              var isRestore = restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword);
-              var restoreCodes = restorePragma.ErrorCodes
-                  .OfType<IdentifierNameSyntax>()
-                  .Select(id => id.Identifier.Text)
-                  .ToList();
-              return isRestore && (restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0);
-            }
-            return false;
-          });
-
-          if (!wasRestored) {
-            return true;
-          }
-        }
+      if (_isActiveDisablePragma(trivia, root, position)) {
+        return true;
       }
     }
     return false;
+  }
+
+  /// <summary>
+  /// Checks if a pragma trivia is an active WHIZ055/WHIZ056 disable that hasn't been restored before the given position.
+  /// </summary>
+  private static bool _isActiveDisablePragma(SyntaxTrivia trivia, SyntaxNode root, int position) {
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax pragma) {
+      return false;
+    }
+
+    var isDisable = pragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.DisableKeyword);
+    if (!isDisable) {
+      return false;
+    }
+
+    var codes = pragma.ErrorCodes
+        .OfType<IdentifierNameSyntax>()
+        .Select(id => id.Identifier.Text)
+        .ToList();
+
+    if (!codes.Contains("WHIZ055") && !codes.Contains("WHIZ056")) {
+      return false;
+    }
+
+    // Found a disable before the invocation - check if there's a restore after the disable but before the position
+    return !_wasRestoredBefore(root, trivia.SpanStart, position);
+  }
+
+  /// <summary>
+  /// Checks if a pragma disable was restored between the disable position and the target position.
+  /// </summary>
+  private static bool _wasRestoredBefore(SyntaxNode root, int disableStart, int position) {
+    var restoreTrivia = root.DescendantTrivia()
+        .Where(t => t.SpanStart > disableStart &&
+                   t.SpanStart < position &&
+                   t.IsKind(SyntaxKind.PragmaWarningDirectiveTrivia));
+
+    return restoreTrivia.Any(rt => _isMatchingRestore(rt));
+  }
+
+  /// <summary>
+  /// Checks if a pragma trivia is a restore directive for WHIZ055/WHIZ056 (or a blanket restore).
+  /// </summary>
+  private static bool _isMatchingRestore(SyntaxTrivia trivia) {
+    if (trivia.GetStructure() is not PragmaWarningDirectiveTriviaSyntax restorePragma) {
+      return false;
+    }
+
+    var isRestore = restorePragma.DisableOrRestoreKeyword.IsKind(SyntaxKind.RestoreKeyword);
+    if (!isRestore) {
+      return false;
+    }
+
+    var restoreCodes = restorePragma.ErrorCodes
+        .OfType<IdentifierNameSyntax>()
+        .Select(id => id.Identifier.Text)
+        .ToList();
+
+    return restoreCodes.Contains("WHIZ055") || restoreCodes.Contains("WHIZ056") || restoreCodes.Count == 0;
   }
 
 #pragma warning disable S1144 // Called from RegisterSourceOutput lambda at line 78; enabled is used at line 337
