@@ -17,6 +17,8 @@ namespace Whizbang.Generators;
 public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_BASE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveBase";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
+  private const string XML_DOC_SUMMARY_OPEN_INDENTED = "  /// <summary>";
+  private const string XML_DOC_SUMMARY_CLOSE_INDENTED = "  /// </summary>";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveRunnerGenerator
@@ -253,10 +255,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine();
 
     // GetRunner() method
-    source.AppendLine("  /// <summary>");
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine("  /// Gets a perspective runner by perspective type name (zero reflection).");
     source.AppendLine("  /// Returns null if no runner found for the given perspective name.");
-    source.AppendLine("  /// </summary>");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  /// <param name=\"perspectiveName\">CLR format type name (e.g., \"MyApp.Perspectives.OrderPerspective\" or \"MyApp.Parent+Nested\")</param>");
     source.AppendLine("  /// <param name=\"serviceProvider\">Service provider to resolve runner dependencies</param>");
     source.AppendLine("  /// <returns>IPerspectiveRunner instance or null if not found</returns>");
@@ -286,10 +288,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
     source.AppendLine("  ];");
     source.AppendLine();
-    source.AppendLine("  /// <summary>");
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine("  /// Gets information about all registered perspectives (zero reflection).");
     source.AppendLine("  /// Useful for diagnostic messages when runner lookup fails.");
-    source.AppendLine("  /// </summary>");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public IReadOnlyList<PerspectiveRegistrationInfo> GetRegisteredPerspectives() => _registeredPerspectives;");
     source.AppendLine();
 
@@ -307,10 +309,10 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
     source.AppendLine("  ];");
     source.AppendLine();
-    source.AppendLine("  /// <summary>");
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine("  /// Gets all unique event types across all perspectives.");
     source.AppendLine("  /// Used by PerspectiveWorker for lifecycle receptor invocation (AOT-compatible polymorphic deserialization).");
-    source.AppendLine("  /// </summary>");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public IReadOnlyList<Type> GetEventTypes() => _allEventTypes;");
     source.AppendLine("}");
     source.AppendLine();
@@ -324,11 +326,11 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("/// Extension methods for registering perspective runners.");
     source.AppendLine("/// </summary>");
     source.AppendLine("public static class PerspectiveRunnerRegistryExtensions {");
-    source.AppendLine("  /// <summary>");
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine($"  /// Registers all {perspectives.Length} perspective runner(s) as scoped services.");
     source.AppendLine("  /// Also registers PerspectiveRunnerRegistry as IPerspectiveRunnerRegistry and IEventTypeProvider singletons.");
     source.AppendLine("  /// Call this method in your service registration (e.g., Startup.cs or Program.cs).");
-    source.AppendLine("  /// </summary>");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  public static IServiceCollection AddPerspectiveRunners(");
     source.AppendLine("      this IServiceCollection services) {");
     source.AppendLine();
@@ -364,11 +366,11 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     source.AppendLine("/// For test assemblies where ModuleInitializers may not run reliably, call Initialize() explicitly.");
     source.AppendLine("/// </summary>");
     source.AppendLine("public static class PerspectiveRunnerInitializer {");
-    source.AppendLine("  /// <summary>");
+    source.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
     source.AppendLine("  /// Module initializer that registers the perspective runner registration callback.");
     source.AppendLine("  /// This runs automatically when the assembly is loaded (no reflection required).");
     source.AppendLine("  /// For test assemblies, you can call this method explicitly in test setup.");
-    source.AppendLine("  /// </summary>");
+    source.AppendLine(XML_DOC_SUMMARY_CLOSE_INDENTED);
     source.AppendLine("  [ModuleInitializer]");
     source.AppendLine("  public static void Initialize() {");
     source.AppendLine("    // Register callback with the library's registry");

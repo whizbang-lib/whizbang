@@ -45,6 +45,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_RESPONSE_TYPE = "__RESPONSE_TYPE__";
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
+  private const string INDENT_6 = "      ";
+  private const string INDENT_6_CLOSE_BRACE = "      }";
+  private const string MESSAGE_ID_FROM_EVENT_ID = "        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();";
 
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
@@ -1161,7 +1164,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load void Send routing snippet from template
@@ -1187,7 +1190,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load Publish routing snippet from template
@@ -1211,7 +1214,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
 
-      publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load Untyped Publish routing snippet from template (for auto-cascade)
@@ -1238,7 +1241,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
           .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, StandardInterfaceNames.I_RECEPTOR);
 
-      untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load Sync Send routing snippet from template (for sync receptors)
@@ -1261,7 +1264,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
-      syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load Void Sync Send routing snippet from template (for void sync receptors)
@@ -1283,7 +1286,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, StandardInterfaceNames.I_SYNC_RECEPTOR)
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName);
 
-      voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Load Any Send routing snippets for cascade support
@@ -1311,7 +1314,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_RECEPTOR_CLASS, firstReceptor.ClassName)
           .Replace(PLACEHOLDER_SYNC_AWAIT_CODE, syncAwaitCode);
 
-      anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+      anySendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, INDENT_6));
     }
 
     // Generate receptor default routing lookup (for [DefaultRouting] attribute support)
@@ -1328,7 +1331,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (receptorWithRouting is not null) {
         receptorDefaultRouting.AppendLine($"      if (messageType == typeof({messageType})) {{");
         receptorDefaultRouting.AppendLine($"        return {receptorWithRouting.DefaultRouting};");
-        receptorDefaultRouting.AppendLine("      }");
+        receptorDefaultRouting.AppendLine(INDENT_6_CLOSE_BRACE);
         receptorDefaultRouting.AppendLine();
       }
     }
@@ -1347,9 +1350,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      outboxCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       outboxCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine("      }");
+      outboxCascade.AppendLine(INDENT_6_CLOSE_BRACE);
       outboxCascade.AppendLine();
     }
 
@@ -1360,10 +1363,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       outboxCascade.AppendLine($"      if (message is {eventType}) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
-      outboxCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      outboxCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
       outboxCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
-      outboxCascade.AppendLine("      }");
+      outboxCascade.AppendLine(INDENT_6_CLOSE_BRACE);
       outboxCascade.AppendLine();
     }
 
@@ -1376,9 +1379,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       eventStoreOnlyCascade.AppendLine($"      if (messageType == typeof({eventType})) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      eventStoreOnlyCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       eventStoreOnlyCascade.AppendLine($"        return PublishToOutboxAsync(({eventType})message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine("      }");
+      eventStoreOnlyCascade.AppendLine(INDENT_6_CLOSE_BRACE);
       eventStoreOnlyCascade.AppendLine();
     }
 
@@ -1388,10 +1391,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       eventStoreOnlyCascade.AppendLine($"      if (message is {eventType}) {{");
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (event store)
-      eventStoreOnlyCascade.AppendLine("        var messageId = eventId.HasValue ? new global::Whizbang.Core.ValueObjects.MessageId(eventId.Value) : global::Whizbang.Core.ValueObjects.MessageId.New();");
+      eventStoreOnlyCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
       // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
       eventStoreOnlyCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope, eventStoreOnly: true);");
-      eventStoreOnlyCascade.AppendLine("      }");
+      eventStoreOnlyCascade.AppendLine(INDENT_6_CLOSE_BRACE);
       eventStoreOnlyCascade.AppendLine();
     }
 

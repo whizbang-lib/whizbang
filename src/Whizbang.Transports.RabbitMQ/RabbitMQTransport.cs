@@ -18,6 +18,8 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <docs>messaging/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
+  private const string UNKNOWN_MESSAGE_ID = "unknown";
+
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
@@ -501,7 +503,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       _logger?.LogWarning(
         ex,
         "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
-        args.BasicProperties.MessageId ?? "unknown",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
         queueName
       );
     }
@@ -513,7 +515,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
     await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
@@ -557,7 +559,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
     await channel.BasicNackAsync(args.DeliveryTag, false, false);
@@ -844,7 +846,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _logger?.LogError(
       ex,
       "Error processing message {MessageId} from queue {QueueName}",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
 
@@ -861,7 +863,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue",
           deliveryCount,
           _options.MaxDeliveryAttempts,
-          args.BasicProperties.MessageId ?? "unknown",
+          args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
           queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, false);
@@ -871,7 +873,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
           "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry",
           deliveryCount,
           _options.MaxDeliveryAttempts,
-          args.BasicProperties.MessageId ?? "unknown",
+          args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
           queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, true);
@@ -882,7 +884,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       _logger?.LogWarning(
         channelEx,
         "RabbitMQ channel closed/disposed during failure handling for message {MessageId} - message will be redelivered on reconnection",
-        args.BasicProperties.MessageId ?? "unknown"
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID
       );
     }
   }
