@@ -8,7 +8,9 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+#pragma warning disable S2094 // Intentional: discriminated union base record for filter tree pattern matching
 public abstract record SyncFilterNode;
+#pragma warning restore S2094
 
 /// <summary>
 /// Filters by a specific stream ID.
