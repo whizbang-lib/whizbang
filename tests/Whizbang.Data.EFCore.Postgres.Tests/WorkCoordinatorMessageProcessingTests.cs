@@ -32,27 +32,27 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
 
     // Act - Store message in outbox
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // Assert - Message should be returned in THIS CALL
     await Assert.That(result.OutboxWork)
@@ -72,49 +72,49 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
     var messageId = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
-    await _sut.ProcessWorkBatchAsync(
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      leaseSeconds: -1  // Immediately expired lease!
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: -1  // Immediately expired lease!
+));
 
     // Act - Call again - expired lease should be reclaimed
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // Assert - Expired message should be reclaimed
     await Assert.That(result.OutboxWork)
@@ -132,49 +132,49 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
     var messageId = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
-    await _sut.ProcessWorkBatchAsync(
+    await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      leaseSeconds: 300  // Long lease
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: [],
+      LeaseSeconds: 300  // Long lease
+));
 
     // Act - Call again WITHOUT completing the message
-    var result = await _sut.ProcessWorkBatchAsync(
+    var result = await _sut.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       _instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [],
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     // Assert - Should NOT return the message again (still leased)
     await Assert.That(result.OutboxWork)
