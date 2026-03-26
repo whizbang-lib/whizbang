@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,6 +49,12 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
 
   [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing message: MessageType={MessageType}, OutboxDestination={OutboxDestination}, ResolvedAddress={ResolvedAddress}, ResolvedRoutingKey={ResolvedRoutingKey}")]
   private partial void LogPublishingMessage(string messageType, string outboxDestination, string resolvedAddress, string? resolvedRoutingKey);
+
+  [LoggerMessage(Level = LogLevel.Debug, Message = "Publishing batch of {Count} messages to {Address}")]
+  private partial void LogPublishingBatch(int count, string address);
+
+  [LoggerMessage(Level = LogLevel.Warning, Message = "Batch publish failed for group {Address}: {Error}")]
+  private partial void LogBatchPublishGroupFailed(string address, string error);
 
   /// <summary>
   /// Creates a new TransportPublishStrategy with default inbox topic.
@@ -126,6 +134,106 @@ public partial class TransportPublishStrategy(ITransport transport, ITransportRe
         Error = $"{ex.GetType().Name}: {ex.Message}"
       };
     }
+  }
+
+  /// <summary>
+  /// Whether this strategy supports bulk publishing.
+  /// Returns true when the underlying transport declares the BulkPublish capability.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
+  public bool SupportsBulkPublish =>
+    _transport.Capabilities.HasFlag(TransportCapabilities.BulkPublish);
+
+  /// <summary>
+  /// Publishes a batch of outbox messages to the configured transport.
+  /// Groups messages by resolved destination address and calls PublishBatchAsync per group.
+  /// Event-store-only messages (null/empty destination) are returned as immediate successes.
+  /// Partial failures are handled per-group: if a group's transport call throws, all items in that group fail.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
+    IReadOnlyList<OutboxWork> workItems,
+    CancellationToken cancellationToken) {
+    if (workItems.Count == 0) {
+      return [];
+    }
+
+    var results = new List<MessagePublishResult>(workItems.Count);
+
+    // Separate event-store-only items (null/empty destination) from transportable items
+    var transportableItems = new List<(OutboxWork Work, TransportDestination Destination)>();
+
+    foreach (var work in workItems) {
+      if (string.IsNullOrEmpty(work.Destination)) {
+        LogSkippingEventStoreOnly(work.MessageType);
+        results.Add(new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = true,
+          CompletedStatus = MessageProcessingStatus.Published,
+          Error = null
+        });
+      } else {
+        var destination = _resolveDestination(work);
+        transportableItems.Add((work, destination));
+      }
+    }
+
+    // Group by destination address for batch transport calls
+    var groups = transportableItems.GroupBy(item => item.Destination.Address);
+
+    foreach (var group in groups) {
+      var groupItems = group.ToList();
+      // Use the first item's destination as the shared destination (address is the same for all)
+      var sharedDestination = groupItems[0].Destination;
+
+      // Build BulkPublishItems with per-item routing keys
+      var bulkItems = new List<BulkPublishItem>(groupItems.Count);
+      foreach (var (work, destination) in groupItems) {
+        bulkItems.Add(new BulkPublishItem {
+          Envelope = work.Envelope,
+          EnvelopeType = work.EnvelopeType,
+          MessageId = work.MessageId,
+          RoutingKey = destination.RoutingKey
+        });
+      }
+
+      try {
+        LogPublishingBatch(bulkItems.Count, sharedDestination.Address);
+        var batchResults = await _transport.PublishBatchAsync(bulkItems, sharedDestination, cancellationToken);
+
+        // Map transport results back to MessagePublishResult
+        foreach (var batchResult in batchResults) {
+          var originalWork = groupItems.First(g => g.Work.MessageId == batchResult.MessageId).Work;
+          results.Add(new MessagePublishResult {
+            MessageId = batchResult.MessageId,
+            Success = batchResult.Success,
+            CompletedStatus = batchResult.Success ? MessageProcessingStatus.Published : originalWork.Status,
+            Error = batchResult.Error
+          });
+        }
+      } catch (Exception ex) {
+        LogBatchPublishGroupFailed(sharedDestination.Address, ex.Message);
+        // All items in this group fail
+        foreach (var (work, _) in groupItems) {
+          results.Add(new MessagePublishResult {
+            MessageId = work.MessageId,
+            Success = false,
+            CompletedStatus = work.Status,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+    }
+
+    return results;
   }
 
   /// <summary>

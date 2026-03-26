@@ -855,7 +855,7 @@ public class TransportPublishStrategyTests {
     await Assert.That(results.Count).IsEqualTo(2);
     await Assert.That(results[0].Success).IsTrue();
     await Assert.That(results[1].Success).IsTrue();
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(1);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
     await Assert.That(transport.PublishBatchCalls[0].Destination.Address).IsEqualTo("myapp.orders.events");
   }
 
@@ -876,7 +876,7 @@ public class TransportPublishStrategyTests {
     // Assert — 3 groups: myapp.orders.events, myapp.users.events, inbox
     await Assert.That(results.Count).IsEqualTo(3);
     await Assert.That(results.All(r => r.Success)).IsTrue();
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(3);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(3);
 
     var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).OrderBy(a => a).ToList();
     await Assert.That(addresses).Contains("inbox");
@@ -901,7 +901,7 @@ public class TransportPublishStrategyTests {
     await Assert.That(results.Count).IsEqualTo(2);
     await Assert.That(results.All(r => r.Success)).IsTrue();
     // Only 1 transport call (for the normal event)
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(1);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -949,9 +949,9 @@ public class TransportPublishStrategyTests {
     await strategy.PublishBatchAsync([work1, work2], CancellationToken.None);
 
     // Assert — each item should have its own routing key
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(1);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(1);
     var items = transport.PublishBatchCalls[0].Items;
-    await Assert.That(items).HasCount().EqualTo(2);
+    await Assert.That(items).Count().IsEqualTo(2);
     await Assert.That(items[0].RoutingKey).IsEqualTo("myapp.orders.events.ordercreatedevent");
     await Assert.That(items[1].RoutingKey).IsEqualTo("myapp.orders.events.orderupdatedevent");
   }
@@ -968,7 +968,7 @@ public class TransportPublishStrategyTests {
 
     // Assert
     await Assert.That(results.Count).IsEqualTo(0);
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(0);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -1018,7 +1018,7 @@ public class TransportPublishStrategyTests {
     await Assert.That(results.Count).IsEqualTo(2);
     await Assert.That(results.All(r => r.Success)).IsTrue();
     await Assert.That(results.All(r => r.CompletedStatus == MessageProcessingStatus.Published)).IsTrue();
-    await Assert.That(transport.PublishBatchCalls).HasCount().EqualTo(0);
+    await Assert.That(transport.PublishBatchCalls).Count().IsEqualTo(0);
   }
 
   // Helper to create event OutboxWork
