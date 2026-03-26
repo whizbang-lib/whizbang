@@ -32,6 +32,14 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
     return _queryAsyncCore(queryBuilder, cancellationToken);
   }
 
+  /// <inheritdoc/>
+  public IAsyncEnumerable<TResult> QueryAsync<TResult>(
+      Func<ILensQuery<TModel>, IQueryable<TResult>> queryBuilder,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(queryBuilder);
+    return _queryAsyncCore(queryBuilder, cancellationToken);
+  }
+
   private async IAsyncEnumerable<PerspectiveRow<TModel>> _queryAsyncCore(
       Func<ILensQuery<TModel>, IQueryable<PerspectiveRow<TModel>>> queryBuilder,
       [EnumeratorCancellation] CancellationToken cancellationToken) {
@@ -48,14 +56,6 @@ public class ScopedLensQuery<TModel> : IScopedLensQuery<TModel> where TModel : c
       cancellationToken.ThrowIfCancellationRequested();
       yield return row;
     }
-  }
-
-  /// <inheritdoc/>
-  public IAsyncEnumerable<TResult> QueryAsync<TResult>(
-      Func<ILensQuery<TModel>, IQueryable<TResult>> queryBuilder,
-      CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(queryBuilder);
-    return _queryAsyncCore(queryBuilder, cancellationToken);
   }
 
   private async IAsyncEnumerable<TResult> _queryAsyncCore<TResult>(
