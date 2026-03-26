@@ -1361,7 +1361,7 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var sut = new ScopedWorkCoordinatorStrategy(
       throwingCoordinator, instanceProvider, null, options
-      // no logger
+    // no logger
     );
 
     // Queue a message so DisposeAsync attempts flush

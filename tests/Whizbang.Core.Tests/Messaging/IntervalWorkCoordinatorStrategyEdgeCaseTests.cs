@@ -21,7 +21,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// and timer callback early returns.
 /// </summary>
 public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
-  private static IMessageEnvelope<JsonElement> _createEnvelope(Guid messageId) {
+  private static TestMessageEnvelope _createEnvelope(Guid messageId) {
     return new TestMessageEnvelope {
       MessageId = MessageId.From(messageId),
       Hops = []
