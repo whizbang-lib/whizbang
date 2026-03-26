@@ -169,7 +169,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
-    TransportCapabilities.Ordered;
+    TransportCapabilities.Ordered |
+    TransportCapabilities.BulkPublish;
 
   /// <inheritdoc />
   /// <tests>No tests found</tests>
@@ -308,6 +309,125 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       throw;
 #pragma warning restore S2139
     }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+    IReadOnlyList<BulkPublishItem> items,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(items);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    if (items.Count == 0) {
+      return [];
+    }
+
+    var results = new List<BulkPublishItemResult>(items.Count);
+    var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+
+    // Use CreateMessageBatchAsync for size-constrained batching
+    var currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+    var batchItemIds = new List<Guid>();
+
+    for (var i = 0; i < items.Count; i++) {
+      var item = items[i];
+      try {
+        var message = _createServiceBusMessage(item, destination);
+
+        if (!currentBatch.TryAddMessage(message)) {
+          // Current batch is full — send it and start a new one
+          if (currentBatch.Count > 0) {
+            await sender.SendMessagesAsync(currentBatch, cancellationToken);
+            foreach (var id in batchItemIds) {
+              results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
+            }
+          }
+
+          // Start new batch
+          currentBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+          batchItemIds = [];
+
+          // Try adding the message that didn't fit
+          if (!currentBatch.TryAddMessage(message)) {
+            // Single message exceeds batch size limit
+            results.Add(new BulkPublishItemResult {
+              MessageId = item.MessageId,
+              Success = false,
+              Error = $"Message {item.MessageId} exceeds maximum batch message size"
+            });
+            continue;
+          }
+        }
+
+        batchItemIds.Add(item.MessageId);
+      } catch (Exception ex) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = item.MessageId,
+          Success = false,
+          Error = $"{ex.GetType().Name}: {ex.Message}"
+        });
+      }
+    }
+
+    // Send remaining batch
+    if (currentBatch.Count > 0) {
+      try {
+        await sender.SendMessagesAsync(currentBatch, cancellationToken);
+        foreach (var id in batchItemIds) {
+          results.Add(new BulkPublishItemResult { MessageId = id, Success = true });
+        }
+      } catch (Exception ex) {
+        foreach (var id in batchItemIds) {
+          results.Add(new BulkPublishItemResult {
+            MessageId = id,
+            Success = false,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {
+    var envelope = item.Envelope;
+    var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+
+    var envelopeRuntimeType = envelope.GetType();
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+    var json = JsonSerializer.Serialize(envelope, typeInfo);
+
+    var message = new ServiceBusMessage(json) {
+      MessageId = envelope.MessageId.Value.ToString(),
+      Subject = item.RoutingKey ?? destination.RoutingKey ?? "message",
+      ContentType = "application/json"
+    };
+
+    message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
+
+    var correlationId = envelope.GetCorrelationId();
+    if (correlationId != null) {
+      message.CorrelationId = correlationId.Value.Value.ToString();
+    }
+
+    var causationId = envelope.GetCausationId();
+    if (causationId != null) {
+      message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
+    }
+
+    if (destination.Metadata != null) {
+      foreach (var (key, value) in destination.Metadata) {
+        message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
+      }
+    }
+
+    return message;
   }
 
   /// <inheritdoc />
