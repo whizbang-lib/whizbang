@@ -376,11 +376,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         ? tag.Properties
         : tag.TypeProperties;
 
+    // S3267: Loop has side effects (appending to StringBuilder) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var prop in propsToExtract) {
       if (tag.TypeProperties.Contains(prop)) {
         sb.AppendLine($"        dict[\"{prop}\"] = e.{prop};");
       }
     }
+#pragma warning restore S3267
 
     // Include full event if requested
     if (tag.IncludeEvent) {

@@ -132,6 +132,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     }
 
     // Log all destinations we're going to subscribe to
+    // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var destination in _options.Destinations) {
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var address = destination.Address;
@@ -143,6 +145,7 @@ public partial class TransportConsumerWorker : BackgroundService {
         );
       }
     }
+#pragma warning restore S3267
 
     _linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
 
@@ -716,11 +719,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public async Task PauseAllSubscriptionsAsync() {
     _logger.LogInformation("Pausing all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.PauseAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions paused");
   }
@@ -732,11 +738,14 @@ public partial class TransportConsumerWorker : BackgroundService {
   public async Task ResumeAllSubscriptionsAsync() {
     _logger.LogInformation("Resuming all subscriptions");
 
+    // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
     foreach (var state in _states.Values) {
       if (state.Subscription != null) {
         await state.Subscription.ResumeAsync();
       }
     }
+#pragma warning restore S3267
 
     _logger.LogInformation("All subscriptions resumed");
   }

@@ -690,6 +690,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static HashSet<string> _extractUniqueEventTypes(ImmutableArray<ReceptorInfo> receptors) {
     var eventTypes = new HashSet<string>(StringComparer.Ordinal);
 
+    // S3267: Loop has side effects (mutating eventTypes set via helper method) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var receptor in receptors) {
       // Skip void receptors (no response type to cascade)
       if (receptor.IsVoid || string.IsNullOrEmpty(receptor.ResponseType)) {
@@ -698,6 +700,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       _extractEventTypesFromResponseType(receptor.ResponseType!, eventTypes);
     }
+#pragma warning restore S3267
 
     return eventTypes;
   }

@@ -99,6 +99,8 @@ internal static class PerspectiveDiscoveryHelper {
     var eventTypes = new List<ITypeSymbol>();
     var seen = new HashSet<string>();
 
+    // S3267: Inner loop with index arithmetic — LINQ SelectMany would be less clear
+#pragma warning disable S3267
     foreach (var iface in FindSingleStreamInterfaces(classSymbol)) {
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
         var eventType = iface.TypeArguments[i];
@@ -119,6 +121,7 @@ internal static class PerspectiveDiscoveryHelper {
         }
       }
     }
+#pragma warning restore S3267
 
     return eventTypes;
   }

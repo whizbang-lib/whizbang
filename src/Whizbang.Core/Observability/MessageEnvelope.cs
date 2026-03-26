@@ -288,6 +288,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
     }
 
     // Walk forwards through current hops only, later hops override earlier ones
+    // S3267: Multi-statement loop body — LINQ would reduce readability
+#pragma warning disable S3267
     foreach (var hop in Hops.Where(h => h.Type == HopType.Current)) {
       if (hop.Metadata != null) {
         foreach (var kvp in hop.Metadata) {
@@ -295,6 +297,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
         }
       }
     }
+#pragma warning restore S3267
 
     return result;
   }

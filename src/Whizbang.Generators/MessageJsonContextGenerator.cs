@@ -1724,11 +1724,14 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     var discoveredEnums = new Dictionary<string, JsonEnumInfo>();
 
+    // S3267: Loop has side effects (mutating discoveredEnums dictionary) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
         _tryDiscoverEnumFromProperty(property, compilation, discoveredEnums);
       }
     }
+#pragma warning restore S3267
 
     return [.. discoveredEnums.Values];
   }
@@ -2087,6 +2090,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<ArrayTypeInfo> _discoverArrayTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var arrayTypes = new Dictionary<string, ArrayTypeInfo>();
 
+    // S3267: Multi-statement loop body — LINQ would reduce readability
+#pragma warning disable S3267
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
         var rawTypeName = property.Type;
@@ -2124,6 +2129,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         );
       }
     }
+#pragma warning restore S3267
 
     return [.. arrayTypes.Values];
   }
@@ -2904,20 +2910,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Order properties by constructor parameter order, then any remaining properties (in base→derived order)
       var ordered = new List<IPropertySymbol>();
+      // S3267: Loop has side effects (removing from propertyLookup dictionary) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var param in primaryCtor.Parameters) {
         if (propertyLookup.TryGetValue(param.Name, out var prop)) {
           ordered.Add(prop);
           propertyLookup.Remove(param.Name);
         }
       }
+#pragma warning restore S3267
 
       // Add any remaining properties (computed properties, inherited properties not in ctor)
       // Keep them in base→derived order
-      foreach (var prop in allProperties) {
-        if (propertyLookup.ContainsKey(prop.Name)) {
-          ordered.Add(prop);
-        }
-      }
+      ordered.AddRange(allProperties.Where(prop => propertyLookup.ContainsKey(prop.Name)));
       return ordered;
     }
 
