@@ -250,7 +250,10 @@ public partial class PerspectiveWorker(
     }
   }
 
+  // S3776: Core perspective processing pipeline — inherent complexity from 5-phase lifecycle (claim/apply/buffer/postPerspective/postLifecycle)
+#pragma warning disable S3776
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
+#pragma warning restore S3776
     var batchSw = System.Diagnostics.Stopwatch.StartNew();
 
     // Capture parent context BEFORE making span decisions

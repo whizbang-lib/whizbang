@@ -1781,6 +1781,8 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Internal implementation of LocalInvokeAsync with DispatchOptions.
   /// </summary>
+  // S3776: Complexity 16 from Routed<T> unwrapping + async/sync invoker fallback — already well-structured
+#pragma warning disable S3776
   private async ValueTask<TResult> _localInvokeWithOptionsAsync<TResult>(
     object message,
     IMessageContext context,
@@ -1789,6 +1791,7 @@ public abstract partial class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
+#pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     ArgumentNullException.ThrowIfNull(context);
 
@@ -2425,7 +2428,10 @@ public abstract partial class Dispatcher(
   /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
   /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
+  // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
+#pragma warning disable S3776
   private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null, IMessageEnvelope? sourceEnvelope = null) {
+#pragma warning restore S3776
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var resultTypeName = result?.GetType().Name ?? "null";
@@ -3047,7 +3053,10 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
+  // S3776: Multi-mode cascade dispatch — complexity from conditional logging + Local/EventStore/Outbox routing paths
+#pragma warning disable S3776
   public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
+#pragma warning restore S3776
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
 

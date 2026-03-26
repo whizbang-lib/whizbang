@@ -44,9 +44,12 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Extracts perspective information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
   /// </summary>
+  // S3776: Complexity from sequential interface discovery checks — generator needs to inspect multiple perspective interface variants
+#pragma warning disable S3776
   private static PerspectiveRegistryInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
+#pragma warning restore S3776
 
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;

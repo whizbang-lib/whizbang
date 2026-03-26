@@ -1756,11 +1756,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Returns escaped SQL string ready to embed in C# verbatim string literal.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
+  // S3776: SQL schema generation — complexity from per-field column types, index generation, and vector support
+#pragma warning disable S3776
   private static string _generatePerspectiveTablesSchema(
     SourceProductionContext context,
     List<PerspectiveModelInfo> perspectives,
     string schema
   ) {
+#pragma warning restore S3776
     if (perspectives.Count == 0) {
       return "\"\""; // Empty string - no perspective tables
     }
