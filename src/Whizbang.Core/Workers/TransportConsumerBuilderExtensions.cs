@@ -200,18 +200,7 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
-    // Register health check for subscription monitoring
-    builder.Services.AddHealthChecks()
-      .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
-        HEALTH_CHECK_NAME,
-        sp => {
-          var worker = sp.GetService<TransportConsumerWorker>();
-          var states = worker?.SubscriptionStates
-            ?? new Dictionary<TransportDestination, SubscriptionState>();
-          return new SubscriptionHealthCheck(states);
-        },
-        failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
-        tags: ["transport", HEALTH_CHECK_NAME]));
+    _registerSubscriptionHealthCheck(builder.Services);
 
     return builder;
   }
@@ -320,8 +309,16 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience)
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
-    // Register health check for subscription monitoring
-    builder.Services.AddHealthChecks()
+    _registerSubscriptionHealthCheck(builder.Services);
+
+    return builder;
+  }
+
+  /// <summary>
+  /// Registers a health check that monitors transport subscription states.
+  /// </summary>
+  private static void _registerSubscriptionHealthCheck(IServiceCollection services) {
+    services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
         HEALTH_CHECK_NAME,
         sp => {
@@ -332,8 +329,6 @@ public static class TransportConsumerBuilderExtensions {
         },
         failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
         tags: ["transport", HEALTH_CHECK_NAME]));
-
-    return builder;
   }
 
   /// <summary>

@@ -163,51 +163,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         cancellationToken: cancellationToken
       );
 
-      // Get envelope type name - prefer provided envelopeType to preserve correct generic type
-      // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
-      var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
-        ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+      var (properties, body) = _createMessageProperties(envelope, envelopeType, destination);
 
-      var envelopeRuntimeType = envelope.GetType();
-
-      // Serialize envelope using AOT-compatible JsonContextRegistry
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
-
-      var json = JsonSerializer.Serialize(envelope, typeInfo);
-      var body = Encoding.UTF8.GetBytes(json);
-
-      // Create message properties
-      var properties = new BasicProperties {
-        MessageId = envelope.MessageId.Value.ToString(),
-        ContentType = "application/json",
-        Persistent = true,
-        Headers = new Dictionary<string, object?>()
-      };
-
-      // Add envelope type for deserialization
-      properties.Headers["EnvelopeType"] = envelopeTypeName;
-
-      // Add correlation ID if present
-      var correlationId = envelope.GetCorrelationId();
-      if (correlationId != null) {
-        properties.CorrelationId = correlationId.Value.Value.ToString();
-      }
-
-      // Add causation ID if present
-      var causationId = envelope.GetCausationId();
-      if (causationId != null) {
-        properties.Headers["CausationId"] = causationId.Value.Value.ToString();
-      }
-
-      // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
-      if (destination.Metadata != null) {
-        foreach (var (key, value) in destination.Metadata) {
-          properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
-        }
-      }
-
-      // Publish message to exchange
       await channel.BasicPublishAsync(
         exchange: exchangeName,
         routingKey: routingKey,
@@ -294,39 +251,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         try {
           var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
           var envelope = item.Envelope;
-          var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
-            ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
-          var envelopeRuntimeType = envelope.GetType();
-
-          var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
-            ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
-          var json = JsonSerializer.Serialize(envelope, typeInfo);
-          var body = Encoding.UTF8.GetBytes(json);
-
-          var properties = new BasicProperties {
-            MessageId = envelope.MessageId.Value.ToString(),
-            ContentType = "application/json",
-            Persistent = true,
-            Headers = new Dictionary<string, object?>()
-          };
-
-          properties.Headers["EnvelopeType"] = envelopeTypeName;
-
-          var correlationId = envelope.GetCorrelationId();
-          if (correlationId != null) {
-            properties.CorrelationId = correlationId.Value.Value.ToString();
-          }
-
-          var causationId = envelope.GetCausationId();
-          if (causationId != null) {
-            properties.Headers["CausationId"] = causationId.Value.Value.ToString();
-          }
-
-          if (destination.Metadata != null) {
-            foreach (var (key, value) in destination.Metadata) {
-              properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
-            }
-          }
+          var (properties, body) = _createMessageProperties(envelope, item.EnvelopeType, destination);
 
           await channel.BasicPublishAsync(
             exchange: exchangeName,
@@ -887,6 +812,51 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID
       );
     }
+  }
+
+  /// <summary>
+  /// Creates a BasicProperties with headers for the given envelope and destination metadata.
+  /// </summary>
+  private (BasicProperties Properties, byte[] Body) _createMessageProperties(
+    IMessageEnvelope envelope,
+    string? envelopeType,
+    TransportDestination destination
+  ) {
+    var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+    var envelopeRuntimeType = envelope.GetType();
+
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+    var json = JsonSerializer.Serialize(envelope, typeInfo);
+    var body = Encoding.UTF8.GetBytes(json);
+
+    var properties = new BasicProperties {
+      MessageId = envelope.MessageId.Value.ToString(),
+      ContentType = "application/json",
+      Persistent = true,
+      Headers = new Dictionary<string, object?>()
+    };
+
+    properties.Headers["EnvelopeType"] = envelopeTypeName;
+
+    var correlationId = envelope.GetCorrelationId();
+    if (correlationId != null) {
+      properties.CorrelationId = correlationId.Value.Value.ToString();
+    }
+
+    var causationId = envelope.GetCausationId();
+    if (causationId != null) {
+      properties.Headers["CausationId"] = causationId.Value.Value.ToString();
+    }
+
+    if (destination.Metadata != null) {
+      foreach (var (key, value) in destination.Metadata) {
+        properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
+      }
+    }
+
+    return (properties, body);
   }
 
   /// <summary>
