@@ -380,6 +380,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       await _processMessageAsync(channel, args, handler, queueName, cancellationToken);
     } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
       _logger?.LogWarning(
+        ex,
         "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
         args.BasicProperties.MessageId ?? "unknown",
         queueName
@@ -737,24 +738,22 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     try {
       if (deliveryCount >= _options.MaxDeliveryAttempts) {
         _logger?.LogWarning(
-          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue. Exception: {ExceptionType}: {ExceptionMessage}",
+          ex,
+          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue",
           deliveryCount,
           _options.MaxDeliveryAttempts,
           args.BasicProperties.MessageId ?? "unknown",
-          queueName,
-          ex.GetType().Name,
-          ex.Message
+          queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, false);
       } else {
         _logger?.LogWarning(
-          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+          ex,
+          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry",
           deliveryCount,
           _options.MaxDeliveryAttempts,
           args.BasicProperties.MessageId ?? "unknown",
-          queueName,
-          ex.GetType().Name,
-          ex.Message
+          queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, true);
       }
@@ -762,6 +761,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Channel/connection was closed or disposed during shutdown - this is expected
       // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(
+        channelEx,
         "RabbitMQ channel closed/disposed during failure handling for message {MessageId} - message will be redelivered on reconnection",
         args.BasicProperties.MessageId ?? "unknown"
       );

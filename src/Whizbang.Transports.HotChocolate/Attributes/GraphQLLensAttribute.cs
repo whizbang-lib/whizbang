@@ -45,9 +45,9 @@ public sealed class GraphQLLensAttribute : Attribute {
   /// <summary>
   /// Determines which parts of <see cref="Whizbang.Core.Lenses.PerspectiveRow{TModel}"/>
   /// are exposed in GraphQL queries.
-  /// Default: <see cref="GraphQLLensScope.Default"/> (uses system configuration).
+  /// Default: <see cref="GraphQLLensScope.None"/> (uses system configuration).
   /// </summary>
-  public GraphQLLensScope Scope { get; set; } = GraphQLLensScope.Default;
+  public GraphQLLensScope Scope { get; set; } = GraphQLLensScope.None;
 
   /// <summary>
   /// Enable GraphQL filtering on this lens.

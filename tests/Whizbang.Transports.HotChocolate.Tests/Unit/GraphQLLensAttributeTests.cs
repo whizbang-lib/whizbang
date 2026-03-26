@@ -14,7 +14,7 @@ public class GraphQLLensAttributeTests {
 
     // Assert - verify all defaults
     await Assert.That(attribute.QueryName).IsNull();
-    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.Default);
+    await Assert.That(attribute.Scope).IsEqualTo(GraphQLLensScope.None);
     await Assert.That(attribute.EnableFiltering).IsTrue();
     await Assert.That(attribute.EnableSorting).IsTrue();
     await Assert.That(attribute.EnablePaging).IsTrue();

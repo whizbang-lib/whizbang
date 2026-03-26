@@ -236,7 +236,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
   }
 
   /// <summary>
-  /// Rewriter that removes Wolverine HTTP attributes and adds TODO comments.
+  /// Rewriter that removes Wolverine HTTP attributes and adds action-needed comments.
   /// </summary>
   private sealed class WolverineHttpAttributeRemover : CSharpSyntaxRewriter {
 
@@ -279,7 +279,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
         }
       }
 
-      // Add TODO comment - attrName is guaranteed non-null when hasWolverineHttpAttr is true
+      // Add action-needed comment - attrName is guaranteed non-null when hasWolverineHttpAttr is true
       var httpMethod = attrName!.Replace("Wolverine", "").ToUpperInvariant();
       var todoComment = SyntaxFactory.Comment(
           $"// TODO: Convert to FastEndpoints - Create Endpoint<TRequest, TResponse> class with {httpMethod}(\"{route}\") in Configure()\n");
