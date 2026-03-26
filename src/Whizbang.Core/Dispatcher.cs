@@ -159,6 +159,7 @@ public abstract partial class Dispatcher(
   // Lazy-resolved logger for cascade diagnostic tracing (avoids constructor changes)
   // Uses try-catch to handle ObjectDisposedException during shutdown gracefully
 #pragma warning disable S6669 // Two loggers needed: cascade vs dispatcher tracing use different categories
+#pragma warning disable IDE1006 // Logger properties use PascalCase, not _camelCase
   private ILogger? _cascadeLogger;
   private ILogger CascadeLogger {
     get {

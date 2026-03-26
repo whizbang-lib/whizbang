@@ -36,7 +36,7 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "Add <PackageReference Include=\"Pgvector.EntityFrameworkCore\" /> to use vector columns with EF Core. This package provides the UseVector() extension for DbContextOptionsBuilder.",
-      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+      customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
   /// <summary>
@@ -52,7 +52,7 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
       description: "Add <PackageReference Include=\"Pgvector\" /> for NpgsqlDataSourceBuilder.UseVector() support. This is the base package for pgvector types.",
-      customTags: [WellKnownDiagnosticTags.CompilationEnd]
+      customTags: WellKnownDiagnosticTags.CompilationEnd
   );
 
   /// <summary>

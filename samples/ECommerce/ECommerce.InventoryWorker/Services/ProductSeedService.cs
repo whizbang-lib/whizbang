@@ -17,8 +17,6 @@ public class ProductSeedService(
   ILogger<ProductSeedService> logger) : IHostedService {
 
   public async Task StartAsync(CancellationToken cancellationToken) {
-    logger.LogInformation("ProductSeedService: Checking if seeding is needed...");
-
     // Generate deterministic UUIDv7 IDs for the 12 products
     var prod1 = Guid.CreateVersion7();
     var prod2 = Guid.CreateVersion7();
@@ -48,8 +46,6 @@ public class ProductSeedService(
         existingProducts.Count);
       return;
     }
-
-    logger.LogInformation("ProductSeedService: Seeding 12 products...");
 
     // Seed all 12 products with stock levels matching frontend mocks
     var createProductCommands = new[] {
@@ -168,7 +164,7 @@ public class ProductSeedService(
       }
     }
 
-    logger.LogInformation("ProductSeedService: Product seeding complete");
+    logger.LogInformation("ProductSeedService: Seeded {Count} products successfully", createProductCommands.Length);
   }
 
   public Task StopAsync(CancellationToken cancellationToken) {

@@ -23,11 +23,6 @@ public class RestockInventoryReceptor(
     RestockInventoryCommand message,
     CancellationToken cancellationToken = default) {
 
-    logger.LogInformation(
-      "Restocking inventory for product {ProductId} with quantity {Quantity}",
-      message.ProductId,
-      message.QuantityToAdd);
-
     // Query current inventory level to calculate new total quantity
     var currentInventory = await inventoryLens.GetByProductIdAsync(message.ProductId, cancellationToken);
 

@@ -1079,7 +1079,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Use consumer assembly's namespace to avoid collisions when multiple assemblies reference same generator
     // Each consumer assembly (e.g., ECommerce.BFF.API, ECommerce.InventoryWorker) gets its own .Generated namespace
-    var consumerNamespace = dbContextGroups.First().DbContext.Namespace;
+    var consumerNamespace = dbContextGroups[0].DbContext.Namespace;
     sb.AppendLine($"namespace {consumerNamespace}.Generated;");
     sb.AppendLine();
 
