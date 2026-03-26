@@ -13,6 +13,7 @@ namespace Whizbang.Core.Transports;
 /// Contains the message envelope, type metadata, and optional routing key.
 /// All items in a single PublishBatchAsync call share the same TransportDestination address.
 /// </summary>
+/// <docs>messaging/transports/transports</docs>
 public record BulkPublishItem {
   /// <summary>
   /// The message envelope to publish.
@@ -45,6 +46,7 @@ public record BulkPublishItem {
 /// Result of a single item in a bulk publish operation.
 /// Enables per-item success/failure tracking for partial batch failures.
 /// </summary>
+/// <docs>messaging/transports/transports</docs>
 public record BulkPublishItemResult {
   /// <summary>
   /// The message ID that was published (or attempted).
