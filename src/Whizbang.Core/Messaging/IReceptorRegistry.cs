@@ -57,15 +57,6 @@ public interface IReceptorRegistry {
   void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage;
 
   /// <summary>
-  /// Unregisters a previously registered void receptor.
-  /// </summary>
-  /// <typeparam name="TMessage">The message type to unregister from.</typeparam>
-  /// <param name="receptor">The receptor instance to remove.</param>
-  /// <param name="stage">The lifecycle stage from which to remove the receptor.</param>
-  /// <returns>True if the receptor was found and removed; false otherwise.</returns>
-  bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage;
-
-  /// <summary>
   /// Registers a response receptor at a specific lifecycle stage for runtime invocation.
   /// Enables event cascading from runtime-registered receptors.
   /// </summary>
@@ -75,6 +66,15 @@ public interface IReceptorRegistry {
   /// <param name="stage">The lifecycle stage at which to invoke the receptor.</param>
   /// <docs>operations/testing/lifecycle-synchronization</docs>
   void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage;
+
+  /// <summary>
+  /// Unregisters a previously registered void receptor.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type to unregister from.</typeparam>
+  /// <param name="receptor">The receptor instance to remove.</param>
+  /// <param name="stage">The lifecycle stage from which to remove the receptor.</param>
+  /// <returns>True if the receptor was found and removed; false otherwise.</returns>
+  bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage;
 
   /// <summary>
   /// Unregisters a previously registered response receptor.

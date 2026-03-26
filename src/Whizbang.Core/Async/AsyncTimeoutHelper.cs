@@ -29,21 +29,6 @@ public static class AsyncTimeoutHelper {
     return _waitWithTimeoutCoreAsync(task, timeout, timeoutMessage, cancellationToken);
   }
 
-  private static async Task _waitWithTimeoutCoreAsync(
-      Task task,
-      TimeSpan timeout,
-      string timeoutMessage,
-      CancellationToken cancellationToken) {
-    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    cts.CancelAfter(timeout);
-
-    try {
-      await task.WaitAsync(cts.Token);
-    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
-      throw new TimeoutException(timeoutMessage);
-    }
-  }
-
   /// <summary>
   /// Waits for a task to complete within the specified timeout and returns its result.
   /// </summary>
@@ -62,6 +47,21 @@ public static class AsyncTimeoutHelper {
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(task);
     return _waitWithTimeoutCoreAsync(task, timeout, timeoutMessage, cancellationToken);
+  }
+
+  private static async Task _waitWithTimeoutCoreAsync(
+      Task task,
+      TimeSpan timeout,
+      string timeoutMessage,
+      CancellationToken cancellationToken) {
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    cts.CancelAfter(timeout);
+
+    try {
+      await task.WaitAsync(cts.Token);
+    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      throw new TimeoutException(timeoutMessage);
+    }
   }
 
   private static async Task<T> _waitWithTimeoutCoreAsync<T>(
