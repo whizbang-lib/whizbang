@@ -1924,12 +1924,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // - hnsw: max 2000 dimensions (pgvector < 0.7.0) or 16000 (pgvector >= 0.7.0)
     // To be safe with all pgvector versions, skip index for > 2000 dimensions
     // The column still works for queries, just without index acceleration
-    if (field.VectorDimensions.Value <= 2000) {
+    var dimensions = field.VectorDimensions!.Value;
+    if (dimensions <= 2000) {
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_{field.ColumnName}_vec");
       sb.AppendLine($"  ON {quotedSchema}.{tableName} USING ivfflat ({field.ColumnName} vector_cosine_ops);");
       sb.AppendLine();
     } else {
-      sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({field.VectorDimensions.Value} dimensions > 2000 limit)");
+      sb.AppendLine($"-- NOTE: Skipping vector index for {field.ColumnName} ({dimensions} dimensions > 2000 limit)");
       sb.AppendLine("-- Vector queries will still work but without index acceleration");
       sb.AppendLine("-- To enable indexing, upgrade to pgvector >= 0.7.0 and manually create an hnsw index");
       sb.AppendLine();
