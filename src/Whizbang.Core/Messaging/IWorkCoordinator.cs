@@ -892,61 +892,68 @@ public record PerspectiveEventCompletion {
 }
 
 /// <summary>
+/// Groups the parameters for <see cref="WorkCoordinatorExtensions.ProcessWorkBatchAsync"/>
+/// to avoid S107 (too many parameters). Maps directly to <see cref="ProcessWorkBatchRequest"/>.
+/// </summary>
+public readonly record struct ProcessWorkBatchContext(
+  Guid InstanceId,
+  string ServiceName,
+  string HostName,
+  int ProcessId,
+  Dictionary<string, JsonElement>? Metadata,
+  MessageCompletion[] OutboxCompletions,
+  MessageFailure[] OutboxFailures,
+  MessageCompletion[] InboxCompletions,
+  MessageFailure[] InboxFailures,
+  ReceptorProcessingCompletion[] ReceptorCompletions,
+  ReceptorProcessingFailure[] ReceptorFailures,
+  PerspectiveCursorCompletion[] PerspectiveCompletions,
+  PerspectiveCursorFailure[] PerspectiveFailures,
+  OutboxMessage[] NewOutboxMessages,
+  InboxMessage[] NewInboxMessages,
+  Guid[] RenewOutboxLeaseIds,
+  Guid[] RenewInboxLeaseIds,
+  WorkBatchOptions Flags = WorkBatchOptions.None,
+  int PartitionCount = 10_000,
+  int LeaseSeconds = 300,
+  int StaleThresholdSeconds = 600);
+
+/// <summary>
 /// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
 /// </summary>
 public static class WorkCoordinatorExtensions {
   /// <summary>
-  /// Backwards-compatible overload using positional parameters.
+  /// Backwards-compatible overload using a context record.
   /// Converts to ProcessWorkBatchRequest internally.
   /// </summary>
   public static Task<WorkBatch> ProcessWorkBatchAsync(
     this IWorkCoordinator coordinator,
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCursorCompletion[] perspectiveCompletions,
-    PerspectiveCursorFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchOptions flags = WorkBatchOptions.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchContext context,
     CancellationToken cancellationToken = default
   ) {
     var request = new ProcessWorkBatchRequest {
-      InstanceId = instanceId,
-      ServiceName = serviceName,
-      HostName = hostName,
-      ProcessId = processId,
-      Metadata = metadata,
-      OutboxCompletions = outboxCompletions,
-      OutboxFailures = outboxFailures,
-      InboxCompletions = inboxCompletions,
-      InboxFailures = inboxFailures,
-      ReceptorCompletions = receptorCompletions,
-      ReceptorFailures = receptorFailures,
-      PerspectiveCompletions = perspectiveCompletions,
+      InstanceId = context.InstanceId,
+      ServiceName = context.ServiceName,
+      HostName = context.HostName,
+      ProcessId = context.ProcessId,
+      Metadata = context.Metadata,
+      OutboxCompletions = context.OutboxCompletions,
+      OutboxFailures = context.OutboxFailures,
+      InboxCompletions = context.InboxCompletions,
+      InboxFailures = context.InboxFailures,
+      ReceptorCompletions = context.ReceptorCompletions,
+      ReceptorFailures = context.ReceptorFailures,
+      PerspectiveCompletions = context.PerspectiveCompletions,
       PerspectiveEventCompletions = [],
-      PerspectiveFailures = perspectiveFailures,
-      NewOutboxMessages = newOutboxMessages,
-      NewInboxMessages = newInboxMessages,
-      RenewOutboxLeaseIds = renewOutboxLeaseIds,
-      RenewInboxLeaseIds = renewInboxLeaseIds,
-      Flags = flags,
-      PartitionCount = partitionCount,
-      LeaseSeconds = leaseSeconds,
-      StaleThresholdSeconds = staleThresholdSeconds
+      PerspectiveFailures = context.PerspectiveFailures,
+      NewOutboxMessages = context.NewOutboxMessages,
+      NewInboxMessages = context.NewInboxMessages,
+      RenewOutboxLeaseIds = context.RenewOutboxLeaseIds,
+      RenewInboxLeaseIds = context.RenewInboxLeaseIds,
+      Flags = context.Flags,
+      PartitionCount = context.PartitionCount,
+      LeaseSeconds = context.LeaseSeconds,
+      StaleThresholdSeconds = context.StaleThresholdSeconds
     };
     return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
   }

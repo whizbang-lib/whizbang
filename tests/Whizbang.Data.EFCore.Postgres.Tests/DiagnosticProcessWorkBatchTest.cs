@@ -29,27 +29,27 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
 
     Console.WriteLine($"=== STEP 1: Storing messageId1: {messageId1.Value} ===");
 
-    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch1 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      Metadata: null,
+      OutboxCompletions: [],
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId1.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     Console.WriteLine($"WorkBatch1 returned {workBatch1.OutboxWork.Count} messages");
 
@@ -72,32 +72,32 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
     Console.WriteLine($"\n=== STEP 2: Reporting messageId1 complete, storing messageId2: {messageId2.Value} ===");
     Console.WriteLine($"p_outbox_completions: [{{\"messageId\":\"{messageId1.Value}\",\"status\":4}}]");
 
-    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(
+    var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(new ProcessWorkBatchContext(
       instanceId,
       "TestService",
       "test-host",
       12345,
-      metadata: null,
-      outboxCompletions: [
+      Metadata: null,
+      OutboxCompletions: [
         new MessageCompletion {
           MessageId = messageId1.Value,
           Status = MessageProcessingStatus.Published
         }
       ],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [],
-      perspectiveFailures: [],
-      newOutboxMessages: [
+      OutboxFailures: [],
+      InboxCompletions: [],
+      InboxFailures: [],
+      ReceptorCompletions: [],
+      ReceptorFailures: [],
+      PerspectiveCompletions: [],
+      PerspectiveFailures: [],
+      NewOutboxMessages: [
         CreateTestOutboxMessage(messageId2.Value, "test-topic", streamId, true)
       ],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
-    );
+      NewInboxMessages: [],
+      RenewOutboxLeaseIds: [],
+      RenewInboxLeaseIds: []
+));
 
     Console.WriteLine($"WorkBatch2 returned {workBatch2.OutboxWork.Count} messages:");
     foreach (var work in workBatch2.OutboxWork) {

@@ -316,27 +316,14 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
       }
 
       var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-        _coordinator,
-        _scopeFactory,
-        _instanceProvider,
-        _options,
-        "batch",
-        outboxMessages,
-        inboxMessages,
-        outboxCompletions,
-        inboxCompletions,
-        outboxFailures,
-        inboxFailures,
-        flags,
-        _lifecycleMessageDeserializer,
-        _logger,
-        _tracingOptions,
-        _metrics,
-        _lifecycleMetrics,
-        workChannelWriter: _workChannelWriter,
-        pendingAuditMessages: null,
-        ct,
-        skipLifecycle: skipLifecycle
+        new FlushContext(
+          _coordinator, _scopeFactory, _instanceProvider, _options, "batch",
+          outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
+          outboxFailures, inboxFailures, flags, _lifecycleMessageDeserializer,
+          _logger, _tracingOptions, _metrics, _lifecycleMetrics,
+          WorkChannelWriter: _workChannelWriter, PendingAuditMessages: null,
+          SkipLifecycle: skipLifecycle),
+        ct
       );
 
       if (_logger != null) {

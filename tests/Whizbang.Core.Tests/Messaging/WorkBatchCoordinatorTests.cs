@@ -104,7 +104,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - outbox work should be in channel
     var canRead = outboxChannel.Reader.TryRead(out var readWork);
@@ -148,7 +148,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - perspective work should be in channel
     var canRead = perspectiveChannel.Reader.TryRead(out var readWork);
@@ -203,7 +203,7 @@ public class WorkBatchCoordinatorTests {
     );
 
     // Act
-    await coordinator.ProcessAndDistributeAsync(instanceId);
+    await coordinator.ProcessAndDistributeAsync(new ProcessAndDistributeContext(instanceId));
 
     // Assert - both channels should have work
     await Assert.That(outboxChannel.Reader.TryRead(out var readOutboxWork)).IsTrue();

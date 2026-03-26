@@ -158,25 +158,12 @@ public partial class ScopedWorkCoordinatorStrategy(
       : null;
 
     var workBatch = await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-      _coordinator,
-      _dependencies.ScopeFactory,
-      _instanceProvider,
-      _options,
-      STRATEGY_NAME,
-      outboxMessages,
-      inboxMessages,
-      outboxCompletions,
-      inboxCompletions,
-      outboxFailures,
-      inboxFailures,
-      flags,
-      _dependencies.LifecycleMessageDeserializer,
-      _logger,
-      _dependencies.TracingOptions,
-      _metrics,
-      _lifecycleMetrics,
-      workChannelWriter: _workChannelWriter,
-      pendingAuditMessages: pendingAuditMessages,
+      new FlushContext(
+        _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+        outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
+        outboxFailures, inboxFailures, flags, _dependencies.LifecycleMessageDeserializer,
+        _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
+        WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages),
       ct
     );
 
@@ -237,27 +224,14 @@ public partial class ScopedWorkCoordinatorStrategy(
           : null;
 
         await WorkCoordinatorFlushHelper.ExecuteFlushAsync(
-          _coordinator,
-          _dependencies.ScopeFactory,
-          _instanceProvider,
-          _options,
-          STRATEGY_NAME,
-          outboxMessages,
-          inboxMessages,
-          outboxCompletions,
-          inboxCompletions,
-          outboxFailures,
-          inboxFailures,
-          WorkBatchOptions.None,
-          _dependencies.LifecycleMessageDeserializer,
-          _logger,
-          _dependencies.TracingOptions,
-          _metrics,
-          _lifecycleMetrics,
-          workChannelWriter: _workChannelWriter,
-          pendingAuditMessages: pendingAuditMessages,
-          ct: default,
-          skipLifecycle: true
+          new FlushContext(
+            _coordinator, _dependencies.ScopeFactory, _instanceProvider, _options, STRATEGY_NAME,
+            outboxMessages, inboxMessages, outboxCompletions, inboxCompletions,
+            outboxFailures, inboxFailures, WorkBatchOptions.None, _dependencies.LifecycleMessageDeserializer,
+            _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
+            WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+            SkipLifecycle: true),
+          ct: default
         );
 
         _queues.Clear();
