@@ -82,13 +82,4 @@ public static class WhizbangDiagnostics {
     return result;
   }
 
-  /// <summary>
-  /// Prints all collected diagnostic information from all generators.
-  /// This is a convenience method that calls Diagnostics(printToConsole: true).
-  /// </summary>
-  [ExcludeFromCodeCoverage]
-  [Obsolete("Use Diagnostics() instead. This method will be removed in a future version.")]
-  public static void PrintDiagnostics() {
-    Diagnostics(printToConsole: true);
-  }
 }
