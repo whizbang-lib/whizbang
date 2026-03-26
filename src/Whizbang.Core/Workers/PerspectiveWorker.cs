@@ -448,7 +448,7 @@ public partial class PerspectiveWorker(
         NewInboxMessages = [],
         RenewOutboxLeaseIds = [],
         RenewInboxLeaseIds = [],
-        Flags = _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
         StaleThresholdSeconds = _options.StaleThresholdSeconds

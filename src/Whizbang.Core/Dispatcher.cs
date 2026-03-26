@@ -420,7 +420,7 @@ public abstract partial class Dispatcher(
       // We extract the inner message and use that for receptor dispatch
       if (message is IRouted routed) {
         // RoutedNone (Route.None()) has no inner value to dispatch
-        if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        if (routed.Mode == DispatchModes.None || routed.Value == null) {
           throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
         }
         message = routed.Value;
@@ -559,7 +559,7 @@ public abstract partial class Dispatcher(
     try {
       // Unwrap Routed<T> if needed - users can call SendAsync(Route.Local(event))
       if (message is IRouted routed) {
-        if (routed.Mode == DispatchMode.None || routed.Value == null) {
+        if (routed.Mode == DispatchModes.None || routed.Value == null) {
           throw new ArgumentException("Cannot send a RoutedNone (Route.None()) - it has no inner message to dispatch.", nameof(message));
         }
         message = routed.Value;
@@ -904,7 +904,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed - users can call LocalInvokeAsync(Route.Local(event))
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -1019,7 +1019,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -1251,7 +1251,7 @@ public abstract partial class Dispatcher(
       return;
     }
 
-    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+    Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
         ? GetReceptorDefaultRouting(originalMessageType)
         : null;
 
@@ -1277,18 +1277,18 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Cascades a single message via local dispatch and/or outbox based on the dispatch mode.
   /// </summary>
-  private async Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchMode mode) {
+  private async Task _cascadeSingleMessageAsync(IMessage msg, Dispatch.DispatchModes mode) {
 #pragma warning disable CA1848
     var msgType = msg.GetType();
 
-    if (mode.HasFlag(Dispatch.DispatchMode.Local)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.Local)) {
       var publisher = GetUntypedReceptorPublisher(msgType);
       if (publisher != null) {
         await publisher(msg, null, default);
       }
     }
 
-    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
       await CascadeToOutboxAsync(msg, msgType);
     }
 #pragma warning restore CA1848
@@ -1442,7 +1442,7 @@ public abstract partial class Dispatcher(
     // We need to use runtime type to get the actual inner message type
     object actualMessage = message;
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       actualMessage = routed.Value;
@@ -1482,7 +1482,7 @@ public abstract partial class Dispatcher(
     // We need to use runtime type to get the actual inner message type
     object actualMessage = message;
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       actualMessage = routed.Value;
@@ -1784,7 +1784,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -1830,7 +1830,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -2078,7 +2078,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -2119,7 +2119,7 @@ public abstract partial class Dispatcher(
 
     // Unwrap Routed<T> if needed
     if (message is IRouted routed) {
-      if (routed.Mode == DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == DispatchModes.None || routed.Value == null) {
         throw new ArgumentException(ROUTED_NONE_ERROR, nameof(message));
       }
       message = routed.Value;
@@ -2409,7 +2409,7 @@ public abstract partial class Dispatcher(
   /// returns type-erased delegates that cast internally.
   /// </para>
   /// <para>
-  /// Routing behavior based on DispatchMode:
+  /// Routing behavior based on DispatchModes:
   /// <list type="bullet">
   ///   <item>Local: Invoke in-process receptors only via GetUntypedReceptorPublisher</item>
   ///   <item>Outbox: Write to outbox for cross-service delivery via _cascadeToOutboxAsync</item>
@@ -2438,7 +2438,7 @@ public abstract partial class Dispatcher(
 
     // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     // This is done via the generated GetReceptorDefaultRouting method
-    Dispatch.DispatchMode? receptorDefault = originalMessageType is not null
+    Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
         ? GetReceptorDefaultRouting(originalMessageType)
         : null;
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -2631,11 +2631,11 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Dispatches a cascaded message based on routing mode: local, event store, and/or outbox.
   /// </summary>
-  private async Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchMode mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) {
+  private async Task _dispatchByModeAsync(IMessage msg, Type messageType, Dispatch.DispatchModes mode, IMessageEnvelope? sourceEnvelope, Guid? eventId) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
     // Check for LocalDispatch flag specifically, not the composite Local mode
-    if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         var msgTypeName = messageType.Name;
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Dispatching locally for {MessageType}", msgTypeName);
@@ -2651,7 +2651,7 @@ public abstract partial class Dispatcher(
     // Event store only: Store to event store without transport (for Local, EventStoreOnly)
     // When EventStore is set but Outbox is NOT set, store with null destination
     // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox) && msg is IEvent) {
+    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && msg is IEvent) {
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         var msgTypeName = messageType.Name;
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToEventStoreOnlyAsync for {MessageType}", msgTypeName);
@@ -2661,7 +2661,7 @@ public abstract partial class Dispatcher(
 
     // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
     // CRITICAL: Pass eventId to ensure storage uses same ID as tracking
-    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         var msgTypeName = messageType.Name;
         CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Calling CascadeToOutboxAsync for {MessageType}", msgTypeName);
@@ -2887,7 +2887,7 @@ public abstract partial class Dispatcher(
   /// This avoids reflection and maintains AOT compatibility.
   /// </para>
   /// <para>
-  /// Called by CascadeMessageAsync when DispatchMode.EventStore flag is set without DispatchMode.Outbox.
+  /// Called by CascadeMessageAsync when DispatchModes.EventStore flag is set without DispatchModes.Outbox.
   /// Events are stored to wh_event_store and perspective events are created, but transport is skipped.
   /// </para>
   /// </remarks>
@@ -3043,7 +3043,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
   /// <docs>fundamentals/security/message-security#security-context-in-event-cascades</docs>
-  public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) {
+  public async Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(message);
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -3071,7 +3071,7 @@ public abstract partial class Dispatcher(
     }
 
     // Local dispatch: Invoke in-process receptors (for Local, LocalNoPersist, Both)
-    if (mode.HasFlag(Dispatch.DispatchMode.LocalDispatch)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.LocalDispatch)) {
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         var msgTypeName = messageType.Name;
@@ -3085,7 +3085,7 @@ public abstract partial class Dispatcher(
     }
 
     // Event store only: Store to event store without transport (for Local, EventStoreOnly)
-    if (mode.HasFlag(Dispatch.DispatchMode.EventStore) && !mode.HasFlag(Dispatch.DispatchMode.Outbox) && message is IEvent) {
+    if (mode.HasFlag(Dispatch.DispatchModes.EventStore) && !mode.HasFlag(Dispatch.DispatchModes.Outbox) && message is IEvent) {
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToEventStoreOnlyAsync for {MessageType}", messageType.Name);
@@ -3095,7 +3095,7 @@ public abstract partial class Dispatcher(
     }
 
     // Outbox dispatch: Write to outbox for cross-service delivery (for Outbox, Both)
-    if (mode.HasFlag(Dispatch.DispatchMode.Outbox)) {
+    if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[CASCADE] CascadeMessageAsync: Calling CascadeToOutboxAsync for {MessageType}", messageType.Name);
@@ -3412,7 +3412,7 @@ public abstract partial class Dispatcher(
 #pragma warning restore CA1848
 
     // Flush strategy to execute the batch
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None);
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       var outboxCount = workBatch.OutboxWork.Count;
@@ -3467,7 +3467,7 @@ public abstract partial class Dispatcher(
 
       var newOutboxMessage = _buildOutboxMessage(jsonEnvelope, destination, eventType, eventData, streamId);
       strategy.QueueOutboxMessage(newOutboxMessage);
-      await strategy.FlushAsync(WorkBatchFlags.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
     } finally {
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
@@ -3745,7 +3745,7 @@ public abstract partial class Dispatcher(
       strategy.QueueOutboxMessage(newOutboxMessage);
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchFlags.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message!, messageType);
@@ -3831,7 +3831,7 @@ public abstract partial class Dispatcher(
 
       // Flush strategy to execute the batch (strategy determines when to actually flush)
       // Flush strategy to execute the batch (strategy determines when to actually flush)
-      await strategy.FlushAsync(WorkBatchFlags.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
 
       // Extract stream ID from [StreamId] attribute for delivery receipt
       var streamId = _streamIdExtractor?.ExtractStreamId(message, messageType);
@@ -3896,7 +3896,7 @@ public abstract partial class Dispatcher(
       }
 
       // Flush ONCE for all messages
-      await strategy.FlushAsync(WorkBatchFlags.None, mode: FlushMode.BestEffort);
+      await strategy.FlushAsync(WorkBatchOptions.None, mode: FlushMode.BestEffort);
 
     } finally {
       // Dispose scope asynchronously
@@ -4805,7 +4805,7 @@ public abstract partial class Dispatcher(
   /// <returns>The default dispatch mode from the receptor's [DefaultRouting] attribute, or null</returns>
   /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs</tests>
-  protected abstract Dispatch.DispatchMode? GetReceptorDefaultRouting(Type messageType);
+  protected abstract Dispatch.DispatchModes? GetReceptorDefaultRouting(Type messageType);
 
   /// <summary>
   /// AOT-compatible logging for security-related dispatcher events.

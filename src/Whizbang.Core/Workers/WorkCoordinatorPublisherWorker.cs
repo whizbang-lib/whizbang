@@ -735,7 +735,7 @@ public partial class WorkCoordinatorPublisherWorker(
         NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)
         RenewOutboxLeaseIds = leaseRenewalsToSend,
         RenewInboxLeaseIds = inboxLeaseRenewalsToSend,
-        Flags = _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        Flags = _options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None,
         PartitionCount = _options.PartitionCount,
         LeaseSeconds = _options.LeaseSeconds,
         StaleThresholdSeconds = _options.StaleThresholdSeconds

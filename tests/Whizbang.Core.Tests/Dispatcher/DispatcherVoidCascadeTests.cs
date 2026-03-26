@@ -34,7 +34,7 @@ public class DispatcherVoidCascadeTests {
   /// Uses [DefaultRouting(Local)] to ensure local cascade for test verification.
   /// (Default system routing is Outbox for cross-service delivery)
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record OrderProcessedEvent([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
 
   /// <summary>

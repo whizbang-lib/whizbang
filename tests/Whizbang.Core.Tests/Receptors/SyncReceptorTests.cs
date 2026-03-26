@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Receptors;
 /// <docs>core-concepts/receptors#synchronous-receptors</docs>
 [Category("Receptors")]
 public class SyncReceptorTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   // Test Messages - unique names to avoid conflicts
   public record SyncCreateOrderCommand(Guid CustomerId, SyncOrderItem[] Items);

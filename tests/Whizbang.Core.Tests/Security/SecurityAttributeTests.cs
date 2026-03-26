@@ -92,43 +92,43 @@ public class SecurityAttributeTests {
     var attr = new ScopedAttribute();
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithFilter_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.User);
+    var attr = new ScopedAttribute(ScopeFilters.User);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.User);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.User);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithCombinedFilters_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Tenant | ScopeFilter.User);
+    var attr = new ScopedAttribute(ScopeFilters.Tenant | ScopeFilters.User);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant | ScopeFilter.User);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Tenant | ScopeFilters.User);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithOrganization_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Organization);
+    var attr = new ScopedAttribute(ScopeFilters.Organization);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Organization);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Organization);
   }
 
   [Test]
   public async Task ScopedAttribute_Constructor_WithPrincipal_SetsFilterAsync() {
     // Arrange & Act
-    var attr = new ScopedAttribute(ScopeFilter.Principal);
+    var attr = new ScopedAttribute(ScopeFilters.Principal);
 
     // Assert
-    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Principal);
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilters.Principal);
   }
 
   #endregion

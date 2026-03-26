@@ -13,7 +13,7 @@ internal static class GuidInterceptorSnippets {
   internal static global::Whizbang.Core.ValueObjects.TrackedGuid __INTERCEPTOR_NAME__() {
     return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(
         global::System.Guid.NewGuid(),
-        global::Whizbang.Core.ValueObjects.GuidMetadata.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadata.__SOURCE__);
+        global::Whizbang.Core.ValueObjects.GuidMetadatas.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadatas.__SOURCE__);
   }
   #endregion
 
@@ -25,7 +25,7 @@ internal static class GuidInterceptorSnippets {
   internal static global::Whizbang.Core.ValueObjects.TrackedGuid __INTERCEPTOR_NAME__() {
     return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(
         global::System.Guid.CreateVersion7(),
-        global::Whizbang.Core.ValueObjects.GuidMetadata.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadata.__SOURCE__);
+        global::Whizbang.Core.ValueObjects.GuidMetadatas.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadatas.__SOURCE__);
   }
   #endregion
 
@@ -37,7 +37,7 @@ internal static class GuidInterceptorSnippets {
   internal static global::Whizbang.Core.ValueObjects.TrackedGuid __INTERCEPTOR_NAME__() {
     return global::Whizbang.Core.ValueObjects.TrackedGuid.FromIntercepted(
         __ORIGINAL_CALL__,
-        global::Whizbang.Core.ValueObjects.GuidMetadata.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadata.__SOURCE__);
+        global::Whizbang.Core.ValueObjects.GuidMetadatas.__VERSION__ | global::Whizbang.Core.ValueObjects.GuidMetadatas.__SOURCE__);
   }
   #endregion
 

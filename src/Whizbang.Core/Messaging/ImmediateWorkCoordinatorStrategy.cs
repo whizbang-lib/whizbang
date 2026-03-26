@@ -120,7 +120,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorDrainTests.cs:FlushAsync_DrainsDeferredChannel_IncludesInBatchAsync</tests>
-  public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public async Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "immediate"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
     // Immediate strategy always flushes regardless of FlushMode
     // Drain deferred channel first - these get written in THIS transaction
@@ -188,7 +188,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
   // ========================================
   // High-Performance LoggerMessage Delegates

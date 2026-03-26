@@ -72,7 +72,7 @@ public static class Route {
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
   /// <param name="value">The value to route locally with persistence.</param>
-  /// <returns>A routed wrapper with <see cref="DispatchMode.Local"/>.</returns>
+  /// <returns>A routed wrapper with <see cref="DispatchModes.Local"/>.</returns>
   /// <remarks>
   /// Events are dispatched to in-process receptors AND persisted to the event store.
   /// This is the recommended mode for local event handling with durability.
@@ -84,14 +84,14 @@ public static class Route {
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Local_WithValue_ReturnsRoutedWithLocalModeAsync</tests>
-  public static Routed<T> Local<T>(T value) => new(value, DispatchMode.Local);
+  public static Routed<T> Local<T>(T value) => new(value, DispatchModes.Local);
 
   /// <summary>
   /// Wraps a value for local-only dispatch without persistence (ephemeral).
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
   /// <param name="value">The value to route locally without persistence.</param>
-  /// <returns>A routed wrapper with <see cref="DispatchMode.LocalNoPersist"/>.</returns>
+  /// <returns>A routed wrapper with <see cref="DispatchModes.LocalNoPersist"/>.</returns>
   /// <remarks>
   /// Events are dispatched to in-process receptors only. No persistence to event store.
   /// Use for ephemeral events like cache invalidation that don't need durability.
@@ -103,14 +103,14 @@ public static class Route {
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithValue_ReturnsRoutedWithLocalNoPersistModeAsync</tests>
-  public static Routed<T> LocalNoPersist<T>(T value) => new(value, DispatchMode.LocalNoPersist);
+  public static Routed<T> LocalNoPersist<T>(T value) => new(value, DispatchModes.LocalNoPersist);
 
   /// <summary>
   /// Wraps a collection of values for local-only dispatch without persistence.
   /// </summary>
   /// <typeparam name="T">The type of values to wrap.</typeparam>
   /// <param name="values">The values to route locally without persistence.</param>
-  /// <returns>An enumerable of routed wrappers with <see cref="DispatchMode.LocalNoPersist"/>.</returns>
+  /// <returns>An enumerable of routed wrappers with <see cref="DispatchModes.LocalNoPersist"/>.</returns>
   /// <example>
   /// <code>
   /// return Route.LocalNoPersist(new[] { evt1, evt2, evt3 });
@@ -118,42 +118,42 @@ public static class Route {
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:LocalNoPersist_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
   public static IEnumerable<Routed<T>> LocalNoPersist<T>(IEnumerable<T> values)
-    => values.Select(v => new Routed<T>(v, DispatchMode.LocalNoPersist));
+    => values.Select(v => new Routed<T>(v, DispatchModes.LocalNoPersist));
 
   /// <summary>
   /// Wraps a value for outbox-only dispatch (transport to other services).
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
   /// <param name="value">The value to route to outbox.</param>
-  /// <returns>A routed wrapper with <see cref="DispatchMode.Outbox"/>.</returns>
+  /// <returns>A routed wrapper with <see cref="DispatchModes.Outbox"/>.</returns>
   /// <example>
   /// <code>
   /// return Route.Outbox(new UserCreatedEvent { UserId = userId });
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Outbox_WithValue_ReturnsRoutedWithOutboxModeAsync</tests>
-  public static Routed<T> Outbox<T>(T value) => new(value, DispatchMode.Outbox);
+  public static Routed<T> Outbox<T>(T value) => new(value, DispatchModes.Outbox);
 
   /// <summary>
   /// Wraps a value for both local dispatch AND outbox write.
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
   /// <param name="value">The value to route to both destinations.</param>
-  /// <returns>A routed wrapper with <see cref="DispatchMode.Both"/>.</returns>
+  /// <returns>A routed wrapper with <see cref="DispatchModes.Both"/>.</returns>
   /// <example>
   /// <code>
   /// return Route.Both(new AuditLogEvent { Action = "create" });
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:Both_WithValue_ReturnsRoutedWithBothModeAsync</tests>
-  public static Routed<T> Both<T>(T value) => new(value, DispatchMode.Both);
+  public static Routed<T> Both<T>(T value) => new(value, DispatchModes.Both);
 
   /// <summary>
   /// Wraps a value for direct event store persistence only (no local dispatch).
   /// </summary>
   /// <typeparam name="T">The type of value to wrap.</typeparam>
   /// <param name="value">The value to persist to event store.</param>
-  /// <returns>A routed wrapper with <see cref="DispatchMode.EventStoreOnly"/>.</returns>
+  /// <returns>A routed wrapper with <see cref="DispatchModes.EventStoreOnly"/>.</returns>
   /// <remarks>
   /// Events are persisted to the event store but NOT dispatched to local receptors.
   /// Use for audit events or when you need persistence without immediate processing.
@@ -164,14 +164,14 @@ public static class Route {
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithValue_ReturnsRoutedWithEventStoreOnlyModeAsync</tests>
-  public static Routed<T> EventStoreOnly<T>(T value) => new(value, DispatchMode.EventStoreOnly);
+  public static Routed<T> EventStoreOnly<T>(T value) => new(value, DispatchModes.EventStoreOnly);
 
   /// <summary>
   /// Wraps a collection of values for direct event store persistence only.
   /// </summary>
   /// <typeparam name="T">The type of values to wrap.</typeparam>
   /// <param name="values">The values to persist to event store.</param>
-  /// <returns>An enumerable of routed wrappers with <see cref="DispatchMode.EventStoreOnly"/>.</returns>
+  /// <returns>An enumerable of routed wrappers with <see cref="DispatchModes.EventStoreOnly"/>.</returns>
   /// <example>
   /// <code>
   /// return Route.EventStoreOnly(new[] { auditEvt1, auditEvt2 });
@@ -179,5 +179,5 @@ public static class Route {
   /// </example>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:EventStoreOnly_WithCollection_ReturnsEnumerableOfRoutedAsync</tests>
   public static IEnumerable<Routed<T>> EventStoreOnly<T>(IEnumerable<T> values)
-    => values.Select(v => new Routed<T>(v, DispatchMode.EventStoreOnly));
+    => values.Select(v => new Routed<T>(v, DispatchModes.EventStoreOnly));
 }

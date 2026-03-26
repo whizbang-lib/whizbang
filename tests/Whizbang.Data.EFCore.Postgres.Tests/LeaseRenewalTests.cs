@@ -222,7 +222,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await Assert.That(workBatch.OutboxWork.Count).IsEqualTo(1)
       .Because("Lease-renewed outbox messages must be returned as work to avoid message loss");
     await Assert.That(workBatch.OutboxWork[0].MessageId).IsEqualTo(messageId);
-    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchFlags.Orphaned)).IsTrue()
+    await Assert.That(workBatch.OutboxWork[0].Flags.HasFlag(WorkBatchOptions.Orphaned)).IsTrue()
       .Because("Lease-renewed messages are returned via the orphaned work path");
 
     // Cleanup

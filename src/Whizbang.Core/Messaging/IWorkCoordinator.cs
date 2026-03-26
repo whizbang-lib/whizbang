@@ -146,7 +146,7 @@ public sealed record ProcessWorkBatchRequest {
   /// Examples: SkipNewWork, ForceClaimAll.
   /// Defaults to None for normal operation.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; } = WorkBatchFlags.None;
+  public WorkBatchOptions Flags { get; init; } = WorkBatchOptions.None;
 
   /// <summary>
   /// Total number of virtual partitions for consistent hashing (default: 10,000).
@@ -245,7 +245,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WorkBatchOptions_SetCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync</tests>
@@ -651,7 +651,7 @@ public record OutboxWork : IHasMessageIdAndStatus {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -714,7 +714,7 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -882,7 +882,7 @@ public record PerspectiveWork {
   /// Work batch flags indicating metadata about this work item.
   /// Examples: NewCheckpoint (first time processing stream), CatchingUp, Orphaned.
   /// </summary>
-  public WorkBatchFlags Flags { get; init; }
+  public WorkBatchOptions Flags { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.
@@ -935,7 +935,7 @@ public static class WorkCoordinatorExtensions {
     InboxMessage[] newInboxMessages,
     Guid[] renewOutboxLeaseIds,
     Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
+    WorkBatchOptions flags = WorkBatchOptions.None,
     int partitionCount = 10_000,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,

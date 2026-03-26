@@ -414,7 +414,7 @@ public interface IDispatcher {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/dispatcher#cascade-to-outbox</docs>
-  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchMode mode, CancellationToken cancellationToken = default);
+  Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Dispatch.DispatchModes mode, CancellationToken cancellationToken = default);
 
   // ========================================
   // LOCAL INVOKE AND SYNC - Wait for All Perspectives

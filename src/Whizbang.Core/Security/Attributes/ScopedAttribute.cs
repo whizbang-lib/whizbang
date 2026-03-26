@@ -13,14 +13,14 @@ namespace Whizbang.Core.Security.Attributes;
 ///   [Scoped]
 ///   public string TenantId { get; init; }
 ///
-///   [Scoped(ScopeFilter.Tenant | ScopeFilter.User)]
+///   [Scoped(ScopeFilters.Tenant | ScopeFilters.User)]
 ///   public string UserId { get; init; }
 /// }
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
-public sealed class ScopedAttribute(ScopeFilter filter = ScopeFilter.Tenant) : Attribute {
+public sealed class ScopedAttribute(ScopeFilters filter = ScopeFilters.Tenant) : Attribute {
   /// <summary>
   /// The scope filter to apply for this property.
   /// </summary>
-  public ScopeFilter Filter { get; } = filter;
+  public ScopeFilters Filter { get; } = filter;
 }

@@ -471,10 +471,10 @@ internal class FakeDispatcher : IDispatcher {
   public Task<IEnumerable<IDeliveryReceipt>> PublishManyAsync(IEnumerable<object> events) =>
     throw new NotImplementedException();
 
-  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public Task CascadeMessageAsync(IMessage message, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
-  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchMode mode, CancellationToken cancellationToken = default) =>
+  public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, Whizbang.Core.Dispatch.DispatchModes mode, CancellationToken cancellationToken = default) =>
     Task.CompletedTask;
 
   public ValueTask<Whizbang.Core.Dispatch.InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
@@ -593,7 +593,7 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
     // No-op for tests
   }
 
-  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchFlags flags, Whizbang.Core.Messaging.FlushMode mode = Whizbang.Core.Messaging.FlushMode.Required, CancellationToken ct = default) {
+  public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchOptions flags, Whizbang.Core.Messaging.FlushMode mode = Whizbang.Core.Messaging.FlushMode.Required, CancellationToken ct = default) {
     // Return an empty WorkBatch - unit tests don't need actual work processing
     var workBatch = new Whizbang.Core.Messaging.WorkBatch {
       InboxWork = [],

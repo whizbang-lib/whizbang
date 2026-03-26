@@ -48,13 +48,13 @@ public class StreamIdCascadeFromLocalInvokeTests {
   /// Event returned by the receptor. The receptor copies command.StreamId to this event.
   /// Uses [DefaultRouting(Local)] so we can verify via a local tracking receptor.
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record CascadeStreamIdEvent([property: StreamId] Guid StreamId, string Detail) : IEvent;
 
   /// <summary>
   /// Second event for tuple cascade tests.
   /// </summary>
-  [DefaultRouting(DispatchMode.Local)]
+  [DefaultRouting(DispatchModes.Local)]
   public record CascadeStreamIdEvent2([property: StreamId] Guid StreamId, string Detail) : IEvent;
 
   /// <summary>

@@ -39,7 +39,7 @@ internal static class WorkCoordinatorFlushHelper {
     MessageCompletion[] inboxCompletions,
     MessageFailure[] outboxFailures,
     MessageFailure[] inboxFailures,
-    WorkBatchFlags flags,
+    WorkBatchOptions flags,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     ILogger? logger,
     IOptionsMonitor<TracingOptions>? tracingOptions,
@@ -120,7 +120,7 @@ internal static class WorkCoordinatorFlushHelper {
         NewInboxMessages = inboxMessages,
         RenewOutboxLeaseIds = [],
         RenewInboxLeaseIds = [],
-        Flags = flags | (options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
+        Flags = flags | (options.DebugMode ? WorkBatchOptions.DebugMode : WorkBatchOptions.None),
         PartitionCount = options.PartitionCount,
         LeaseSeconds = options.LeaseSeconds,
         StaleThresholdSeconds = options.StaleThresholdSeconds

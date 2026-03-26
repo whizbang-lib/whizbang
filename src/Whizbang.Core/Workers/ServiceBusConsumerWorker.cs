@@ -154,7 +154,7 @@ public partial class ServiceBusConsumerWorker(
       await _invokePostInboxLifecycleAsync(myWork, receptorInvoker, scopedProvider, ct);
 
       // 3. Report completions/failures back to database
-      await strategy.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort, ct);
+      await strategy.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort, ct);
       LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
@@ -199,7 +199,7 @@ public partial class ServiceBusConsumerWorker(
     var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scopedProvider);
     strategy.QueueInboxMessage(newInboxMessage);
     LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
-    var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct: ct);
+    var workBatch = await strategy.FlushAsync(WorkBatchOptions.None, ct: ct);
     LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
     var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
     LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);

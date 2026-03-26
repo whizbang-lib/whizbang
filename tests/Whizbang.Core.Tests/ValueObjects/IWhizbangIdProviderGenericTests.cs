@@ -67,6 +67,6 @@ public class IWhizbangIdProviderGenericTests {
     private readonly Guid _guid = guid;
 
     public TrackedGuid NewGuid() =>
-        TrackedGuid.FromIntercepted(_guid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
+        TrackedGuid.FromIntercepted(_guid, GuidMetadatas.Version7 | GuidMetadatas.SourceMedo);
   }
 }

@@ -100,7 +100,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<IOrderLensQuery>(
-      ScopeFilter.Tenant,
+      ScopeFilters.Tenant,
       Permission.Delete("orders")))
       .Throws<AccessDeniedException>();
   }
@@ -141,8 +141,8 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
 
     // Assert
     await Assert.That(lens.AppliedFilter!.Value.SecurityPrincipals.Count).IsEqualTo(3);
-    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilter.Principal)).IsTrue();
-    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilter.Tenant)).IsTrue();
+    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilters.Principal)).IsTrue();
+    await Assert.That(lens.AppliedFilter!.Value.Filters.HasFlag(ScopeFilters.Tenant)).IsTrue();
   }
 
   [Test]
@@ -322,7 +322,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     };
 
     // Act
-    var lens = factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilter.Tenant, Permission.Read("orders"));
+    var lens = factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilters.Tenant, Permission.Read("orders"));
     var result = await lens.Query.ToListAsync();
 
     // Assert
@@ -344,7 +344,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     };
 
     // Act & Assert
-    await Assert.That(() => factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilter.Tenant, Permission.Read("orders")))
+    await Assert.That(() => factory.GetLens<IDatabaseOrderLensQuery>(ScopeFilters.Tenant, Permission.Read("orders")))
       .Throws<AccessDeniedException>();
   }
 

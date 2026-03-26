@@ -26,7 +26,7 @@ public class DiagnosticTestBase {
   /// Override this property to specify which diagnostic categories to display.
   /// Default is ReceptorDiscovery.
   /// </summary>
-  protected virtual DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected virtual DiagnosticCategories DiagnosticCategories => DiagnosticCategories.ReceptorDiscovery;
 
   [Before(Class)]
   public static void ClassSetup() {

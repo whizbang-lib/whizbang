@@ -23,11 +23,11 @@ public sealed class NonDisposingStrategyAdapter(IWorkCoordinatorStrategy inner) 
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) => _inner.QueueInboxCompletion(messageId, completedStatus);
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueOutboxFailure(messageId, completedStatus, errorMessage);
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) => _inner.QueueInboxFailure(messageId, completedStatus, errorMessage);
-  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) => _inner.FlushAsync(flags, mode, ct);
+  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) => _inner.FlushAsync(flags, mode, ct);
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    _inner.FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+    _inner.FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
   /// <summary>
   /// No-op: the singleton is owned by the DI container, not by scopes.

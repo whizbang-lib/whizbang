@@ -315,7 +315,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - Manual flush should work immediately
-      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      var result = await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
@@ -348,7 +348,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act - BestEffort should return empty and defer
-      var result = await sut.FlushAsync(WorkBatchFlags.None, FlushMode.BestEffort);
+      var result = await sut.FlushAsync(WorkBatchOptions.None, FlushMode.BestEffort);
 
       // Assert
       await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -378,7 +378,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      var result = await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -422,7 +422,7 @@ public class BatchWorkCoordinatorStrategyTests {
     await sut.DisposeAsync();
 
     // Act & Assert
-    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
       .ThrowsExactly<ObjectDisposedException>();
   }
 
@@ -508,10 +508,10 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       // Act
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
-      await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+      await Assert.That(fakeCoordinator.LastFlags & WorkBatchOptions.DebugMode).IsEqualTo(WorkBatchOptions.DebugMode);
     } finally {
       await sut.DisposeAsync();
     }
@@ -538,7 +538,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
@@ -564,7 +564,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
@@ -590,7 +590,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
@@ -616,7 +616,7 @@ public class BatchWorkCoordinatorStrategyTests {
 
     try {
       sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
       await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
@@ -712,7 +712,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act
-      await sut.FlushAsync(WorkBatchFlags.None);
+      await sut.FlushAsync(WorkBatchOptions.None);
 
       // Assert
       await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(1);
@@ -749,7 +749,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act & Assert - should not throw
-      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      var result = await sut.FlushAsync(WorkBatchOptions.None);
       await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();
@@ -784,7 +784,7 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
 
       // Act & Assert - should handle gracefully
-      var result = await sut.FlushAsync(WorkBatchFlags.None);
+      var result = await sut.FlushAsync(WorkBatchOptions.None);
       await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     } finally {
       await sut.DisposeAsync();
@@ -885,7 +885,7 @@ public class BatchWorkCoordinatorStrategyTests {
   }
 
   private sealed class BatchFakeWorkCoordinatorWithFlags : IWorkCoordinator {
-    public WorkBatchFlags LastFlags { get; private set; }
+    public WorkBatchOptions LastFlags { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,

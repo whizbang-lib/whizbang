@@ -213,11 +213,11 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
-  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
+  public Task<WorkBatch> FlushAsync(WorkBatchOptions flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     return _flushCoreAsync(flags, mode, skipLifecycle: false, ct);
   }
 
-  private async Task<WorkBatch> _flushCoreAsync(WorkBatchFlags flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
+  private async Task<WorkBatch> _flushCoreAsync(WorkBatchOptions flags, FlushMode mode, bool skipLifecycle, CancellationToken ct) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "interval"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
@@ -335,7 +335,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
   /// <inheritdoc />
   Task IWorkFlusher.FlushAsync(CancellationToken ct) =>
-    FlushAsync(WorkBatchFlags.None, FlushMode.Required, ct);
+    FlushAsync(WorkBatchOptions.None, FlushMode.Required, ct);
 
   /// <summary>
   /// Timer callback that triggers periodic flushing of queued operations.
@@ -350,7 +350,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     // Fire and forget flush on timer — skip lifecycle (background thread, no ambient context)
     _ = Task.Run(async () => {
       try {
-        await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
+        await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, skipLifecycle: true, ct: default);
       } catch (Exception ex) {
         if (_logger != null) {
           LogErrorDuringIntervalFlush(_logger, ex);
@@ -395,7 +395,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     }
 
     try {
-      await _flushCoreAsync(WorkBatchFlags.None, FlushMode.Required, skipLifecycle: true, ct: default);
+      await _flushCoreAsync(WorkBatchOptions.None, FlushMode.Required, skipLifecycle: true, ct: default);
     } catch (Exception ex) {
       if (_logger != null) {
         LogErrorFlushingOnDisposal(_logger, ex);

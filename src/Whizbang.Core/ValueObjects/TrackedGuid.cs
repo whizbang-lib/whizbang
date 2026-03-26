@@ -11,7 +11,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// <summary>
   /// Creates a TrackedGuid with the specified value and metadata.
   /// </summary>
-  private TrackedGuid(Guid value, GuidMetadata metadata) {
+  private TrackedGuid(Guid value, GuidMetadatas metadata) {
     Value = value;
     Metadata = metadata;
   }
@@ -20,16 +20,16 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   public Guid Value { get; }
 
   /// <summary>Gets the metadata about this Guid's creation source and version.</summary>
-  public GuidMetadata Metadata { get; }
+  public GuidMetadatas Metadata { get; }
 
   /// <summary>Gets whether this Guid is time-ordered (UUIDv7).</summary>
-  public bool IsTimeOrdered => (Metadata & GuidMetadata.Version7) != 0;
+  public bool IsTimeOrdered => (Metadata & GuidMetadatas.Version7) != 0;
 
   /// <summary>
   /// Gets whether this Guid has sub-millisecond precision.
   /// Only true for Medo-generated UUIDs; Microsoft's CreateVersion7() has millisecond precision only.
   /// </summary>
-  public bool SubMillisecondPrecision => (Metadata & GuidMetadata.SourceMedo) != 0;
+  public bool SubMillisecondPrecision => (Metadata & GuidMetadatas.SourceMedo) != 0;
 
   /// <summary>
   /// Gets whether this TrackedGuid has authoritative metadata from creation.
@@ -58,7 +58,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// Console.WriteLine(loaded.SubMillisecondPrecision); // false (unknown, not authoritative)
   /// </code>
   /// </example>
-  public bool IsTracking => (Metadata & (GuidMetadata.SourceMedo | GuidMetadata.SourceMicrosoft)) != 0;
+  public bool IsTracking => (Metadata & (GuidMetadatas.SourceMedo | GuidMetadatas.SourceMicrosoft)) != 0;
 
   /// <summary>
   /// Extracts the timestamp from a UUIDv7.
@@ -67,7 +67,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   public DateTimeOffset Timestamp => _extractTimestamp(Value);
 
   /// <summary>An empty TrackedGuid.</summary>
-  public static TrackedGuid Empty => new(Guid.Empty, GuidMetadata.None);
+  public static TrackedGuid Empty => new(Guid.Empty, GuidMetadatas.None);
 
   // ========================================
   // Factory Methods
@@ -105,7 +105,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   public static TrackedGuid Parse(string input) {
     var guid = Guid.Parse(input);
     var versionFlag = _detectVersion(guid);
-    return new(guid, versionFlag | GuidMetadata.SourceParsed);
+    return new(guid, versionFlag | GuidMetadatas.SourceParsed);
   }
 
   /// <summary>
@@ -114,7 +114,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   public static bool TryParse(string? input, out TrackedGuid result) {
     if (Guid.TryParse(input, out var guid)) {
       var versionFlag = _detectVersion(guid);
-      result = new(guid, versionFlag | GuidMetadata.SourceParsed);
+      result = new(guid, versionFlag | GuidMetadatas.SourceParsed);
       return true;
     }
     result = default;
@@ -127,7 +127,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// </summary>
   public static TrackedGuid FromExternal(Guid existing) {
     var versionFlag = _detectVersion(existing);
-    return new(existing, versionFlag | GuidMetadata.SourceExternal);
+    return new(existing, versionFlag | GuidMetadatas.SourceExternal);
   }
 
   /// <summary>
@@ -142,7 +142,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// The metadata is trusted and used exactly as provided, enabling precise tracking of
   /// how and where the Guid was created.
   /// </remarks>
-  internal static TrackedGuid FromIntercepted(Guid value, GuidMetadata metadata) =>
+  internal static TrackedGuid FromIntercepted(Guid value, GuidMetadatas metadata) =>
       new(value, metadata);
 
   // ========================================
@@ -161,7 +161,7 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// </summary>
   public static implicit operator TrackedGuid(Guid value) {
     var versionFlag = _detectVersion(value);
-    return new(value, versionFlag | GuidMetadata.SourceUnknown);
+    return new(value, versionFlag | GuidMetadatas.SourceUnknown);
   }
 
   // ========================================
@@ -227,11 +227,11 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   /// Detects the version of a Guid (v4, v7, or unknown).
   /// Uses .NET 9's Guid.Version property.
   /// </summary>
-  private static GuidMetadata _detectVersion(Guid guid) {
+  private static GuidMetadatas _detectVersion(Guid guid) {
     return guid.Version switch {
-      4 => GuidMetadata.Version4,
-      7 => GuidMetadata.Version7,
-      _ => GuidMetadata.None // Unknown version
+      4 => GuidMetadatas.Version4,
+      7 => GuidMetadatas.Version7,
+      _ => GuidMetadatas.None // Unknown version
     };
   }
 

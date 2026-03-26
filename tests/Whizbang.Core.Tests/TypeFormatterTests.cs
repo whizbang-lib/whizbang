@@ -7,7 +7,7 @@ namespace Whizbang.Core.Tests;
 
 /// <summary>
 /// Tests for TypeFormatter static class.
-/// Ensures type name formatting works correctly for all TypeQualification options.
+/// Ensures type name formatting works correctly for all TypeQualifications options.
 /// </summary>
 public class TypeFormatterTests {
   // Test type for formatting
@@ -17,7 +17,7 @@ public class TypeFormatterTests {
   public async Task FormatType_Simple_ReturnsTypeNameOnlyAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.Simple;
+    var qualification = TypeQualifications.Simple;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -30,7 +30,7 @@ public class TypeFormatterTests {
   public async Task FormatType_NamespaceQualified_ReturnsFullNamespaceAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.NamespaceQualified;
+    var qualification = TypeQualifications.NamespaceQualified;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -43,7 +43,7 @@ public class TypeFormatterTests {
   public async Task FormatType_FullyQualified_ReturnsTypeWithAssemblyAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.FullyQualified;
+    var qualification = TypeQualifications.FullyQualified;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -58,7 +58,7 @@ public class TypeFormatterTests {
   public async Task FormatType_FullyQualifiedWithVersion_IncludesVersionInfoAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.FullyQualifiedWithVersion;
+    var qualification = TypeQualifications.FullyQualifiedWithVersion;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -74,7 +74,7 @@ public class TypeFormatterTests {
   public async Task FormatType_GlobalQualified_AddsGlobalPrefixAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.GlobalQualified;
+    var qualification = TypeQualifications.GlobalQualified;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -88,7 +88,7 @@ public class TypeFormatterTests {
   public async Task FormatType_AssemblyQualified_IncludesAssemblyWithoutNamespaceAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.AssemblyQualified;
+    var qualification = TypeQualifications.AssemblyQualified;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -103,7 +103,7 @@ public class TypeFormatterTests {
   public async Task FormatType_None_ReturnsEmptyStringAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.None;
+    var qualification = TypeQualifications.None;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -116,7 +116,7 @@ public class TypeFormatterTests {
   public async Task FormatType_TypeNameOnly_ReturnsSimpleNameAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.TypeName;
+    var qualification = TypeQualifications.TypeName;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -129,7 +129,7 @@ public class TypeFormatterTests {
   public async Task FormatType_NamespaceOnly_ReturnsNamespaceOnlyAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.Namespace;
+    var qualification = TypeQualifications.Namespace;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);
@@ -142,7 +142,7 @@ public class TypeFormatterTests {
   public async Task FormatType_CustomCombination_WorksCorrectlyAsync() {
     // Arrange
     var type = typeof(TestEvent);
-    var qualification = TypeQualification.GlobalPrefix | TypeQualification.TypeName;
+    var qualification = TypeQualifications.GlobalPrefix | TypeQualifications.TypeName;
 
     // Act
     var result = TypeFormatter.FormatType(type, qualification);

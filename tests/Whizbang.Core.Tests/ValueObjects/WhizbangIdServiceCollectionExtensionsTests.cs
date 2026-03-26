@@ -269,6 +269,6 @@ public class WhizbangIdServiceCollectionExtensionsTests {
     private readonly Guid _fixedGuid = fixedGuid;
 
     public TrackedGuid NewGuid() =>
-        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadata.Version7 | GuidMetadata.SourceMedo);
+        TrackedGuid.FromIntercepted(_fixedGuid, GuidMetadatas.Version7 | GuidMetadatas.SourceMedo);
   }
 }

@@ -46,7 +46,7 @@ public static class WhizbangDiagnostics {
   /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldDisplayFormattedOutputAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldFilterByCategoryAsync</tests>
   [ExcludeFromCodeCoverage]
-  public static string Diagnostics(DiagnosticCategory categories = DiagnosticCategory.All, bool printToConsole = true) {
+  public static string Diagnostics(DiagnosticCategories categories = DiagnosticCategories.All, bool printToConsole = true) {
     var filteredEntries = _entries.Where(e => (e.Category & categories) != 0).ToList();
 
     if (filteredEntries.Count == 0) {
@@ -57,7 +57,7 @@ public static class WhizbangDiagnostics {
     var output = new System.Text.StringBuilder();
     output.AppendLine("═══════════════════════════════════════════════════════════════");
     output.AppendLine("Whizbang Source Generators - Build Diagnostics");
-    if (categories != DiagnosticCategory.All) {
+    if (categories != DiagnosticCategories.All) {
       output.AppendLine(CultureInfo.InvariantCulture, $"Categories: {categories}");
     }
     output.AppendLine("═══════════════════════════════════════════════════════════════");

@@ -188,7 +188,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
 
     // Unwrap Routed<T> if the payload contains a routing wrapper
     if (message is Dispatch.IRouted routed) {
-      if (routed.Mode == Dispatch.DispatchMode.None || routed.Value == null) {
+      if (routed.Mode == Dispatch.DispatchModes.None || routed.Value == null) {
         return null;
       }
       message = routed.Value;

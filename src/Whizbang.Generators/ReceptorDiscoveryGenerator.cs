@@ -551,7 +551,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts the [DefaultRouting] attribute value from a receptor class.
-  /// Returns the fully qualified DispatchMode enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchMode.Local")
+  /// Returns the fully qualified DispatchModes enum value (e.g., "global::Whizbang.Core.Dispatch.DispatchModes.Local")
   /// or null if no [DefaultRouting] attribute is found.
   /// </summary>
   private static string? _extractDefaultRouting(INamedTypeSymbol classSymbol) {
@@ -1340,8 +1340,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
+#pragma warning disable S125 // Descriptive comments about code generation, not dead code
     // Generate outbox cascade type-switch (for auto-cascading events to outbox)
     // Reuse event types extracted earlier for untyped publish routing
+#pragma warning restore S125
     var outboxCascade = new StringBuilder();
 
     // Separate concrete types from interface types
@@ -1368,14 +1370,18 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       // CRITICAL: Use passed eventId for sync tracking consistency, or generate new if not provided
       // This ensures the same ID is used for tracking (singleton tracker) AND storage (outbox)
       outboxCascade.AppendLine(MESSAGE_ID_FROM_EVENT_ID);
+#pragma warning disable S125 // Descriptive comment about code generation, not dead code
       // Use PublishToOutboxDynamicAsync which serializes using messageType (runtime type), not the interface
+#pragma warning restore S125
       outboxCascade.AppendLine("        return PublishToOutboxDynamicAsync(message, messageType, messageId, sourceEnvelope);");
       outboxCascade.AppendLine(INDENT_6_CLOSE_BRACE);
       outboxCascade.AppendLine();
     }
 
+#pragma warning disable S125 // Descriptive comments about code generation, not dead code
     // Generate event store only cascade type-switch (for storing events without transport)
     // Uses eventStoreOnly: true to set destination=null, bypassing transport publishing
+#pragma warning restore S125
     var eventStoreOnlyCascade = new StringBuilder();
 
     // Generate concrete type cascades first (exact type matching)

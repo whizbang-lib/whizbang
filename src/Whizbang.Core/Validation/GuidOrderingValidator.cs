@@ -61,15 +61,15 @@ public partial class GuidOrderingValidator(WhizbangOptions options, ILogger logg
   [LoggerMessage(
       Level = LogLevel.Error,
       Message = "Non-time-ordered GUID used for {Context}. Metadata: {Metadata}, IsTracking: {IsTracking}")]
-  private static partial void LogGuidOrderingError(ILogger logger, string context, GuidMetadata metadata, bool isTracking);
+  private static partial void LogGuidOrderingError(ILogger logger, string context, GuidMetadatas metadata, bool isTracking);
 
   [LoggerMessage(
       Level = LogLevel.Warning,
       Message = "Non-time-ordered GUID used for {Context}. Metadata: {Metadata}, IsTracking: {IsTracking}")]
-  private static partial void LogGuidOrderingWarning(ILogger logger, string context, GuidMetadata metadata, bool isTracking);
+  private static partial void LogGuidOrderingWarning(ILogger logger, string context, GuidMetadatas metadata, bool isTracking);
 
   [LoggerMessage(
       Level = LogLevel.Information,
       Message = "Non-time-ordered GUID used for {Context}. Metadata: {Metadata}, IsTracking: {IsTracking}")]
-  private static partial void LogGuidOrderingInfo(ILogger logger, string context, GuidMetadata metadata, bool isTracking);
+  private static partial void LogGuidOrderingInfo(ILogger logger, string context, GuidMetadatas metadata, bool isTracking);
 }

@@ -112,9 +112,9 @@ public static class MessageExtractor {
   /// <returns>Flattened collection of messages with their resolved dispatch modes</returns>
   /// <docs>fundamentals/dispatcher/dispatcher#routed-message-cascading</docs>
   /// <tests>tests/Whizbang.Core.Tests/Internal/MessageExtractorRoutingTests.cs</tests>
-  public static IEnumerable<(IMessage Message, DispatchMode Mode)> ExtractMessagesWithRouting(
+  public static IEnumerable<(IMessage Message, DispatchModes Mode)> ExtractMessagesWithRouting(
     object? result,
-    DispatchMode? receptorDefault = null,
+    DispatchModes? receptorDefault = null,
     Action<Type>? onNonMessageValue = null) {
     return _extractMessagesWithRoutingInternal(result, receptorDefault, null, null, onNonMessageValue);
   }
@@ -122,11 +122,11 @@ public static class MessageExtractor {
   /// <summary>
   /// Internal recursive implementation that tracks wrapper modes.
   /// </summary>
-  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractMessagesWithRoutingInternal(
+  private static IEnumerable<(IMessage Message, DispatchModes Mode)> _extractMessagesWithRoutingInternal(
     object? result,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode,
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode,
     Action<Type>? onNonMessageValue = null) {
     if (result == null) {
       yield break;
@@ -152,14 +152,14 @@ public static class MessageExtractor {
     }
   }
 
-  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromRouted(
+  private static IEnumerable<(IMessage Message, DispatchModes Mode)> _extractFromRouted(
     IRouted routed,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode,
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode,
     Action<Type>? onNonMessageValue) {
     // Skip RoutedNone values (discriminated union "no value" marker)
-    if (routed.Mode == DispatchMode.None) {
+    if (routed.Mode == DispatchModes.None) {
       yield break;
     }
 
@@ -176,11 +176,11 @@ public static class MessageExtractor {
     }
   }
 
-  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromEnumerable(
+  private static IEnumerable<(IMessage Message, DispatchModes Mode)> _extractFromEnumerable(
     object result,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode,
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode,
     Action<Type>? onNonMessageValue) {
     // Handle typed enumerables (IEnumerable<IMessage>, IEnumerable<IEvent>, IEnumerable<ICommand>)
     if (_tryExtractFromTypedEnumerable(result, out var typedMessages)) {
@@ -210,11 +210,11 @@ public static class MessageExtractor {
     onNonMessageValue?.Invoke(result.GetType());
   }
 
-  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromTupleWithRouting(
+  private static IEnumerable<(IMessage Message, DispatchModes Mode)> _extractFromTupleWithRouting(
     ITuple tuple,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode,
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode,
     Action<Type>? onNonMessageValue) {
     for (int i = 0; i < tuple.Length; i++) {
       var item = tuple[i];
@@ -227,11 +227,11 @@ public static class MessageExtractor {
     }
   }
 
-  private static IEnumerable<(IMessage Message, DispatchMode Mode)> _extractFromGeneralEnumerableWithRouting(
+  private static IEnumerable<(IMessage Message, DispatchModes Mode)> _extractFromGeneralEnumerableWithRouting(
     IEnumerable enumerable,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode,
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode,
     Action<Type>? onNonMessageValue) {
     foreach (var item in enumerable) {
       if (item != null) {
@@ -262,11 +262,11 @@ public static class MessageExtractor {
   /// to restrict cascade to local receptors only.
   /// </para>
   /// </remarks>
-  private static DispatchMode _resolveMode(
+  private static DispatchModes _resolveMode(
     IMessage message,
-    DispatchMode? receptorDefault,
-    DispatchMode? individualWrapperMode,
-    DispatchMode? collectionWrapperMode) {
+    DispatchModes? receptorDefault,
+    DispatchModes? individualWrapperMode,
+    DispatchModes? collectionWrapperMode) {
     // Priority 1: Message type attribute (HIGHEST - policy enforcement)
     // Uses reflection (not AOT compatible) - will be replaced by generated lookup
     var messageAttr = message.GetType().GetCustomAttribute<DefaultRoutingAttribute>();
@@ -292,6 +292,6 @@ public static class MessageExtractor {
     // Priority 5: System default (LOWEST)
     // Default to Outbox for cross-service delivery (per routed cascade design).
     // Use Route.Local() to restrict to local receptors only.
-    return DispatchMode.Outbox;
+    return DispatchModes.Outbox;
   }
 }

@@ -355,7 +355,7 @@ public sealed partial class PerspectiveSyncAwaiter(
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
       PerspectiveSyncInquiries = inquiries,
-      Flags = WorkBatchFlags.None // Sync queries are processed regardless of flags
+      Flags = WorkBatchOptions.None // Sync queries are processed regardless of flags
     };
 
     return await _coordinator.ProcessWorkBatchAsync(request, ct);

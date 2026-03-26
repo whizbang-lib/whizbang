@@ -1,9 +1,9 @@
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Tests for IReadOnlyListTypeInfo - ensures value equality for incremental generator caching.
+/// Tests for ReadOnlyListTypeInfo - ensures value equality for incremental generator caching.
 /// </summary>
-/// <tests>src/Whizbang.Generators/IReadOnlyListTypeInfo.cs</tests>
+/// <tests>src/Whizbang.Generators/ReadOnlyListTypeInfo.cs</tests>
 public class IReadOnlyListTypeInfoTests {
 
   /// <summary>
@@ -13,12 +13,12 @@ public class IReadOnlyListTypeInfoTests {
   [Test]
   public async Task IReadOnlyListTypeInfo_ValueEquality_ComparesFieldsAsync() {
     // Arrange - Create two instances with same values
-    var info1 = new IReadOnlyListTypeInfo(
+    var info1 = new ReadOnlyListTypeInfo(
       "global::System.Collections.Generic.IReadOnlyList<global::MyApp.CatalogItem>",
       "global::MyApp.CatalogItem",
       "CatalogItem"
     );
-    var info2 = new IReadOnlyListTypeInfo(
+    var info2 = new ReadOnlyListTypeInfo(
       "global::System.Collections.Generic.IReadOnlyList<global::MyApp.CatalogItem>",
       "global::MyApp.CatalogItem",
       "CatalogItem"
@@ -35,7 +35,7 @@ public class IReadOnlyListTypeInfoTests {
   [Test]
   public async Task IReadOnlyListTypeInfo_Constructor_SetsPropertiesAsync() {
     // Arrange & Act
-    var info = new IReadOnlyListTypeInfo(
+    var info = new ReadOnlyListTypeInfo(
       "global::System.Collections.Generic.IReadOnlyList<global::MyApp.Product>",
       "global::MyApp.Product",
       "Product"
@@ -53,7 +53,7 @@ public class IReadOnlyListTypeInfoTests {
   [Test]
   public async Task IReadOnlyListTypeInfo_ElementUniqueIdentifier_GeneratesValidIdentifierAsync() {
     // Arrange
-    var info = new IReadOnlyListTypeInfo(
+    var info = new ReadOnlyListTypeInfo(
       "global::System.Collections.Generic.IReadOnlyList<global::MyApp.Models.CatalogItem>",
       "global::MyApp.Models.CatalogItem",
       "CatalogItem"
@@ -72,7 +72,7 @@ public class IReadOnlyListTypeInfoTests {
   [Test]
   public async Task IReadOnlyListTypeInfo_ElementUniqueIdentifier_HandlesNullableElementTypeAsync() {
     // Arrange
-    var info = new IReadOnlyListTypeInfo(
+    var info = new ReadOnlyListTypeInfo(
       "global::System.Collections.Generic.IReadOnlyList<global::System.Guid?>",
       "global::System.Guid?",
       "Guid"
