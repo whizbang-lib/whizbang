@@ -848,6 +848,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Remove default rule if it exists
       var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
       var deletedRules = 0;
+      // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
       await foreach (var rule in rules) {
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
@@ -865,6 +867,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           }
         }
       }
+#pragma warning restore S3267
       activity?.SetTag("servicebus.rules_deleted", deletedRules);
 
       // Create new rule with CorrelationFilter on Destination application property
@@ -1045,10 +1048,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     try {
       // Delete existing rules (including $Default)
       var deletedRules = new List<string>();
+      // S3267: Loop contains await — LINQ doesn't support async lambdas
+#pragma warning disable S3267
       await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
         await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
         deletedRules.Add(rule.Name);
       }
+#pragma warning restore S3267
 
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));

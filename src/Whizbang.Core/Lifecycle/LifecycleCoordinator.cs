@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -228,10 +229,8 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
           return false;
         }
 
-        foreach (var expected in _expected) {
-          if (!_completed.ContainsKey(expected)) {
-            return false;
-          }
+        if (_expected.Any(expected => !_completed.ContainsKey(expected))) {
+          return false;
         }
 
         _fired = true;

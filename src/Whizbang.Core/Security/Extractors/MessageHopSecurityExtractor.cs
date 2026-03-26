@@ -95,6 +95,8 @@ public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecuri
 
     Log.ProcessingHops(logger, messageId, hops.Count, currentHops.Count);
 
+    // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var hop in currentHops) {
       if (hop.Scope == null) {
         Log.HopScopeNull(logger, messageId);
@@ -109,6 +111,7 @@ public sealed partial class MessageHopSecurityExtractor(ILogger<MessageHopSecuri
       result = hop.Scope.ApplyTo(result);
       Log.ScopeExtracted(logger, messageId, result.Scope.UserId, result.Scope.TenantId);
     }
+#pragma warning restore S3267
 
     return result;
   }

@@ -715,10 +715,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Build lookup from model type name to table name for this DbContext's perspectives
+    // S3267: Loop has side effects (dictionary mutation with last-wins semantics) — LINQ not appropriate
+#pragma warning disable S3267
     var modelTableLookup = new Dictionary<string, string>();
     foreach (var perspective in matchingPerspectives) {
       modelTableLookup[perspective.ModelTypeName] = perspective.TableName;
     }
+#pragma warning restore S3267
 
     // Deduplicate multi-lens queries by their model type combination (preserve declaration order)
     var uniqueCombinations = multiLensQueries

@@ -1078,6 +1078,8 @@ public partial class PerspectiveWorker(
 
     // Buffer perspective event completions for next batch (triggers wh_perspective_events deletion)
     var completedWorkIds = new List<Guid>(group.Count());
+    // S3267: Multi-statement loop body — LINQ would reduce readability
+#pragma warning disable S3267
     foreach (var workItem in group) {
       _pendingEventCompletions.Enqueue(new PerspectiveEventCompletion {
         EventWorkId = workItem.WorkId,
@@ -1085,6 +1087,7 @@ public partial class PerspectiveWorker(
       });
       completedWorkIds.Add(workItem.WorkId);
     }
+#pragma warning restore S3267
 
     // Mark processed WorkIds as in-flight in dedup cache (no TTL until DB acks)
     _processedEventCache.AddRange(completedWorkIds);
@@ -1139,6 +1142,8 @@ public partial class PerspectiveWorker(
     // This ensures WhenAll expectations include ALL perspectives that handle the event type,
     // not just the ones claimed in this batch. ExpectPerspectiveCompletions is idempotent (TryAdd).
     if (_perspectivesPerEventType is not null) {
+      // S3267: Loop has side effects (logging/state mutation) — LINQ not appropriate
+#pragma warning disable S3267
       foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
         var eventType = envelope.Payload.GetType();
         var eventTypeKey = $"{eventType.FullName}, {eventType.Assembly.GetName().Name}";
@@ -1148,6 +1153,7 @@ public partial class PerspectiveWorker(
           LogEventTypeNotInPerspectiveRegistry(_logger, eventTypeKey);
         }
       }
+#pragma warning restore S3267
     }
 
     // Replay signals — perspectives already completed during the group loop, but

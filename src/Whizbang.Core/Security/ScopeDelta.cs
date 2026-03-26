@@ -539,11 +539,14 @@ public sealed class ScopeDelta {
     var added = new Dictionary<string, string>();
     var removed = new List<string>();
 
+    // S3267: Loop has side effects (dictionary mutation) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var kvp in current) {
       if (!previous.TryGetValue(kvp.Key, out var prevValue) || prevValue != kvp.Value) {
         added[kvp.Key] = kvp.Value;
       }
     }
+#pragma warning restore S3267
 
     removed.AddRange(previous.Keys.Where(key => !current.ContainsKey(key)));
 

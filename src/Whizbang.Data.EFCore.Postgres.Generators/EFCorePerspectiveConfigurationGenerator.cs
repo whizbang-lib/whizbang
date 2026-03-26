@@ -150,11 +150,14 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // Validate physical field column and index names
+    // S3267: Loop has side effects (reporting diagnostics) and must not short-circuit — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var field in perspective.PhysicalFields) {
       if (_validatePhysicalField(context, perspective, field, limits)) {
         hasError = true;
       }
     }
+#pragma warning restore S3267
 
     return !hasError;
   }
@@ -665,6 +668,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Checks if any generic type arguments of a type are polymorphic or contain polymorphic properties.
   /// </summary>
   private static bool _hasPolymorphicTypeArguments(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
+    // S3267: Loop has side effects (mutating visited set via _checkForPolymorphicTypes) — LINQ not appropriate
+#pragma warning disable S3267
     foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
       if (_isPolymorphicType(typeArg)) {
         return true;
@@ -673,6 +678,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         return true;
       }
     }
+#pragma warning restore S3267
 
     return false;
   }
