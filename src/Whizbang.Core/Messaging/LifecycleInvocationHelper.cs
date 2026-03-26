@@ -29,6 +29,16 @@ public static class LifecycleInvocationHelper {
   private const string METRIC_MESSAGE_TYPE = "message_type";
 
   /// <summary>
+  /// Groups lifecycle invocation dependencies to reduce parameter count in internal methods.
+  /// </summary>
+  private readonly record struct LifecycleInvocationDependencies(
+    IServiceScopeFactory? ScopeFactory,
+    ILifecycleMessageDeserializer? LifecycleMessageDeserializer,
+    ILogger? Logger,
+    bool EnableLifecycleTracing,
+    LifecycleMetrics? Metrics);
+
+  /// <summary>
   /// Invokes lifecycle receptors for outbox and inbox messages at async and inline stages.
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
@@ -58,9 +68,10 @@ public static class LifecycleInvocationHelper {
     // The main thread may modify the original collections while the background task iterates
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
+    var deps = new LifecycleInvocationDependencies(scopeFactory, lifecycleMessageDeserializer, logger, enableLifecycleTracing, metrics);
 
     // Invoke async stage (non-blocking, backgrounded)
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, scopeFactory, lifecycleMessageDeserializer, logger, enableLifecycleTracing, metrics, ct);
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
 
     // Invoke inline stage (blocking, sequential)
     if (scopeFactory is null || lifecycleMessageDeserializer is null) {
@@ -106,9 +117,10 @@ public static class LifecycleInvocationHelper {
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     var outboxSnapshot = outboxMessages.ToArray();
     var inboxSnapshot = inboxMessages.ToArray();
+    var deps = new LifecycleInvocationDependencies(scopeFactory, lifecycleMessageDeserializer, logger, enableLifecycleTracing, metrics);
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
-    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, scopeFactory, lifecycleMessageDeserializer, logger, enableLifecycleTracing, metrics, ct);
+    _ = _invokeAsyncStageInBackgroundAsync(outboxSnapshot, inboxSnapshot, asyncStage, deps, ct);
   }
 
   /// <summary>
@@ -119,32 +131,28 @@ public static class LifecycleInvocationHelper {
       OutboxMessage[] outboxSnapshot,
       InboxMessage[] inboxSnapshot,
       LifecycleStage asyncStage,
-      IServiceScopeFactory? scopeFactory,
-      ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
-      ILogger? logger,
-      bool enableLifecycleTracing,
-      LifecycleMetrics? metrics,
+      LifecycleInvocationDependencies deps,
       CancellationToken ct) {
     return Task.Run(async () => {
-      if (scopeFactory is null || lifecycleMessageDeserializer is null) {
+      if (deps.ScopeFactory is null || deps.LifecycleMessageDeserializer is null) {
         return;
       }
 
-      metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()));
+      deps.Metrics?.StageInvocations.Add(1, new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()));
       var stageSw = Stopwatch.StartNew();
 
       try {
-        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, scopeFactory, lifecycleMessageDeserializer, enableLifecycleTracing, metrics, ct);
-        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, scopeFactory, lifecycleMessageDeserializer, enableLifecycleTracing, metrics, ct);
+        await _processOutboxMessagesAsync(outboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
+        await _processInboxMessagesAsync(inboxSnapshot, asyncStage, deps.ScopeFactory, deps.LifecycleMessageDeserializer, deps.EnableLifecycleTracing, deps.Metrics, ct);
       } catch (Exception ex) {
-        _logLifecycleError(logger, asyncStage, ex);
-        metrics?.ReceptorErrors.Add(1,
+        _logLifecycleError(deps.Logger, asyncStage, ex);
+        deps.Metrics?.ReceptorErrors.Add(1,
           new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"),
           new KeyValuePair<string, object?>("error_type", ex.GetType().Name));
       } finally {
         stageSw.Stop();
-        metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
+        deps.Metrics?.StageDuration.Record(stageSw.Elapsed.TotalMilliseconds,
           new KeyValuePair<string, object?>(METRIC_STAGE, asyncStage.ToString()),
           new KeyValuePair<string, object?>(METRIC_MESSAGE_TYPE, "mixed"));
       }

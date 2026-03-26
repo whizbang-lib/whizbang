@@ -170,9 +170,9 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     var streamIdExtractor = _scopedProvider.GetService<IStreamIdExtractor>();
     Guid? extractedStreamId = streamIdExtractor?.ExtractStreamId(message, messageType);
 
+    var invocationCtx = new ReceptorInvocationContext(message, messageType, envelope, stage, context, callerInfo, extractedStreamId, parentContext);
     foreach (var receptor in receptors) {
-      await _invokeReceptorAsync(receptor, message, messageType, envelope, stage, context, callerInfo,
-        extractedStreamId, parentContext, cancellationToken).ConfigureAwait(false);
+      await _invokeReceptorAsync(receptor, invocationCtx, cancellationToken).ConfigureAwait(false);
     }
 
     // Process message tags after all receptors complete at the current lifecycle stage
@@ -341,50 +341,56 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
   }
 
   /// <summary>
+  /// Groups parameters for a single receptor invocation to reduce parameter count.
+  /// </summary>
+  private readonly record struct ReceptorInvocationContext(
+    object Message,
+    Type MessageType,
+    IMessageEnvelope Envelope,
+    LifecycleStage Stage,
+    ILifecycleContext? LifecycleContext,
+    CallerInfo? CallerInfo,
+    Guid? ExtractedStreamId,
+    ActivityContext ParentContext);
+
+  /// <summary>
   /// Invokes a single receptor with tracing, sync awaiting, and event cascading.
   /// </summary>
   private async ValueTask _invokeReceptorAsync(
       ReceptorInfo receptor,
-      object message,
-      Type messageType,
-      IMessageEnvelope envelope,
-      LifecycleStage stage,
-      ILifecycleContext? context,
-      CallerInfo? callerInfo,
-      Guid? extractedStreamId,
-      ActivityContext parentContext,
+      ReceptorInvocationContext ctx,
       CancellationToken cancellationToken) {
     using var receptorActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"Receptor {receptor.ReceptorId}",
       ActivityKind.Internal,
-      parentContext: parentContext);
+      parentContext: ctx.ParentContext);
     receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
-    receptorActivity?.SetTag("whizbang.receptor.message_type", messageType.FullName);
-    receptorActivity?.SetTag("whizbang.lifecycle.stage", stage.ToString());
+    receptorActivity?.SetTag("whizbang.receptor.message_type", ctx.MessageType.FullName);
+    receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
 
     try {
       // Await perspective sync if needed
-      await _awaitPerspectiveSyncAsync(receptor, extractedStreamId, context, cancellationToken).ConfigureAwait(false);
+      await _awaitPerspectiveSyncAsync(receptor, ctx.ExtractedStreamId, ctx.LifecycleContext, cancellationToken).ConfigureAwait(false);
 
       // Set lifecycle context for runtime-registered receptors (IAcceptsLifecycleContext support)
-      if (context is not null) {
+      if (ctx.LifecycleContext is not null) {
         var lifecycleContextAccessor = _scopedProvider.GetService<ILifecycleContextAccessor>();
         if (lifecycleContextAccessor is not null) {
-          lifecycleContextAccessor.Current = context;
+          lifecycleContextAccessor.Current = ctx.LifecycleContext;
         }
       }
 
-      _logCallerInfo(receptor, callerInfo);
+      _logCallerInfo(receptor, ctx.CallerInfo);
 
       // InvokeAsync is a pre-compiled delegate (no reflection)
-      var result = await receptor.InvokeAsync(_scopedProvider, message, envelope, callerInfo, cancellationToken).ConfigureAwait(false);
+      var result = await receptor.InvokeAsync(_scopedProvider, ctx.Message, ctx.Envelope, ctx.CallerInfo, cancellationToken).ConfigureAwait(false);
 
       receptorActivity?.SetStatus(ActivityStatusCode.Ok);
       receptorActivity?.SetTag("whizbang.receptor.has_result", result is not null);
 
       // Cascade any IMessage instances from the receptor's return value
       if (result is not null && _eventCascader is not null) {
-        await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
+        await _eventCascader.CascadeFromResultAsync(result, sourceEnvelope: ctx.Envelope, receptorDefault: null, cancellationToken).ConfigureAwait(false);
       }
     } catch (Exception ex) {
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);

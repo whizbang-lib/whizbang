@@ -40,6 +40,7 @@ public record ScopedWorkCoordinatorDependencies {
 /// <remarks>
 /// Initializes a new instance of <see cref="ScopedWorkCoordinatorStrategy"/>.
 /// </remarks>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ScopedWorkCoordinatorStrategy(
   IWorkCoordinator coordinator,
   IServiceInstanceProvider instanceProvider,
@@ -50,6 +51,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+#pragma warning restore S107
   private const string STRATEGY_NAME = "scoped";
 
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));

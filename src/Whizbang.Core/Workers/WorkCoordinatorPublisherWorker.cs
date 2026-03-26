@@ -76,6 +76,7 @@ namespace Whizbang.Core.Workers;
 /// where handlers are scoped and resolved from the message processing scope.
 /// </para>
 /// </remarks>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
@@ -89,6 +90,7 @@ public partial class WorkCoordinatorPublisherWorker(
   WorkCoordinatorMetrics? workCoordinatorMetrics = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
+#pragma warning restore S107
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));

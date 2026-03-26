@@ -57,7 +57,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
-#pragma warning disable S107 // Methods should not have too many parameters
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public IntervalWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,

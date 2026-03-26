@@ -24,6 +24,15 @@ namespace Whizbang.Core.Tags;
 /// <docs>fundamentals/messages/message-tags#processing</docs>
 /// <tests>Whizbang.Core.Tests/Tags/MessageTagProcessorTests.cs</tests>
 public sealed class MessageTagProcessor : IMessageTagProcessor {
+  /// <summary>
+  /// Groups tag processing parameters that travel together through the processing pipeline.
+  /// </summary>
+  private readonly record struct TagProcessingContext(
+    object Message,
+    Type MessageType,
+    LifecycleStage Stage,
+    IScopeContext? Scope);
+
   private readonly TagOptions _options;
   private readonly Func<Type, object?>? _hookResolver;
   private readonly IServiceScopeFactory? _scopeFactory;
@@ -97,12 +106,14 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       }
       await using var serviceScope = _scopeFactory.CreateAsyncScope();
       Func<Type, object?> scopedResolver = type => serviceScope.ServiceProvider.GetService(type);
-      await _processAllTagsAsync(message, messageType, stage, scope, scopedResolver, ct);
+      var tagCtx = new TagProcessingContext(message, messageType, stage, scope);
+      await _processAllTagsAsync(tagCtx, scopedResolver, ct);
     } else {
       if (Logger.IsEnabled(LogLevel.Debug)) {
         Logger.LogDebug("[TAG PROCESSOR] Using direct hook resolver");
       }
-      await _processAllTagsAsync(message, messageType, stage, scope, _hookResolver!, ct);
+      var tagCtx = new TagProcessingContext(message, messageType, stage, scope);
+      await _processAllTagsAsync(tagCtx, _hookResolver!, ct);
     }
 #pragma warning restore CA1848
   }
@@ -111,22 +122,19 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// Processes all tags for a message using the provided hook resolver.
   /// </summary>
   private async ValueTask _processAllTagsAsync(
-      object message,
-      Type messageType,
-      LifecycleStage stage,
-      IScopeContext? scope,
+      TagProcessingContext ctx,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
     // Get tag registrations for this message type from the registry
-    foreach (var registration in MessageTagRegistry.GetTagsFor(messageType)) {
+    foreach (var registration in MessageTagRegistry.GetTagsFor(ctx.MessageType)) {
       // Build payload using the pre-compiled builder
-      var payload = registration.PayloadBuilder(message);
+      var payload = registration.PayloadBuilder(ctx.Message);
 
       // Get the attribute instance
       var attribute = registration.AttributeFactory();
 
       // Create context and invoke hooks for this attribute type (pass stage so hooks can filter)
-      await _processTagRegistrationAsync(message, messageType, attribute, payload, stage, scope, hookResolver, ct);
+      await _processTagRegistrationAsync(ctx, attribute, payload, hookResolver, ct);
     }
   }
 
@@ -134,19 +142,16 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
   /// Processes a single tag registration by creating context and invoking matching hooks.
   /// </summary>
   private async ValueTask _processTagRegistrationAsync(
-      object message,
-      Type messageType,
+      TagProcessingContext ctx,
       MessageTagAttribute attribute,
       JsonElement payload,
-      LifecycleStage stage,
-      IScopeContext? scope,
       Func<Type, object?> hookResolver,
       CancellationToken ct) {
     var attributeType = attribute.GetType();
-    var hooks = _options.GetHooksFor(attributeType, stage).ToList();
+    var hooks = _options.GetHooksFor(attributeType, ctx.Stage).ToList();
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (Logger.IsEnabled(LogLevel.Debug)) {
-      Logger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, stage, hooks.Count);
+      Logger.LogDebug("[TAG PROCESSOR] Processing attribute {AttributeType} at stage {Stage}, found {HookCount} hooks", attributeType.Name, ctx.Stage, hooks.Count);
     }
 
     var currentPayload = payload;
@@ -157,7 +162,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
         continue;
       }
 
-      var hookContext = _createContextForRegistration(registration, attribute, message, messageType, currentPayload, scope, stage);
+      var hookContext = _createContextForRegistration(registration, attribute, ctx.Message, ctx.MessageType, currentPayload, ctx.Scope, ctx.Stage);
       currentPayload = await _invokeAndUpdatePayloadAsync(hookInstance, hookContext, registration.AttributeType, currentPayload, ct);
     }
 #pragma warning restore CA1848

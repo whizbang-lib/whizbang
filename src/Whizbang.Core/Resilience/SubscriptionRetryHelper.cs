@@ -17,6 +17,16 @@ namespace Whizbang.Core.Resilience;
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerResilienceTests.cs</tests>
 public static partial class SubscriptionRetryHelper {
   /// <summary>
+  /// Groups subscription retry parameters that travel together through retry and reconnection logic.
+  /// </summary>
+  private readonly record struct SubscriptionContext(
+    ITransport Transport,
+    TransportDestination Destination,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> Handler,
+    SubscriptionState State,
+    SubscriptionResilienceOptions Options,
+    ILogger Logger);
+  /// <summary>
   /// Calculates the next delay using exponential backoff, capped at MaxRetryDelay.
   /// </summary>
   /// <param name="currentDelay">The current delay between retries.</param>
@@ -64,7 +74,8 @@ public static partial class SubscriptionRetryHelper {
         state.Subscription = subscription;
         state.Status = SubscriptionStatus.Healthy;
 
-        _hookDisconnectionReconnect(subscription, transport, destination, handler, state, options, logger, cancellationToken);
+        var subscriptionCtx = new SubscriptionContext(transport, destination, handler, state, options, logger);
+        _hookDisconnectionReconnect(subscription, subscriptionCtx, cancellationToken);
         _logSubscriptionSuccess(logger, destination, attempt);
 
         return; // Success!
@@ -85,32 +96,27 @@ public static partial class SubscriptionRetryHelper {
   /// </summary>
   private static void _hookDisconnectionReconnect(
       ISubscription subscription,
-      ITransport transport,
-      TransportDestination destination,
-      Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
-      SubscriptionState state,
-      SubscriptionResilienceOptions options,
-      ILogger logger,
+      SubscriptionContext ctx,
       CancellationToken cancellationToken) {
     subscription.OnDisconnected += (sender, args) => {
       if (args.IsApplicationInitiated) {
         return;
       }
 
-      LogSubscriptionDisconnected(logger, destination.Address, args.Reason);
+      LogSubscriptionDisconnected(ctx.Logger, ctx.Destination.Address, args.Reason);
 
-      state.Status = SubscriptionStatus.Recovering;
-      state.LastError = args.Exception;
-      state.LastErrorTime = DateTimeOffset.UtcNow;
+      ctx.State.Status = SubscriptionStatus.Recovering;
+      ctx.State.LastError = args.Exception;
+      ctx.State.LastErrorTime = DateTimeOffset.UtcNow;
 
       _ = Task.Run(async () => {
         try {
-          await Task.Delay(options.InitialRetryDelay, cancellationToken);
-          await SubscribeWithRetryAsync(transport, destination, handler, state, options, logger, cancellationToken);
+          await Task.Delay(ctx.Options.InitialRetryDelay, cancellationToken);
+          await SubscribeWithRetryAsync(ctx.Transport, ctx.Destination, ctx.Handler, ctx.State, ctx.Options, ctx.Logger, cancellationToken);
         } catch (OperationCanceledException) {
           // Shutdown - ignore
         } catch (Exception ex) {
-          LogReconnectionFailed(logger, destination.Address, ex);
+          LogReconnectionFailed(ctx.Logger, ctx.Destination.Address, ex);
         }
       }, cancellationToken);
     };

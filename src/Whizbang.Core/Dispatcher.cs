@@ -72,6 +72,7 @@ public delegate void VoidSyncReceptorInvoker(object message);
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameters 'jsonOptions' and 'receptorInvoker' retained for backward compatibility with generated code")]
 #pragma warning disable CS9113 // Primary constructor parameter is unread - retained for backward compatibility with generated code
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public abstract partial class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -91,7 +92,17 @@ public abstract partial class Dispatcher(
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   CascadeContextFactory? cascadeContextFactory = null
   ) : IDispatcher {
+#pragma warning restore S107
 #pragma warning restore CS9113
+
+  /// <summary>
+  /// Groups caller location parameters that are always passed together from [CallerMemberName/FilePath/LineNumber].
+  /// </summary>
+  private readonly record struct CallerLocation(
+    string MemberName,
+    string FilePath,
+    int LineNumber);
+
   private const string TAG_MESSAGE_TYPE = "whizbang.message.type";
   private const string TAG_MESSAGE_ID = "whizbang.message.id";
   private const string TAG_CORRELATION_ID = "whizbang.correlation.id";
@@ -1791,17 +1802,18 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
     TResult result;
+    var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
     var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
-      result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
     } else {
       var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
       if (syncInvoker != null) {
         // Wrap sync invoker as async and route through tracing path
         ReceptorInvoker<TResult> wrappedInvoker = (msg) => new ValueTask<TResult>(syncInvoker(msg));
-        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+        result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, wrappedInvoker, options, caller);
       } else {
         throw new ReceptorNotFoundException(messageType);
       }
@@ -1837,11 +1849,12 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
     var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
     if (asyncInvoker != null) {
-      await _invokeVoidAsyncReceptorAsync(asyncInvoker, message, messageType, context, options, callerMemberName, callerFilePath, callerLineNumber);
+      await _invokeVoidAsyncReceptorAsync(asyncInvoker, message, messageType, context, options, caller);
     } else {
-      await _invokeVoidSyncOrFallbackAsync(message, messageType, context, options, callerMemberName, callerFilePath, callerLineNumber);
+      await _invokeVoidSyncOrFallbackAsync(message, messageType, context, options, caller);
     }
 
     // Wait for all perspectives to process cascaded events if requested
@@ -1857,12 +1870,10 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     DispatchOptions options,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     if (_traceStore != null) {
-      await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      await _localInvokeVoidWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
     } else {
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
@@ -1880,9 +1891,7 @@ public abstract partial class Dispatcher(
     Type messageType,
     IMessageContext context,
     DispatchOptions options,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
@@ -1899,7 +1908,7 @@ public abstract partial class Dispatcher(
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
       await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
-      await _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+      await _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, caller.MemberName, caller.FilePath, caller.LineNumber);
       return;
     }
 
@@ -1915,14 +1924,12 @@ public abstract partial class Dispatcher(
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
     DispatchOptions options,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    var envelope = _createEnvelope(message, context, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {
@@ -1971,14 +1978,12 @@ public abstract partial class Dispatcher(
     IMessageContext context,
     VoidReceptorInvoker invoker,
     DispatchOptions options,
-    string callerMemberName,
-    string callerFilePath,
-    int callerLineNumber
+    CallerLocation caller
   ) {
     // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
     await _awaitPerspectiveSyncIfNeededAsync(message, messageType, options.CancellationToken);
 
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    var envelope = _createEnvelope(message, context, caller.MemberName, caller.FilePath, caller.LineNumber);
     _envelopeRegistry?.Register(envelope);
     try {
       if (_traceStore != null) {

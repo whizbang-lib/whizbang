@@ -65,7 +65,7 @@ public partial class BatchWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IW
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesWhenBatchSizeReachedAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/BatchWorkCoordinatorStrategyTests.cs:DebounceTimer_FlushesAfterQuietPeriodAsync</tests>
-#pragma warning disable S107 // Methods should not have too many parameters
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
   public BatchWorkCoordinatorStrategy(
     IWorkCoordinator? coordinator,
     IServiceInstanceProvider instanceProvider,

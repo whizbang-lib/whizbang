@@ -23,6 +23,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
+#pragma warning disable S107 // Constructor uses DI injection — many parameters are idiomatic
 public partial class ImmediateWorkCoordinatorStrategy(
   IWorkCoordinator coordinator,
   IServiceInstanceProvider instanceProvider,
@@ -37,6 +38,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   IOptions<SystemEventOptions>? systemEventOptions = null,
   IWorkChannelWriter? workChannelWriter = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher {
+#pragma warning restore S107
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
