@@ -117,10 +117,9 @@ internal sealed class ProcessedEventCache {
 
     foreach (var kvp in _entries) {
       // Only evict Retained entries that are past their TTL
-      if (kvp.Value.AckedAt is not null && now >= kvp.Value.AckedAt.Value + _retentionPeriod) {
-        if (_entries.TryRemove(kvp.Key, out _)) {
-          evictedCount++;
-        }
+      if (kvp.Value.AckedAt is not null && now >= kvp.Value.AckedAt.Value + _retentionPeriod
+          && _entries.TryRemove(kvp.Key, out _)) {
+        evictedCount++;
       }
     }
 
