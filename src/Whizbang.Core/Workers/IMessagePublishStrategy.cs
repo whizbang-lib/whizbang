@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Transports;
 
 namespace Whizbang.Core.Workers;
 
@@ -31,6 +33,35 @@ public interface IMessagePublishStrategy {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Result indicating success/failure and any error details</returns>
   Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken);
+
+  /// <summary>
+  /// Whether this strategy supports bulk publishing.
+  /// When true, PublishBatchAsync can be called to publish multiple messages in a single transport operation.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithBulkCapableTransport_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:SupportsBulkPublish_WithoutBulkCapableTransport_ReturnsFalseAsync</tests>
+  bool SupportsBulkPublish => false;
+
+  /// <summary>
+  /// Publishes a batch of outbox messages to the configured transport.
+  /// Groups messages by resolved destination and uses bulk transport when available.
+  /// Returns per-message results to enable partial failure handling.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_SingleDestination_CallsTransportOnceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_MultipleDestinations_GroupsByAddressAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EventStoreOnlyItems_ReturnSuccessWithoutCallingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_TransportThrowsForGroup_FailsOnlyThatGroupAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PerItemRoutingKeys_SetCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_EmptyList_ReturnsEmptyResultsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_PartialItemResults_MapsCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishBatchAsync_AllEventStoreOnly_NoTransportCallsAsync</tests>
+  /// <param name="workItems">The batch of outbox work items to publish</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Per-message results indicating success or failure</returns>
+  Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
+    IReadOnlyList<OutboxWork> workItems,
+    CancellationToken cancellationToken
+  ) => throw new NotSupportedException("Bulk publish is not supported by this strategy.");
 }
 
 /// <summary>
