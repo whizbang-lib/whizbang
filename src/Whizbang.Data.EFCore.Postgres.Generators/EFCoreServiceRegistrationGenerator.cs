@@ -2042,78 +2042,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.Append('[');
 
     for (int i = 0; i < perspectives.Count; i++) {
-      var perspective = perspectives[i];
-
-      // Build schema object for this perspective
-      var schemaColumns = new List<ColumnSchema> {
-        new("id", "uuid", false, true, false, null),
-        new("data", "jsonb", false, false, false, null),
-        new("metadata", "jsonb", false, false, false, null),
-        new("scope", "jsonb", false, false, false, null),
-        new("created_at", "timestamptz", false, false, false, null),
-        new("updated_at", "timestamptz", false, false, false, null),
-        new("version", "integer", false, false, false, null)
-      };
-
-      // Add physical fields to schema
-      foreach (var field in perspective.PhysicalFields) {
-        var postgresType = _getPostgresColumnType(field).ToLowerInvariant();
-        schemaColumns.Add(new ColumnSchema(
-            field.ColumnName,
-            postgresType,
-            true,  // Physical fields are nullable
-            false, // Not primary key
-            field.IsVector,
-            field.VectorDimensions
-        ));
-      }
-
-      // Build indexes
-      var schemaIndexes = new List<IndexSchema> {
-        new($"idx_{perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "")}_created_at", ["created_at"], "btree", false),
-        new($"idx_{perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "")}_data_gin", ["data"], "gin", false),
-        new($"idx_{perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "")}_metadata_gin", ["metadata"], "gin", false),
-        new($"idx_{perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "")}_scope_gin", ["scope"], "gin", false)
-      };
-
-      // Add indexes for physical fields
-      var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
-      foreach (var field in perspective.PhysicalFields) {
-        if (field.IsIndexed) {
-          // Skip vector indexes for > 2000 dimensions (pgvector limit in older versions)
-          if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
-            continue; // No index for high-dimensional vectors
-          }
-
-          var indexType = field.IsVector ? "ivfflat" : "btree";
-          schemaIndexes.Add(new IndexSchema(
-              $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
-              [field.ColumnName],
-              indexType,
-              false
-          ));
-        }
-      }
-
-      // Create schema and compute hash
-      var tableSchema = new PerspectiveTableSchema(schemaColumns, schemaIndexes);
-      var schemaJson = SchemaHashUtilities.ToCanonicalJson(tableSchema);
-      var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
-
-      // Build JSON object for this perspective
       if (i > 0) {
         sb.Append(',');
       }
-      sb.Append('{');
-      // Strip global:: prefix when writing to DB — ModelTypeName uses global:: for C# code generation
-      // but the database needs the plain CLR type name for runtime lookups
-      var dbClrTypeName = perspective.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "");
-      sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
-      sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
-      sb.Append($"\"SchemaJson\":{schemaJson},");
-      sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
-      sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\"");
-      sb.Append('}');
+      _appendPerspectiveRegistryEntry(sb, perspectives[i], serviceName);
     }
 
     sb.Append(']');
@@ -2121,6 +2053,80 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Escape for C# string literal (double the quotes)
     var json = sb.ToString().Replace("\"", "\\\"");
     return $"\"{json}\"";
+  }
+
+  private static void _appendPerspectiveRegistryEntry(StringBuilder sb, PerspectiveModelInfo perspective, string serviceName) {
+    var schemaColumns = _buildPerspectiveSchemaColumns(perspective);
+    var schemaIndexes = _buildPerspectiveSchemaIndexes(perspective);
+
+    var tableSchema = new PerspectiveTableSchema(schemaColumns, schemaIndexes);
+    var schemaJson = SchemaHashUtilities.ToCanonicalJson(tableSchema);
+    var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
+
+    sb.Append('{');
+    var dbClrTypeName = perspective.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "");
+    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
+    sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
+    sb.Append($"\"SchemaJson\":{schemaJson},");
+    sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
+    sb.Append($"\"ServiceName\":\"{_escapeJsonString(serviceName)}\"");
+    sb.Append('}');
+  }
+
+  private static List<ColumnSchema> _buildPerspectiveSchemaColumns(PerspectiveModelInfo perspective) {
+    var schemaColumns = new List<ColumnSchema> {
+      new("id", "uuid", false, true, false, null),
+      new("data", "jsonb", false, false, false, null),
+      new("metadata", "jsonb", false, false, false, null),
+      new("scope", "jsonb", false, false, false, null),
+      new("created_at", "timestamptz", false, false, false, null),
+      new("updated_at", "timestamptz", false, false, false, null),
+      new("version", "integer", false, false, false, null)
+    };
+
+    foreach (var field in perspective.PhysicalFields) {
+      var postgresType = _getPostgresColumnType(field).ToLowerInvariant();
+      schemaColumns.Add(new ColumnSchema(
+          field.ColumnName,
+          postgresType,
+          true,
+          false,
+          field.IsVector,
+          field.VectorDimensions
+      ));
+    }
+
+    return schemaColumns;
+  }
+
+  private static List<IndexSchema> _buildPerspectiveSchemaIndexes(PerspectiveModelInfo perspective) {
+    var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
+    var schemaIndexes = new List<IndexSchema> {
+      new($"idx_{shortName}_created_at", ["created_at"], "btree", false),
+      new($"idx_{shortName}_data_gin", ["data"], "gin", false),
+      new($"idx_{shortName}_metadata_gin", ["metadata"], "gin", false),
+      new($"idx_{shortName}_scope_gin", ["scope"], "gin", false)
+    };
+
+    foreach (var field in perspective.PhysicalFields) {
+      if (!field.IsIndexed) {
+        continue;
+      }
+
+      if (field.IsVector && field.VectorDimensions.HasValue && field.VectorDimensions.Value > 2000) {
+        continue;
+      }
+
+      var indexType = field.IsVector ? "ivfflat" : "btree";
+      schemaIndexes.Add(new IndexSchema(
+          $"idx_{shortName}_{field.ColumnName}" + (field.IsVector ? "_vec" : ""),
+          [field.ColumnName],
+          indexType,
+          false
+      ));
+    }
+
+    return schemaIndexes;
   }
 
   /// <summary>

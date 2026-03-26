@@ -373,56 +373,62 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      // Extract PerspectiveType from constructor argument
-      if (attribute.ConstructorArguments.Length == 0) {
-        continue;
+      var syncInfo = _parseSingleSyncAttribute(attribute);
+      if (syncInfo is not null) {
+        syncAttributes.Add(syncInfo);
       }
-
-      var perspectiveTypeArg = attribute.ConstructorArguments[0];
-      if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
-        continue;
-      }
-
-      var perspectiveType = perspectiveTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-
-      // Extract EventTypes from named argument (Type[]?)
-      string[]? eventTypes = null;
-      var eventTypesArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "EventTypes");
-      if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
-        var eventTypesList = new System.Collections.Generic.List<string>();
-        foreach (var typeConstant in eventTypesArg.Value.Values) {
-          if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-            eventTypesList.Add(eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
-          }
-        }
-        if (eventTypesList.Count > 0) {
-          eventTypes = [.. eventTypesList];
-        }
-      }
-
-      // Extract TimeoutMs (int, defaults to -1 which means use DefaultTimeoutMs)
-      var timeoutMs = -1;
-      var timeoutArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "TimeoutMs");
-      if (timeoutArg.Value.Value is int timeoutValue) {
-        timeoutMs = timeoutValue;
-      }
-
-      // Extract FireBehavior (enum, defaults to 0 = FireOnSuccess)
-      var fireBehavior = 0;
-      var fireBehaviorArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "FireBehavior");
-      if (fireBehaviorArg.Value.Value is int fireBehaviorValue) {
-        fireBehavior = fireBehaviorValue;
-      }
-
-      syncAttributes.Add(new SyncAttributeInfo(
-          PerspectiveType: perspectiveType,
-          EventTypes: eventTypes,
-          TimeoutMs: timeoutMs,
-          FireBehavior: fireBehavior
-      ));
     }
 
     return syncAttributes.Count > 0 ? [.. syncAttributes] : null;
+  }
+
+  private static SyncAttributeInfo? _parseSingleSyncAttribute(AttributeData attribute) {
+    if (attribute.ConstructorArguments.Length == 0) {
+      return null;
+    }
+
+    var perspectiveTypeArg = attribute.ConstructorArguments[0];
+    if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
+      return null;
+    }
+
+    var perspectiveType = perspectiveTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Extract EventTypes from named argument (Type[]?)
+    string[]? eventTypes = null;
+    var eventTypesArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "EventTypes");
+    if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
+      var eventTypesList = new System.Collections.Generic.List<string>();
+      foreach (var typeConstant in eventTypesArg.Value.Values) {
+        if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
+          eventTypesList.Add(eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        }
+      }
+      if (eventTypesList.Count > 0) {
+        eventTypes = [.. eventTypesList];
+      }
+    }
+
+    // Extract TimeoutMs (int, defaults to -1 which means use DefaultTimeoutMs)
+    var timeoutMs = -1;
+    var timeoutArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "TimeoutMs");
+    if (timeoutArg.Value.Value is int timeoutValue) {
+      timeoutMs = timeoutValue;
+    }
+
+    // Extract FireBehavior (enum, defaults to 0 = FireOnSuccess)
+    var fireBehavior = 0;
+    var fireBehaviorArg = attribute.NamedArguments.FirstOrDefault(na => na.Key == "FireBehavior");
+    if (fireBehaviorArg.Value.Value is int fireBehaviorValue) {
+      fireBehavior = fireBehaviorValue;
+    }
+
+    return new SyncAttributeInfo(
+        PerspectiveType: perspectiveType,
+        EventTypes: eventTypes,
+        TimeoutMs: timeoutMs,
+        FireBehavior: fireBehavior
+    );
   }
 
   /// <summary>
@@ -720,15 +726,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       "IReadOnlyCollection<"
     ];
 
-    foreach (var prefix in collectionPrefixes) {
-      if (typeName.StartsWith(prefix, StringComparison.Ordinal) && typeName.EndsWith(">", StringComparison.Ordinal)) {
-        // Extract inner type: remove prefix and trailing >
-        var inner = typeName.Substring(prefix.Length, typeName.Length - prefix.Length - 1);
-        return inner;
-      }
-    }
+    var matchedPrefix = collectionPrefixes
+        .FirstOrDefault(prefix => typeName.StartsWith(prefix, StringComparison.Ordinal) && typeName.EndsWith(">", StringComparison.Ordinal));
 
-    return null;  // Not a recognized collection type
+    // Extract inner type: remove prefix and trailing >
+    return matchedPrefix is not null
+        ? typeName.Substring(matchedPrefix.Length, typeName.Length - matchedPrefix.Length - 1)
+        : null;
   }
 
   /// <summary>

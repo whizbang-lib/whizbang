@@ -322,80 +322,14 @@ public partial class WorkCoordinatorPublisherWorker(
         LogTransportReadinessCheck(_logger, isReady);
 
         if (!isReady) {
-          _transportMetrics?.OutboxReadinessWaitDuration.Record(readinessWaitSw.Elapsed.TotalMilliseconds);
-
-          // Re-queue all items and renew leases
-          foreach (var work in batch) {
-            _leaseRenewals.Add(work.MessageId);
-            Interlocked.Increment(ref _consecutiveNotReadyChecks);
-            Interlocked.Increment(ref _totalLeaseRenewals);
-            Interlocked.Increment(ref _totalBufferedMessages);
-            _workCoordinatorMetrics?.PublisherLeaseRenewals.Add(1);
-            _workCoordinatorMetrics?.PublisherBufferedMessages.Add(1);
-            _workChannelWriter.TryWrite(work);
-          }
-
-          if (_consecutiveNotReadyChecks > 10) {
-            LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
-          }
+          _handleTransportNotReadyBulk(batch, readinessWaitSw.Elapsed);
           continue;
         }
 
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // Pre-outbox lifecycle per message
-        var batchContexts = new List<(OutboxWork Work, AsyncServiceScope Scope, ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope, ActivityContext TraceContext, bool EnableLifecycleSpans)>(batch.Count);
-        foreach (var work in batch) {
-          LogPublisherLoopReceivedWork(_logger, work.MessageId, work.Destination);
-
-          var scope = _scopeFactory.CreateAsyncScope();
-          var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-
-          await SecurityContextHelper.EstablishFullContextAsync(
-            work.Envelope, scope.ServiceProvider, stoppingToken);
-
-          var latestHop = work.Envelope.Hops?.LastOrDefault();
-          ActivityContext traceContext = default;
-          if (latestHop?.TraceParent is not null &&
-              ActivityContext.TryParse(latestHop.TraceParent, null, out var parsedContext)) {
-            traceContext = parsedContext;
-          }
-
-          var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
-          ILifecycleTracking? outboxTracking = null;
-          IMessageEnvelope? outboxTypedEnvelope = null;
-          var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
-
-          if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-            var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-            outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
-            if (coordinator is not null) {
-              outboxTracking = coordinator.BeginTracking(
-                work.MessageId, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-                await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, stoppingToken);
-              }
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-                await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, stoppingToken);
-              }
-            } else {
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-                var lifecycleContext = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PreOutboxAsync, MessageSource = MessageSource.Outbox, AttemptNumber = work.Attempts };
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync, lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-              }
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-                var lifecycleContext = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PreOutboxInline, MessageSource = MessageSource.Outbox, AttemptNumber = work.Attempts };
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync, lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-              }
-            }
-          }
-
-          _populateQueuedAtTimestamp(work);
-          batchContexts.Add((work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans));
-        }
+        var batchContexts = await _prepareBulkBatchContextsAsync(batch, stoppingToken);
 
         // Batch publish
         var publishSw = Stopwatch.StartNew();
@@ -404,84 +338,94 @@ public partial class WorkCoordinatorPublisherWorker(
         _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
 
         // Post-outbox lifecycle per message + track results
-        for (var i = 0; i < batchContexts.Count; i++) {
-          var (work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans) = batchContexts[i];
-          var result = results.FirstOrDefault(r => r.MessageId == work.MessageId);
-
-          if (result is null) {
-            // Safety: if transport didn't return a result for this item, treat as failure
-            result = new MessagePublishResult {
-              MessageId = work.MessageId,
-              Success = false,
-              CompletedStatus = work.Status,
-              Error = "No result returned from batch publish",
-              Reason = MessageFailureReason.Unknown
-            };
-          }
-
-          LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
-
-          // PostOutbox lifecycle
-          var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
-          if (outboxTracking is not null && coordinator is not null) {
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, scope.ServiceProvider, stoppingToken);
-            }
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, stoppingToken);
-            }
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, stoppingToken);
-            }
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
-            }
-            coordinator.AbandonTracking(work.MessageId);
-          } else if (outboxTypedEnvelope is not null) {
-            var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
-            if (receptorInvoker is not null) {
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-                var lifecycleContext = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostOutboxAsync, MessageSource = MessageSource.Outbox, AttemptNumber = work.Attempts };
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync, lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-              }
-              using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-                var lifecycleContext = new LifecycleExecutionContext { CurrentStage = LifecycleStage.PostOutboxInline, MessageSource = MessageSource.Outbox, AttemptNumber = work.Attempts };
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-                await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync, lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-              }
-            }
-          }
-
-          // Track completion/failure
-          if (result.Success) {
-            _transportMetrics?.OutboxMessagesPublished.Add(1);
-            _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
-          } else if (result.Reason == MessageFailureReason.TransportException) {
-            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
-            _transportMetrics?.OutboxPublishRetries.Add(1);
-            _leaseRenewals.Add(work.MessageId);
-            _workChannelWriter.TryWrite(work);
-            LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
-          } else {
-            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
-            _failures.Add(new MessageFailure { MessageId = work.MessageId, CompletedStatus = result.CompletedStatus, Error = result.Error ?? UNKNOWN_ERROR, Reason = result.Reason });
-            LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR, result.Reason);
-          }
-
-          // Dispose scope
-          await scope.DisposeAsync();
-        }
+        await _processPublishBatchResultsAsync(batchContexts, results, stoppingToken);
       } catch (ObjectDisposedException) {
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // If the entire batch fails unexpectedly, fail all items
-        foreach (var work in batch) {
-          LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
-          _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
-          _failures.Add(new MessageFailure { MessageId = work.MessageId, CompletedStatus = work.Status, Error = ex.Message, Reason = MessageFailureReason.Unknown });
-        }
+        _handleBulkBatchException(batch, ex);
       }
+    }
+  }
+
+  private void _handleTransportNotReadyBulk(List<OutboxWork> batch, TimeSpan readinessWaitDuration) {
+    _transportMetrics?.OutboxReadinessWaitDuration.Record(readinessWaitDuration.TotalMilliseconds);
+
+    foreach (var work in batch) {
+      _leaseRenewals.Add(work.MessageId);
+      Interlocked.Increment(ref _consecutiveNotReadyChecks);
+      Interlocked.Increment(ref _totalLeaseRenewals);
+      Interlocked.Increment(ref _totalBufferedMessages);
+      _workCoordinatorMetrics?.PublisherLeaseRenewals.Add(1);
+      _workCoordinatorMetrics?.PublisherBufferedMessages.Add(1);
+      _workChannelWriter.TryWrite(work);
+    }
+
+    if (_consecutiveNotReadyChecks > 10) {
+      LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
+    }
+  }
+
+  private async Task<List<(OutboxWork Work, AsyncServiceScope Scope, ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope, ActivityContext TraceContext, bool EnableLifecycleSpans)>>
+    _prepareBulkBatchContextsAsync(List<OutboxWork> batch, CancellationToken stoppingToken) {
+
+    var batchContexts = new List<(OutboxWork Work, AsyncServiceScope Scope, ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope, ActivityContext TraceContext, bool EnableLifecycleSpans)>(batch.Count);
+
+    foreach (var work in batch) {
+      LogPublisherLoopReceivedWork(_logger, work.MessageId, work.Destination);
+
+      var scope = _scopeFactory.CreateAsyncScope();
+      var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+
+      await SecurityContextHelper.EstablishFullContextAsync(
+        work.Envelope, scope.ServiceProvider, stoppingToken);
+
+      var traceContext = _extractTraceContext(work);
+      var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
+
+      var (outboxTracking, outboxTypedEnvelope) = await _invokePreOutboxLifecycleAsync(
+        work, scope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
+
+      _populateQueuedAtTimestamp(work);
+      batchContexts.Add((work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans));
+    }
+
+    return batchContexts;
+  }
+
+  private async Task _processPublishBatchResultsAsync(
+    List<(OutboxWork Work, AsyncServiceScope Scope, ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope, ActivityContext TraceContext, bool EnableLifecycleSpans)> batchContexts,
+    IReadOnlyList<MessagePublishResult> results,
+    CancellationToken stoppingToken) {
+
+    for (var i = 0; i < batchContexts.Count; i++) {
+      var (work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans) = batchContexts[i];
+      var result = results.FirstOrDefault(r => r.MessageId == work.MessageId);
+
+      if (result is null) {
+        result = new MessagePublishResult {
+          MessageId = work.MessageId,
+          Success = false,
+          CompletedStatus = work.Status,
+          Error = "No result returned from batch publish",
+          Reason = MessageFailureReason.Unknown
+        };
+      }
+
+      LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
+
+      await _invokePostOutboxLifecycleAsync(
+        work, scope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans, stoppingToken);
+
+      _trackPublishResult(work, result);
+      await scope.DisposeAsync();
+    }
+  }
+
+  private void _handleBulkBatchException(List<OutboxWork> batch, Exception ex) {
+    foreach (var work in batch) {
+      LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
+      _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "unexpected_exception"));
+      _failures.Add(new MessageFailure { MessageId = work.MessageId, CompletedStatus = work.Status, Error = ex.Message, Reason = MessageFailureReason.Unknown });
     }
   }
 
@@ -495,28 +439,7 @@ public partial class WorkCoordinatorPublisherWorker(
         readinessWaitSw.Stop();
         LogTransportReadinessCheck(_logger, isReady);
         if (!isReady) {
-          _transportMetrics?.OutboxReadinessWaitDuration.Record(readinessWaitSw.Elapsed.TotalMilliseconds);
-
-          // Transport not ready - renew lease to buffer message
-          _leaseRenewals.Add(work.MessageId);
-          Interlocked.Increment(ref _consecutiveNotReadyChecks);
-          Interlocked.Increment(ref _totalLeaseRenewals);
-          Interlocked.Increment(ref _totalBufferedMessages);
-          _workCoordinatorMetrics?.PublisherLeaseRenewals.Add(1);
-          _workCoordinatorMetrics?.PublisherBufferedMessages.Add(1);
-
-          // Log at Information level (important operational event)
-          LogTransportNotReadyBuffering(_logger, work.MessageId, work.Destination);
-
-          // Warn if transport has been continuously unavailable
-          if (_consecutiveNotReadyChecks > 10) {
-            LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
-          }
-
-          // Re-queue work to channel for retry — without this, the message is consumed
-          // from the channel and lost until lease expiry (which never happens because
-          // the lease keeps being renewed)
-          _workChannelWriter.TryWrite(work);
+          _handleTransportNotReadySingular(work, readinessWaitSw.Elapsed);
           continue;
         }
 
@@ -524,204 +447,32 @@ public partial class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // Create scope for scoped services (IReceptorInvoker)
-        // Following MediatR/MassTransit pattern: handlers are scoped, resolved from message processing scope
         await using var lifecycleScope = _scopeFactory.CreateAsyncScope();
         var receptorInvoker = lifecycleScope.ServiceProvider.GetService<IReceptorInvoker>();
 
-        // Establish security context from envelope before invoking lifecycle receptors.
-        // This sets IScopeContextAccessor.Current and IMessageContextAccessor.Current,
-        // enabling receptors to inject IMessageContext and access UserId/TenantId.
-        // Security context cascades to any commands/events dispatched by these receptors.
         await SecurityContextHelper.EstablishFullContextAsync(
-          work.Envelope,
-          lifecycleScope.ServiceProvider,
-          stoppingToken);
+          work.Envelope, lifecycleScope.ServiceProvider, stoppingToken);
 
-        // Extract trace context from envelope hops FIRST to parent all lifecycle spans
-        // This ensures all outbox processing appears as children of the original request trace
-        // Defensive: Handle null Hops gracefully (shouldn't happen but be safe)
-        var latestHop = work.Envelope.Hops?.LastOrDefault();
-        ActivityContext traceContext = default;
-        var traceParentValue = latestHop?.TraceParent;
-        var parseSucceeded = false;
-        if (traceParentValue is not null &&
-            ActivityContext.TryParse(traceParentValue, null, out var parsedContext)) {
-          traceContext = parsedContext;
-          parseSucceeded = true;
-        }
-
-        // Check if Lifecycle tracing is enabled via TraceComponents
+        var traceContext = _extractTraceContext(work);
         var enableLifecycleSpans = _tracingOptions?.CurrentValue.IsEnabled(TraceComponents.Lifecycle) ?? false;
 
-        // PreOutbox lifecycle stages (before publishing to transport)
-        // ALL receptors registered at PreOutbox stages fire here, including:
-        // - Receptors with [FireAt(PreOutboxAsync/PreOutboxInline)]
-        // - DEFAULT receptors (without [FireAt]) - this is where they fire for the distributed send path
-        // Only create lifecycle spans when TraceComponents.Lifecycle is enabled
-        ILifecycleTracking? outboxTracking = null;
-        IMessageEnvelope? outboxTypedEnvelope = null;
-        var coordinator = lifecycleScope.ServiceProvider.GetService<ILifecycleCoordinator>();
-
-        if (_lifecycleMessageDeserializer is not null && receptorInvoker is not null) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
-          outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
-
-          if (coordinator is not null) {
-            var eventId = work.MessageId;
-            outboxTracking = coordinator.BeginTracking(
-              eventId, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
-
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, lifecycleScope.ServiceProvider, stoppingToken);
-            }
-
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-              await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, lifecycleScope.ServiceProvider, stoppingToken);
-            }
-          } else {
-            // Fallback: direct invocation when coordinator not registered
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-              var lifecycleContext = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PreOutboxAsync,
-                MessageSource = MessageSource.Outbox,
-                AttemptNumber = work.Attempts
-              };
-              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
-              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
-                lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-            }
-
-            using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-              var lifecycleContext = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PreOutboxInline,
-                MessageSource = MessageSource.Outbox,
-                AttemptNumber = work.Attempts
-              };
-              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
-              await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
-                lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-            }
-          }
-        }
+        // PreOutbox lifecycle stages
+        var (outboxTracking, outboxTypedEnvelope) = await _invokePreOutboxLifecycleAsync(
+          work, lifecycleScope, receptorInvoker, traceContext, enableLifecycleSpans, stoppingToken);
 
         // Populate QueuedAt timestamp on the message payload (JSON-level, AOT-safe)
         _populateQueuedAtTimestamp(work);
 
         // Publish via strategy
-        LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
-        MessagePublishResult result;
-        var publishSw = Stopwatch.StartNew();
+        var result = await _publishSingularWithTracingAsync(work, traceContext, stoppingToken);
 
-        using (var activity = WhizbangActivitySource.Tracing.StartActivity(
-          "Outbox PublishAsync",
-          ActivityKind.Producer,
-          parentContext: traceContext)) {
-          activity?.SetTag("whizbang.message.id", work.MessageId.ToString());
-          activity?.SetTag("whizbang.message.type", work.MessageType);
-          activity?.SetTag("whizbang.message.destination", work.Destination ?? "local");
-          activity?.SetTag("whizbang.message.attempts", work.Attempts);
-          activity?.SetTag("whizbang.trace.context_restored", traceContext != default);
-          activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops?.Count ?? 0);
-          activity?.SetTag("whizbang.trace.traceparent_raw", traceParentValue ?? "(null)");
-          activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
-
-          result = await _publishStrategy.PublishAsync(work, stoppingToken);
-          publishSw.Stop();
-
-          activity?.SetTag("whizbang.publish.success", result.Success.ToString());
-          activity?.SetTag("whizbang.publish.status", result.CompletedStatus.ToString());
-          if (!result.Success && result.Error != null) {
-            activity?.SetTag("whizbang.publish.error", result.Error);
-            activity?.SetTag("whizbang.publish.failure_reason", result.Reason.ToString());
-          }
-        }
-        _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
-        LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
-
-        // PostOutbox lifecycle stages (after publishing to transport)
-        // ALL receptors registered at PostOutbox stages fire here
-        // NOTE: Default receptors do NOT fire here - only explicit [FireAt(PostOutbox*)] receptors
-        if (outboxTracking is not null && coordinator is not null) {
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-            await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, lifecycleScope.ServiceProvider, stoppingToken);
-          }
-
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-            await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, lifecycleScope.ServiceProvider, stoppingToken);
-          }
-
-          // PostLifecycle: OutboxWorker is the last worker when event leaves the service
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
-            await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, lifecycleScope.ServiceProvider, stoppingToken);
-          }
-
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
-            await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, lifecycleScope.ServiceProvider, stoppingToken);
-          }
-
-          // EXIT: event sent to transport, PostLifecycle complete
-          coordinator.AbandonTracking(work.MessageId);
-        } else if (outboxTypedEnvelope is not null && receptorInvoker is not null) {
-          // Fallback: direct invocation
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
-            var lifecycleContext = new LifecycleExecutionContext {
-              CurrentStage = LifecycleStage.PostOutboxAsync,
-              MessageSource = MessageSource.Outbox,
-              AttemptNumber = work.Attempts
-            };
-            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
-            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
-              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-          }
-
-          using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
-            var lifecycleContext = new LifecycleExecutionContext {
-              CurrentStage = LifecycleStage.PostOutboxInline,
-              MessageSource = MessageSource.Outbox,
-              AttemptNumber = work.Attempts
-            };
-            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
-            await receptorInvoker.InvokeAsync(outboxTypedEnvelope, LifecycleStage.ImmediateAsync,
-              lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
-          }
-        }
+        // PostOutbox lifecycle stages
+        await _invokePostOutboxLifecycleAsync(
+          work, lifecycleScope, outboxTracking, outboxTypedEnvelope, traceContext, enableLifecycleSpans, stoppingToken);
 
         // Collect results
-        if (result.Success) {
-          _transportMetrics?.OutboxMessagesPublished.Add(1);
-          _completions.Add(new MessageCompletion {
-            MessageId = work.MessageId,
-            Status = result.CompletedStatus
-          });
-        } else {
-          // For retryable failures, renew lease instead of marking as failed
-          // This allows the message to be re-claimed and retried
-          if (result.Reason == MessageFailureReason.TransportException) {
-            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
-            _transportMetrics?.OutboxPublishRetries.Add(1);
-            _leaseRenewals.Add(work.MessageId);
-
-            // Re-queue work to channel for retry — without this, the message is consumed
-            // from the channel and lost until lease expiry (which never happens because
-            // the lease keeps being renewed)
-            _workChannelWriter.TryWrite(work);
-
-            LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
-          } else {
-            // Non-retryable failures (serialization, validation, etc.) - mark as failed
-            _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
-            _failures.Add(new MessageFailure {
-              MessageId = work.MessageId,
-              CompletedStatus = result.CompletedStatus,
-              Error = result.Error ?? UNKNOWN_ERROR,
-              Reason = result.Reason
-            });
-
-            LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR, result.Reason);
-          }
-        }
+        _trackPublishResult(work, result);
       } catch (ObjectDisposedException) {
-        // Service provider disposed during host shutdown — exit gracefully
         break;
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
@@ -734,6 +485,193 @@ public partial class WorkCoordinatorPublisherWorker(
           Reason = MessageFailureReason.Unknown
         });
       }
+    }
+  }
+
+  private void _handleTransportNotReadySingular(OutboxWork work, TimeSpan readinessWaitDuration) {
+    _transportMetrics?.OutboxReadinessWaitDuration.Record(readinessWaitDuration.TotalMilliseconds);
+
+    _leaseRenewals.Add(work.MessageId);
+    Interlocked.Increment(ref _consecutiveNotReadyChecks);
+    Interlocked.Increment(ref _totalLeaseRenewals);
+    Interlocked.Increment(ref _totalBufferedMessages);
+    _workCoordinatorMetrics?.PublisherLeaseRenewals.Add(1);
+    _workCoordinatorMetrics?.PublisherBufferedMessages.Add(1);
+
+    LogTransportNotReadyBuffering(_logger, work.MessageId, work.Destination);
+
+    if (_consecutiveNotReadyChecks > 10) {
+      LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
+    }
+
+    _workChannelWriter.TryWrite(work);
+  }
+
+  private static ActivityContext _extractTraceContext(OutboxWork work) {
+    var latestHop = work.Envelope.Hops?.LastOrDefault();
+    ActivityContext traceContext = default;
+    if (latestHop?.TraceParent is not null &&
+        ActivityContext.TryParse(latestHop.TraceParent, null, out var parsedContext)) {
+      traceContext = parsedContext;
+    }
+    return traceContext;
+  }
+
+  private async Task<(ILifecycleTracking? Tracking, IMessageEnvelope? TypedEnvelope)> _invokePreOutboxLifecycleAsync(
+    OutboxWork work,
+    AsyncServiceScope scope,
+    IReceptorInvoker? receptorInvoker,
+    ActivityContext traceContext,
+    bool enableLifecycleSpans,
+    CancellationToken stoppingToken) {
+
+    if (_lifecycleMessageDeserializer is null || receptorInvoker is null) {
+      return (null, null);
+    }
+
+    var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
+    var outboxTypedEnvelope = work.Envelope.ReconstructWithPayload(message);
+    var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+    if (coordinator is not null) {
+      var outboxTracking = coordinator.BeginTracking(
+        work.MessageId, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, MessageSource.Outbox);
+
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxAsync, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_PRE_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PreOutboxInline, scope.ServiceProvider, stoppingToken);
+      }
+      return (outboxTracking, outboxTypedEnvelope);
+    }
+
+    // Fallback: direct invocation when coordinator not registered
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxAsync, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_ASYNC, traceContext, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PreOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_PRE_OUTBOX_INLINE, traceContext, stoppingToken);
+    return (null, outboxTypedEnvelope);
+  }
+
+  private static async Task _invokePostOutboxLifecycleAsync(
+    OutboxWork work,
+    AsyncServiceScope scope,
+    ILifecycleTracking? outboxTracking,
+    IMessageEnvelope? outboxTypedEnvelope,
+    ActivityContext traceContext,
+    bool enableLifecycleSpans,
+    CancellationToken stoppingToken) {
+
+    var coordinator = scope.ServiceProvider.GetService<ILifecycleCoordinator>();
+
+    if (outboxTracking is not null && coordinator is not null) {
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_ASYNC, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxAsync, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(LIFECYCLE_POST_OUTBOX_INLINE, ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostOutboxInline, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleAsync", ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleAsync, scope.ServiceProvider, stoppingToken);
+      }
+      using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity("Lifecycle PostLifecycleInline", ActivityKind.Internal, parentContext: traceContext) : null) {
+        await outboxTracking.AdvanceToAsync(LifecycleStage.PostLifecycleInline, scope.ServiceProvider, stoppingToken);
+      }
+      coordinator.AbandonTracking(work.MessageId);
+      return;
+    }
+
+    if (outboxTypedEnvelope is null) {
+      return;
+    }
+
+    var receptorInvoker = scope.ServiceProvider.GetService<IReceptorInvoker>();
+    if (receptorInvoker is null) {
+      return;
+    }
+
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxAsync, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_ASYNC, traceContext, stoppingToken);
+    await _invokeLifecycleDirectAsync(receptorInvoker, outboxTypedEnvelope, LifecycleStage.PostOutboxInline, work.Attempts, enableLifecycleSpans, LIFECYCLE_POST_OUTBOX_INLINE, traceContext, stoppingToken);
+  }
+
+  private static async Task _invokeLifecycleDirectAsync(
+    IReceptorInvoker receptorInvoker,
+    IMessageEnvelope typedEnvelope,
+    LifecycleStage stage,
+    int attempts,
+    bool enableLifecycleSpans,
+    string activityName,
+    ActivityContext traceContext,
+    CancellationToken stoppingToken) {
+
+    using (enableLifecycleSpans ? WhizbangActivitySource.Tracing.StartActivity(activityName, ActivityKind.Internal, parentContext: traceContext) : null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = stage,
+        MessageSource = MessageSource.Outbox,
+        AttemptNumber = attempts
+      };
+      await receptorInvoker.InvokeAsync(typedEnvelope, stage, lifecycleContext, stoppingToken);
+      await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateAsync,
+        lifecycleContext with { CurrentStage = LifecycleStage.ImmediateAsync }, stoppingToken);
+    }
+  }
+
+  private async Task<MessagePublishResult> _publishSingularWithTracingAsync(
+    OutboxWork work,
+    ActivityContext traceContext,
+    CancellationToken stoppingToken) {
+
+    LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
+    var publishSw = Stopwatch.StartNew();
+    var latestHop = work.Envelope.Hops?.LastOrDefault();
+    var traceParentValue = latestHop?.TraceParent;
+    var parseSucceeded = traceContext != default;
+
+    MessagePublishResult result;
+    using (var activity = WhizbangActivitySource.Tracing.StartActivity(
+      "Outbox PublishAsync", ActivityKind.Producer, parentContext: traceContext)) {
+      activity?.SetTag("whizbang.message.id", work.MessageId.ToString());
+      activity?.SetTag("whizbang.message.type", work.MessageType);
+      activity?.SetTag("whizbang.message.destination", work.Destination ?? "local");
+      activity?.SetTag("whizbang.message.attempts", work.Attempts);
+      activity?.SetTag("whizbang.trace.context_restored", traceContext != default);
+      activity?.SetTag("whizbang.trace.hop_count", work.Envelope.Hops?.Count ?? 0);
+      activity?.SetTag("whizbang.trace.traceparent_raw", traceParentValue ?? "(null)");
+      activity?.SetTag("whizbang.trace.parse_succeeded", parseSucceeded);
+
+      result = await _publishStrategy.PublishAsync(work, stoppingToken);
+      publishSw.Stop();
+
+      activity?.SetTag("whizbang.publish.success", result.Success.ToString());
+      activity?.SetTag("whizbang.publish.status", result.CompletedStatus.ToString());
+      if (!result.Success && result.Error != null) {
+        activity?.SetTag("whizbang.publish.error", result.Error);
+        activity?.SetTag("whizbang.publish.failure_reason", result.Reason.ToString());
+      }
+    }
+    _transportMetrics?.OutboxPublishDuration.Record(publishSw.Elapsed.TotalMilliseconds);
+    LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
+    return result;
+  }
+
+  private void _trackPublishResult(OutboxWork work, MessagePublishResult result) {
+    if (result.Success) {
+      _transportMetrics?.OutboxMessagesPublished.Add(1);
+      _completions.Add(new MessageCompletion { MessageId = work.MessageId, Status = result.CompletedStatus });
+    } else if (result.Reason == MessageFailureReason.TransportException) {
+      _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, "transport_exception"));
+      _transportMetrics?.OutboxPublishRetries.Add(1);
+      _leaseRenewals.Add(work.MessageId);
+      _workChannelWriter.TryWrite(work);
+      LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR);
+    } else {
+      _transportMetrics?.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>(METRIC_FAILURE_REASON, result.Reason.ToString()));
+      _failures.Add(new MessageFailure {
+        MessageId = work.MessageId,
+        CompletedStatus = result.CompletedStatus,
+        Error = result.Error ?? UNKNOWN_ERROR,
+        Reason = result.Reason
+      });
+      LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? UNKNOWN_ERROR, result.Reason);
     }
   }
 

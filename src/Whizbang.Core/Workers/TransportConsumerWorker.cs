@@ -460,7 +460,7 @@ public partial class TransportConsumerWorker : BackgroundService {
     await _orderedProcessor.ProcessInboxWorkAsync(
       myWork,
       processor: async (work) => {
-        var @event = _deserializeEvent(work);
+        _ = _deserializeEvent(work);
         return MessageProcessingStatus.EventStored;
       },
       completionHandler: (msgId, status) => {

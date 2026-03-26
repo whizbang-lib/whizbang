@@ -124,45 +124,78 @@ public partial class PerspectiveWorker(
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
-    // Log registered perspectives at startup for diagnostics
-    await using (var startupScope = _scopeFactory.CreateAsyncScope()) {
-      var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
-      if (registry != null) {
-        var registeredPerspectives = registry.GetRegisteredPerspectives();
-        if (registeredPerspectives.Count > 0) {
-          LogRegisteredPerspectivesHeader(_logger, registeredPerspectives.Count);
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            foreach (var p in registeredPerspectives) {
-              var eventTypesStr = string.Join(", ", p.EventTypes);
-              LogRegisteredPerspective(_logger, p.ClrTypeName, p.ModelType, p.EventTypes.Count, eventTypesStr);
-            }
-          }
+    await _initializePerspectiveRegistryAsync();
+    await _processInitialCheckpointsAsync(stoppingToken);
 
-          // Build reverse map: event type → all perspectives that handle it.
-          // Used for WhenAll expectations so PostAllPerspectivesAsync fires once
-          // after ALL perspectives complete, not once per batch cycle.
-          var map = new Dictionary<string, List<string>>();
-          foreach (var p in registeredPerspectives) {
-            foreach (var eventType in p.EventTypes) {
-              if (!map.TryGetValue(eventType, out var list)) {
-                list = [];
-                map[eventType] = list;
-              }
-              list.Add(p.ClrTypeName);
-            }
-          }
-          _perspectivesPerEventType = map.ToDictionary(
-            kvp => kvp.Key,
-            kvp => (IReadOnlyList<string>)kvp.Value);
-        } else {
-          LogNoPerspectivesRegistered(_logger);
+    while (!stoppingToken.IsCancellationRequested) {
+      try {
+        if (!await _checkDatabaseReadinessAsync(stoppingToken)) {
+          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          continue;
         }
-      } else {
-        LogPerspectiveRegistryNotAvailableAtStartup(_logger);
+
+        await _processWorkBatchAsync(stoppingToken);
+        _periodicStaleTrackingCleanup();
+      } catch (ObjectDisposedException) {
+        break;
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        LogErrorProcessingCheckpoints(_logger, ex);
+        throw; // Never swallow exceptions
+      }
+
+      try {
+        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+      } catch (OperationCanceledException) {
+        break;
       }
     }
 
-    // Process any pending perspective cursors IMMEDIATELY on startup (before first polling delay)
+    LogWorkerStopping(_logger);
+  }
+
+  private async Task _initializePerspectiveRegistryAsync() {
+    await using var startupScope = _scopeFactory.CreateAsyncScope();
+    var registry = startupScope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+    if (registry == null) {
+      LogPerspectiveRegistryNotAvailableAtStartup(_logger);
+      return;
+    }
+
+    var registeredPerspectives = registry.GetRegisteredPerspectives();
+    if (registeredPerspectives.Count == 0) {
+      LogNoPerspectivesRegistered(_logger);
+      return;
+    }
+
+    LogRegisteredPerspectivesHeader(_logger, registeredPerspectives.Count);
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      foreach (var p in registeredPerspectives) {
+        var eventTypesStr = string.Join(", ", p.EventTypes);
+        LogRegisteredPerspective(_logger, p.ClrTypeName, p.ModelType, p.EventTypes.Count, eventTypesStr);
+      }
+    }
+
+    _perspectivesPerEventType = _buildPerspectivesPerEventTypeMap(registeredPerspectives);
+  }
+
+  private static Dictionary<string, IReadOnlyList<string>> _buildPerspectivesPerEventTypeMap(
+    IReadOnlyList<PerspectiveRegistrationInfo> registeredPerspectives) {
+    var map = new Dictionary<string, List<string>>();
+    foreach (var p in registeredPerspectives) {
+      foreach (var eventType in p.EventTypes) {
+        if (!map.TryGetValue(eventType, out var list)) {
+          list = [];
+          map[eventType] = list;
+        }
+        list.Add(p.ClrTypeName);
+      }
+    }
+    return map.ToDictionary(
+      kvp => kvp.Key,
+      kvp => (IReadOnlyList<string>)kvp.Value);
+  }
+
+  private async Task _processInitialCheckpointsAsync(CancellationToken stoppingToken) {
     try {
       LogCheckingPendingCheckpoints(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
@@ -176,60 +209,34 @@ public partial class PerspectiveWorker(
       LogErrorProcessingInitialCheckpoints(_logger, ex);
       throw; // Never swallow exceptions
     }
+  }
 
-    while (!stoppingToken.IsCancellationRequested) {
-      try {
-        // Check database readiness before attempting work coordinator call
-        var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
-        if (!isDatabaseReady) {
-          // Database not ready - skip ProcessWorkBatchAsync
-          Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
-
-          // Log at Information level (important operational event)
-          LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
-
-          // Warn if database has been continuously unavailable
-          if (_consecutiveDatabaseNotReadyChecks > 10) {
-            LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
-          }
-
-          // Wait before retry
-          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
-          continue;
-        }
-
-        // Database is ready - reset consecutive counter
-        Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
-
-        await _processWorkBatchAsync(stoppingToken);
-
-        // Periodic stale tracking cleanup (every 10 cycles, 5-minute inactivity threshold)
-        if (++_batchCycleCount % 10 == 0) {
-          using var cleanupScope = _scopeFactory.CreateScope();
-          var lifecycleCoordinator = cleanupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
-          var cleaned = lifecycleCoordinator?.CleanupStaleTracking(TimeSpan.FromMinutes(5)) ?? 0;
-          if (cleaned > 0) {
-            LogStaleTrackingCleaned(_logger, cleaned);
-          }
-        }
-      } catch (ObjectDisposedException) {
-        // Service provider disposed during host shutdown — exit gracefully
-        break;
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingCheckpoints(_logger, ex);
-        throw; // Never swallow exceptions
-      }
-
-      // Wait before next poll (unless cancelled)
-      try {
-        await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
-      } catch (OperationCanceledException) {
-        // Graceful shutdown
-        break;
-      }
+  private async Task<bool> _checkDatabaseReadinessAsync(CancellationToken stoppingToken) {
+    var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
+    if (isDatabaseReady) {
+      Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
+      return true;
     }
 
-    LogWorkerStopping(_logger);
+    Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
+    LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
+    if (_consecutiveDatabaseNotReadyChecks > 10) {
+      LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
+    }
+    return false;
+  }
+
+  private void _periodicStaleTrackingCleanup() {
+    if (++_batchCycleCount % 10 != 0) {
+      return;
+    }
+
+    using var cleanupScope = _scopeFactory.CreateScope();
+    var lifecycleCoordinator = cleanupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
+    var cleaned = lifecycleCoordinator?.CleanupStaleTracking(TimeSpan.FromMinutes(5)) ?? 0;
+    if (cleaned > 0) {
+      LogStaleTrackingCleaned(_logger, cleaned);
+    }
   }
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
@@ -1146,7 +1153,7 @@ public partial class PerspectiveWorker(
       }
     }
 
-    foreach (var (eventId, (envelope, streamId)) in batchProcessedEvents) {
+    foreach (var (eventId, (envelope, _)) in batchProcessedEvents) {
       // WhenAll gate: PostAllPerspectives fires only when all perspectives signaled complete
       if (!lifecycleCoordinator.AreAllPerspectivesComplete(eventId)) {
         // Not all perspectives have completed yet — keep tracking alive for next batch.
