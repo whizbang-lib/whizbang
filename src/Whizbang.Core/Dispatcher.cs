@@ -156,10 +156,10 @@ public abstract partial class Dispatcher(
   // Security context accessor is resolved lazily from scope - it's a scoped service
   // DO NOT resolve in constructor - will fail with "Cannot resolve scoped service from root provider"
 
-  // Lazy-resolved logger for diagnostic tracing (avoids constructor changes)
+  // Lazy-resolved logger for cascade diagnostic tracing (avoids constructor changes)
   // Uses try-catch to handle ObjectDisposedException during shutdown gracefully
+#pragma warning disable S6669 // Two loggers needed: cascade vs dispatcher tracing use different categories
   private ILogger? _cascadeLogger;
-#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger CascadeLogger {
     get {
       if (_cascadeLogger is not null) {
@@ -175,11 +175,9 @@ public abstract partial class Dispatcher(
       return _cascadeLogger;
     }
   }
-#pragma warning restore IDE1006
 
   // Lazy-resolved logger for dispatcher diagnostic tracing
   private ILogger? _dispatcherLogger;
-#pragma warning disable IDE1006 // Naming rule - property follows internal naming convention
   private ILogger DispatcherLogger {
     get {
       if (_dispatcherLogger is not null) {
@@ -194,7 +192,7 @@ public abstract partial class Dispatcher(
       return _dispatcherLogger;
     }
   }
-#pragma warning restore IDE1006
+#pragma warning restore S6669
 
   /// <summary>
   /// Resolves owned domains from RoutingOptions in DI container.

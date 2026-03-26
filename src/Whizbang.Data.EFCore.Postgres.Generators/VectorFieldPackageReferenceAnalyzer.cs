@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// which is useful for custom vector implementations or testing scenarios.
 /// </para>
 /// </remarks>
-/// <docs>diagnostics/WHIZ070</docs>
+/// <docs>operations/diagnostics/whiz070</docs>
 /// <docs>diagnostics/WHIZ071</docs>
 /// <tests>VectorFieldPackageReferenceAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
