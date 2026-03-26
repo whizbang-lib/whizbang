@@ -129,7 +129,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       }
     }
 
-    return validPerspectives.ToImmutableArray();
+    return [.. validPerspectives];
   }
 
   /// <summary>

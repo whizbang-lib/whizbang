@@ -50,6 +50,8 @@ public partial class ScopedWorkCoordinatorStrategy(
   WorkCoordinatorMetrics? metrics = null,
   LifecycleMetrics? lifecycleMetrics = null
   ) : IWorkCoordinatorStrategy, IWorkFlusher, IAsyncDisposable {
+  private const string STRATEGY_NAME = "scoped";
+
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
@@ -120,7 +122,7 @@ public partial class ScopedWorkCoordinatorStrategy(
 
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, FlushMode mode = FlushMode.Required, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
-    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "scoped"), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
+    _metrics?.FlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME), new KeyValuePair<string, object?>("flush_mode", mode.ToString()));
 
     // BestEffort on Scoped strategy: flush immediately anyway.
     // The scope IS the batching boundary — deferring to DisposeAsync is unreliable
@@ -128,7 +130,7 @@ public partial class ScopedWorkCoordinatorStrategy(
     // our DisposeAsync runs (DI disposal order is not guaranteed).
 
     if (_queues.IsEmpty) {
-      _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", "scoped"));
+      _metrics?.EmptyFlushCalls.Add(1, new KeyValuePair<string, object?>("strategy", STRATEGY_NAME));
       return new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -158,7 +160,7 @@ public partial class ScopedWorkCoordinatorStrategy(
       _dependencies.ScopeFactory,
       _instanceProvider,
       _options,
-      "scoped",
+      STRATEGY_NAME,
       outboxMessages,
       inboxMessages,
       outboxCompletions,
@@ -237,7 +239,7 @@ public partial class ScopedWorkCoordinatorStrategy(
           _dependencies.ScopeFactory,
           _instanceProvider,
           _options,
-          "scoped",
+          STRATEGY_NAME,
           outboxMessages,
           inboxMessages,
           outboxCompletions,

@@ -456,7 +456,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
             node.ToString().Trim(),
             ""));
 
-        // Return null to remove the node entirely
+        // Remove this node from the syntax tree
         return null;
       }
 
@@ -485,7 +485,7 @@ public sealed class EventStoreTransformer : ICodeTransformer {
             node.ToString().Trim(),
             ""));
 
-        // Return null to remove the node entirely
+        // Remove this node from the syntax tree
         return null;
       }
 

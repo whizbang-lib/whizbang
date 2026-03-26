@@ -65,6 +65,8 @@ public sealed class TransportConsumerConfiguration {
 /// <docs>messaging/transports/transport-consumer#auto-configuration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerBuilderExtensionsTests.cs</tests>
 public static class TransportConsumerBuilderExtensions {
+  private const string HEALTH_CHECK_NAME = "subscriptions";
+
   /// <summary>
   /// Registers <see cref="TransportConsumerWorker"/> with auto-generated subscriptions
   /// from routing configuration.
@@ -201,7 +203,7 @@ public static class TransportConsumerBuilderExtensions {
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
-        "subscriptions",
+        HEALTH_CHECK_NAME,
         sp => {
           var worker = sp.GetService<TransportConsumerWorker>();
           var states = worker?.SubscriptionStates
@@ -209,7 +211,7 @@ public static class TransportConsumerBuilderExtensions {
           return new SubscriptionHealthCheck(states);
         },
         failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
-        tags: ["transport", "subscriptions"]));
+        tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
   }
@@ -321,7 +323,7 @@ public static class TransportConsumerBuilderExtensions {
     // Register health check for subscription monitoring
     builder.Services.AddHealthChecks()
       .Add(new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
-        "subscriptions",
+        HEALTH_CHECK_NAME,
         sp => {
           var worker = sp.GetService<TransportConsumerWorker>();
           var states = worker?.SubscriptionStates
@@ -329,7 +331,7 @@ public static class TransportConsumerBuilderExtensions {
           return new SubscriptionHealthCheck(states);
         },
         failureStatus: Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded,
-        tags: ["transport", "subscriptions"]));
+        tags: ["transport", HEALTH_CHECK_NAME]));
 
     return builder;
   }

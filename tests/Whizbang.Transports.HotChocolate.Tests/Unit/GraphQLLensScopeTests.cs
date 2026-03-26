@@ -10,7 +10,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Default_ShouldBeZeroAsync() {
     // Arrange & Act
-    var scope = GraphQLLensScope.Default;
+    var scope = GraphQLLensScope.None;
 
     // Assert
     await Assert.That((int)scope).IsEqualTo(0);
@@ -145,7 +145,7 @@ public class GraphQLLensScopeTests {
   [Test]
   public async Task Default_ShouldNotHaveAnyFlagsAsync() {
     // Arrange & Act
-    var defaultScope = GraphQLLensScope.Default;
+    var defaultScope = GraphQLLensScope.None;
     var hasData = defaultScope.HasFlag(GraphQLLensScope.Data);
     var hasMetadata = defaultScope.HasFlag(GraphQLLensScope.Metadata);
     var hasScope = defaultScope.HasFlag(GraphQLLensScope.Scope);
@@ -184,7 +184,7 @@ public class GraphQLLensScopeTests {
     // Act & Assert
     var extractedData = (combined & GraphQLLensScope.Data) == GraphQLLensScope.Data;
     var extractedMetadata = (combined & GraphQLLensScope.Metadata) == GraphQLLensScope.Metadata;
-    var extractedScope = (combined & GraphQLLensScope.Scope) == GraphQLLensScope.Default;
+    var extractedScope = (combined & GraphQLLensScope.Scope) == GraphQLLensScope.None;
 
     await Assert.That(extractedData).IsTrue();
     await Assert.That(extractedMetadata).IsTrue();
@@ -208,7 +208,7 @@ public class GraphQLLensScopeTests {
   public async Task AllValues_ShouldBePowersOfTwoOrZeroAsync() {
     // Arrange - primitive flags should be 0 or powers of 2
     var primitiveFlags = new[] {
-      GraphQLLensScope.Default,
+      GraphQLLensScope.None,
       GraphQLLensScope.Data,
       GraphQLLensScope.Metadata,
       GraphQLLensScope.Scope,

@@ -485,9 +485,9 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
                     SyntaxFactory.GenericName(
                         SyntaxFactory.Identifier("LocalInvokeAsync"),
                         SyntaxFactory.TypeArgumentList(
-                            SyntaxFactory.SeparatedList<TypeSyntax>(new[] {
+                            SyntaxFactory.SeparatedList<TypeSyntax>([
                                 SyntaxFactory.ParseTypeName(innerType)
-                            }))));
+                            ]))));
 
                 var newInvocation = SyntaxFactory.InvocationExpression(newExpression, newArgList)
                     .WithLeadingTrivia(node.GetLeadingTrivia())

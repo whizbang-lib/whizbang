@@ -24,6 +24,11 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   private const string POPULATE_FROM_SERVICE_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromServiceAttribute";
   private const string POPULATE_FROM_IDENTIFIER_ATTRIBUTE = "Whizbang.Core.Attributes.PopulateFromIdentifierAttribute";
 
+  private const string POPULATE_KIND_TIMESTAMP = "Timestamp";
+  private const string POPULATE_KIND_CONTEXT = "Context";
+  private const string POPULATE_KIND_SERVICE = "Service";
+  private const string POPULATE_KIND_IDENTIFIER = "Identifier";
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover types with auto-populate attributes on properties
     var populatedProperties = context.SyntaxProvider.CreateSyntaxProvider(
@@ -117,7 +122,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         TypeFullName: typeFullName,
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        PopulateKind: "Timestamp",
+        PopulateKind: POPULATE_KIND_TIMESTAMP,
         SpecificKind: $"TimestampKind.{kindName}",
         IsRecord: isRecord
     );
@@ -145,7 +150,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         TypeFullName: typeFullName,
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        PopulateKind: "Context",
+        PopulateKind: POPULATE_KIND_CONTEXT,
         SpecificKind: $"ContextKind.{kindName}",
         IsRecord: isRecord
     );
@@ -175,7 +180,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         TypeFullName: typeFullName,
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        PopulateKind: "Service",
+        PopulateKind: POPULATE_KIND_SERVICE,
         SpecificKind: $"ServiceKind.{kindName}",
         IsRecord: isRecord
     );
@@ -205,7 +210,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
         TypeFullName: typeFullName,
         PropertyName: property.Name,
         PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        PopulateKind: "Identifier",
+        PopulateKind: POPULATE_KIND_IDENTIFIER,
         SpecificKind: $"IdentifierKind.{kindName}",
         IsRecord: isRecord
     );
@@ -302,10 +307,10 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     // Add the specific kind based on PopulateKind
     var specificKindProperty = info.PopulateKind switch {
-      "Timestamp" => "TimestampKind",
-      "Context" => "ContextKind",
-      "Service" => "ServiceKind",
-      "Identifier" => "IdentifierKind",
+      POPULATE_KIND_TIMESTAMP => "TimestampKind",
+      POPULATE_KIND_CONTEXT => "ContextKind",
+      POPULATE_KIND_SERVICE => "ServiceKind",
+      POPULATE_KIND_IDENTIFIER => "IdentifierKind",
       _ => null
     };
 
@@ -393,10 +398,10 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     foreach (var group in typeGroups) {
       // SentAt phase: TimestampKind.SentAt + all Context + all Service + all Identifier
       var sentProperties = group.Where(i =>
-          (i.PopulateKind == "Timestamp" && i.SpecificKind == "TimestampKind.SentAt") ||
-          i.PopulateKind == "Context" ||
-          i.PopulateKind == "Service" ||
-          i.PopulateKind == "Identifier"
+          (i.PopulateKind == POPULATE_KIND_TIMESTAMP && i.SpecificKind == "TimestampKind.SentAt") ||
+          i.PopulateKind == POPULATE_KIND_CONTEXT ||
+          i.PopulateKind == POPULATE_KIND_SERVICE ||
+          i.PopulateKind == POPULATE_KIND_IDENTIFIER
       ).ToList();
 
       if (sentProperties.Count == 0) {
@@ -428,7 +433,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var group in typeGroups) {
       var timestampProperties = group.Where(i =>
-          i.PopulateKind == "Timestamp" && i.SpecificKind == $"TimestampKind.{timestampKindName}"
+          i.PopulateKind == POPULATE_KIND_TIMESTAMP && i.SpecificKind == $"TimestampKind.{timestampKindName}"
       ).ToList();
 
       if (timestampProperties.Count == 0) {
@@ -450,17 +455,17 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
   private static string _getValueExpression(AutoPopulateInfo info) {
     return info.PopulateKind switch {
-      "Timestamp" when info.SpecificKind == "TimestampKind.SentAt" => "hop.Timestamp",
-      "Context" when info.SpecificKind == "ContextKind.UserId" => "_extractUserId(hop)",
-      "Context" when info.SpecificKind == "ContextKind.TenantId" => "_extractTenantId(hop)",
-      "Service" when info.SpecificKind == "ServiceKind.ServiceName" => "hop.ServiceInstance.ServiceName",
-      "Service" when info.SpecificKind == "ServiceKind.InstanceId" => "hop.ServiceInstance.InstanceId",
-      "Service" when info.SpecificKind == "ServiceKind.HostName" => "hop.ServiceInstance.HostName",
-      "Service" when info.SpecificKind == "ServiceKind.ProcessId" => "hop.ServiceInstance.ProcessId",
-      "Identifier" when info.SpecificKind == "IdentifierKind.MessageId" => "messageId.Value",
-      "Identifier" when info.SpecificKind == "IdentifierKind.CorrelationId" => "hop.CorrelationId?.Value.Value",
-      "Identifier" when info.SpecificKind == "IdentifierKind.CausationId" => "hop.CausationId?.Value.Value",
-      "Identifier" when info.SpecificKind == "IdentifierKind.StreamId" => "hop.StreamId",
+      POPULATE_KIND_TIMESTAMP when info.SpecificKind == "TimestampKind.SentAt" => "hop.Timestamp",
+      POPULATE_KIND_CONTEXT when info.SpecificKind == "ContextKind.UserId" => "_extractUserId(hop)",
+      POPULATE_KIND_CONTEXT when info.SpecificKind == "ContextKind.TenantId" => "_extractTenantId(hop)",
+      POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.ServiceName" => "hop.ServiceInstance.ServiceName",
+      POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.InstanceId" => "hop.ServiceInstance.InstanceId",
+      POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.HostName" => "hop.ServiceInstance.HostName",
+      POPULATE_KIND_SERVICE when info.SpecificKind == "ServiceKind.ProcessId" => "hop.ServiceInstance.ProcessId",
+      POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.MessageId" => "messageId.Value",
+      POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.CorrelationId" => "hop.CorrelationId?.Value.Value",
+      POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.CausationId" => "hop.CausationId?.Value.Value",
+      POPULATE_KIND_IDENTIFIER when info.SpecificKind == "IdentifierKind.StreamId" => "hop.StreamId",
       _ => "default"
     };
   }

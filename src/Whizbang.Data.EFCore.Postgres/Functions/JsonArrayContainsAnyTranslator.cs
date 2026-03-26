@@ -49,7 +49,7 @@ public class JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpres
     // This generates: scope->'AllowedPrincipals'
     var allowedPrincipalsPath = _sqlExpressionFactory.JsonTraversal(
       scopeColumn,
-      new[] { _sqlExpressionFactory.Constant("AllowedPrincipals") },
+      [_sqlExpressionFactory.Constant("AllowedPrincipals")],
       returnsText: false,  // Returns JSONB, not text
       typeof(string),
       scopeColumn.TypeMapping);

@@ -18,6 +18,8 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <docs>messaging/transports/rabbitmq</docs>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
+  private const string UNKNOWN_MESSAGE_ID = "unknown";
+
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
@@ -83,7 +85,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <inheritdoc />
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
-    TransportCapabilities.Reliable;
+    TransportCapabilities.Reliable |
+    TransportCapabilities.BulkPublish;
   // Note: NOT Ordered - RabbitMQ doesn't guarantee ordering in multi-consumer scenarios
 
   /// <inheritdoc />
@@ -250,6 +253,124 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+    IReadOnlyList<BulkPublishItem> items,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(items);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    if (items.Count == 0) {
+      return [];
+    }
+
+    var exchangeName = destination.Address;
+    var results = new List<BulkPublishItemResult>(items.Count);
+
+    try {
+      using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
+      var channel = pooledChannel.Channel;
+
+      // Declare exchange (idempotent)
+      await channel.ExchangeDeclareAsync(
+        exchange: exchangeName,
+        type: "topic",
+        durable: true,
+        autoDelete: false,
+        arguments: null,
+        passive: false,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Publish each item in the batch using the same channel
+      foreach (var item in items) {
+        try {
+          var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
+          var envelope = item.Envelope;
+          var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
+            ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+          var envelopeRuntimeType = envelope.GetType();
+
+          var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+            ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
+          var json = JsonSerializer.Serialize(envelope, typeInfo);
+          var body = Encoding.UTF8.GetBytes(json);
+
+          var properties = new BasicProperties {
+            MessageId = envelope.MessageId.Value.ToString(),
+            ContentType = "application/json",
+            Persistent = true,
+            Headers = new Dictionary<string, object?>()
+          };
+
+          properties.Headers["EnvelopeType"] = envelopeTypeName;
+
+          var correlationId = envelope.GetCorrelationId();
+          if (correlationId != null) {
+            properties.CorrelationId = correlationId.Value.Value.ToString();
+          }
+
+          var causationId = envelope.GetCausationId();
+          if (causationId != null) {
+            properties.Headers["CausationId"] = causationId.Value.Value.ToString();
+          }
+
+          if (destination.Metadata != null) {
+            foreach (var (key, value) in destination.Metadata) {
+              properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
+            }
+          }
+
+          await channel.BasicPublishAsync(
+            exchange: exchangeName,
+            routingKey: routingKey,
+            mandatory: false,
+            basicProperties: properties,
+            body: body,
+            cancellationToken: cancellationToken
+          );
+
+          results.Add(new BulkPublishItemResult { MessageId = item.MessageId, Success = true });
+        } catch (Exception ex) {
+          results.Add(new BulkPublishItemResult {
+            MessageId = item.MessageId,
+            Success = false,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+    } catch (AlreadyClosedException ex) {
+      // Channel/connection closed — fail all remaining items
+      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
+      foreach (var id in failedIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"AlreadyClosedException: {ex.Message}"
+        });
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
+      foreach (var id in failedIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"{ex.GetType().Name}: {ex.Message}"
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /// <inheritdoc />
   public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
@@ -380,8 +501,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       await _processMessageAsync(channel, args, handler, queueName, cancellationToken);
     } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
       _logger?.LogWarning(
+        ex,
         "RabbitMQ channel closed/disposed while processing message {MessageId} from queue {QueueName} - message will be redelivered",
-        args.BasicProperties.MessageId ?? "unknown",
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
         queueName
       );
     }
@@ -393,7 +515,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private async Task _nackPausedMessageAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Subscription paused - requeueing message {MessageId} from queue {QueueName}",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
     await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
@@ -437,7 +559,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private async Task _nackDeserializationFailureAsync(IChannel channel, BasicDeliverEventArgs args, string queueName) {
     _logger?.LogWarning(
       "NACK reason: Deserialization failed for message {MessageId} from queue {QueueName} - sending to dead letter queue",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
     await channel.BasicNackAsync(args.DeliveryTag, false, false);
@@ -724,7 +846,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _logger?.LogError(
       ex,
       "Error processing message {MessageId} from queue {QueueName}",
-      args.BasicProperties.MessageId ?? "unknown",
+      args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
       queueName
     );
 
@@ -737,24 +859,22 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     try {
       if (deliveryCount >= _options.MaxDeliveryAttempts) {
         _logger?.LogWarning(
-          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue. Exception: {ExceptionType}: {ExceptionMessage}",
+          ex,
+          "NACK reason: Handler exception after max delivery attempts ({DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - sending to dead letter queue",
           deliveryCount,
           _options.MaxDeliveryAttempts,
-          args.BasicProperties.MessageId ?? "unknown",
-          queueName,
-          ex.GetType().Name,
-          ex.Message
+          args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
+          queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, false);
       } else {
         _logger?.LogWarning(
-          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry. Exception: {ExceptionType}: {ExceptionMessage}",
+          ex,
+          "NACK reason: Handler exception (attempt {DeliveryCount}/{MaxAttempts}) for message {MessageId} from queue {QueueName} - requeueing for retry",
           deliveryCount,
           _options.MaxDeliveryAttempts,
-          args.BasicProperties.MessageId ?? "unknown",
-          queueName,
-          ex.GetType().Name,
-          ex.Message
+          args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID,
+          queueName
         );
         await channel.BasicNackAsync(args.DeliveryTag, false, true);
       }
@@ -762,8 +882,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Channel/connection was closed or disposed during shutdown - this is expected
       // The message will be redelivered when the consumer reconnects or another instance picks it up
       _logger?.LogWarning(
+        channelEx,
         "RabbitMQ channel closed/disposed during failure handling for message {MessageId} - message will be redelivered on reconnection",
-        args.BasicProperties.MessageId ?? "unknown"
+        args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID
       );
     }
   }

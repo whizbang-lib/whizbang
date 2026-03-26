@@ -38,7 +38,8 @@ DO $$ BEGIN
 END $$;
 
 -- Add new columns for rewind and locking support (safe on both fresh and upgraded DBs)
-ALTER TABLE __SCHEMA__.wh_perspective_cursors
+-- IF EXISTS handles the case where neither old nor new table exists yet (version mismatch)
+ALTER TABLE IF EXISTS __SCHEMA__.wh_perspective_cursors
   ADD COLUMN IF NOT EXISTS rewind_trigger_event_id UUID,
   ADD COLUMN IF NOT EXISTS stream_lock_instance_id UUID,
   ADD COLUMN IF NOT EXISTS stream_lock_expiry TIMESTAMPTZ,

@@ -96,5 +96,27 @@ public class TransportCapabilitiesTests {
     await Assert.That(all.HasFlag(TransportCapabilities.Reliable)).IsTrue();
     await Assert.That(all.HasFlag(TransportCapabilities.Ordered)).IsTrue();
     await Assert.That(all.HasFlag(TransportCapabilities.ExactlyOnce)).IsTrue();
+    await Assert.That(all.HasFlag(TransportCapabilities.BulkPublish)).IsTrue();
+  }
+
+  [Test]
+  public async Task TransportCapabilities_HasBulkPublishAsync() {
+    // Arrange & Act
+    var capability = TransportCapabilities.BulkPublish;
+
+    // Assert
+    await Assert.That((int)capability).IsEqualTo(1 << 6);
+  }
+
+  [Test]
+  public async Task TransportCapabilities_BulkPublish_CanCombineWithOtherFlagsAsync() {
+    // Arrange & Act
+    var combined = TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable | TransportCapabilities.BulkPublish;
+
+    // Assert
+    await Assert.That(combined.HasFlag(TransportCapabilities.PublishSubscribe)).IsTrue();
+    await Assert.That(combined.HasFlag(TransportCapabilities.Reliable)).IsTrue();
+    await Assert.That(combined.HasFlag(TransportCapabilities.BulkPublish)).IsTrue();
+    await Assert.That(combined.HasFlag(TransportCapabilities.Ordered)).IsFalse();
   }
 }

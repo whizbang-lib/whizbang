@@ -396,7 +396,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Normalize event type name (remove assembly version/culture/publickey if present)
       var storedTypeName = record.EventType;
       var commaIndex = storedTypeName.IndexOf(',');
-      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
       // Skip events that aren't in the perspective's list
       if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {

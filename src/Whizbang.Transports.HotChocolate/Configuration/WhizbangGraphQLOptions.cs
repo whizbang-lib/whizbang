@@ -18,7 +18,7 @@ namespace Whizbang.Transports.HotChocolate;
 public class WhizbangGraphQLOptions {
   /// <summary>
   /// Default scope when <see cref="GraphQLLensAttribute.Scope"/> is set to
-  /// <see cref="GraphQLLensScope.Default"/>.
+  /// <see cref="GraphQLLensScope.None"/>.
   /// Default: <see cref="GraphQLLensScope.DataOnly"/>
   /// </summary>
   public GraphQLLensScope DefaultScope { get; set; } = GraphQLLensScope.DataOnly;

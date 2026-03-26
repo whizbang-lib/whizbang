@@ -85,7 +85,8 @@ public static class TemplateUtilities {
   }
 
   /// <summary>
-  /// Finds the start of the line containing the given position (after the preceding newline).
+  /// Finds the start of the line containing the given position, scanning backward to the
+  /// preceding newline character.
   /// </summary>
   private static int _findLineStart(string template, int position) {
     var lineStart = position;

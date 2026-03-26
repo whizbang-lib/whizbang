@@ -429,7 +429,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   /// Database-backed lens implementation using EFCoreFilterableLensQuery.
   /// </summary>
   private sealed class DatabaseOrderLensQuery(DbContext context) : IDatabaseOrderLensQuery, IFilterableLens {
-    private readonly EFCoreFilterableLensQuery<Order> _inner = new EFCoreFilterableLensQuery<Order>(context, "wh_per_order");
+    private readonly EFCoreFilterableLensQuery<Order> _inner = new(context, "wh_per_order");
 
     public void ApplyFilter(ScopeFilterInfo filterInfo) {
       _inner.ApplyFilter(filterInfo);

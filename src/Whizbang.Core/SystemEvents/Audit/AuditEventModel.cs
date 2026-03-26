@@ -61,6 +61,8 @@ public class AuditEventModel {
 /// </remarks>
 /// <docs>fundamentals/events/system-events#audit-projection</docs>
 public static class AuditEventProjection {
+  private const string PASCAL_CASE_SPACE_REPLACEMENT = "$1 $2";
+
   /// <summary>
   /// Global custom humanizer set via <see cref="SystemEventOptions.EventNameHumanizer"/>.
   /// Called by <see cref="HumanizeEventType"/> before the default logic.
@@ -144,8 +146,8 @@ public static class AuditEventProjection {
         seg = seg[..^9];
       }
       // Insert spaces in PascalCase, keeping acronyms together
-      seg = Regex.Replace(seg, "([A-Z]+)([A-Z][a-z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
-      seg = Regex.Replace(seg, "([a-z])([A-Z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
+      seg = Regex.Replace(seg, "([A-Z]+)([A-Z][a-z])", PASCAL_CASE_SPACE_REPLACEMENT, RegexOptions.None, TimeSpan.FromSeconds(1));
+      seg = Regex.Replace(seg, "([a-z])([A-Z])", PASCAL_CASE_SPACE_REPLACEMENT, RegexOptions.None, TimeSpan.FromSeconds(1));
       if (!string.IsNullOrWhiteSpace(seg)) {
         humanized.Add(seg.Trim());
       }
@@ -197,8 +199,8 @@ public static class AuditEventProjection {
     foreach (var seg in segments) {
       var name = seg;
       // Humanize PascalCase, keeping acronyms together
-      name = Regex.Replace(name, "([A-Z]+)([A-Z][a-z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
-      name = Regex.Replace(name, "([a-z])([A-Z])", "$1 $2", RegexOptions.None, TimeSpan.FromSeconds(1));
+      name = Regex.Replace(name, "([A-Z]+)([A-Z][a-z])", PASCAL_CASE_SPACE_REPLACEMENT, RegexOptions.None, TimeSpan.FromSeconds(1));
+      name = Regex.Replace(name, "([a-z])([A-Z])", PASCAL_CASE_SPACE_REPLACEMENT, RegexOptions.None, TimeSpan.FromSeconds(1));
       if (!string.IsNullOrWhiteSpace(name)) {
         meaningful.Add(name.Trim());
       }

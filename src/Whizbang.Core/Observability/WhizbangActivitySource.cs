@@ -30,25 +30,27 @@ namespace Whizbang.Core.Observability;
 /// </code>
 /// </remarks>
 public static class WhizbangActivitySource {
+  private const string ACTIVITY_SOURCE_VERSION = "1.0.0";
+
   /// <summary>
   /// ActivitySource for execution strategies (SerialExecutor, ParallelExecutor).
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Execution_ActivitySource_IsInitializedAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:ExecutionActivitySource_CanCreateActivitiesAsync</tests>
-  public static readonly ActivitySource Execution = new("Whizbang.Execution", "1.0.0");
+  public static readonly ActivitySource Execution = new("Whizbang.Execution", ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
   /// ActivitySource for transport operations (InProcessTransport, etc.).
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Transport_ActivitySource_IsInitializedAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:TransportActivitySource_CanCreateActivitiesAsync</tests>
-  public static readonly ActivitySource Transport = new("Whizbang.Transport", "1.0.0");
+  public static readonly ActivitySource Transport = new("Whizbang.Transport", ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
   /// ActivitySource for hosting and initialization operations (Aspire AppHost, startup provisioning).
   /// Tracks infrastructure setup like topic/subscription creation, filter provisioning, and worker initialization.
   /// </summary>
-  public static readonly ActivitySource Hosting = new("Whizbang.Hosting", "1.0.0");
+  public static readonly ActivitySource Hosting = new("Whizbang.Hosting", ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
   /// ActivitySource for handler tracing operations.
@@ -61,7 +63,7 @@ public static class WhizbangActivitySource {
   ///   .WithTracing(builder => builder.AddSource("Whizbang.Tracing"));
   /// </code>
   /// </remarks>
-  public static readonly ActivitySource Tracing = new("Whizbang.Tracing", "1.0.0");
+  public static readonly ActivitySource Tracing = new("Whizbang.Tracing", ACTIVITY_SOURCE_VERSION);
 
   /// <summary>
   /// Records a defensive exception that should never occur in normal operation.

@@ -8,7 +8,7 @@ namespace ECommerce.Contracts;
 /// Required by PerspectiveWorker to load events when invoking lifecycle receptors.
 /// </summary>
 public class ECommerceEventTypeProvider : IEventTypeProvider {
-  private static readonly IReadOnlyList<Type> _eventTypes = new[] {
+  private static readonly IReadOnlyList<Type> _eventTypes = [
     typeof(InventoryAdjustedEvent),
     typeof(InventoryReleasedEvent),
     typeof(InventoryReservedEvent),
@@ -21,7 +21,7 @@ public class ECommerceEventTypeProvider : IEventTypeProvider {
     typeof(ProductDeletedEvent),
     typeof(ProductUpdatedEvent),
     typeof(ShipmentCreatedEvent)
-  };
+  ];
 
   public IReadOnlyList<Type> GetEventTypes() => _eventTypes;
 }
