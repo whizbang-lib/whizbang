@@ -105,7 +105,7 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
     } catch (RequestFailedException ex) when (ex.Status == 409) {
       // Race condition - topic created by another instance between exists check and create
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug("Topic '{Topic}' already exists (race condition), skipping", topicName);
+        _logger.LogDebug(ex, "Topic '{Topic}' already exists (race condition), skipping", topicName);
       }
     }
   }

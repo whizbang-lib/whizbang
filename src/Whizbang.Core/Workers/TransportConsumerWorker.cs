@@ -194,8 +194,8 @@ public partial class TransportConsumerWorker : BackgroundService {
     // Keep running until cancellation is requested
     try {
       await Task.Delay(Timeout.Infinite, stoppingToken);
-    } catch (OperationCanceledException) {
-      _logger.LogInformation("TransportConsumerWorker cancellation requested");
+    } catch (OperationCanceledException ex) {
+      _logger.LogInformation(ex, "TransportConsumerWorker cancellation requested");
     }
   }
 
@@ -380,16 +380,16 @@ public partial class TransportConsumerWorker : BackgroundService {
     } catch (ObjectDisposedException) {
       LogMessageDroppedDuringShutdown(_logger, envelope.MessageId.Value);
       return;
+#pragma warning disable S2139 // Log + rethrow is intentional: transport needs the exception for retry/dead-letter, but we need the log for observability
     } catch (Exception ex) {
       _metrics?.InboxMessagesFailed.Add(1, messageTypeTag);
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
       inboxActivity?.SetTag("exception.message", ex.Message);
-#pragma warning disable S2139 // Log + rethrow is intentional: transport needs the exception for retry/dead-letter, but we need the log for observability
       _logger.LogError(ex, "Error processing message {MessageId}", envelope.MessageId);
       throw;
-#pragma warning restore S2139
     } finally {
+#pragma warning restore S2139
       receiveSw.Stop();
       _metrics?.InboxReceiveDuration.Record(receiveSw.Elapsed.TotalMilliseconds, messageTypeTag);
       inboxActivity?.Dispose();

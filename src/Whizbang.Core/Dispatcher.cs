@@ -966,14 +966,14 @@ public abstract partial class Dispatcher(
         new KeyValuePair<string, object?>(METRIC_PATTERN, PATTERN_LOCAL_INVOKE));
 
       return result;
-    } catch (InvalidCastException) {
+    } catch (InvalidCastException ex) {
       // The typed invoker failed because the receptor returns a complex type
       // containing TResult, not TResult directly. Fall back to RPC extraction.
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         var msgTypeName = messageType.Name;
         var resultTypeName = typeof(TResult).Name;
-        CascadeLogger.LogDebug("[RPC] InvalidCastException caught, falling back to RPC extraction for {MessageType} -> {ResultType}",
+        CascadeLogger.LogDebug(ex, "[RPC] InvalidCastException caught, falling back to RPC extraction for {MessageType} -> {ResultType}",
           msgTypeName, resultTypeName);
       }
 #pragma warning restore CA1848
@@ -3184,13 +3184,13 @@ public abstract partial class Dispatcher(
     IServiceScope scope;
     try {
       scope = _scopeFactory.CreateScope();
-    } catch (ObjectDisposedException) {
+    } catch (ObjectDisposedException ex) {
       // Service provider is disposed - application is shutting down
       // Dropping events during shutdown is acceptable behavior
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
         var eventTypeName = eventType.Name;
-        CascadeLogger.LogWarning(
+        CascadeLogger.LogWarning(ex,
           "[CASCADE] PublishToOutboxAsync: Service provider disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
           eventTypeName, messageId);
       }
@@ -3355,10 +3355,10 @@ public abstract partial class Dispatcher(
     // may be disposed during host shutdown while in-flight receptors are still publishing.
     try {
       strategy.QueueOutboxMessage(newOutboxMessage);
-    } catch (ObjectDisposedException) {
+    } catch (ObjectDisposedException ex) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
       if (CascadeLogger.IsEnabled(LogLevel.Warning)) {
-        CascadeLogger.LogWarning(
+        CascadeLogger.LogWarning(ex,
           "[CASCADE] PublishToOutboxAsync: Strategy disposed during shutdown - event {EventType} will not be published to outbox. MessageId={MessageId}",
           eventType.Name, messageId);
       }
