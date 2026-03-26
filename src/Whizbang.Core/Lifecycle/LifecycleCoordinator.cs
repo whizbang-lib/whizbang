@@ -45,9 +45,9 @@ public sealed partial class LifecycleCoordinator : ILifecycleCoordinator {
     Guid? streamId = null,
     Type? perspectiveType = null) {
     var tracking = _tracked.GetOrAdd(eventId,
-      _ => {
+      id => {
         _metrics?.ActiveTrackedEvents.Add(1);
-        return new LifecycleTrackingState(eventId, envelope, entryStage, source, streamId, perspectiveType);
+        return new LifecycleTrackingState(id, envelope, entryStage, source, streamId, perspectiveType);
       });
     return tracking;
   }

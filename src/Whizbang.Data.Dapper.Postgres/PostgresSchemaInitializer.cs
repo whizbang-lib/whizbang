@@ -326,7 +326,9 @@ public sealed class PostgresSchemaInitializer {
         }
 
         await using var dropCmd = connection.CreateCommand();
+#pragma warning disable S2077 // Table name is validated against _isSafeIdentifier (alphanumeric/underscore only) and sourced from information_schema
         dropCmd.CommandText = $"DROP TABLE IF EXISTS \"{tableName}\"";
+#pragma warning restore S2077
         dropCmd.CommandTimeout = 30;
         await dropCmd.ExecuteNonQueryAsync(cancellationToken);
         dropped.Add(tableName);

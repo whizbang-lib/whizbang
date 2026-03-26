@@ -193,9 +193,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     CancellationToken cancellationToken
   ) {
     try {
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to get sender for {Destination}", destination.Address);
       var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Got sender for {Destination}", destination.Address);
 
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
@@ -228,13 +226,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ContentType = "application/json"
       };
 
-      // DIAGNOSTIC: Log the Subject being set (WARNING level to always show)
-      _logger.LogWarning(
-        "DIAGNOSTIC [PublishAsync]: Setting Subject={Subject} on message {MessageId} to topic {TopicName} (RoutingKey={RoutingKey})",
-        message.Subject,
-        envelope.MessageId,
-        destination.Address,
-        destination.RoutingKey ?? "(null)");
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[Publish] Setting Subject={Subject} on message {MessageId} to topic {TopicName} (RoutingKey={RoutingKey})",
+          message.Subject,
+          envelope.MessageId,
+          destination.Address,
+          destination.RoutingKey ?? "(null)");
+      }
 
       // DIAGNOSTIC: Log the Service Bus message ID to compare
       if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -267,8 +266,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         }
       }
 
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to send message {MessageId} to {Destination}", envelope.MessageId, destination.Address);
-
       // WORKAROUND: Azure Service Bus Emulator sometimes hangs on first send
       // Use a task-based timeout instead of CancellationToken (which also hangs)
       // Increased to 30 seconds for emulator (originally 5s, too short for slow emulator with many topics)
@@ -283,7 +280,6 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       }
 
       await sendTask; // Re-await to propagate exceptions
-      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Message sent successfully {MessageId}", envelope.MessageId);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         var messageId = envelope.MessageId;
@@ -741,16 +737,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     string subscriptionName,
     CancellationToken cancellationToken
   ) {
-    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) == true) {
-      _logger.LogWarning(
-        "DIAGNOSTIC [SubscribeAsync]: Found RoutingPatterns! ValueKind={ValueKind}, RawText={RawText}",
-        routingPatternsElement.ValueKind,
-        routingPatternsElement.GetRawText());
-    } else {
-      _logger.LogWarning(
-        "DIAGNOSTIC [SubscribeAsync]: RoutingPatterns NOT FOUND in metadata for {TopicName}/{SubscriptionName}",
-        topicName,
-        subscriptionName);
+    if (destination.Metadata?.TryGetValue("RoutingPatterns", out var routingPatternsElement) != true) {
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[Subscribe] RoutingPatterns not found in metadata for {TopicName}/{SubscriptionName}",
+          topicName,
+          subscriptionName);
+      }
       return;
     }
 
@@ -799,14 +792,14 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       } catch (Exception ex) {
         _logger.LogWarning(
           ex,
-          "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+          "DestinationFilter '{DestinationFilter}' for {TopicName}/{SubscriptionName}: failed to apply, proceeding without filter",
           destinationFilter,
           topicName,
           subscriptionName
         );
       }
-    } else {
-      _logger.LogWarning(
+    } else if (_logger.IsEnabled(LogLevel.Debug)) {
+      _logger.LogDebug(
         "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
         destinationFilter,
         topicName,
@@ -1057,25 +1050,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         deletedRules.Add(rule.Name);
       }
 
-      // Log deleted rules at WARNING level for diagnostic visibility
-      _logger.LogWarning(
-        "DIAGNOSTIC [SqlFilter]: Deleted {RuleCount} existing rules from {TopicName}/{SubscriptionName}: [{DeletedRules}]",
-        deletedRules.Count,
-        topicName,
-        subscriptionName,
-        string.Join(", ", deletedRules));
-
       // Create SqlFilter rule
       var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
       await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
 
-      // Log at WARNING level for diagnostic visibility
-      _logger.LogWarning(
-        "DIAGNOSTIC [SqlFilter]: Applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
-        sqlExpression,
-        topicName,
-        subscriptionName
-      );
+      if (_logger.IsEnabled(LogLevel.Debug)) {
+        _logger.LogDebug(
+          "[SqlFilter] Deleted {RuleCount} existing rules and applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
+          deletedRules.Count,
+          sqlExpression,
+          topicName,
+          subscriptionName);
+      }
     } catch (Exception ex) {
       _logger.LogWarning(
         ex,
@@ -1134,17 +1120,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Using existing sender for {TopicName}", topicName);
       return existingSender;
     }
 
-    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Waiting for semaphore for {TopicName}", topicName);
     await _senderLock.WaitAsync(cancellationToken);
-    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Acquired semaphore for {TopicName}", topicName);
     try {
       // Double-check after acquiring lock
       if (_senders.TryGetValue(topicName, out existingSender)) {
-        _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Found existing sender after lock for {TopicName}", topicName);
         return existingSender;
       }
 
@@ -1152,19 +1134,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
       await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
 
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Creating sender for {TopicName}", topicName);
       var sender = _client.CreateSender(topicName);
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Sender created, adding to dictionary for {TopicName}", topicName);
       _senders[topicName] = sender;
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
-        var topic = topicName;
-        _logger.LogDebug("Created sender for topic {TopicName}", topic);
+        _logger.LogDebug("Created sender for topic {TopicName}", topicName);
       }
 
       return sender;
     } finally {
-      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Releasing semaphore for {TopicName}", topicName);
       _senderLock.Release();
     }
   }

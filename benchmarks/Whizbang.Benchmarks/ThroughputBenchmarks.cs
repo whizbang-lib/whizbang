@@ -239,7 +239,7 @@ public class ThroughputBenchmarks {
       var responseEnvelope = _createEnvelope(response);
 
       // Get correlation ID from request
-      var correlationId = requestEnvelope.Hops.Last().CorrelationId;
+      var correlationId = requestEnvelope.Hops[^1].CorrelationId;
       if (correlationId.HasValue) {
         await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
       }

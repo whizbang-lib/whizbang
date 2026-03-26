@@ -32,6 +32,7 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
 #pragma warning disable S4487 // Backing field for Logger lazy property
   private ILogger? _logger;
 #pragma warning restore S4487
+#pragma warning disable IDE1006 // Naming rule — Logger is a property, not field
   private ILogger Logger => _logger ??= _scopeFactory?.CreateScope().ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Tags.MessageTagProcessor") ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 
   /// <summary>
