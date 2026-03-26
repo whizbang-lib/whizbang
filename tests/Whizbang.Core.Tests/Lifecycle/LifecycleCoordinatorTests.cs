@@ -922,8 +922,8 @@ public class LifecycleCoordinatorTests {
     var envelope = _createEnvelope(new TestEvent(eventId, "stale"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
 
-    // Act — cleanup with zero threshold (everything is stale)
-    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.Zero);
+    // Act — cleanup with threshold of -1 tick (everything is stale since cutoff is in the future)
+    var cleaned = coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
 
     // Assert
     await Assert.That(cleaned).IsEqualTo(1);
@@ -1016,8 +1016,8 @@ public class LifecycleCoordinatorTests {
     var envelope = _createEnvelope(new TestEvent(eventId, "metric-cleanup"));
     coordinator.BeginTracking(eventId, envelope, LifecycleStage.PrePerspectiveAsync, MessageSource.Local);
 
-    // Act
-    coordinator.CleanupStaleTracking(TimeSpan.Zero);
+    // Act — use negative threshold so cutoff is in the future (everything is stale)
+    coordinator.CleanupStaleTracking(TimeSpan.FromTicks(-1));
 
     // Assert
     var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stale_tracking_cleaned");

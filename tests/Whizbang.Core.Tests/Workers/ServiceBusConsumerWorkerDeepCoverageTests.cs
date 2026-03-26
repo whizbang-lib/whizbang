@@ -529,7 +529,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -605,7 +605,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -681,7 +681,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     }
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(registry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(registry, sp));
@@ -767,7 +767,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     ]);
 
     var services = new ServiceCollection();
-    services.AddWhizbangMessageSecurity();
+    services.AddWhizbangMessageSecurity(options => { options.AllowAnonymous = true; });
     services.AddSingleton<IWorkCoordinatorStrategy>(strategy);
     services.AddSingleton<IReceptorRegistry>(receptorRegistry);
     services.AddScoped<IReceptorInvoker>(sp => new ReceptorInvoker(receptorRegistry, sp));

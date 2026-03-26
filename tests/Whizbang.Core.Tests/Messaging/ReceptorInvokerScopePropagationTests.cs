@@ -68,7 +68,10 @@ public class ReceptorInvokerScopePropagationTests {
       () => new TestEvent("cascaded-data"));
 
     var invoker = new ReceptorInvoker(registry, scope.ServiceProvider, cascader);
-    var envelope = _createEnvelope(new TestCommand("test"));
+    // Use envelope WITH scope in hops - EnvelopeContextExtractor.ExtractFromHops produces an
+    // ImmutableScopeContext with ShouldPropagate=true that gets set on ScopeContextAccessor.CurrentContext
+    // directly in InvokeAsync (not inside a child async method), so it flows to the cascade context.
+    var envelope = _createEnvelopeWithScopeInHops(new TestCommand("test"), expectedTenantId, expectedUserId);
 
     // Act
     await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
