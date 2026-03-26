@@ -83,7 +83,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <inheritdoc />
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
-    TransportCapabilities.Reliable;
+    TransportCapabilities.Reliable |
+    TransportCapabilities.BulkPublish;
   // Note: NOT Ordered - RabbitMQ doesn't guarantee ordering in multi-consumer scenarios
 
   /// <inheritdoc />
@@ -247,6 +248,124 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         ex
       );
     }
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+    IReadOnlyList<BulkPublishItem> items,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(items);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    if (items.Count == 0) {
+      return [];
+    }
+
+    var exchangeName = destination.Address;
+    var results = new List<BulkPublishItemResult>(items.Count);
+
+    try {
+      using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
+      var channel = pooledChannel.Channel;
+
+      // Declare exchange (idempotent)
+      await channel.ExchangeDeclareAsync(
+        exchange: exchangeName,
+        type: "topic",
+        durable: true,
+        autoDelete: false,
+        arguments: null,
+        passive: false,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Publish each item in the batch using the same channel
+      foreach (var item in items) {
+        try {
+          var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
+          var envelope = item.Envelope;
+          var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
+            ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+          var envelopeRuntimeType = envelope.GetType();
+
+          var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+            ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}.");
+          var json = JsonSerializer.Serialize(envelope, typeInfo);
+          var body = Encoding.UTF8.GetBytes(json);
+
+          var properties = new BasicProperties {
+            MessageId = envelope.MessageId.Value.ToString(),
+            ContentType = "application/json",
+            Persistent = true,
+            Headers = new Dictionary<string, object?>()
+          };
+
+          properties.Headers["EnvelopeType"] = envelopeTypeName;
+
+          var correlationId = envelope.GetCorrelationId();
+          if (correlationId != null) {
+            properties.CorrelationId = correlationId.Value.Value.ToString();
+          }
+
+          var causationId = envelope.GetCausationId();
+          if (causationId != null) {
+            properties.Headers["CausationId"] = causationId.Value.Value.ToString();
+          }
+
+          if (destination.Metadata != null) {
+            foreach (var (key, value) in destination.Metadata) {
+              properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
+            }
+          }
+
+          await channel.BasicPublishAsync(
+            exchange: exchangeName,
+            routingKey: routingKey,
+            mandatory: false,
+            basicProperties: properties,
+            body: body,
+            cancellationToken: cancellationToken
+          );
+
+          results.Add(new BulkPublishItemResult { MessageId = item.MessageId, Success = true });
+        } catch (Exception ex) {
+          results.Add(new BulkPublishItemResult {
+            MessageId = item.MessageId,
+            Success = false,
+            Error = $"{ex.GetType().Name}: {ex.Message}"
+          });
+        }
+      }
+    } catch (AlreadyClosedException ex) {
+      // Channel/connection closed — fail all remaining items
+      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
+      foreach (var id in failedIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"AlreadyClosedException: {ex.Message}"
+        });
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      var failedIds = items.Select(i => i.MessageId).Except(results.Select(r => r.MessageId)).ToList();
+      foreach (var id in failedIds) {
+        results.Add(new BulkPublishItemResult {
+          MessageId = id,
+          Success = false,
+          Error = $"{ex.GetType().Name}: {ex.Message}"
+        });
+      }
+    }
+
+    return results;
   }
 
   /// <inheritdoc />
