@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
@@ -84,4 +85,24 @@ public interface ITransport {
     TransportDestination destination,
     CancellationToken cancellationToken = default
   ) where TRequest : notnull where TResponse : notnull;
+
+  /// <summary>
+  /// Publishes a batch of messages to the same destination in a single transport operation.
+  /// Transports that support the BulkPublish capability should override this for efficiency.
+  /// All items in the batch share the same TransportDestination address; per-item routing
+  /// is specified via BulkPublishItem.RoutingKey.
+  /// </summary>
+  /// <param name="items">The batch of items to publish</param>
+  /// <param name="destination">The shared destination address for all items</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Per-item results indicating success or failure</returns>
+  /// <exception cref="NotSupportedException">Thrown when the transport does not support bulk publishing</exception>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishBatchAsync_WithoutBulkPublishCapability_ThrowsNotSupportedExceptionAsync</tests>
+  Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+    IReadOnlyList<BulkPublishItem> items,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) => throw new NotSupportedException(
+    "Bulk publish is not supported by this transport. " +
+    "Check Capabilities.HasFlag(TransportCapabilities.BulkPublish) before calling.");
 }
